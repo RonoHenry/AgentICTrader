@@ -1,0 +1,72 @@
+# Python virtual environment
+agentic.venv/
+env/
+venv/
+ENV/
+.env
+.env.*
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build directories
+build/
+dist/
+*.egg-info/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.vs/
+
+# Database files
+*.sqlite3
+*.db
+
+# Logs and temporary files
+logs/
+*.log
+temp/
+.DS_Store
+
+# React/Frontend
+frontend/build/
+frontend/dist/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# ML model files
+*.h5
+*.pkl
+*.model
+checkpoints/
+
+# Documentation builds
+docs/_build/
+site/
+
+# Trading data
+data/*.csv
+data/*.json
+*.dat
+
+# Test coverage
+.coverage
+coverage.xml
+.tox/
