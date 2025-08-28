@@ -4,7 +4,7 @@ Test InfluxDB infrastructure setup and management.
 import pytest
 from django.conf import settings
 from datetime import timedelta
-from backend.trader.infrastructure.influxdb_manager import InfluxDBManager
+from trader.infrastructure.influxdb_manager import InfluxDBManager
 from influxdb_client.client.exceptions import InfluxDBError
 
 class TestInfluxDBSetup:
