@@ -25,7 +25,8 @@ class CandlePatternAnalyzer:
             moves = candles[1:, 3] - candles[:-1, 3]  # Close price changes
             mean_range = np.mean(candles[:, 1] - candles[:, 2])  # Average candle range
             
-            if len(moves) >= 2 and all(x > 0 for x in moves) and np.mean(moves) > mean_range * 0.5:
+            # Check for manipulation first (strong directional moves)
+            if len(moves) >= 2 and all(x > 0 for x in moves) and all(abs(x) > mean_range * 0.3 for x in moves):
                 return {
                     "type": "manipulation",
                     "direction": "bullish",
@@ -33,9 +34,21 @@ class CandlePatternAnalyzer:
                     "details": "Strong directional moves"
                 }
             
-            # Check for accumulation
+            # Check for accumulation (tight ranging)
             price_range = candles[:, 1] - candles[:, 2]  # high - low
-            if all(abs(x - mean_range) < mean_range * 0.3 for x in price_range):
+            avg_range = np.mean(price_range)
+            close_diffs = np.abs(candles[1:, 3] - candles[:-1, 3])  # Close price differences
+            
+            # Accumulation criteria:
+            # 1. Price ranges should be consistent (low variance)
+            range_variance = np.std(price_range) / avg_range
+            # 2. Close prices should be relatively stable
+            close_stability = np.mean(close_diffs) / avg_range
+            # 3. Prices should be contained within a tight range
+            total_range = np.max(candles[:, 1]) - np.min(candles[:, 2])
+            range_factor = total_range / avg_range
+            
+            if range_variance < 0.5 and close_stability < 0.3 and range_factor < 3.0:
                 return {
                     "type": "accumulation",
                     "confidence": 0.75,

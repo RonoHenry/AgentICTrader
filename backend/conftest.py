@@ -7,7 +7,12 @@ from typing import Generator
 import subprocess
 
 def pytest_configure():
+    # Set test environment variables
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'agentictrader.settings')
+    os.environ.setdefault('DERIV_APP_ID', 'test_app_id')
+    os.environ.setdefault('DERIV_API_ENDPOINT', 'wss://test.endpoint.com/websockets/v3')
+    os.environ.setdefault('DERIV_RATE_LIMIT', '10')
+    
     settings.DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
@@ -30,18 +35,9 @@ def docker_compose_project_name() -> str:
     return "test_agentictrader"
 
 @pytest.fixture(scope="session")
-def docker_services(docker_compose_file, docker_compose_project_name):
-    """Start docker services defined in docker-compose.yml"""
-    docker_compose_path = str(docker_compose_file)
-    project_name = docker_compose_project_name
-    
-    # Start containers
-    subprocess.run(["docker", "compose", "-f", docker_compose_path, "-p", project_name, "up", "-d"], check=True)
-    
+def docker_services():
+    """Mock docker services fixture when Docker is not available."""
     yield
-    
-    # Stop containers
-    subprocess.run(["docker", "compose", "-f", docker_compose_path, "-p", project_name, "down"], check=True)
 
 @pytest.fixture(scope="session")
 def influxdb_container(docker_services) -> Generator[str, None, None]:

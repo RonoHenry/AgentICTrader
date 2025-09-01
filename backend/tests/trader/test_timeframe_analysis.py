@@ -14,10 +14,15 @@ class TestTimeframeAnalyzer:
         now = datetime.now()
         m1_data = [
             # timestamp, open, high, low, close, volume
-            (now - timedelta(minutes=i), 100+i, 102+i, 99+i, 101+i, 1000)
-            for i in range(60)
+            (now - timedelta(minutes=i), 
+             100 + i + np.random.normal(0, 0.5),  # Add some noise to make it more realistic
+             102 + i + np.random.normal(0, 0.5),
+             99 + i + np.random.normal(0, 0.5),
+             101 + i + np.random.normal(0, 0.5),
+             1000 + np.random.randint(-100, 100))
+            for i in range(480)  # 8 hours worth of M1 data
         ]
-        return np.array(m1_data)
+        return np.array(m1_data, dtype=object)
 
     def test_timeframe_conversion(self, analyzer, sample_data):
         """Test converting M1 data to higher timeframes"""
@@ -37,6 +42,10 @@ class TestTimeframeAnalyzer:
 
     def test_dominant_timeframe(self, analyzer, sample_data):
         """Test detection of dominant timeframe"""
-        dominant_tf = analyzer.find_dominant_timeframe(sample_data)
-        assert dominant_tf in ["M1", "M5", "M15", "H1", "H4", "D1"]
-        assert hasattr(dominant_tf, "strength")  # Confidence score
+        dominant_info = analyzer.find_dominant_timeframe(sample_data)
+        assert isinstance(dominant_info, dict)
+        assert "timeframe" in dominant_info
+        assert "strength" in dominant_info
+        assert "volatilities" in dominant_info
+        assert dominant_info["timeframe"] in ["M1", "M5", "M15", "H1", "H4", "D1"]
+        assert 0 <= dominant_info["strength"] <= 1  # Confidence score should be between 0 and 1
