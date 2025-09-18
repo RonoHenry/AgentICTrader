@@ -1,10 +1,13 @@
 import os
+import sys
 import pytest
-import docker
 import django
 from django.conf import settings
 from typing import Generator
-import subprocess
+from tests.infrastructure.mock_influxdb import MockInfluxDBClient
+
+# Add the backend directory to the Python path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 def pytest_configure():
     # Set test environment variables
@@ -45,3 +48,13 @@ def influxdb_container(docker_services) -> Generator[str, None, None]:
     # Check if InfluxDB is up and responding
     subprocess.run(["docker", "exec", "test_agentictrader-influxdb-1", "influx", "ping"], check=True)
     yield "8086"  # Return default InfluxDB port
+
+@pytest.fixture(scope="session")
+def influxdb_client():
+    """Provide a mock InfluxDB client for testing."""
+    client = MockInfluxDBClient(
+        url="http://localhost:8086",
+        token="mock-token",
+        org="test-org"
+    )
+    return client
