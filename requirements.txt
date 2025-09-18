@@ -1,10 +1,11 @@
 # Core Data Processing
-numpy>=1.24.0
-pandas>=2.0.0
+numpy>=2.0.0
+pandas>=2.1.0
 
 # Web Framework
-Django>=4.2.0
-django-redis>=5.3.0
+Django>=5.2.5
+django-redis>=5.4.0
+influxdb-client>=1.36.0
 django-influxdb>=0.1.4
 
 # Testing
@@ -12,11 +13,13 @@ pytest==7.4.0
 pytest-asyncio==0.21.1
 pytest-cov==4.1.0
 pytest-django==4.7.0
+pytest-docker==2.0.1
 
 # API Integration
 websockets==11.0.3
 aiohttp==3.8.5
 python-decouple==3.8
+requests>=2.31.0
 
 # Development Tools
 black==23.7.0

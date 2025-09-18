@@ -2,7 +2,7 @@
 Time series data management using InfluxDB.
 """
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from dataclasses import dataclass
 from influxdb_client import InfluxDBClient, Point, WritePrecision
@@ -131,13 +131,25 @@ class TimeseriesManager:
         end_time: datetime
     ) -> List[OHLCVPoint]:
         """Read OHLCV data points."""
+        # Ensure times are timezone-aware
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=timezone.utc)
+        if end_time.tzinfo is None:
+            end_time = end_time.replace(tzinfo=timezone.utc)
+            
+        # Add a small buffer to avoid empty range
+        query_start = start_time - timedelta(minutes=1)
+        query_end = end_time + timedelta(minutes=1)
+            
         query = f'''
             from(bucket: "market_data")
-                |> range(start: {start_time.isoformat()}, stop: {end_time.isoformat()})
+                |> range(start: {query_start.isoformat()}, stop: {query_end.isoformat()})
                 |> filter(fn: (r) => r["_measurement"] == "ohlcv")
                 |> filter(fn: (r) => r["symbol"] == "{symbol}")
                 |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
                 |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+                |> filter(fn: (r) => r["_time"] >= {start_time.isoformat()})
+                |> filter(fn: (r) => r["_time"] <= {end_time.isoformat()})
         '''
         
         result = self.query_api.query(query=query, org=self.client.org)

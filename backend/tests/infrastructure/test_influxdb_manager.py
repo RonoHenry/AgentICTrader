@@ -49,7 +49,7 @@ def test_retention_policy_management(influx_manager):
     influx_manager.set_retention_policy(bucket, "7d")
     
     # Get retention policy
-    retention = influx_manager.get_retention_policy(bucket)
+    retention = influx_manager.get_retention_policy(bucket, return_str=True)
     assert retention == "7d"
 
 def test_data_point_operations(influx_manager):
@@ -77,18 +77,22 @@ def test_data_point_operations(influx_manager):
 def test_duration_parsing(influx_manager):
     """Test duration string parsing and formatting."""
     # Test parsing
-    assert influx_manager._parse_duration("7d") == 7 * 24 * 60 * 60
-    assert influx_manager._parse_duration("24h") == 24 * 60 * 60
-    assert influx_manager._parse_duration("60m") == 60 * 60
-    assert influx_manager._parse_duration("3600s") == 3600
+    # Test parsing various duration formats
+    assert influx_manager._parse_duration("7d") == 7 * 24 * 60 * 60  # 7 days
+    assert influx_manager._parse_duration("24h") == 24 * 60 * 60     # 24 hours
+    assert influx_manager._parse_duration("60m") == 60 * 60          # 60 minutes
+    assert influx_manager._parse_duration("3600s") == 3600           # 3600 seconds
     
-    # Test formatting
-    assert influx_manager._format_duration(7 * 24 * 60 * 60) == "7d"
-    assert influx_manager._format_duration(24 * 60 * 60) == "24h"
-    assert influx_manager._format_duration(60 * 60) == "60m"
-    assert influx_manager._format_duration(30) == "30s"
-
-def test_error_handling(influx_manager):
+    # Test formatting with normalization (converts to largest unit)
+    assert influx_manager._format_duration(7 * 24 * 60 * 60) == "7d"      # 7 days
+    assert influx_manager._format_duration(24 * 60 * 60) == "1d"          # 24 hours -> 1 day
+    assert influx_manager._format_duration(60 * 60) == "1h"              # 60 minutes -> 1 hour
+    assert influx_manager._format_duration(120) == "2m"                   # 120 seconds -> 2 minutes
+    
+    # Test smaller values that don't need normalization
+    assert influx_manager._format_duration(23 * 60 * 60) == "23h"        # 23 hours (less than a day)
+    assert influx_manager._format_duration(59 * 60) == "59m"             # 59 minutes (less than an hour)
+    assert influx_manager._format_duration(30) == "30s"                  # 30 secondsdef test_error_handling(influx_manager):
     """Test error handling for various operations."""
     # Test invalid bucket name
     with pytest.raises(ValueError):

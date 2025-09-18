@@ -53,12 +53,12 @@ class TestInfluxDBInfrastructure:
             retention_days=30
         )
         assert bucket.exists()
-        assert bucket.retention_period == "30d"
+        assert bucket.get_retention_period() == "30d"
         
     def test_write_ohlcv_data(self, timeseries_manager, sample_ohlcv_data):
         """Test writing OHLCV data points."""
         result = timeseries_manager.write_ohlcv(sample_ohlcv_data)
-        assert result.success
+        assert result is True
         
     def test_read_ohlcv_data(self, timeseries_manager, sample_ohlcv_data):
         """Test reading back written OHLCV data."""
@@ -106,7 +106,7 @@ class TestInfluxDBInfrastructure:
                 volume=1000
             )
             result = timeseries_manager.write_ohlcv(data)
-            assert result.success
+            assert result is True
             
         # Verify data for each timeframe
         for tf in timeframes:
