@@ -28,7 +28,7 @@ class TestInfluxDBSetup:
 
         # Create InfluxDB client first
         client = InfluxDBClient(
-            url="http://localhost:8086",
+            url="http://localhost:8087",
             token="test-token",
             org="agentic"
         )
@@ -69,7 +69,7 @@ class TestInfluxDBSetup:
     def influx_client(self):
         """Create a test InfluxDB client."""
         client = InfluxDBClient(
-            url="http://localhost:8086",
+            url="http://localhost:8087",
             token="test-token",
             org="agentic"
         )

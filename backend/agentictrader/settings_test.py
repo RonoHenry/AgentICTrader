@@ -12,7 +12,7 @@ DATABASES = {
 }
 
 # InfluxDB Settings for Testing
-INFLUXDB_URL = "http://localhost:8086"
+INFLUXDB_URL = "http://localhost:8087"
 INFLUXDB_TOKEN = "test-token"
 INFLUXDB_ORG = "agentic"
 INFLUXDB_DEFAULT_BUCKET = "market_data_test"

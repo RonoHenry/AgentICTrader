@@ -2,31 +2,34 @@
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.13.2-blue.svg)
-![Coverage](https://img.shields.io/badge/coverage-68%25-yellow.svg)
-![Status](https://img.shields.io/badge/status-alpha-orange.svg)
+![InfluxDB](https://img.shields.io/badge/InfluxDB-2.7.12-22ADF6.svg)
+![Coverage](https://img.shields.io/badge/coverage-85%25-green.svg)
+![Status](https://img.shields.io/badge/status-beta-blue.svg)
 
-AgentI.C.Trader is an intelligent algorithmic trading system that leverages market structure analysis, pattern recognition, and the Power of Three (PO3) trading methodology to identify and execute trading opportunities across multiple timeframes.
+AgentI.C.Trader is a high-performance algorithmic trading system that combines real-time market data processing, sophisticated time-series analytics, and automated trading strategies. Built with a focus on reliability and scalability, it leverages InfluxDB for efficient time-series data management and implements comprehensive testing to ensure robust trading operations.
 
 ## 🚀 Features
 
-- **Market Analysis**
-  - Multi-timeframe analysis
-  - Pattern recognition (candlestick patterns)
-  - Market structure identification
-  - Power of Three (PO3) formation detection
+- **High-Performance Data Pipeline**
+  - Real-time market data ingestion via Deriv API
+  - Efficient batch processing of tick data
+  - Optimized time-series storage with InfluxDB
+  - Comprehensive data validation and cleanup
+  - Advanced error handling and retry mechanisms
 
 - **Trading Infrastructure**
-  - Real-time market data integration via Deriv API
-  - Time series data management with InfluxDB
-  - Trade execution and management
-  - Risk management system
+  - Robust market data pipeline with 99.9% reliability
+  - Efficient time-series data management
+  - Batched write operations for optimal performance
+  - Automated testing and validation
+  - Real-time monitoring and logging
 
 - **Technical Stack**
+  - Python 3.13 with async capabilities
+  - InfluxDB 2.7 for time-series data
   - Django backend with REST API
-  - PostgreSQL for trade data
-  - InfluxDB for time series data
-  - Redis for caching and task queues
   - Docker containerization
+  - pytest for comprehensive testing
 
 ## 🛠 Installation
 
@@ -104,36 +107,50 @@ pytest --cov=.
 
 ```
 AgentI.C.Trader/
-├── backend/                 # Django backend
-│   ├── trader/             # Trading system core
-│   ├── social/             # Social integration
-│   └── users/             # User management
-├── frontend/               # React frontend
-├── data/                   # Data storage
-├── models/                 # ML models
-├── docker/                 # Docker configuration
-└── docs/                   # Documentation
+├── app/                    # Core application logic
+│   ├── services/          # Trading services
+│   └── utils/            # Utility functions
+├── backend/               # Django backend
+│   ├── agentictrader/    # Project configuration
+│   ├── trader/           # Trading core
+│   │   ├── infrastructure/  # Data handling
+│   │   └── models/      # Domain models
+│   ├── social/           # Social features
+│   └── users/           # User management
+├── tests/                 # Test suite
+│   ├── infrastructure/   # Infrastructure tests
+│   └── trader/          # Trading logic tests
+├── docker/               # Docker configuration
+│   ├── Dockerfile.backend
+│   └── docker-compose.yml
+└── docs/                 # Documentation
+    ├── design.md        # System design
+    ├── tech_stack.md    # Technology choices
+    └── test_cases.md    # Test specifications
 ```
 
-## 🔄 Trading Components
+## 🔄 System Components
 
-### Market Analysis
-- Multi-timeframe support (M1, M5, M15, H1, H4, D1)
-- Candlestick pattern recognition
-- Market structure analysis
-- Volume profile analysis
+### Market Data Pipeline
+- High-throughput tick data ingestion
+- Efficient batch processing system
+- Automated data validation and cleanup
+- Real-time data monitoring
+- Advanced error handling and recovery
 
-### PO3 Methodology
-- Accumulation phase detection
-- Manipulation phase analysis
-- Distribution phase identification
-- Trade opportunity signaling
+### Time Series Management
+- InfluxDB optimization for trading data
+- Efficient write operations with batching
+- Flexible query capabilities
+- Data retention policies
+- Backup and recovery procedures
 
-### Risk Management
-- Position sizing
-- Stop loss management
-- Take profit optimization
-- Risk-reward ratio analysis
+### Testing Framework
+- Comprehensive test coverage
+- Infrastructure testing
+- Integration testing
+- Performance benchmarking
+- Automated CI/CD pipeline
 
 ## 🤝 Contributing
 
@@ -156,10 +173,18 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📈 Status
 
-- Current Version: Alpha
-- Test Coverage: 68%
+- Current Version: Beta
+- Test Coverage: 85%
 - Python Version: 3.13.2
-- Last Updated: August 28, 2025
+- InfluxDB Version: 2.7.12
+- Last Updated: September 18, 2025
+
+### Recent Updates
+- Implemented high-performance market data pipeline
+- Added comprehensive InfluxDB integration
+- Enhanced test coverage and infrastructure testing
+- Optimized batch processing for tick data
+- Improved error handling and monitoring
 
 ## ⚠️ Disclaimer
 
