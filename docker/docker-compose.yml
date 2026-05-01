@@ -1,42 +1,41 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: postgres:15
+
+  # ── TIME-SERIES DATABASE ──────────────────────────────────
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
     environment:
-      POSTGRES_DB: ${DB_NAME}
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-agentictrader}
+      POSTGRES_USER: ${DB_USER:-agentictrader}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - timescaledb_data:/var/lib/postgresql/data
+      - ./init/timescaledb:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-agentictrader} -d ${DB_NAME:-agentictrader}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  influxdb:
-    image: influxdb:2.7
+  # ── DOCUMENT STORE ────────────────────────────────────────
+  mongodb:
+    image: mongo:7
     ports:
-      - "8086:8086"
-    environment:
-      DOCKER_INFLUXDB_INIT_MODE: setup
-      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_USER}
-      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_PASSWORD}
-      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG}
-      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET}
+      - "27017:27017"
     volumes:
-      - influxdb_data:/var/lib/influxdb2
+      - mongodb_data:/data/db
     healthcheck:
-      test: ["CMD", "influx", "ping"]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # ── CACHE ─────────────────────────────────────────────────
   redis:
-    image: redis:7
+    image: redis:7-alpine
     ports:
       - "6379:6379"
     volumes:
@@ -47,6 +46,54 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── MESSAGE BUS ───────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ── ML EXPERIMENT TRACKING ────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.11.1
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://${DB_USER:-agentictrader}:${DB_PASSWORD:-changeme}@timescaledb:5432/${DB_NAME:-agentictrader}
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+  # ── LEGACY DJANGO BACKEND (auth/user management) ──────────
   backend:
     build:
       context: ..
@@ -57,21 +104,26 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
-      influxdb:
+      timescaledb:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment:
-      - DB_HOST=postgres
+      - DB_HOST=timescaledb
       - DB_PORT=5432
-      - INFLUXDB_HOST=influxdb
-      - INFLUXDB_PORT=8086
+      - DB_NAME=${DB_NAME:-agentictrader}
+      - DB_USER=${DB_USER:-agentictrader}
+      - DB_PASSWORD=${DB_PASSWORD:-changeme}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-changeme}
+      - DJANGO_DEBUG=${DJANGO_DEBUG:-True}
 
 volumes:
-  postgres_data:
-  influxdb_data:
+  timescaledb_data:
+  mongodb_data:
   redis_data:
+  zookeeper_data:
+  kafka_data:
+  mlflow_artifacts:
