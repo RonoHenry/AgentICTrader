@@ -2,9 +2,13 @@
 agentic.venv/
 env/
 venv/
+.venv/
 ENV/
 .env
 .env.*
+
+# Note: We want to commit documentation .md files
+# Only ignore generated documentation in docs/_build/ and site/ (see below) 
 
 # Python cache files
 __pycache__/
