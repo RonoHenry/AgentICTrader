@@ -36,14 +36,17 @@ AgentICTrader.AI is an autonomous intelligent trading platform that encodes prof
 ### FR-3A: Time Window & Narrative Framework
 > Time is the determinant factor. The same price structure has different probability depending on which time window it forms in.
 
-- The system MUST classify every candle into one of the following time windows (all times NY, DST-aware):
-  - ASIAN_RANGE (20:00–00:00 NY) — Accumulation phase: liquidity being engineered for the next session
+- The system MUST classify every candle into one of the following time windows based on ICT Killzone methodology (all times NY, DST-aware):
+  - ASIAN_RANGE (20:00–22:00 NY) — Accumulation phase: liquidity building, creates Asian Range that London/NY will sweep
   - TRUE_DAY_OPEN (00:00–01:00 NY) — NY midnight: key reference price for intraday bias
-  - LONDON_KILLZONE (03:00–04:00 NY) — Manipulation phase: Asian range liquidity swept, displacement
-  - LONDON_SESSION (02:00–07:00 NY) — London active outside killzone
-  - NEWS_WINDOW (±30 min around 08:30 NY) — Volatility injection: NFP, CPI, FOMC
-  - NY_KILLZONE (07:00–10:00 NY) — Expansion/delivery phase: highest probability setups
-  - NY_EQUITY_OPEN (09:30–10:30 NY) — Indices-specific volatility trigger (US500, US30)
+  - LONDON_KILLZONE (02:00–05:00 NY) — Manipulation phase: "Engine Room", often creates high/low of day, highly volatile for EUR/GBP pairs
+  - LONDON_SILVER_BULLET (03:00–04:00 NY) — Highest probability London window (subset of London Killzone)
+  - NY_AM_KILLZONE (07:00–10:00 NY) — Expansion/delivery phase: "Decisive Mover", correlates with US economic data releases (8:30 AM) and NYSE open (9:30 AM), best for Indices and USD pairs
+  - NY_AM_SILVER_BULLET (10:00–11:00 NY) — Highest probability NY AM window
+  - LONDON_CLOSE (10:00–12:00 NY) — Distribution phase: retracements/reversals as European traders square positions
+  - NY_PM_KILLZONE (13:30–16:00 NY) — Expansion phase: best for Indices (NASDAQ/S&P), secondary expansion or "Power Hour" move
+  - NY_PM_SILVER_BULLET (14:00–15:00 NY) — Highest probability NY PM window
+  - NEWS_WINDOW (08:00–09:00 NY) — Volatility injection: US economic data releases (NFP, CPI, FOMC at 8:30 AM)
   - DAILY_CLOSE (17:00–18:00 NY) — Position squaring before daily candle transition
   - OFF_HOURS — all other times
 
@@ -54,17 +57,17 @@ AgentICTrader.AI is an autonomous intelligent trading platform that encodes prof
 
 - The system MUST compute price position relative to each reference price (ABOVE / BELOW / AT)
 
-- The system MUST assign a time window probability weight to every candle:
-  - LONDON_KILLZONE, NY_KILLZONE → 1.0 (highest probability)
-  - NY_EQUITY_OPEN → 0.9 (indices only)
+- The system MUST assign a time window probability weight to every candle based on ICT Silver Bullet hierarchy:
+  - LONDON_SILVER_BULLET, NY_AM_SILVER_BULLET, NY_PM_SILVER_BULLET → 1.0 (highest probability - Silver Bullet windows)
+  - LONDON_KILLZONE, NY_AM_KILLZONE, NY_PM_KILLZONE → 0.9 (high probability killzones)
   - NEWS_WINDOW → 0.8
   - TRUE_DAY_OPEN → 0.7
-  - LONDON_SESSION, NY_SESSION → 0.5
+  - LONDON_CLOSE → 0.5
   - ASIAN_RANGE → 0.3
   - DAILY_CLOSE → 0.2
   - OFF_HOURS → 0.1
 
-- The system MUST use time_window_weight as a primary input to the Confluence Scorer — setups during killzones score significantly higher than identical setups during off-hours
+- The system MUST use time_window_weight as a primary input to the Confluence Scorer — setups during Silver Bullet windows and killzones score significantly higher than identical setups during off-hours
 
 - The system MUST classify every setup into a narrative phase: ACCUMULATION | MANIPULATION | EXPANSION | DISTRIBUTION | TRANSITION | OFF
 
