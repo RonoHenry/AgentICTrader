@@ -179,7 +179,7 @@
     - Confirm all tests PASS (GREEN)
   - **11c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 12. Implement zone and structure feature extractor
+- [x] 12. Implement zone and structure feature extractor
   - **12a. RED — Write failing tests** (`backend/tests/test_zone_features.py`)
     - Test: BOS detected when close breaks beyond last swing high/low (known candle sequence)
     - Test: CHoCH detected when BOS occurs in opposite direction
