@@ -121,21 +121,35 @@
     - Confirm all tests PASS (GREEN)
   - **8c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 9. Implement HTF auto-timeframe selection logic
+- [x] 9. Implement HTF 3-tier timeframe correlation logic (TTrades methodology)
   - **9a. RED — Write failing tests** (`backend/tests/test_htf_selector.py`)
-    - Test: all single-level mappings: M1→M5, M5→M15, M15→H1, H1→H4, H4→D1, D1→W1, W1→M1, M1→M3, M3→M12
-    - Test: two-level mode returns correct tuple for each input timeframe
-    - Property: get_htf_timeframe always returns a timeframe strictly higher than the input
+    - Test: all 5 trading style correlations (SCALPING, INTRADAY_STANDARD, INTRADAY_SIMPLE, SWING, POSITION)
+    - Test: SCALPING returns (H1, M15, M1) — Higher TF (Bias), Mid TF (Structure), Lower TF (Entry)
+    - Test: INTRADAY_STANDARD returns (D1, H1, M5)
+    - Test: INTRADAY_SIMPLE returns (D1, H4, M15)
+    - Test: SWING returns (W1, D1, H1)
+    - Test: POSITION returns (MN1, W1, H4)
+    - Test: individual layer extraction functions (get_bias_timeframe, get_structure_timeframe, get_entry_timeframe)
+    - Test: all supported timeframes (M1, M3, M5, M15, M30, H1, H4, D1, W1, MN1)
+    - Property: bias_tf duration > structure_tf duration > entry_tf duration (strict hierarchy)
     - Test: invalid timeframe raises ValueError
+    - Test: invalid trading style raises ValueError
     - Confirm all tests FAIL (RED)
   - **9b. GREEN — Write minimal implementation**
     - Create `ml/features/htf_selector.py`
-    - Implement get_htf_timeframe(current_tf: str) -> str
-    - Implement get_htf_timeframes(current_tf: str) -> tuple[str, str]
-    - Confirm all tests PASS (GREEN)
+    - Implement TradingStyle enum with 5 trading styles
+    - Implement get_htf_correlation(current_tf: str, trading_style: TradingStyle) -> Tuple[str, str, str]
+    - Implement get_bias_timeframe(current_tf: str, trading_style: TradingStyle) -> str
+    - Implement get_structure_timeframe(current_tf: str, trading_style: TradingStyle) -> str
+    - Implement get_entry_timeframe(current_tf: str, trading_style: TradingStyle) -> str
+    - Define SUPPORTED_TIMEFRAMES constant
+    - Confirm all tests PASS (GREEN) — 44 tests passing
   - **9c. REFACTOR** — clean up, confirm GREEN
+    - Added comprehensive docstrings with examples
+    - Added input validation with clear error messages
+    - Confirmed all 44 tests still pass
 
-- [ ] 10. Implement HTF OHLC computation and projection feature extractor
+- [x] 10. Implement HTF OHLC computation and projection feature extractor
   - **10a. RED — Write failing tests** (`backend/tests/test_htf_projections.py`)
     - Property: htf_high_proximity_pct + htf_low_proximity_pct = 100 when price is within range
     - Property: open_bias is BULLISH iff current_price > htf_open

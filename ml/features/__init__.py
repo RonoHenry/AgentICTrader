@@ -8,6 +8,10 @@ from ml.features.htf_selector import (
     TradingStyle,
     SUPPORTED_TIMEFRAMES,
 )
+from ml.features.htf_projections import (
+    HTFProjection,
+    HTFProjectionExtractor,
+)
 
 __all__ = [
     "get_htf_correlation",
@@ -16,4 +20,6 @@ __all__ = [
     "get_entry_timeframe",
     "TradingStyle",
     "SUPPORTED_TIMEFRAMES",
+    "HTFProjection",
+    "HTFProjectionExtractor",
 ]
