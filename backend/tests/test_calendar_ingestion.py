@@ -24,6 +24,26 @@ from services.market_data.calendar_ingestion import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Test helpers
+# ---------------------------------------------------------------------------
+
+def create_mock_pool():
+    """Create a properly mocked asyncpg pool for testing."""
+    mock_pool = MagicMock()
+    mock_conn = AsyncMock()
+    
+    # Create an async context manager for acquire()
+    async_context = AsyncMock()
+    async_context.__aenter__ = AsyncMock(return_value=mock_conn)
+    async_context.__aexit__ = AsyncMock(return_value=None)
+    
+    mock_pool.acquire = MagicMock(return_value=async_context)
+    mock_pool.close = AsyncMock()
+    
+    return mock_pool, mock_conn
+
+
 # ===========================================================================
 # 1. Test: events ingested for currencies USD, EUR, GBP, XAU
 # ===========================================================================
@@ -123,24 +143,23 @@ async def test_events_stored_with_correct_schema():
         db_password="changeme",
     )
     
-    await ingestion.connect()
-    
-    event = EconomicEvent(
-        event_time=datetime(2026, 5, 1, 8, 30, 0, tzinfo=timezone.utc),
-        currency="USD",
-        event_name="Non-Farm Payrolls",
-        impact="HIGH",
-        forecast="200K",
-        previous="180K",
-        actual="210K",
-        source="test",
-    )
-    
     # Mock the database connection
-    with patch.object(ingestion, "_pool") as mock_pool:
-        mock_conn = AsyncMock()
-        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
-        mock_conn.execute = AsyncMock()
+    with patch("services.market_data.calendar_ingestion.asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
+        mock_pool, mock_conn = create_mock_pool()
+        mock_create_pool.return_value = mock_pool
+        
+        await ingestion.connect()
+        
+        event = EconomicEvent(
+            event_time=datetime(2026, 5, 1, 8, 30, 0, tzinfo=timezone.utc),
+            currency="USD",
+            event_name="Non-Farm Payrolls",
+            impact="HIGH",
+            forecast="200K",
+            previous="180K",
+            actual="210K",
+            source="test",
+        )
         
         await ingestion._store_event(event)
         
@@ -164,8 +183,8 @@ async def test_events_stored_with_correct_schema():
         assert event.currency in call_args[0]
         assert event.event_name in call_args[0]
         assert event.impact in call_args[0]
-    
-    await ingestion.close()
+        
+        await ingestion.close()
 
 
 @pytest.mark.asyncio
@@ -219,38 +238,45 @@ async def test_daily_refresh_scheduled_at_0005_utc():
         db_password="changeme",
     )
     
-    await ingestion.connect()
-    
-    # Start the scheduler
-    ingestion.start_scheduler()
-    
-    # Verify scheduler is running
-    assert ingestion._scheduler is not None, "Scheduler must be initialized"
-    assert ingestion._scheduler.running, "Scheduler must be running"
-    
-    # Verify job is scheduled
-    jobs = ingestion._scheduler.get_jobs()
-    assert len(jobs) > 0, "At least one job must be scheduled"
-    
-    # Find the daily refresh job
-    refresh_job = None
-    for job in jobs:
-        if "refresh" in job.id.lower() or "ingest" in job.id.lower():
-            refresh_job = job
-            break
-    
-    assert refresh_job is not None, "Daily refresh job must be scheduled"
-    
-    # Verify job runs at 00:05 UTC
-    trigger = refresh_job.trigger
-    assert hasattr(trigger, "hour"), "Job must have hour trigger"
-    assert hasattr(trigger, "minute"), "Job must have minute trigger"
-    assert trigger.hour == 0, "Job must run at hour 0 (midnight)"
-    assert trigger.minute == 5, "Job must run at minute 5"
-    
-    # Stop the scheduler
-    ingestion.stop_scheduler()
-    await ingestion.close()
+    # Mock the database connection
+    with patch("services.market_data.calendar_ingestion.asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
+        mock_pool = AsyncMock()
+        mock_create_pool.return_value = mock_pool
+        
+        await ingestion.connect()
+        
+        # Start the scheduler
+        ingestion.start_scheduler()
+        
+        # Verify scheduler is running
+        assert ingestion._scheduler is not None, "Scheduler must be initialized"
+        assert ingestion._scheduler.running, "Scheduler must be running"
+        
+        # Verify job is scheduled
+        jobs = ingestion._scheduler.get_jobs()
+        assert len(jobs) > 0, "At least one job must be scheduled"
+        
+        # Find the daily refresh job
+        refresh_job = None
+        for job in jobs:
+            if "refresh" in job.id.lower() or "ingest" in job.id.lower():
+                refresh_job = job
+                break
+        
+        assert refresh_job is not None, "Daily refresh job must be scheduled"
+        
+        # Verify job runs at 00:05 UTC
+        trigger = refresh_job.trigger
+        # CronTrigger stores fields in a different way
+        trigger_str = str(trigger)
+        assert "hour='0'" in trigger_str or "hour=0" in trigger_str, "Job must run at hour 0 (midnight)"
+        assert "minute='5'" in trigger_str or "minute=5" in trigger_str, "Job must run at minute 5"
+        # Timezone is set but may not appear in string representation, check the trigger object
+        assert trigger.timezone is not None, "Job must have a timezone set"
+        
+        # Stop the scheduler
+        ingestion.stop_scheduler()
+        await ingestion.close()
 
 
 @pytest.mark.asyncio
@@ -266,16 +292,24 @@ async def test_scheduler_can_be_stopped():
         db_password="changeme",
     )
     
-    await ingestion.connect()
-    ingestion.start_scheduler()
-    
-    assert ingestion._scheduler.running, "Scheduler must be running"
-    
-    ingestion.stop_scheduler()
-    
-    assert not ingestion._scheduler.running, "Scheduler must be stopped"
-    
-    await ingestion.close()
+    # Mock the database connection
+    with patch("services.market_data.calendar_ingestion.asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
+        mock_pool = AsyncMock()
+        mock_create_pool.return_value = mock_pool
+        
+        await ingestion.connect()
+        ingestion.start_scheduler()
+        
+        assert ingestion._scheduler.running, "Scheduler must be running"
+        
+        ingestion.stop_scheduler()
+        
+        # Give the scheduler a moment to shut down
+        await asyncio.sleep(0.1)
+        
+        assert not ingestion._scheduler.running, "Scheduler must be stopped"
+        
+        await ingestion.close()
 
 
 # ===========================================================================
@@ -296,26 +330,25 @@ async def test_duplicate_events_not_inserted_twice():
         db_password="changeme",
     )
     
-    await ingestion.connect()
-    
-    event = EconomicEvent(
-        event_time=datetime(2026, 5, 1, 8, 30, 0, tzinfo=timezone.utc),
-        currency="USD",
-        event_name="Non-Farm Payrolls",
-        impact="HIGH",
-        forecast="200K",
-        previous="180K",
-        actual=None,
-        source="test",
-    )
-    
     # Mock the database connection
-    with patch.object(ingestion, "_pool") as mock_pool:
-        mock_conn = AsyncMock()
-        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+    with patch("services.market_data.calendar_ingestion.asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
+        mock_pool, mock_conn = create_mock_pool()
+        mock_create_pool.return_value = mock_pool
+        
+        await ingestion.connect()
+        
+        event = EconomicEvent(
+            event_time=datetime(2026, 5, 1, 8, 30, 0, tzinfo=timezone.utc),
+            currency="USD",
+            event_name="Non-Farm Payrolls",
+            impact="HIGH",
+            forecast="200K",
+            previous="180K",
+            actual=None,
+            source="test",
+        )
         
         # First insert should succeed
-        mock_conn.execute = AsyncMock()
         await ingestion._store_event(event)
         first_call_count = mock_conn.execute.call_count
         
@@ -329,8 +362,8 @@ async def test_duplicate_events_not_inserted_twice():
         # Should use ON CONFLICT DO NOTHING or similar deduplication
         assert "on conflict" in sql or "where not exists" in sql, \
             "SQL must handle duplicates with ON CONFLICT or WHERE NOT EXISTS"
-    
-    await ingestion.close()
+        
+        await ingestion.close()
 
 
 @pytest.mark.asyncio
@@ -346,47 +379,47 @@ async def test_duplicate_check_by_event_time_currency_name():
         db_password="changeme",
     )
     
-    await ingestion.connect()
-    
-    # Same event_time, currency, event_name = duplicate
-    event1 = EconomicEvent(
-        event_time=datetime(2026, 5, 1, 8, 30, 0, tzinfo=timezone.utc),
-        currency="USD",
-        event_name="Non-Farm Payrolls",
-        impact="HIGH",
-        forecast="200K",
-        previous="180K",
-        actual=None,
-        source="test",
-    )
-    
-    event2 = EconomicEvent(
-        event_time=datetime(2026, 5, 1, 8, 30, 0, tzinfo=timezone.utc),
-        currency="USD",
-        event_name="Non-Farm Payrolls",
-        impact="HIGH",
-        forecast="210K",  # Different forecast, but same key fields
-        previous="180K",
-        actual=None,
-        source="test",
-    )
-    
-    # Different event_time = not duplicate
-    event3 = EconomicEvent(
-        event_time=datetime(2026, 5, 1, 9, 30, 0, tzinfo=timezone.utc),  # Different time
-        currency="USD",
-        event_name="Non-Farm Payrolls",
-        impact="HIGH",
-        forecast="200K",
-        previous="180K",
-        actual=None,
-        source="test",
-    )
-    
-    with patch.object(ingestion, "_pool") as mock_pool:
-        mock_conn = AsyncMock()
-        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
-        mock_conn.execute = AsyncMock()
+    # Mock the database connection
+    with patch("services.market_data.calendar_ingestion.asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
+        mock_pool, mock_conn = create_mock_pool()
+        mock_create_pool.return_value = mock_pool
+        
+        await ingestion.connect()
+        
+        # Same event_time, currency, event_name = duplicate
+        event1 = EconomicEvent(
+            event_time=datetime(2026, 5, 1, 8, 30, 0, tzinfo=timezone.utc),
+            currency="USD",
+            event_name="Non-Farm Payrolls",
+            impact="HIGH",
+            forecast="200K",
+            previous="180K",
+            actual=None,
+            source="test",
+        )
+        
+        event2 = EconomicEvent(
+            event_time=datetime(2026, 5, 1, 8, 30, 0, tzinfo=timezone.utc),
+            currency="USD",
+            event_name="Non-Farm Payrolls",
+            impact="HIGH",
+            forecast="210K",  # Different forecast, but same key fields
+            previous="180K",
+            actual=None,
+            source="test",
+        )
+        
+        # Different event_time = not duplicate
+        event3 = EconomicEvent(
+            event_time=datetime(2026, 5, 1, 9, 30, 0, tzinfo=timezone.utc),  # Different time
+            currency="USD",
+            event_name="Non-Farm Payrolls",
+            impact="HIGH",
+            forecast="200K",
+            previous="180K",
+            actual=None,
+            source="test",
+        )
         
         await ingestion._store_event(event1)
         await ingestion._store_event(event2)  # Should be treated as duplicate
@@ -401,8 +434,8 @@ async def test_duplicate_check_by_event_time_currency_name():
             assert "event_time" in sql
             assert "currency" in sql
             assert "event_name" in sql
-    
-    await ingestion.close()
+        
+        await ingestion.close()
 
 
 # ===========================================================================
@@ -520,39 +553,44 @@ async def test_ingest_events_stores_all_fetched_events():
         db_password="changeme",
     )
     
-    await ingestion.connect()
-    
-    mock_events = [
-        EconomicEvent(
-            event_time=datetime.now(timezone.utc),
-            currency="USD",
-            event_name="Event 1",
-            impact="HIGH",
-            forecast=None,
-            previous=None,
-            actual=None,
-            source="test",
-        ),
-        EconomicEvent(
-            event_time=datetime.now(timezone.utc),
-            currency="EUR",
-            event_name="Event 2",
-            impact="MEDIUM",
-            forecast=None,
-            previous=None,
-            actual=None,
-            source="test",
-        ),
-    ]
-    
-    with patch.object(ingestion, "_fetch_events", return_value=mock_events):
-        with patch.object(ingestion, "_store_event", new_callable=AsyncMock) as mock_store:
-            await ingestion.ingest_events()
-            
-            # Verify _store_event was called for each event
-            assert mock_store.call_count == len(mock_events)
-    
-    await ingestion.close()
+    # Mock the database connection
+    with patch("services.market_data.calendar_ingestion.asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
+        mock_pool = AsyncMock()
+        mock_create_pool.return_value = mock_pool
+        
+        await ingestion.connect()
+        
+        mock_events = [
+            EconomicEvent(
+                event_time=datetime.now(timezone.utc),
+                currency="USD",
+                event_name="Event 1",
+                impact="HIGH",
+                forecast=None,
+                previous=None,
+                actual=None,
+                source="test",
+            ),
+            EconomicEvent(
+                event_time=datetime.now(timezone.utc),
+                currency="EUR",
+                event_name="Event 2",
+                impact="MEDIUM",
+                forecast=None,
+                previous=None,
+                actual=None,
+                source="test",
+            ),
+        ]
+        
+        with patch.object(ingestion, "_fetch_events", return_value=mock_events):
+            with patch.object(ingestion, "_store_event", new_callable=AsyncMock) as mock_store:
+                await ingestion.ingest_events()
+                
+                # Verify _store_event was called for each event
+                assert mock_store.call_count == len(mock_events)
+        
+        await ingestion.close()
 
 
 # ===========================================================================

@@ -8,7 +8,11 @@ import pytest
 from django.conf import settings
 
 # Get the absolute path to the project root
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+# Add project root to sys.path so we can import services module
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 def pytest_configure():
     """Configure Django for testing."""

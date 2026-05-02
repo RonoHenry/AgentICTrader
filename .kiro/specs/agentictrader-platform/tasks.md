@@ -107,7 +107,7 @@
   - Validate loaded data: no gaps > 2x timeframe duration on trading days, no OHLC violations
   - Log summary: instrument, timeframe, row count, date range, gap count
 
-- [-] 8. Implement economic calendar ingestion
+- [x] 8. Implement economic calendar ingestion
   - **8a. RED — Write failing tests** (`backend/tests/test_calendar_ingestion.py`)
     - Test: events ingested for currencies USD, EUR, GBP, XAU
     - Test: events stored in TimescaleDB economic_events table with correct schema
