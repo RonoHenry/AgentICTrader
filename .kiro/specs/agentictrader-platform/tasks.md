@@ -164,7 +164,7 @@
     - Confirm all tests PASS (GREEN)
   - **10c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 11. Implement candle structure feature extractor
+- [x] 11. Implement candle structure feature extractor
   - **11a. RED — Write failing tests** (`backend/tests/test_candle_features.py`)
     - Property: body_pct + upper_wick_pct + lower_wick_pct = 100 for all valid candles
     - Property: close_position is always in [0, 1]
