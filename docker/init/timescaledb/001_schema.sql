@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS economic_events (
     previous        VARCHAR(50),
     actual          VARCHAR(50),
     source          VARCHAR(50),
-    created_at      TIMESTAMPTZ     DEFAULT NOW()
+    created_at      TIMESTAMPTZ     DEFAULT NOW(),
+    UNIQUE (event_time, currency, event_name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_time_currency ON economic_events (event_time, currency);
