@@ -196,7 +196,7 @@
     - Confirm all tests PASS (GREEN)
   - **12c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 13. Implement session and time feature extractor
+- [x] 13. Implement session and time feature extractor
   - **13a. RED — Write failing tests** (`backend/tests/test_session_features.py`)
     - Test: all time window boundaries with exact timestamps (ASIAN_RANGE, TRUE_DAY_OPEN, LONDON_KILLZONE, etc.)
     - Test: DST transitions — NY switches between UTC-4 and UTC-5
@@ -216,7 +216,7 @@
     - Confirm all tests PASS (GREEN)
   - **13c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 14. Build sklearn feature pipeline orchestration
+- [x] 14. Build sklearn feature pipeline orchestration
   - Create ml/features/pipeline.py
   - Compose HTFProjectionExtractor + CandleFeatureExtractor + ZoneFeatureExtractor + SessionFeatureExtractor into a single sklearn Pipeline
   - Output: flat feature vector as pandas DataFrame with named columns
