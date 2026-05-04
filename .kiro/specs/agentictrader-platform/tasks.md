@@ -216,7 +216,7 @@
     - Confirm all tests PASS (GREEN)
   - **13c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 14. Build sklearn feature pipeline orchestration
+- [x] 14. Build sklearn feature pipeline orchestration
   - Create ml/features/pipeline.py
   - Compose HTFProjectionExtractor + CandleFeatureExtractor + ZoneFeatureExtractor + SessionFeatureExtractor into a single sklearn Pipeline
   - Output: flat feature vector as pandas DataFrame with named columns
