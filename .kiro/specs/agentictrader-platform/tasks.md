@@ -224,7 +224,7 @@
   - Add Great Expectations data quality suite: validate no nulls in HTF projection columns, all pct values in [0,100], open_bias in valid enum set
   - Write integration tests in backend/tests/test_feature_pipeline.py using 100 real candles from TimescaleDB
 
-- [ ] 15. Build trade journal importer
+- [x] 15. Build trade journal importer
   - **15a. RED — Write failing tests** (`backend/tests/test_journal_importer.py`)
     - Test: CSV file imported and mapped to trade_journal schema correctly
     - Test: XLSX file imported and mapped correctly
@@ -238,7 +238,7 @@
     - Confirm all tests PASS (GREEN)
   - **15c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 16. Implement Analytics Service for edge analysis
+- [x] 16. Implement Analytics Service for edge analysis
   - **16a. RED — Write failing tests** (`backend/tests/test_edge_analysis.py`)
     - Test: win_rate, avg_r_multiple, expectancy, trade_count computed correctly from known data
     - Test: grouping by session, day_of_week, instrument, setup_tag, htf_open_bias works
