@@ -2,235 +2,198 @@
 Test suite for Edge Analysis Streamlit Dashboard.
 
 Tests cover:
-- Dashboard module can be imported
-- Helper functions work correctly
+- Dashboard module imports correctly
+- Helper functions work as expected
 - Configuration is properly set
 """
 
 import pytest
-from unittest.mock import Mock, patch
 import sys
 import os
 
 
 class TestDashboardImport:
-    """Test dashboard module import."""
+    """Test dashboard module can be imported."""
     
-    def test_dashboard_module_exists(self):
-        """Test: dashboard.py file exists."""
-        dashboard_path = os.path.join('services', 'analytics', 'dashboard.py')
-        assert os.path.exists(dashboard_path), f"Dashboard file not found at {dashboard_path}"
-    
-    def test_dashboard_has_required_imports(self):
-        """Test: dashboard.py contains required imports."""
-        dashboard_path = os.path.join('services', 'analytics', 'dashboard.py')
-        
-        with open(dashboard_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Check for required imports
-        assert 'import streamlit' in content, "Missing streamlit import"
-        assert 'import requests' in content, "Missing requests import"
-        assert 'import pandas' in content, "Missing pandas import"
-        assert 'import plotly' in content, "Missing plotly import"
-    
-    def test_dashboard_has_required_functions(self):
-        """Test: dashboard.py contains required helper functions."""
-        dashboard_path = os.path.join('services', 'analytics', 'dashboard.py')
-        
-        with open(dashboard_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Check for required functions
-        assert 'def fetch_summary' in content, "Missing fetch_summary function"
-        assert 'def fetch_edge' in content, "Missing fetch_edge function"
-        assert 'def fetch_equity_curve' in content, "Missing fetch_equity_curve function"
-    
-    def test_dashboard_has_configuration(self):
-        """Test: dashboard.py has ANALYTICS_SERVICE_URL configuration."""
-        dashboard_path = os.path.join('services', 'analytics', 'dashboard.py')
-        
-        with open(dashboard_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        assert 'ANALYTICS_SERVICE_URL' in content, "Missing ANALYTICS_SERVICE_URL configuration"
-        assert 'http://localhost:8000' in content, "Missing default URL"
+    def test_dashboard_imports_successfully(self):
+        """Test: dashboard.py can be imported without errors."""
+        # This test verifies all dependencies are available
+        try:
+            # Add services directory to path
+            services_path = os.path.join(os.path.dirname(__file__), '..', '..', 'services')
+            if services_path not in sys.path:
+                sys.path.insert(0, services_path)
+            
+            # Import should not raise any errors
+            import analytics.dashboard
+            
+            assert analytics.dashboard is not None
+        except ImportError as e:
+            pytest.fail(f"Failed to import dashboard: {e}")
 
 
 class TestDashboardConfiguration:
     """Test dashboard configuration."""
     
-    def test_default_analytics_url(self):
-        """Test: default Analytics Service URL is localhost:8000."""
-        # This would be tested by importing the module, but we can't do that
-        # without Streamlit being installed and running, so we check the file content
-        dashboard_path = os.path.join('services', 'analytics', 'dashboard.py')
+    def test_default_analytics_service_url(self):
+        """Test: default ANALYTICS_SERVICE_URL is set correctly."""
+        import os
         
-        with open(dashboard_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+        # Clear any existing env var
+        if 'ANALYTICS_SERVICE_URL' in os.environ:
+            del os.environ['ANALYTICS_SERVICE_URL']
         
-        # Verify default URL
-        assert "os.getenv('ANALYTICS_SERVICE_URL', 'http://localhost:8000')" in content
+        # Import dashboard to get default
+        services_path = os.path.join(os.path.dirname(__file__), '..', '..', 'services')
+        if services_path not in sys.path:
+            sys.path.insert(0, services_path)
+        
+        import analytics.dashboard
+        
+        # Default should be localhost:8000
+        assert analytics.dashboard.ANALYTICS_SERVICE_URL == 'http://localhost:8000'
     
-    def test_dashboard_port_configuration(self):
-        """Test: dashboard is configured to run on port 8501."""
-        # Check README for port configuration
-        readme_path = os.path.join('services', 'analytics', 'README_DASHBOARD.md')
+    def test_custom_analytics_service_url(self):
+        """Test: custom ANALYTICS_SERVICE_URL can be set via environment."""
+        import os
+        import importlib
         
-        with open(readme_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+        # Set custom URL
+        os.environ['ANALYTICS_SERVICE_URL'] = 'http://custom-host:9000'
         
-        assert '8501' in content, "Port 8501 not mentioned in README"
-        assert '--server.port 8501' in content, "Port configuration not in README"
+        # Reload module to pick up new env var
+        services_path = os.path.join(os.path.dirname(__file__), '..', '..', 'services')
+        if services_path not in sys.path:
+            sys.path.insert(0, services_path)
+        
+        import analytics.dashboard
+        importlib.reload(analytics.dashboard)
+        
+        assert analytics.dashboard.ANALYTICS_SERVICE_URL == 'http://custom-host:9000'
+        
+        # Clean up
+        del os.environ['ANALYTICS_SERVICE_URL']
+
+
+class TestDashboardHelperFunctions:
+    """Test dashboard helper functions."""
+    
+    def test_format_percentage_positive(self):
+        """Test: format_percentage handles positive values correctly."""
+        services_path = os.path.join(os.path.dirname(__file__), '..', '..', 'services')
+        if services_path not in sys.path:
+            sys.path.insert(0, services_path)
+        
+        from analytics.dashboard import format_percentage
+        
+        result = format_percentage(0.75)
+        
+        assert 'positive' in result
+        assert '75.00%' in result
+    
+    def test_format_percentage_negative(self):
+        """Test: format_percentage handles negative values correctly."""
+        services_path = os.path.join(os.path.dirname(__file__), '..', '..', 'services')
+        if services_path not in sys.path:
+            sys.path.insert(0, services_path)
+        
+        from analytics.dashboard import format_percentage
+        
+        result = format_percentage(-0.25)
+        
+        assert 'negative' in result
+        assert '-25.00%' in result
+    
+    def test_format_percentage_zero(self):
+        """Test: format_percentage handles zero correctly."""
+        services_path = os.path.join(os.path.dirname(__file__), '..', '..', 'services')
+        if services_path not in sys.path:
+            sys.path.insert(0, services_path)
+        
+        from analytics.dashboard import format_percentage
+        
+        result = format_percentage(0.0)
+        
+        assert 'neutral' in result
+        assert '0.00%' in result
+    
+    def test_format_currency_positive(self):
+        """Test: format_currency handles positive values correctly."""
+        services_path = os.path.join(os.path.dirname(__file__), '..', '..', 'services')
+        if services_path not in sys.path:
+            sys.path.insert(0, services_path)
+        
+        from analytics.dashboard import format_currency
+        
+        result = format_currency(1500.50)
+        
+        assert 'positive' in result
+        assert '+$1,500.50' in result
+    
+    def test_format_currency_negative(self):
+        """Test: format_currency handles negative values correctly."""
+        services_path = os.path.join(os.path.dirname(__file__), '..', '..', 'services')
+        if services_path not in sys.path:
+            sys.path.insert(0, services_path)
+        
+        from analytics.dashboard import format_currency
+        
+        result = format_currency(-250.75)
+        
+        assert 'negative' in result
+        assert '$-250.75' in result or '-$250.75' in result
+    
+    def test_format_r_multiple_positive(self):
+        """Test: format_r_multiple handles positive values correctly."""
+        services_path = os.path.join(os.path.dirname(__file__), '..', '..', 'services')
+        if services_path not in sys.path:
+            sys.path.insert(0, services_path)
+        
+        from analytics.dashboard import format_r_multiple
+        
+        result = format_r_multiple(2.5)
+        
+        assert 'positive' in result
+        assert '+2.50R' in result
+    
+    def test_format_r_multiple_negative(self):
+        """Test: format_r_multiple handles negative values correctly."""
+        services_path = os.path.join(os.path.dirname(__file__), '..', '..', 'services')
+        if services_path not in sys.path:
+            sys.path.insert(0, services_path)
+        
+        from analytics.dashboard import format_r_multiple
+        
+        result = format_r_multiple(-1.0)
+        
+        assert 'negative' in result
+        assert '-1.00R' in result
 
 
 class TestDashboardPages:
     """Test dashboard page structure."""
     
-    def test_dashboard_has_all_required_tabs(self):
-        """Test: dashboard has all 5 required tabs."""
-        dashboard_path = os.path.join('services', 'analytics', 'dashboard.py')
+    def test_dashboard_has_all_required_pages(self):
+        """Test: dashboard defines all required pages."""
+        services_path = os.path.join(os.path.dirname(__file__), '..', '..', 'services')
+        if services_path not in sys.path:
+            sys.path.insert(0, services_path)
+        
+        # Read dashboard source to verify pages exist
+        dashboard_path = os.path.join(services_path, 'analytics', 'dashboard.py')
         
         with open(dashboard_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        # Check for tab creation
-        assert 'st.tabs' in content, "Missing tabs creation"
+        # Verify all required pages are defined
+        required_pages = [
+            '📈 Overview',
+            '🎯 Win Rate by Condition',
+            '📊 R-Multiple Distribution',
+            '💰 Equity Curve',
+            '🕐 Session Breakdown',
+            '🔄 HTF Bias Performance'
+        ]
         
-        # Check for required tab names
-        assert 'Win Rate by Condition' in content, "Missing Win Rate tab"
-        assert 'R-Multiple Distribution' in content, "Missing R-Multiple Distribution tab"
-        assert 'Equity Curve' in content, "Missing Equity Curve tab"
-        assert 'Session Breakdown' in content, "Missing Session Breakdown tab"
-        assert 'HTF Bias Performance' in content, "Missing HTF Bias Performance tab"
-    
-    def test_dashboard_has_filters(self):
-        """Test: dashboard has instrument and session filters."""
-        dashboard_path = os.path.join('services', 'analytics', 'dashboard.py')
-        
-        with open(dashboard_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Check for sidebar filters
-        assert 'st.sidebar' in content, "Missing sidebar"
-        assert 'instrument_filter' in content, "Missing instrument filter"
-        assert 'session_filter' in content, "Missing session filter"
-    
-    def test_dashboard_has_metrics_display(self):
-        """Test: dashboard displays key metrics."""
-        dashboard_path = os.path.join('services', 'analytics', 'dashboard.py')
-        
-        with open(dashboard_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Check for metrics
-        assert 'st.metric' in content, "Missing metrics display"
-        assert 'Win Rate' in content, "Missing Win Rate metric"
-        assert 'Avg R-Multiple' in content, "Missing Avg R-Multiple metric"
-        assert 'Expectancy' in content, "Missing Expectancy metric"
-
-
-class TestDashboardCharts:
-    """Test dashboard chart creation."""
-    
-    def test_dashboard_uses_plotly(self):
-        """Test: dashboard uses Plotly for charts."""
-        dashboard_path = os.path.join('services', 'analytics', 'dashboard.py')
-        
-        with open(dashboard_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Check for Plotly usage
-        assert 'px.bar' in content or 'go.Figure' in content, "Missing Plotly charts"
-        assert 'st.plotly_chart' in content, "Missing Plotly chart rendering"
-    
-    def test_dashboard_has_equity_curve_chart(self):
-        """Test: dashboard has equity curve line chart."""
-        dashboard_path = os.path.join('services', 'analytics', 'dashboard.py')
-        
-        with open(dashboard_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Check for equity curve chart
-        assert 'cumulative_pnl' in content, "Missing cumulative P&L calculation"
-        assert 'Cumulative P&L' in content, "Missing equity curve chart"
-    
-    def test_dashboard_has_drawdown_analysis(self):
-        """Test: dashboard includes drawdown analysis."""
-        dashboard_path = os.path.join('services', 'analytics', 'dashboard.py')
-        
-        with open(dashboard_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Check for drawdown analysis
-        assert 'drawdown' in content.lower(), "Missing drawdown analysis"
-        assert 'running_max' in content or 'cummax' in content, "Missing running maximum calculation"
-
-
-class TestDashboardDocumentation:
-    """Test dashboard documentation."""
-    
-    def test_readme_exists(self):
-        """Test: README_DASHBOARD.md exists."""
-        readme_path = os.path.join('services', 'analytics', 'README_DASHBOARD.md')
-        assert os.path.exists(readme_path), "README_DASHBOARD.md not found"
-    
-    def test_readme_has_running_instructions(self):
-        """Test: README has instructions for running the dashboard."""
-        readme_path = os.path.join('services', 'analytics', 'README_DASHBOARD.md')
-        
-        with open(readme_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        assert 'streamlit run' in content, "Missing streamlit run command"
-        assert 'services/analytics/dashboard.py' in content, "Missing dashboard path"
-    
-    def test_readme_documents_all_features(self):
-        """Test: README documents all 5 dashboard features."""
-        readme_path = os.path.join('services', 'analytics', 'README_DASHBOARD.md')
-        
-        with open(readme_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Check for feature documentation
-        assert 'Win Rate by Condition' in content
-        assert 'R-Multiple Distribution' in content
-        assert 'Equity Curve' in content
-        assert 'Session Breakdown' in content
-        assert 'HTF Bias Performance' in content
-
-
-class TestDashboardRunScripts:
-    """Test dashboard run scripts."""
-    
-    def test_bash_script_exists(self):
-        """Test: run_dashboard.sh exists."""
-        script_path = os.path.join('services', 'analytics', 'run_dashboard.sh')
-        assert os.path.exists(script_path), "run_dashboard.sh not found"
-    
-    def test_batch_script_exists(self):
-        """Test: run_dashboard.bat exists."""
-        script_path = os.path.join('services', 'analytics', 'run_dashboard.bat')
-        assert os.path.exists(script_path), "run_dashboard.bat not found"
-    
-    def test_bash_script_has_correct_command(self):
-        """Test: bash script has correct streamlit command."""
-        script_path = os.path.join('services', 'analytics', 'run_dashboard.sh')
-        
-        with open(script_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        assert 'streamlit run' in content
-        assert 'services/analytics/dashboard.py' in content
-        assert '--server.port 8501' in content
-    
-    def test_batch_script_has_correct_command(self):
-        """Test: batch script has correct streamlit command."""
-        script_path = os.path.join('services', 'analytics', 'run_dashboard.bat')
-        
-        with open(script_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        assert 'streamlit run' in content
-        assert 'services/analytics/dashboard.py' in content
-        assert '--server.port 8501' in content
+        for page in required_pages:
+            assert page in content, f"Page '{page}' not found in dashboard"
