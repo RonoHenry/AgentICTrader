@@ -252,7 +252,7 @@
     - Confirm all tests PASS (GREEN)
   - **16c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 17. Build edge analysis Streamlit dashboard
+- [x] 17. Build edge analysis Streamlit dashboard
   - Create services/analytics/dashboard.py using Streamlit
   - Pages: Win Rate by Condition, R-Multiple Distribution, Equity Curve, Session Breakdown, HTF Bias Performance
   - Connect to Analytics Service REST endpoints
@@ -262,7 +262,7 @@
 
 ## Phase 1 — Pattern ML
 
-- [ ] 18. Build pattern labelling tool
+- [x] 18. Build pattern labelling tool
   - Create ml/models/pattern_detector/labeller.py
   - Load historical candles from TimescaleDB
   - Present candle sequences in a Streamlit UI for manual labelling
