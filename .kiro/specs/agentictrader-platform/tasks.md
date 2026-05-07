@@ -270,7 +270,7 @@
   - Save labelled examples to MongoDB setups collection with label, candle_window, instrument, timeframe, timestamp
   - Target: minimum 500 labelled examples per pattern
 
-- [ ] 19. Set up MLflow experiment tracking
+- [x] 19. Set up MLflow experiment tracking
   - **19a. RED — Write failing tests** (`backend/tests/test_mlflow_client.py`)
     - Smoke test: MLflow connection succeeds
     - Test: experiment created with correct name
