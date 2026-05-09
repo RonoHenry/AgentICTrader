@@ -12,7 +12,7 @@ The AgentICTrader agent is not a chatbot. It is an autonomous decision-making sy
 **The agent's internal monologue:**
 ```
 "The D1 is bearish. H4 confirms. I'm on the M5 now.
- Price broke structure. There's a supply zone overhead.
+ Price broke structure. There's a Bearish OB (Bearish Array at Premium) overhead.
  Sentiment is negative. Calendar is clear.
  Risk check passes. Confidence is 0.83. This is a valid short.
  I'm sending the alert."
@@ -268,7 +268,7 @@ async def notify_node(state: AgentState) -> AgentState:
     Formats and dispatches push notification to trader.
     """
     message = format_alert(state)
-    # e.g. "🔴 US500 SHORT | Score: 0.83 | BOS + Supply Zone
+    # e.g. "🔴 US500 SHORT | Score: 0.83 | BOS + Bearish Array at Premium
     #       Entry: 6,519 | SL: 6,528 | TP: 6,460 | 3.2R
     #       Sentiment: Bearish | Calendar: Clear"
 

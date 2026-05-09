@@ -178,7 +178,7 @@ Step 1: Market Data Service receives live M5 candle for US500
 Step 2: ML Engine consumes candle
         → Builds feature vector (ATR, candle structure, zone proximity, session, HTF bias)
         → Regime Classifier: TRENDING_BEARISH
-        → Pattern Detector: BOS_CONFIRMED + SUPPLY_ZONE_REJECTION
+        → Pattern Detector: BOS_CONFIRMED + BEARISH_ARRAY_REJECTION
         → Confluence Score: 0.83
         → Published to Kafka: setups.detected
 
@@ -191,7 +191,7 @@ Step 4: Agent Service receives enriched setup
         → Calls Risk Engine: APPROVED (within limits)
         → Mode = HUMAN_IN_LOOP
         → Sends push notification to trader:
-          "US500 SHORT setup | M5 BOS + Supply Zone | Score: 0.83 |
+          "US500 SHORT setup | M5 BOS + Bearish Array at Premium | Score: 0.83 |
            Sentiment: Bearish | SL: 6,528 | TP: 6,460 | 2.1R"
 
 Step 5: Trader acts / ignores

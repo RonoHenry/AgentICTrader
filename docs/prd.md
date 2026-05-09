@@ -23,7 +23,7 @@ AgentICTrader.AI is an autonomous intelligent trading platform that encodes 6+ y
 
 ### 2.2 Machine Learning
 - Regime classification: TRENDING_BULLISH, TRENDING_BEARISH, RANGING, BREAKOUT, NEWS_DRIVEN
-- Pattern detection: BOS, CHoCH, Supply/Demand zones, FVGs, Liquidity sweeps, Order Blocks
+- Pattern detection: BOS, CHoCH, Bearish/Bullish PD Arrays (OBs, FVGs, Breakers, IFVGs at Premium/Discount), Liquidity sweeps, Order Blocks
 - Confidence scoring (0.0–1.0) for every identified setup
 - Multi-timeframe confluence scoring
 - Minimum 80% pattern detection accuracy on held-out data

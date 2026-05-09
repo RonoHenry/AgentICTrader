@@ -171,7 +171,7 @@ CREATE INDEX ON economic_events (event_time, impact);
   "setup": {
     "confidence_score": 0.83,
     "regime": "TRENDING_BEARISH",
-    "patterns": ["BOS_CONFIRMED", "SUPPLY_ZONE_REJECTION", "LIQUIDITY_SWEEP"],
+    "patterns": ["BOS_CONFIRMED", "BEARISH_ARRAY_REJECTION", "LIQUIDITY_SWEEP"],
     "htf_alignment": {
       "D1": "BEARISH",
       "H4": "BEARISH",
@@ -188,7 +188,7 @@ CREATE INDEX ON economic_events (event_time, impact);
     "checked_at": "ISODate"
   },
 
-  "reasoning": "Short US500 on M5 BOS below 6,512. Daily and H4 both in established downtrend. Supply zone confluence at 6,519–6,528 overhead. Sentiment strongly negative following tariff news. Confidence 0.83 — above threshold. News blackout clear for next 2 hours.",
+  "reasoning": "Short US500 on M5 BOS below 6,512. Daily and H4 both in established downtrend. Bearish OB (Bearish Array at Premium) confluence at 6,519–6,528 overhead. Sentiment strongly negative following tariff news. Confidence 0.83 — above threshold. News blackout clear for next 2 hours.",
 
   "tags": ["clean_setup", "multi_tf_confluence", "news_aligned"],
 
@@ -211,7 +211,7 @@ CREATE INDEX ON economic_events (event_time, impact);
   "input_context": {
     "candle_snapshot": [...],
     "regime": "TRENDING_BEARISH",
-    "patterns_detected": ["BOS_CONFIRMED", "SUPPLY_ZONE_REJECTION"],
+    "patterns_detected": ["BOS_CONFIRMED", "BEARISH_ARRAY_REJECTION"],
     "raw_confidence": 0.83,
     "sentiment_score": -0.71,
     "htf_bias": "BEARISH",
@@ -270,7 +270,7 @@ CREATE INDEX ON economic_events (event_time, impact);
       "candle_time": "ISODate"
     },
     {
-      "type": "SUPPLY_ZONE",
+      "type": "BEARISH_ARRAY",
       "high": 6528.0,
       "low": 6519.0,
       "strength": 0.87,
@@ -391,7 +391,7 @@ CREATE INDEX ON economic_events (event_time, impact);
   "instrument": "US500",
   "direction": "SHORT",
   "confidence": 0.83,
-  "patterns": ["BOS_CONFIRMED", "SUPPLY_ZONE_REJECTION"],
+  "patterns": ["BOS_CONFIRMED", "BEARISH_ARRAY_REJECTION"],
   "regime": "TRENDING_BEARISH",
   "trade_plan": { ... },
   "requires_sentiment_enrichment": true

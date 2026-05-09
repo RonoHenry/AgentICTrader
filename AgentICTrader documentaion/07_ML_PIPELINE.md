@@ -37,11 +37,11 @@ Features are the numerical encoding of everything a discretionary trader reads o
 
 | Feature | Description |
 |---|---|
-| `nearest_supply_zone_dist` | Distance to nearest supply zone (ATR-normalised) |
-| `nearest_demand_zone_dist` | Distance to nearest demand zone (ATR-normalised) |
-| `in_supply_zone` | Boolean: price inside a supply zone |
-| `in_demand_zone` | Boolean: price inside a demand zone |
-| `zone_strength_score` | 0–1: how many times zone was respected |
+| `nearest_bearish_array_dist` | Distance to nearest Bearish PD Array at Premium (Bearish OB / FVG / Breaker / IFVG) |
+| `nearest_bullish_array_dist` | Distance to nearest Bullish PD Array at Discount (Bullish OB / FVG / Breaker / IFVG) |
+| `in_bearish_array` | Boolean: price inside a Bearish PD Array at Premium |
+| `in_bullish_array` | Boolean: price inside a Bullish PD Array at Discount |
+| `zone_strength_score` | 0–1: how many times array was respected |
 | `bos_confirmed` | Boolean: Break of Structure confirmed |
 | `choch_detected` | Boolean: Change of Character detected |
 | `fvg_present` | Boolean: Fair Value Gap in recent candles |
@@ -72,8 +72,8 @@ Features are the numerical encoding of everything a discretionary trader reads o
 | `h1_trend` | H1 bias: BULLISH / BEARISH / NEUTRAL |
 | `d1_trend` | Daily bias: BULLISH / BEARISH / NEUTRAL |
 | `htf_confluence_score` | How many HTFs agree with trade direction (0–3) |
-| `h4_in_zone` | H4 is at a key S/D zone |
-| `d1_premium_discount` | Price in H4 premium (short bias) or discount (long bias) |
+| `h4_in_array` | H4 is at a key Bullish or Bearish PD Array |
+| `d1_premium_discount` | Price in H4 premium (bearish array bias) or discount (bullish array bias) |
 
 ### 2.5 Session & Time Features
 
@@ -143,12 +143,16 @@ Features are the numerical encoding of everything a discretionary trader reads o
 |---|---|---|
 | Break of Structure | `BOS_CONFIRMED` | Clean break and close below/above key level |
 | Change of Character | `CHOCH_DETECTED` | First sign of trend reversal |
-| Supply Zone Rejection | `SUPPLY_ZONE_REJECTION` | Bearish reaction from defined supply zone |
-| Demand Zone Bounce | `DEMAND_ZONE_BOUNCE` | Bullish reaction from defined demand zone |
+| Bearish Array Rejection | `BEARISH_ARRAY_REJECTION` | Price rejected from Bearish PD Array (Bearish OB / FVG / Breaker / IFVG) at **Premium** of Dealing Range |
+| Bullish Array Bounce | `BULLISH_ARRAY_BOUNCE` | Price bounced from Bullish PD Array (Bullish OB / FVG / Breaker / IFVG) at **Discount** of Dealing Range |
 | Fair Value Gap | `FVG_PRESENT` | Imbalance / gap in price action |
 | Liquidity Sweep | `LIQUIDITY_SWEEP` | Sweep of buy/sell stops before reversal |
 | Inducement | `INDUCEMENT` | False break before real move |
 | Order Block | `ORDER_BLOCK` | Last opposing candle before strong move |
+
+> **Note:** There are no "supply zones" or "demand zones" in ICT methodology.
+> What traders commonly call "supply" is a Bearish PD Array (Bearish OB, FVG, Breaker, IFVG) at Premium of the Dealing Range.
+> What traders commonly call "demand" is a Bullish PD Array (Bullish OB, FVG, Breaker, IFVG) at Discount of the Dealing Range.
 
 **Training Data:**
 - Source: Trader's annotated historical charts (minimum 500 labelled examples per pattern)
@@ -160,7 +164,7 @@ Features are the numerical encoding of everything a discretionary trader reads o
 {
     "patterns": {
         "BOS_CONFIRMED": {"detected": True, "confidence": 0.91, "level": 6512.0},
-        "SUPPLY_ZONE_REJECTION": {"detected": True, "confidence": 0.87, "zone": [6519.0, 6528.0]},
+        "BEARISH_ARRAY_REJECTION": {"detected": True, "confidence": 0.87, "zone": [6519.0, 6528.0]},
         "LIQUIDITY_SWEEP": {"detected": False, "confidence": 0.31}
     }
 }

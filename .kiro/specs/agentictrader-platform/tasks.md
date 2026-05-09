@@ -266,7 +266,9 @@
   - Create ml/models/pattern_detector/labeller.py
   - Load historical candles from TimescaleDB
   - Present candle sequences in a Streamlit UI for manual labelling
-  - Labels: BOS_CONFIRMED, CHOCH_DETECTED, SUPPLY_ZONE_REJECTION, DEMAND_ZONE_BOUNCE, FVG_PRESENT, LIQUIDITY_SWEEP, ORDER_BLOCK, INDUCEMENT
+  - Labels: BOS_CONFIRMED, CHOCH_DETECTED, BEARISH_ARRAY_REJECTION, BULLISH_ARRAY_BOUNCE, FVG_PRESENT, LIQUIDITY_SWEEP, ORDER_BLOCK, INDUCEMENT
+    - BEARISH_ARRAY_REJECTION: Bearish OB / FVG / Breaker / IFVG at Premium of Dealing Range (not "supply zone")
+    - BULLISH_ARRAY_BOUNCE: Bullish OB / FVG / Breaker / IFVG at Discount of Dealing Range (not "demand zone")
   - Save labelled examples to MongoDB setups collection with label, candle_window, instrument, timeframe, timestamp
   - Target: minimum 500 labelled examples per pattern
 
@@ -282,7 +284,7 @@
     - Confirm all tests PASS (GREEN)
   - **19c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 20. Train and validate Regime Classifier
+- [x] 20. Train and validate Regime Classifier
   - Create ml/models/regime_classifier/train.py
   - Features: HTF projection features + candle structure + zone features + session features
   - Target classes: TRENDING_BULLISH, TRENDING_BEARISH, RANGING, BREAKOUT, NEWS_DRIVEN
@@ -292,7 +294,7 @@
   - Exit criterion: ≥ 75% accuracy on unseen data across all folds
   - Save best model to MLflow model registry as "regime-classifier"
 
-- [ ] 21. Train and validate Pattern Detector
+- [x] 21. Train and validate Pattern Detector
   - Create ml/models/pattern_detector/train.py
   - Features: same feature vector as Regime Classifier
   - Target: multi-label classification (one binary output per pattern)
@@ -302,7 +304,7 @@
   - Exit criterion: ≥ 80% accuracy on held-out test set, false positive rate < 20% at threshold 0.75
   - Save best model to MLflow model registry as "pattern-detector"
 
-- [ ] 22. Train and validate Confluence Scorer
+- [x] 22. Train and validate Confluence Scorer
   - Create ml/models/confluence_scorer/train.py
   - Inputs: Regime Classifier output + Pattern Detector outputs + HTF projection levels (open_bias, htf_high_proximity_pct, htf_low_proximity_pct) + time window weight + narrative_phase + price_vs_daily_open + price_vs_true_day_open as primary signals
   - Model: Logistic Regression ensemble over model outputs
@@ -311,7 +313,7 @@
   - Log calibration curves to MLflow
   - Save best model to MLflow model registry as "confluence-scorer"
 
-- [ ] 23. Build backtesting engine
+- [x] 23. Build backtesting engine
   - **23a. RED — Write failing tests** (`backend/tests/test_backtesting_engine.py`)
     - Property: no trade uses future data (look-ahead check via timestamp ordering)
     - Property: position size never exceeds 1% risk given any SL distance
