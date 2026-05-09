@@ -55,8 +55,8 @@ def killzone_features():
         "price_vs_weekly_open": ["BELOW"],
         "price_vs_true_day_open": ["BELOW"],
         "narrative_phase": ["MANIPULATION"],
-        "supply_zone_distance": [0.03],
-        "demand_zone_distance": [0.02],
+        "bearish_array_distance": [0.03],
+        "bullish_array_distance": [0.02],
     })
 
 
@@ -80,8 +80,8 @@ def offhours_features():
         "price_vs_weekly_open": ["AT"],
         "price_vs_true_day_open": ["AT"],
         "narrative_phase": ["OFF"],
-        "supply_zone_distance": [0.10],
-        "demand_zone_distance": [0.10],
+        "bearish_array_distance": [0.10],
+        "bullish_array_distance": [0.10],
     })
 
 
@@ -114,8 +114,8 @@ def mixed_features_df():
         "price_vs_weekly_open": ["BELOW"] * (n // 2) + ["AT"] * (n // 2),
         "price_vs_true_day_open": ["BELOW"] * (n // 2) + ["AT"] * (n // 2),
         "narrative_phase": ["MANIPULATION"] * (n // 2) + ["OFF"] * (n // 2),
-        "supply_zone_distance": np.random.uniform(0.01, 0.1, n),
-        "demand_zone_distance": np.random.uniform(0.01, 0.1, n),
+        "bearish_array_distance": np.random.uniform(0.01, 0.1, n),
+        "bullish_array_distance": np.random.uniform(0.01, 0.1, n),
     })
 
 
@@ -350,8 +350,8 @@ class TestWalkForwardValidation:
             "price_vs_weekly_open": ["BELOW"] * (n // 2) + ["AT"] * (n // 2),
             "price_vs_true_day_open": ["BELOW"] * (n // 2) + ["AT"] * (n // 2),
             "narrative_phase": ["MANIPULATION"] * (n // 2) + ["OFF"] * (n // 2),
-            "supply_zone_distance": np.random.uniform(0.01, 0.1, n),
-            "demand_zone_distance": np.random.uniform(0.01, 0.1, n),
+            "bearish_array_distance": np.random.uniform(0.01, 0.1, n),
+            "bullish_array_distance": np.random.uniform(0.01, 0.1, n),
         })
 
         fold_results = await trainer.run_walk_forward_validation("EURUSD", mock_features)
@@ -380,8 +380,8 @@ class TestWalkForwardValidation:
             "price_vs_weekly_open": ["BELOW"] * n,
             "price_vs_true_day_open": ["BELOW"] * n,
             "narrative_phase": ["MANIPULATION"] * n,
-            "supply_zone_distance": [0.02] * n,
-            "demand_zone_distance": [0.02] * n,
+            "bearish_array_distance": [0.02] * n,
+            "bullish_array_distance": [0.02] * n,
         })
 
         fold_results = await trainer.run_walk_forward_validation("EURUSD", mock_features)
@@ -435,8 +435,8 @@ class TestMLflowIntegration:
             "price_vs_weekly_open": ["BELOW"] * (n // 2) + ["AT"] * (n // 2),
             "price_vs_true_day_open": ["BELOW"] * (n // 2) + ["AT"] * (n // 2),
             "narrative_phase": ["MANIPULATION"] * (n // 2) + ["OFF"] * (n // 2),
-            "supply_zone_distance": np.random.uniform(0.01, 0.1, n),
-            "demand_zone_distance": np.random.uniform(0.01, 0.1, n),
+            "bearish_array_distance": np.random.uniform(0.01, 0.1, n),
+            "bullish_array_distance": np.random.uniform(0.01, 0.1, n),
         })
 
         with patch.object(trainer.tracker, "start_run") as mock_run:

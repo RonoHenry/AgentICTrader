@@ -350,8 +350,8 @@ class TestPatternClasses:
         expected_patterns = [
             'BOS_CONFIRMED',
             'CHOCH_DETECTED',
-            'SUPPLY_ZONE_REJECTION',
-            'DEMAND_ZONE_BOUNCE',
+            'BEARISH_ARRAY_REJECTION',
+            'BULLISH_ARRAY_BOUNCE',
             'FVG_PRESENT',
             'LIQUIDITY_SWEEP',
             'ORDER_BLOCK',

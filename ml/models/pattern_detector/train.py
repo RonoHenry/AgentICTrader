@@ -4,12 +4,18 @@ Pattern Detector training script.
 Trains an XGBoost multi-label classifier to detect price action patterns:
 - BOS_CONFIRMED
 - CHOCH_DETECTED
-- SUPPLY_ZONE_REJECTION
-- DEMAND_ZONE_BOUNCE
+- BEARISH_ARRAY_REJECTION  (Bearish OB / FVG / Breaker / IFVG at Premium of Dealing Range)
+- BULLISH_ARRAY_BOUNCE     (Bullish OB / FVG / Breaker / IFVG at Discount of Dealing Range)
 - FVG_PRESENT
 - LIQUIDITY_SWEEP
 - ORDER_BLOCK
 - INDUCEMENT
+
+Note: There is no "supply zone" or "demand zone" in price action.
+  - What traders call "supply" is a Bearish PD Array (Bearish OB, FVG, Breaker, IFVG)
+    located at PREMIUM of the dealing range.
+  - What traders call "demand" is a Bullish PD Array (Bullish OB, FVG, Breaker, IFVG)
+    located at DISCOUNT of the dealing range.
 
 Model: XGBoost binary:logistic per label, wrapped in MultiOutputClassifier
 Validation: Walk-forward with minimum 8 folds, 3-month expanding window
@@ -50,8 +56,8 @@ logger = logging.getLogger(__name__)
 PATTERN_LABELS = [
     "BOS_CONFIRMED",
     "CHOCH_DETECTED",
-    "SUPPLY_ZONE_REJECTION",
-    "DEMAND_ZONE_BOUNCE",
+    "BEARISH_ARRAY_REJECTION",   # Bearish OB / FVG / Breaker / IFVG at Premium of Dealing Range
+    "BULLISH_ARRAY_BOUNCE",      # Bullish OB / FVG / Breaker / IFVG at Discount of Dealing Range
     "FVG_PRESENT",
     "LIQUIDITY_SWEEP",
     "ORDER_BLOCK",
@@ -132,8 +138,8 @@ class PatternLabeller:
             sweep = bool(row.get("liquidity_sweep_detected", False))
             htf_bias = row.get("htf_open_bias", "NEUTRAL")
             htf_body = float(row.get("htf_body_pct", 0.0))
-            supply_dist = float(row.get("supply_zone_distance", 999.0))
-            demand_dist = float(row.get("demand_zone_distance", 999.0))
+            bearish_array_dist = float(row.get("bearish_array_distance", 999.0))
+            bullish_array_dist = float(row.get("bullish_array_distance", 999.0))
             tw_weight = float(row.get("time_window_weight", 0.1))
 
             # BOS_CONFIRMED (index 0)
@@ -144,12 +150,14 @@ class PatternLabeller:
             if choch:
                 labels[i, 1] = 1
 
-            # SUPPLY_ZONE_REJECTION (index 2)
-            if htf_bias == "BEARISH" and supply_dist < 0.05 and htf_body > 40.0:
+            # BEARISH_ARRAY_REJECTION (index 2)
+            # Bearish OB / FVG / Breaker / IFVG at Premium of Dealing Range
+            if htf_bias == "BEARISH" and bearish_array_dist < 0.05 and htf_body > 40.0:
                 labels[i, 2] = 1
 
-            # DEMAND_ZONE_BOUNCE (index 3)
-            if htf_bias == "BULLISH" and demand_dist < 0.05 and htf_body > 40.0:
+            # BULLISH_ARRAY_BOUNCE (index 3)
+            # Bullish OB / FVG / Breaker / IFVG at Discount of Dealing Range
+            if htf_bias == "BULLISH" and bullish_array_dist < 0.05 and htf_body > 40.0:
                 labels[i, 3] = 1
 
             # FVG_PRESENT (index 4)

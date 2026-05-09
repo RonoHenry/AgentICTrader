@@ -83,7 +83,9 @@ AgentICTrader.AI is an autonomous intelligent trading platform that encodes prof
 
 ### FR-4: ML Pattern Detection
 - The system MUST classify market regime into: TRENDING_BULLISH, TRENDING_BEARISH, RANGING, BREAKOUT, NEWS_DRIVEN
-- The system MUST detect patterns: BOS_CONFIRMED, CHOCH_DETECTED, SUPPLY_ZONE_REJECTION, DEMAND_ZONE_BOUNCE, FVG_PRESENT, LIQUIDITY_SWEEP, ORDER_BLOCK, INDUCEMENT
+- The system MUST detect patterns: BOS_CONFIRMED, CHOCH_DETECTED, BEARISH_ARRAY_REJECTION, BULLISH_ARRAY_BOUNCE, FVG_PRESENT, LIQUIDITY_SWEEP, ORDER_BLOCK, INDUCEMENT
+- Note: BEARISH_ARRAY_REJECTION = price rejected from a Bearish PD Array (Bearish OB / FVG / Breaker / IFVG) at PREMIUM of the Dealing Range (not a "supply zone")
+- Note: BULLISH_ARRAY_BOUNCE = price bounced from a Bullish PD Array (Bullish OB / FVG / Breaker / IFVG) at DISCOUNT of the Dealing Range (not a "demand zone")
 - The system MUST score every detected setup with a confidence value between 0.0 and 1.0
 - The system MUST use HTF projection levels (O/H/L bias, range proximity) as primary confluence signals in the Confluence Scorer
 - Pattern detection accuracy MUST be ≥ 80% on held-out test data

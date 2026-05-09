@@ -2,14 +2,14 @@
 **Project:** AgentICTrader.AI
 **Version:** 1.0.0
 **Status:** Draft
-**Owner:** Founder / Lead Trader
+**Rono Henry Kipkirui:** Founder/Lead Architect
 **Last Updated:** 2026-04-04
 
 ---
 
 ## 1. Executive Summary
 
-AgentICTrader.AI is an AI-powered autonomous trading platform designed to systematise, scale, and deploy a professional discretionary trader's edge — built on 6+ years of Price Action expertise — across multiple instruments, timeframes, and sessions simultaneously. The platform merges trading mastery with modern AI/ML, data engineering, and agentic systems to create a proprietary, defensible product.
+AgentICTrader.AI is an advanced AI-powered autonomous trading platform designed to transform professional discretionary trading into a scalable, data-driven, and continuously learning intelligent system. The platform aims to encode a proven Price Action trading methodology into machine-readable logic capable of analysing, scoring, and executing high-probability market opportunities across multiple instruments, sessions, and timeframes simultaneously.
 
 ---
 
@@ -17,30 +17,103 @@ AgentICTrader.AI is an AI-powered autonomous trading platform designed to system
 
 ### 2.1 Problem Statement
 
-A skilled discretionary trader faces three structural limitations regardless of their edge quality:
+### 2.2 Market Opportunity
 
-1. **Bandwidth** — One trader can monitor a finite number of instruments and timeframes at once
-2. **Emotion & Fatigue** — Psychological variance introduces inconsistency, especially post-loss or during drawdown
-3. **Speed** — Manual execution and decision-making introduce latency and missed opportunities
+The global financial trading landscape is undergoing rapid transformation driven by advances in artificial intelligence, algorithmic trading infrastructure, and real-time data accessibility. Retail and independent traders increasingly demand intelligent systems capable of delivering institutional-grade analysis, automation, and execution capabilities without requiring large operational teams.
 
-The trader has developed a high-probability, rule-based Price Action methodology (Top Down Analysis: HTF bias → structure → entry trigger) that is sufficiently systematic to be encoded, trained, and deployed at machine speed.
+At the same time, recent advancements in Large Language Models (LLMs), agentic AI systems, and machine learning infrastructure have made it possible to build context-aware autonomous agents capable of reasoning, adapting, and learning continuously from dynamic environments such as financial markets.
+
+Despite the growth of retail trading technologies, a significant market gap remains between traditional rule-based trading bots and the nuanced decision-making processes used by experienced discretionary traders. Most existing retail trading systems lack:
+
+* Multi-timeframe contextual reasoning
+* Human-like market structure interpretation
+* Adaptive learning capabilities
+* Explainable decision-making
+* Integrated macroeconomic and sentiment awareness
+* Robust autonomous risk governance
+
+AgentICTrader.AI seeks to address this gap by combining professional discretionary Price Action methodology with modern AI, machine learning, and agentic orchestration frameworks to create an intelligent autonomous trading platform capable of institutional-level analysis and scalable deployment.
+
+The long-term opportunity extends beyond proprietary trading performance into the development of a scalable AI-native trading platform offering intelligent trade assistance, analytics, autonomous execution, and decision-support infrastructure for external users and future enterprise integrations.
+
+---
+
+## 2.3 Strategic Objectives
+
+| Objective ID | Strategic Objective                                                                                                                                                  |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **SO-01**    | Transform a proven discretionary Price Action trading methodology into a structured, reproducible, and machine-interpretable decision framework                      |
+| **SO-02**    | Develop a scalable market data infrastructure capable of processing real-time and historical multi-asset financial data with high reliability and low latency        |
+| **SO-03**    | Build explainable machine learning models capable of detecting market structure, evaluating trade quality, and generating probabilistic confidence scoring           |
+| **SO-04**    | Implement an autonomous agent architecture capable of continuously observing, analysing, deciding, executing, reviewing, and learning from market activity           |
+| **SO-05**    | Integrate macroeconomic intelligence and NLP-driven sentiment analysis to improve contextual market awareness and directional bias evaluation                        |
+| **SO-06**    | Establish enterprise-grade risk governance frameworks with immutable controls for drawdown management, position sizing, and execution safety                         |
+| **SO-07**    | Deliver a modern AI-native trading platform with real-time dashboards, analytics, alerts, and explainable trade reasoning for operational transparency               |
+| **SO-08**    | Transition progressively from human-in-the-loop assisted trading toward fully autonomous execution through phased validation and performance benchmarking            |
+| **SO-09**    | Create a scalable product ecosystem capable of supporting future multi-user deployment, external clients, and potential SaaS monetisation models                     |
+| **SO-10**    | Build a proprietary and defensible AI trading infrastructure that compounds in value through continuous data acquisition, model refinement, and operational learning |
+
+---
+
+## 2.1 Problem Statement (Enhanced Version)
+
+Professional discretionary traders often develop highly effective market strategies through years of experience, pattern recognition, and contextual analysis. However, even profitable traders face structural limitations that restrict scalability, consistency, and operational efficiency.
+
+These limitations include:
+
+1. **Limited Monitoring Capacity**
+   A human trader can only monitor a finite number of instruments, sessions, and timeframes simultaneously, resulting in missed opportunities and incomplete market coverage.
+
+2. **Emotional and Psychological Variability**
+   Fear, overconfidence, fatigue, and drawdown-related stress can negatively influence execution quality, discipline, and decision consistency over time.
+
+3. **Execution and Reaction Delays**
+   Manual analysis and execution introduce latency between signal recognition and market participation, particularly during high-volatility or news-driven conditions.
+
+4. **Lack of Systematic Scalability**
+   Discretionary expertise is difficult to scale operationally without converting trading logic into structured, machine-readable processes.
+
+5. **Fragmented Market Intelligence**
+   Traders must manually combine technical analysis, macroeconomic events, sentiment interpretation, and risk management across multiple disconnected tools and workflows.
+
+AgentICTrader.AI is designed to address these challenges by transforming a proven Price Action trading methodology into an autonomous AI-driven trading intelligence system capable of analysing markets continuously, generating explainable trade decisions, and operating within strict risk governance parameters.
+
+The platform aims to preserve the contextual strengths of discretionary trading while leveraging artificial intelligence to enhance scalability, consistency, speed, and operational resilience.
+
 
 ### 2.2 Opportunity
 
-- Global retail algorithmic trading market projected to grow significantly through 2028
-- LLM and agentic AI capabilities have matured to the point where context-aware autonomous agents are viable
-- The trader's 6 years of labelled trade history represents a proprietary dataset — a genuine moat that no off-the-shelf system can replicate
-- No retail-accessible product currently combines discretionary Price Action logic with true agentic autonomy and modern NLP sentiment
+- The global financial trading landscape is undergoing rapid transformation driven by advances in artificial intelligence, algorithmic trading infrastructure, and real-time data accessibility. Retail and independent traders increasingly demand intelligent systems capable of delivering institutional-grade analysis, automation, and execution capabilities without requiring large operational teams.
+
+- At the same time, recent advancements in Large Language Models (LLMs), agentic AI systems, and machine learning infrastructure have made it possible to build context-aware autonomous agents capable of reasoning, adapting, and learning continuously from dynamic environments such as financial markets.
+
+- Despite the growth of retail trading technologies, a significant market gap remains between traditional rule-based trading bots and the nuanced decision-making processes used by experienced discretionary traders. Most existing retail trading systems lack:
+
+- .Multi-timeframe contextual reasoning
+- .Human-like market structure interpretation
+- .Adaptive learning capabilities
+- .Explainable decision-making
+- .Integrated macroeconomic and sentiment awareness
+- .Robust autonomous risk governance
+
+- AgentICTrader.AI seeks to address this gap by combining professional discretionary Price Action methodology with modern AI, machine learning, and agentic orchestration frameworks to create an intelligent autonomous trading platform capable of institutional-level analysis and scalable deployment.
+
+- The long-term opportunity extends beyond proprietary trading performance into the development of a scalable AI-native trading platform offering intelligent trade assistance, analytics, autonomous execution, and decision-support infrastructure for external users and future enterprise integrations.
 
 ### 2.3 Strategic Goals
 
-| Goal | Description |
-|---|---|
-| **G1** | Quantify and encode the trader's edge into a reproducible ML system |
-| **G2** | Build a robust data engineering foundation for real-time and historical market data |
-| **G3** | Deploy an autonomous agent capable of identifying and scoring setups 24/5 |
-| **G4** | Create a platform product (AgentICTrader.AI) that can scale to external users |
-| **G5** | Generate consistent, risk-managed P&L from automated trading activity |
+|| Objective ID | Strategic Objective                                                                                                                                                  |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **SO-01**    | Transform a proven discretionary Price Action trading methodology into a structured, reproducible, and machine-interpretable decision framework                      |
+| **SO-02**    | Develop a scalable market data infrastructure capable of processing real-time and historical multi-asset financial data with high reliability and low latency        |
+| **SO-03**    | Build explainable machine learning models capable of detecting market structure, evaluating trade quality, and generating probabilistic confidence scoring           |
+| **SO-04**    | Implement an autonomous agent architecture capable of continuously observing, analysing, deciding, executing, reviewing, and learning from market activity           |
+| **SO-05**    | Integrate macroeconomic intelligence and NLP-driven sentiment analysis to improve contextual market awareness and directional bias evaluation                        |
+| **SO-06**    | Establish enterprise-grade risk governance frameworks with immutable controls for drawdown management, position sizing, and execution safety                         |
+| **SO-07**    | Deliver a modern AI-native trading platform with real-time dashboards, analytics, alerts, and explainable trade reasoning for operational transparency               |
+| **SO-08**    | Transition progressively from human-in-the-loop assisted trading toward fully autonomous execution through phased validation and performance benchmarking            |
+| **SO-09**    | Create a scalable product ecosystem capable of supporting future multi-user deployment, external clients, and potential SaaS monetisation models                     |
+| **SO-10**    | Build a proprietary and defensible AI trading infrastructure that compounds in value through continuous data acquisition, model refinement, and operational learning |
 
 ---
 
@@ -54,7 +127,7 @@ The trader has developed a high-probability, rule-based Price Action methodology
 | **Backend Engineer** | API services, agent orchestration, broker integrations |
 | **Frontend Engineer** | Dashboard, mobile app, user experience |
 | **DevOps / MLOps** | CI/CD, infrastructure, model deployment, monitoring |
-| **Risk Officer** (Founder initially) | Risk framework, drawdown rules, position sizing governance |
+| **Risk Officer**  Risk framework, drawdown rules, position sizing governance |
 
 ---
 
@@ -85,7 +158,7 @@ The trader has developed a high-probability, rule-based Price Action methodology
 
 | ID | Requirement | Priority |
 |---|---|---|
-| BR-ML01 | The system MUST detect Price Action patterns: BOS, CHoCH, supply/demand zones, FVGs, liquidity sweeps | HIGH |
+| BR-ML01 | The system MUST detect Price Action patterns: BOS, CHoCH, Bearish/Bullish PD Arrays (OBs, FVGs, Breakers, IFVGs), Liquidity sweeps | HIGH |
 | BR-ML02 | The system MUST classify market regime: Trending, Ranging, Breakout, News-Driven | HIGH |
 | BR-ML03 | The system MUST produce a confidence score (0.0–1.0) for every identified setup | HIGH |
 | BR-ML04 | The system MUST support multi-timeframe confluence scoring | HIGH |

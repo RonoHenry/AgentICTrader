@@ -266,7 +266,9 @@
   - Create ml/models/pattern_detector/labeller.py
   - Load historical candles from TimescaleDB
   - Present candle sequences in a Streamlit UI for manual labelling
-  - Labels: BOS_CONFIRMED, CHOCH_DETECTED, SUPPLY_ZONE_REJECTION, DEMAND_ZONE_BOUNCE, FVG_PRESENT, LIQUIDITY_SWEEP, ORDER_BLOCK, INDUCEMENT
+  - Labels: BOS_CONFIRMED, CHOCH_DETECTED, BEARISH_ARRAY_REJECTION, BULLISH_ARRAY_BOUNCE, FVG_PRESENT, LIQUIDITY_SWEEP, ORDER_BLOCK, INDUCEMENT
+    - BEARISH_ARRAY_REJECTION: Bearish OB / FVG / Breaker / IFVG at Premium of Dealing Range (not "supply zone")
+    - BULLISH_ARRAY_BOUNCE: Bullish OB / FVG / Breaker / IFVG at Discount of Dealing Range (not "demand zone")
   - Save labelled examples to MongoDB setups collection with label, candle_window, instrument, timeframe, timestamp
   - Target: minimum 500 labelled examples per pattern
 

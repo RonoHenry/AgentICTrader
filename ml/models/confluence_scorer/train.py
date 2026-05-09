@@ -76,8 +76,8 @@ REGIME_CLASSES = [
 PATTERN_LABELS = [
     "BOS_CONFIRMED",
     "CHOCH_DETECTED",
-    "SUPPLY_ZONE_REJECTION",
-    "DEMAND_ZONE_BOUNCE",
+    "BEARISH_ARRAY_REJECTION",   # Bearish OB / FVG / Breaker / IFVG at Premium of Dealing Range
+    "BULLISH_ARRAY_BOUNCE",      # Bullish OB / FVG / Breaker / IFVG at Discount of Dealing Range
     "FVG_PRESENT",
     "LIQUIDITY_SWEEP",
     "ORDER_BLOCK",

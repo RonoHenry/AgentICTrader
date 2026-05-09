@@ -12,12 +12,16 @@ The tool supports labelling the following 8 patterns:
 
 1. **BOS_CONFIRMED** - Break of Structure confirmed (window: 10 candles)
 2. **CHOCH_DETECTED** - Change of Character detected (window: 10 candles)
-3. **SUPPLY_ZONE_REJECTION** - Price rejected from supply zone (window: 8 candles)
-4. **DEMAND_ZONE_BOUNCE** - Price bounced from demand zone (window: 8 candles)
+3. **BEARISH_ARRAY_REJECTION** - Price rejected from Bearish PD Array at Premium (Bearish OB / FVG / Breaker / IFVG) (window: 8 candles)
+4. **BULLISH_ARRAY_BOUNCE** - Price bounced from Bullish PD Array at Discount (Bullish OB / FVG / Breaker / IFVG) (window: 8 candles)
 5. **FVG_PRESENT** - Fair Value Gap present (window: 5 candles)
 6. **LIQUIDITY_SWEEP** - Liquidity sweep detected (window: 12 candles)
 7. **ORDER_BLOCK** - Order block identified (window: 6 candles)
 8. **INDUCEMENT** - Inducement pattern detected (window: 10 candles)
+
+> **Note:** There are no "supply zones" or "demand zones" in ICT methodology.
+> BEARISH_ARRAY_REJECTION refers to a Bearish PD Array (Bearish OB, FVG, Breaker, IFVG) at **Premium** of the Dealing Range.
+> BULLISH_ARRAY_BOUNCE refers to a Bullish PD Array (Bullish OB, FVG, Breaker, IFVG) at **Discount** of the Dealing Range.
 
 **Target:** Minimum 500 labelled examples per pattern (4,000 total examples)
 
@@ -220,15 +224,15 @@ When labelling patterns, follow these guidelines:
 - First sign of potential trend reversal
 - Look for failure to make new high/low
 
-### SUPPLY_ZONE_REJECTION
-- Price reaches supply zone (previous resistance)
-- Strong rejection candle (long upper wick)
-- Price closes below zone
+### BEARISH_ARRAY_REJECTION
+- Price reaches a Bearish PD Array at Premium of Dealing Range (Bearish OB, FVG, Breaker, or IFVG)
+- Strong rejection candle (long upper wick or bearish engulf)
+- Price closes below the array
 
-### DEMAND_ZONE_BOUNCE
-- Price reaches demand zone (previous support)
-- Strong bounce candle (long lower wick)
-- Price closes above zone
+### BULLISH_ARRAY_BOUNCE
+- Price reaches a Bullish PD Array at Discount of Dealing Range (Bullish OB, FVG, Breaker, or IFVG)
+- Strong bounce candle (long lower wick or bullish engulf)
+- Price closes above the array
 
 ### FVG_PRESENT (Fair Value Gap)
 - Gap between candle 1 high and candle 3 low (bullish FVG)

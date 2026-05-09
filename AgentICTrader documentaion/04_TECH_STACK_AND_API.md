@@ -203,7 +203,7 @@ POST   /setups/{setup_id}/feedback   Trader feedback on setup quality
   "session": "NEW_YORK",
   "patterns": [
     {"type": "BOS_CONFIRMED", "confidence": 0.91, "level": 6512.0},
-    {"type": "SUPPLY_ZONE_REJECTION", "confidence": 0.87, "zone": {"high": 6528.0, "low": 6519.0}}
+    {"type": "BEARISH_ARRAY_REJECTION", "confidence": 0.87, "zone": {"high": 6528.0, "low": 6519.0}}
   ],
   "htf_alignment": {"D1": "BEARISH", "H4": "BEARISH", "H1": "BEARISH"},
   "sentiment": {"score": -0.71, "label": "BEARISH"},
@@ -214,7 +214,7 @@ POST   /setups/{setup_id}/feedback   Trader feedback on setup quality
     "take_profit_2": 6460.0,
     "r_ratio": 3.22
   },
-  "reasoning": "Short US500 on confirmed M5 BOS below 6,512. Daily, H4, and H1 all aligned bearish. Supply zone confluence at 6,519–6,528 overhead. Negative sentiment following tariff escalation. Calendar clear for next 90 minutes. Confidence: 0.83."
+  "reasoning": "Short US500 on confirmed M5 BOS below 6,512. Daily, H4, and H1 all aligned bearish. Bearish OB (Bearish Array at Premium) confluence at 6,519–6,528 overhead. Negative sentiment following tariff escalation. Calendar clear for next 90 minutes. Confidence: 0.83."
 }
 ```
 

@@ -53,8 +53,8 @@ def sample_features_df():
         'choch_detected': [False, True, False, True, False, True, False, True, False, True],
         'fvg_present': [True, True, False, False, True, True, False, False, True, True],
         'liquidity_sweep_detected': [False, False, True, True, False, False, True, True, False, False],
-        'supply_zone_distance': [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10],
-        'demand_zone_distance': [0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10, 0.11],
+        'bearish_array_distance': [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10],
+        'bullish_array_distance': [0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10, 0.11],
         'time_window': ['LONDON_KILLZONE'] * 5 + ['NY_AM_KILLZONE'] * 5,
         'time_window_weight': [0.9] * 10,
     })
@@ -87,8 +87,8 @@ class TestPatternLabeller:
         assert len(PATTERN_LABELS) == 8
         assert 'BOS_CONFIRMED' in PATTERN_LABELS
         assert 'CHOCH_DETECTED' in PATTERN_LABELS
-        assert 'SUPPLY_ZONE_REJECTION' in PATTERN_LABELS
-        assert 'DEMAND_ZONE_BOUNCE' in PATTERN_LABELS
+        assert 'BEARISH_ARRAY_REJECTION' in PATTERN_LABELS
+        assert 'BULLISH_ARRAY_BOUNCE' in PATTERN_LABELS
         assert 'FVG_PRESENT' in PATTERN_LABELS
         assert 'LIQUIDITY_SWEEP' in PATTERN_LABELS
         assert 'ORDER_BLOCK' in PATTERN_LABELS

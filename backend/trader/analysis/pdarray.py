@@ -1,11 +1,24 @@
 """
-PD Array analysis module for identifying supply/demand zones.
+PD Array analysis module for identifying Bullish and Bearish PD Arrays.
+
+PD Arrays (Premium/Discount Arrays) are the correct ICT terminology:
+  - Bearish Arrays at Premium of Dealing Range: Bearish OB, FVG, Breaker, IFVG
+    (commonly and incorrectly called "supply zones")
+  - Bullish Arrays at Discount of Dealing Range: Bullish OB, FVG, Breaker, IFVG
+    (commonly and incorrectly called "demand zones")
+
+Supply and Demand zones do not exist as concepts in ICT methodology.
 """
 import numpy as np
 from typing import Dict, Any, Union
 
 class PDArrayAnalyzer:
-    """Supply and demand zone detection using array analysis."""
+    """
+    Bullish and Bearish PD Array detection using premium/discount analysis.
+
+    Bearish Arrays (at Premium) = what is commonly called "supply zones"
+    Bullish Arrays (at Discount) = what is commonly called "demand zones"
+    """
     
     def __init__(self):
         self.cache = {}
@@ -70,12 +83,13 @@ class PDArrayAnalyzer:
         
     def calculate_zone_strength(self, zone: Dict[str, Any], candles: np.ndarray) -> float:
         """
-        Calculate the strength of a given supply/demand zone.
-        
+        Calculate the strength of a given PD Array (Bullish or Bearish).
+
         Args:
-            zone: Zone information including type and boundaries
+            zone: Zone information including type ("premium" for Bearish Array,
+                  "discount" for Bullish Array) and boundaries
             candles: Historical candle data
-            
+
         Returns:
             float: Zone strength value between 0 and 1
         """

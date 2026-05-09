@@ -7,12 +7,18 @@ Loads historical candles from TimescaleDB and provides a Streamlit UI for labell
 Labels:
 - BOS_CONFIRMED: Break of Structure confirmed
 - CHOCH_DETECTED: Change of Character detected
-- SUPPLY_ZONE_REJECTION: Price rejected from supply zone
-- DEMAND_ZONE_BOUNCE: Price bounced from demand zone
+- BEARISH_ARRAY_REJECTION: Price rejected from Bearish PD Array (Bearish OB / FVG / Breaker / IFVG)
+  at PREMIUM of the Dealing Range. This is what is commonly (incorrectly) called a "supply zone".
+- BULLISH_ARRAY_BOUNCE: Price bounced from Bullish PD Array (Bullish OB / FVG / Breaker / IFVG)
+  at DISCOUNT of the Dealing Range. This is what is commonly (incorrectly) called a "demand zone".
 - FVG_PRESENT: Fair Value Gap present
 - LIQUIDITY_SWEEP: Liquidity sweep detected
 - ORDER_BLOCK: Order block identified
 - INDUCEMENT: Inducement pattern detected
+
+Note: Supply and Demand zones do not exist as concepts in ICT methodology.
+  - "Supply" = Bearish Arrays (Bearish OB, FVG, Breaker, IFVG) at Premium of Dealing Range
+  - "Demand" = Bullish Arrays (Bullish OB, FVG, Breaker, IFVG) at Discount of Dealing Range
 
 Target: Minimum 500 labelled examples per pattern
 """
@@ -29,8 +35,8 @@ import pandas as pd
 PATTERN_LABELS = [
     'BOS_CONFIRMED',
     'CHOCH_DETECTED',
-    'SUPPLY_ZONE_REJECTION',
-    'DEMAND_ZONE_BOUNCE',
+    'BEARISH_ARRAY_REJECTION',   # Bearish OB / FVG / Breaker / IFVG at Premium of Dealing Range
+    'BULLISH_ARRAY_BOUNCE',      # Bullish OB / FVG / Breaker / IFVG at Discount of Dealing Range
     'FVG_PRESENT',
     'LIQUIDITY_SWEEP',
     'ORDER_BLOCK',

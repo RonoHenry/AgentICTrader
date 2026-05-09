@@ -186,8 +186,8 @@ def test_regime_classifier():
 def test_pattern_detector():
     # Test BOS_CONFIRMED detection
     # Test CHOCH_DETECTED detection
-    # Test SUPPLY_ZONE_REJECTION detection
-    # Test DEMAND_ZONE_BOUNCE detection
+    # Test BEARISH_ARRAY_REJECTION detection
+    # Test BULLISH_ARRAY_BOUNCE detection
     # Test FVG_PRESENT detection
     # Test LIQUIDITY_SWEEP detection
     # Test ORDER_BLOCK detection
