@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
 
   # ── TIME-SERIES DATABASE ──────────────────────────────────
@@ -96,11 +94,11 @@ services:
   # ── LEGACY DJANGO BACKEND (auth/user management) ──────────
   backend:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile.backend
+      context: .
+      dockerfile: ./Dockerfile.backend
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
-      - ../backend:/app
+      - ./backend:/app
     ports:
       - "8000:8000"
     depends_on:
