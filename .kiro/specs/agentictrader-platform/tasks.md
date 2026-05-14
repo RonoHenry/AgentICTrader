@@ -329,7 +329,7 @@
     - Confirm all tests PASS (GREEN)
   - **23c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 24. Build ML inference FastAPI service
+- [x] 24. Build ML inference FastAPI service
   - Create ml/inference/main.py using FastAPI
   - Load models from MLflow registry: regime-classifier, pattern-detector, confluence-scorer
   - Expose POST /predict endpoint: accepts {instrument, timeframe, candles: list[OHLCV]} → returns {regime, patterns, confidence_score, htf_projections}
@@ -341,7 +341,7 @@
 
 ## Phase 2 — Intelligence Layer
 
-- [ ] 25. Integrate news API and implement FinBERT sentiment classifier
+- [x] 25. Integrate news API and implement FinBERT sentiment classifier
   - Create services/nlp/sentiment_pipeline.py
   - Integrate news API (Alpha Vantage News or Reuters RSS)
   - Run FinBERT (ProsusAI/finbert from HuggingFace) on each article headline + summary
@@ -350,14 +350,14 @@
   - Cache latest score in Redis: key sentiment:{instrument}, TTL 900s
   - Write unit tests in backend/tests/test_sentiment_pipeline.py
 
-- [ ] 26. Implement economic calendar blackout monitor
+- [x] 26. Implement economic calendar blackout monitor
   - Create services/nlp/calendar_monitor.py
   - Poll TimescaleDB economic_events every 60s
   - Detect HIGH impact events within ±15 min window for each instrument's currency
   - Publish blackout state to Redis: key blackout:{instrument} → {active: bool, event_name, minutes_remaining}
   - Write unit tests in backend/tests/test_calendar_monitor.py
 
-- [ ] 27. Build LLM macro event summariser and trade reasoning generator
+- [x] 27. Build LLM macro event summariser and trade reasoning generator
   - Create services/nlp/llm_service.py
   - Implement summarise_macro_event(event: dict) → str using Claude API (anthropic SDK)
   - Implement generate_trade_reasoning(setup: dict) → str structured around the 3-question narrative framework:
