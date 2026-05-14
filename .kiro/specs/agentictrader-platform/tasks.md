@@ -329,7 +329,7 @@
     - Confirm all tests PASS (GREEN)
   - **23c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 24. Build ML inference FastAPI service
+- [x] 24. Build ML inference FastAPI service
   - Create ml/inference/main.py using FastAPI
   - Load models from MLflow registry: regime-classifier, pattern-detector, confluence-scorer
   - Expose POST /predict endpoint: accepts {instrument, timeframe, candles: list[OHLCV]} → returns {regime, patterns, confidence_score, htf_projections}
