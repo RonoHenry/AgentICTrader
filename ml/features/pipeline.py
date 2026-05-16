@@ -10,7 +10,14 @@ The pipeline includes Great Expectations data quality validations to ensure:
 - All percentage values are in [0, 100] range
 - Enum values (open_bias, htf_trend_bias) are in valid sets
 
+New features added in Task 28 (sentiment integration):
+- ``sentiment_score`` (float, -1.0 to +1.0): per-instrument directional sentiment
+  score sourced from Redis key ``sentiment:{instrument}`` (TTL 900s).
+- ``blackout_active`` (bool): whether a HIGH-impact economic event is within ±15 min,
+  sourced from Redis key ``blackout:{instrument}`` (TTL 120s).
+
 **Implements: Task 14 - Build sklearn feature pipeline orchestration**
+**Updated: Task 28 - Integrate sentiment into Confluence Scorer and retrain**
 
 Example usage:
     >>> from ml.features.pipeline import FeaturePipeline
@@ -132,6 +139,8 @@ class FeaturePipeline:
         daily_open: Optional[float] = None,
         weekly_open: Optional[float] = None,
         true_day_open: Optional[float] = None,
+        sentiment_score: float = 0.0,
+        blackout_active: bool = False,
     ) -> pd.DataFrame:
         """
         Transform candle data into a flat feature vector.
@@ -145,6 +154,12 @@ class FeaturePipeline:
             daily_open: Daily open price at 18:00 NY (optional)
             weekly_open: Weekly open price at Sunday 18:00 NY (optional)
             true_day_open: True day open price at 00:00 NY (optional)
+            sentiment_score: Per-instrument directional sentiment score in [-1.0, +1.0].
+                            Sourced from Redis key ``sentiment:{instrument}`` (TTL 900s).
+                            Defaults to 0.0 (neutral) when not provided.
+            blackout_active: Whether a HIGH-impact economic event is within ±15 min.
+                            Sourced from Redis key ``blackout:{instrument}`` (TTL 120s).
+                            Defaults to False when not provided.
             
         Returns:
             pandas DataFrame with one row and named feature columns
@@ -219,6 +234,10 @@ class FeaturePipeline:
         # Add session and time features
         feature_dict.update(asdict(session_features))
         
+        # Add sentiment and blackout features (Task 28)
+        feature_dict["sentiment_score"] = float(sentiment_score)
+        feature_dict["blackout_active"] = bool(blackout_active)
+        
         # Convert to DataFrame (single row)
         df = pd.DataFrame([feature_dict])
         
@@ -237,6 +256,8 @@ class FeaturePipeline:
         daily_open: Optional[float] = None,
         weekly_open: Optional[float] = None,
         true_day_open: Optional[float] = None,
+        sentiment_score: float = 0.0,
+        blackout_active: bool = False,
     ) -> pd.DataFrame:
         """
         Fit and transform in one step (equivalent to transform for stateless pipeline).
@@ -249,6 +270,10 @@ class FeaturePipeline:
             daily_open: Daily open price (optional)
             weekly_open: Weekly open price (optional)
             true_day_open: True day open price (optional)
+            sentiment_score: Per-instrument directional sentiment score in [-1.0, +1.0].
+                            Defaults to 0.0 (neutral) when not provided.
+            blackout_active: Whether a HIGH-impact economic event is within ±15 min.
+                            Defaults to False when not provided.
             
         Returns:
             pandas DataFrame with one row and named feature columns
@@ -262,6 +287,8 @@ class FeaturePipeline:
             daily_open=daily_open,
             weekly_open=weekly_open,
             true_day_open=true_day_open,
+            sentiment_score=sentiment_score,
+            blackout_active=blackout_active,
         )
     
     def get_feature_names(self) -> List[str]:
