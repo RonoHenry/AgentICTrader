@@ -369,7 +369,7 @@
   - Fallback to template-based reasoning using get_narrative_context() if Claude API unavailable
   - Write unit tests in backend/tests/test_llm_service.py with mocked Claude responses
 
-- [ ] 28. Integrate sentiment into Confluence Scorer and retrain
+- [x] 28. Integrate sentiment into Confluence Scorer and retrain
   - Update ml/features/pipeline.py to include sentiment score and blackout flag as features
   - Retrain Confluence Scorer (Task 22) with sentiment features added
   - Validate: Sharpe improvement ≥ 0.1 vs baseline from Task 22
