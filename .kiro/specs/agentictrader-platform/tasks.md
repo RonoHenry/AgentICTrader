@@ -380,7 +380,7 @@
 
 ## Phase 3 — Agent V1 (Human-in-the-Loop)
 
-- [ ] 29. Build Risk Engine FastAPI service
+- [x] 29. Build Risk Engine FastAPI service
   - **29a. RED — Write failing tests** (`backend/tests/test_risk_engine.py`)
     - Property: position_size * sl_distance_pips always equals exactly 1% of equity
     - Property: /validate always returns approved=False when daily_dd >= 3%
