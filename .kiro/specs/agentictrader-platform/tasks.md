@@ -399,7 +399,7 @@
     - Confirm all tests PASS (GREEN)
   - **29c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 30. Define AgentState Pydantic model
+- [x] 30. Define AgentState Pydantic model
   - **30a. RED — Write failing tests** (`backend/tests/test_agent_state.py`)
     - Test: AgentState instantiates with all required fields
     - Test: Optional fields default to None
