@@ -411,7 +411,7 @@
     - Confirm all tests PASS (GREEN)
   - **30c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 31. Implement LangGraph agent nodes
+- [x] 31. Implement LangGraph agent nodes
   - **31a. RED — Write failing tests** (`backend/tests/test_agent_nodes.py`)
     - Test: observe_node rejects stale setups (> 60s old)
     - Test: observe_node populates AgentState from Kafka message
@@ -431,7 +431,7 @@
     - Confirm all tests PASS (GREEN)
   - **31c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 32. Build LangGraph agent graph and kill switch
+- [x] 32. Build LangGraph agent graph and kill switch
   - **32a. RED — Write failing tests** (`backend/tests/test_agent_graph.py`)
     - Integration test: full graph runs observe → analyse → decide → notify in HUMAN_IN_LOOP mode
     - Integration test: full graph runs observe → analyse → decide → execute in AUTONOMOUS mode
@@ -447,7 +447,7 @@
     - Confirm all tests PASS (GREEN)
   - **32c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 33. Build Notification Service
+- [x] 33. Build Notification Service
   - **33a. RED — Write failing tests** (`backend/tests/test_notification_service.py`)
     - Test: send_setup_alert dispatches FCM message with all required payload fields
     - Test: alert payload includes instrument, direction, confidence_score, entry_price, sl_price, tp_price, r_ratio, reasoning, htf_open, htf_high, htf_low, open_bias, time_window, narrative_phase, price_vs_daily_open, price_vs_true_day_open, is_killzone
