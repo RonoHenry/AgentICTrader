@@ -511,7 +511,7 @@
     - Confirm all tests PASS (GREEN)
   - **37c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 38. Enable autonomous execution mode
+- [x] 38. Enable autonomous execution mode
   - **38a. RED — Write failing tests** (`backend/tests/test_autonomous_execution.py`)
     - Integration test: execute_node places live order via broker_tools
     - Test: pre-execution risk recheck called before order placement

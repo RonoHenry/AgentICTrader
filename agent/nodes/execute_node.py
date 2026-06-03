@@ -1,11 +1,12 @@
 """execute_node — fourth node in the LangGraph agent execution loop (AUTONOMOUS path).
 
 Responsibilities:
-  1. Perform a pre-execution risk recheck via Risk Engine validate().
-  2. Place the broker order only when the recheck passes.
-  3. Record broker_order_id and trade_id on the state.
-  4. Set decision=SKIP if the recheck fails.
-  5. Return the updated AgentState.
+  1. Guard: skip immediately if mode is HUMAN_IN_LOOP or shadow_period_active=True.
+  2. Perform a pre-execution risk recheck via Risk Engine validate().
+  3. Place the broker order only when the recheck passes.
+  4. Record broker_order_id and trade_id on the state.
+  5. Set decision=SKIP if the recheck fails or mode is not AUTONOMOUS.
+  6. Return the updated AgentState.
 
 Validates: Requirements FR-6, FR-7
 """
@@ -14,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from agent.state import AgentState, DecisionAction, RiskValidation, RiskVerdictEnum
+from agent.state import AgentMode, AgentState, DecisionAction, RiskValidation, RiskVerdictEnum
 from services.risk_engine.main import RiskEngine, ValidateRequest
 
 logger = logging.getLogger(__name__)
@@ -37,8 +38,35 @@ def execute_node(
 
     Returns:
         Updated AgentState with broker_order_id / trade_id on success,
-        or decision=SKIP on recheck failure.
+        or decision=SKIP on recheck failure / mode guard.
     """
+    # ── 0. Mode guard — only execute in AUTONOMOUS mode ───────────────────
+    if state.mode != AgentMode.AUTONOMOUS:
+        logger.info(
+            "execute_node: SKIP — mode is %s, not AUTONOMOUS for setup_id=%s",
+            state.mode.value, state.setup_id,
+        )
+        return state.model_copy(update={
+            "decision": DecisionAction.SKIP,
+            "decision_reason": (
+                f"execute_node: mode is {state.mode.value} — live orders only "
+                "permitted in AUTONOMOUS mode"
+            ),
+        })
+
+    # ── 0b. Shadow period guard ────────────────────────────────────────────
+    if state.shadow_period_active:
+        logger.warning(
+            "execute_node: SKIP — shadow_period_active=True for setup_id=%s",
+            state.setup_id,
+        )
+        return state.model_copy(update={
+            "decision": DecisionAction.SKIP,
+            "decision_reason": (
+                "execute_node: shadow period is active — autonomous execution blocked"
+            ),
+        })
+
     confidence = state.final_confidence if state.final_confidence is not None else (
         state.raw_confidence if state.raw_confidence is not None else 0.0
     )
