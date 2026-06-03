@@ -3,7 +3,9 @@
 Responsibilities:
   1. Build a complete trade journal document from AgentState.
   2. Insert the document into the MongoDB trade_journal collection.
-  3. Return the updated AgentState.
+  3. After insert, count completed outcomes and trigger MLflow retraining
+     queue every 50 new outcomes.
+  4. Return the updated AgentState.
 
 Validates: Requirements FR-6
 """
@@ -15,7 +17,62 @@ from typing import Any
 
 from agent.state import AgentState
 
+# Top-level import so patch("agent.nodes.learn_node.MLflowTracker") works in tests.
+# The import is deferred inside trigger_retraining_if_needed to avoid a hard
+# dependency when MLflow is not configured, but we expose the name at module level.
+try:
+    from ml.tracking.mlflow_client import MLflowTracker
+except ImportError:  # pragma: no cover — MLflow may not be installed in all envs
+    MLflowTracker = None  # type: ignore[assignment, misc]
+
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Retraining queue threshold
+# ---------------------------------------------------------------------------
+
+_RETRAIN_EVERY_N_OUTCOMES: int = 50
+
+
+def trigger_retraining_if_needed(outcome_count: int) -> None:
+    """Enqueue an MLflow retraining run when *outcome_count* is a multiple of 50.
+
+    Called by learn_node after each successful journal insert.  When the total
+    number of logged outcomes reaches a threshold multiple of 50 (e.g. 50, 100,
+    150, …) it queues a retraining run via the MLflow tracker so the three
+    ML models (regime-classifier, pattern-detector, confluence-scorer) can be
+    retrained with the new labelled data.
+
+    Note: the caller is responsible for checking the threshold guard before
+    calling this function (i.e. only call when count % 50 == 0).
+
+    Args:
+        outcome_count: Total number of trade outcomes recorded in the journal
+                       (as returned by collection.count_documents({})).
+    """
+    logger.info(
+        "trigger_retraining_if_needed: %d outcomes reached — queuing MLflow retraining",
+        outcome_count,
+    )
+
+    try:
+        tracker = MLflowTracker()
+        with tracker.start_run(
+            experiment_name="confluence-scorer",
+            run_name=f"retrain_trigger_n{outcome_count}",
+        ):
+            tracker.log_params({"trigger": "auto", "outcome_count": outcome_count})
+            tracker.log_metrics({"outcomes_at_trigger": float(outcome_count)})
+        logger.info(
+            "trigger_retraining_if_needed: MLflow retraining run queued for n=%d",
+            outcome_count,
+        )
+    except Exception as exc:
+        # Non-fatal — log and continue.  Retraining failure must not block the agent.
+        logger.error(
+            "trigger_retraining_if_needed: MLflow error at n=%d: %s",
+            outcome_count, exc,
+        )
 
 
 def learn_node(
@@ -24,10 +81,14 @@ def learn_node(
 ) -> AgentState:
     """Log the trade outcome to MongoDB trade_journal.
 
+    After inserting the record, counts total outcomes in the collection and
+    calls :func:`trigger_retraining_if_needed` at every 50-outcome threshold.
+
     Args:
         state:                    Current AgentState with outcome populated.
-        trade_journal_collection: PyMongo Collection (or mock) with an
-                                  ``insert_one(document: dict)`` method.
+        trade_journal_collection: PyMongo Collection (or mock) with:
+                                  - ``insert_one(document: dict)``
+                                  - ``count_documents(filter: dict) -> int``
 
     Returns:
         The same AgentState (unchanged — learn_node is a terminal node).
@@ -107,5 +168,15 @@ def learn_node(
     except Exception as exc:
         logger.error("learn_node: MongoDB insert failed: %s", exc)
         return state.model_copy(update={"error": f"MongoDB insert failed: {exc}"})
+
+    # ── Check retraining threshold ─────────────────────────────────────────
+    try:
+        outcome_count = trade_journal_collection.count_documents({})
+        # Guard: only proceed when count_documents returns a real integer
+        if isinstance(outcome_count, int) and outcome_count > 0 and outcome_count % _RETRAIN_EVERY_N_OUTCOMES == 0:
+            trigger_retraining_if_needed(outcome_count)
+    except Exception as exc:
+        # Non-fatal — retraining check failure must not break the agent loop
+        logger.error("learn_node: retraining check failed: %s", exc)
 
     return state
