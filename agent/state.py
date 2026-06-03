@@ -169,3 +169,8 @@ class AgentState(BaseModel):
 
     price_vs_true_day_open: Optional[str] = None
     """Price position relative to true day open (00:00 NY): 'ABOVE', 'BELOW', or 'AT'."""
+
+    # ── Shadow Period (FR-Shadow) ──
+    shadow_period_active: bool = True
+    """True when the agent is running in shadow period mode.
+    During shadow period all users are forced into HUMAN_IN_LOOP mode."""
