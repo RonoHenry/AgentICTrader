@@ -6,9 +6,38 @@
 
 ## 1. Product Overview
 
-AgentICTrader.AI is an autonomous intelligent trading platform that encodes 6+ years of professional Price Action expertise into a scalable AI system. It combines real-time market data engineering, ML pattern recognition, NLP sentiment analysis, and an agentic execution loop to identify, score, and act on high-probability trade setups at machine speed.
+### 1.1 Problem Statement
 
-**Target Users:** Professional discretionary traders, algorithmic trading enthusiasts, investment firms.
+Professional discretionary trading demands sustained cognitive precision across multiple timeframes, instruments, and market sessions simultaneously. Even experienced traders miss high-probability setups due to fatigue, emotional bias, or the physical impossibility of monitoring every instrument at every killzone. When a setup is identified, execution decisions — position sizing, entry timing, risk validation — must happen in seconds. Human latency is a structural disadvantage.
+
+Existing algorithmic trading tools either require deep quantitative programming knowledge, rely on lagging technical indicators that have no edge in modern markets, or operate as black boxes with no interpretable reasoning. None of them encode the nuanced, context-dependent logic of professional Price Action methodology.
+
+### 1.2 Solution
+
+AgentICTrader.AI is an autonomous intelligent trading platform that encodes professional ICT (Inner Circle Trader) Price Action methodology into a production-grade AI system. It operates as a tireless co-pilot: continuously monitoring markets across all sessions, identifying high-probability setups using the same multi-timeframe framework a professional trader uses, and either alerting the trader or executing autonomously — depending on the configured mode.
+
+The platform is built on three core pillars:
+
+**1. Institutional-grade feature engineering** — The sole technical indicator is the HTF Candle Projection: the Open, High, and Low of the Higher Timeframe candle, which define the Dealing Range, directional bias, and premium/discount zones. No lagging indicators (ATR, RSI, EMA, ADX). Every feature is derived from raw price structure, session timing, and liquidity context.
+
+**2. Multi-layer ML inference** — A three-model pipeline classifies market regime, detects Price Action patterns (BOS, CHoCH, FVGs, Order Blocks, Liquidity Sweeps, Bearish/Bullish PD Arrays), and produces a calibrated confidence score (0.0–1.0) that gates every decision. Setups below 0.65 are discarded. Setups above 0.75 trigger alerts. Setups above 0.85 can execute autonomously.
+
+**3. Agentic execution loop** — A LangGraph-powered agent runs a continuous Observe → Analyse → Decide → Act → Review → Learn cycle. It integrates real-time news sentiment, enforces hard risk rules (1% per trade, 3% daily drawdown cap), generates human-readable trade reasoning structured around the ICT narrative framework, and logs every decision with full context for review and model retraining.
+
+### 1.3 Target Users
+
+| User | Profile |
+|---|---|
+| Professional discretionary trader | Uses the platform as an always-on co-pilot to catch setups across sessions they cannot manually monitor |
+| Algorithmic trading enthusiast | Wants systematic execution of a proven Price Action methodology without building infrastructure from scratch |
+| Investment firm / prop desk | Needs auditable, risk-controlled automated execution with full decision logging and performance analytics |
+
+### 1.4 Core Differentiators
+
+- **Methodology-first, not indicator-first** — Built around ICT Price Action concepts (HTF bias, killzones, PD arrays, liquidity) rather than generic technical indicators
+- **Interpretable by design** — Every setup comes with a structured narrative: where price came from, where it is now, where it is likely to go
+- **Risk-gated at every layer** — The Risk Engine is a synchronous gate that cannot be bypassed; no trade executes without passing all checks
+- **Human-in-the-loop by default** — Autonomous execution is an opt-in feature toggle, not the default; traders stay in control
 
 ---
 
@@ -113,8 +142,8 @@ AgentICTrader.AI is an autonomous intelligent trading platform that encodes 6+ y
 
 | Phase | Goal | Status |
 |---|---|---|
-| 0 | Foundation & Edge Quantification | 🟡 In Progress |
-| 1 | Pattern ML (Regime + Pattern + Scorer) | 🔴 Not Started |
+| 0 | Foundation & Edge Quantification | ✅ Complete |
+| 1 | Pattern ML (Regime + Pattern + Scorer + Backtesting) | ✅ Complete |
 | 2 | Intelligence Layer (NLP + LLM) | 🔴 Not Started |
 | 3 | Agent V1 — Human-in-the-Loop | 🔴 Not Started |
 | 4 | Autonomous Execution | 🔴 Not Started |

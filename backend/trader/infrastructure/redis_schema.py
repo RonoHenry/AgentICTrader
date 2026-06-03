@@ -28,6 +28,7 @@ TTL_HTF: int = 300          # 5 minutes — HTF candles change slowly
 TTL_SENTIMENT: int = 900    # 15 minutes — FinBERT scores
 TTL_AGENT_STATE: int = 3600 # 1 hour — agent state snapshot
 TTL_RISK_EXPOSURE: int = 60 # 1 minute — risk exposure snapshot
+TTL_BLACKOUT: int = 120     # 2 minutes — economic calendar blackout state (2× poll interval)
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +95,21 @@ def risk_exposure_key(user_id: str) -> str:
         "risk:exposure:user_42"
     """
     return f"risk:exposure:{user_id}"
+
+
+def blackout_key(instrument: str) -> str:
+    """Return the Redis key for the economic calendar blackout state.
+
+    The value is a JSON object ``{"active": bool, "event_name": str,
+    "minutes_remaining": float}`` with TTL :data:`TTL_BLACKOUT` (120 s).
+
+    Args:
+        instrument: e.g. ``"EURUSD"``
+
+    Returns:
+        ``"blackout:EURUSD"``
+    """
+    return f"blackout:{instrument}"
 
 
 # ---------------------------------------------------------------------------

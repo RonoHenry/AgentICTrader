@@ -460,7 +460,7 @@
     - Confirm all tests PASS (GREEN)
   - **33c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 34. Build User and Auth Service
+- [x] 34. Build User and Auth Service
   - **34a. RED — Write failing tests** (`backend/tests/test_auth_service.py`)
     - Test: POST /auth/register creates user and returns JWT
     - Test: POST /auth/login returns access token (15min TTL) and refresh token (7-day TTL)
@@ -475,7 +475,7 @@
     - Confirm all tests PASS (GREEN)
   - **34c. REFACTOR** — clean up, confirm GREEN
 
-- [ ] 35. Build Next.js web dashboard
+- [x] 35. Build Next.js web dashboard
   - Create frontend/ directory with Next.js 15 App Router, TypeScript, Tailwind CSS, shadcn/ui
   - Pages:
     - /dashboard: live setups feed (WebSocket, real-time updates)
@@ -486,7 +486,7 @@
   - Connect to backend via REST + WebSocket (Socket.io-client)
   - Write component tests using Vitest + React Testing Library
 
-- [ ] 36. Shadow period setup and validation
+- [x] 36. Shadow period setup and validation
   - Connect agent to OANDA practice account (paper trading)
   - Set agent mode to HUMAN_IN_LOOP for all users
   - Run 4-week shadow period: agent fires alerts, trader validates each setup manually
@@ -498,7 +498,7 @@
 
 ## Phase 4 — Autonomous Execution
 
-- [ ] 37. Implement broker execution tools
+- [x] 37. Implement broker execution tools
   - **37a. RED — Write failing tests** (`backend/tests/test_broker_tools.py`)
     - Test: place_order returns order_id on success (mocked OANDA response)
     - Test: set_sl_tp returns True on success
