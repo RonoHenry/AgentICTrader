@@ -1,10 +1,10 @@
-# Implementation Plan: RAG Enhancement
+# Implementation Plan: AlgoRAG
 
 ## Overview
 
-This implementation plan breaks down the RAG Enhancement feature into discrete, testable coding tasks following TDD methodology (RED → GREEN → REFACTOR). The RAG system augments AgentICTrader's ML pipeline with contextual intelligence by retrieving similar historical trading setups using vector embeddings.
+This implementation plan breaks down the **AlgoRAG** feature into discrete, testable coding tasks following TDD methodology (RED → GREEN → REFACTOR). AlgoRAG augments AgentICTrader's ML pipeline with contextual intelligence by retrieving similar historical trading setups using vector embeddings.
 
-**Architecture**: Multi-modal embeddings (narrative + structured + temporal) → Qdrant vector store → FastAPI service → ML pipeline augmentation
+**Architecture**: Multi-modal embeddings (narrative + structured + temporal) → Qdrant vector store → FastAPI service (`services/algorag/`) → ML pipeline augmentation
 
 **Integration Points**:
 - Confluence Scorer (Task 22) - adds RAG features
@@ -19,36 +19,36 @@ This implementation plan breaks down the RAG Enhancement feature into discrete, 
 
 ### Phase 1: Infrastructure Setup
 
-- [ ] 1. Set up Qdrant vector store and RAG service infrastructure
-  - [ ] 1.1 Create Docker configuration for Qdrant
+- [x] 1. Set up Qdrant vector store and RAG service infrastructure
+  - [x] 1.1 Create Docker configuration for Qdrant
     - Add Qdrant service to `docker/docker-compose.yml` (port 6333)
     - Configure persistent volume for vector data
     - Set memory limits and resource constraints
     - Add health check configuration
     - _Requirements: NFR-RAG-2, NFR-RAG-3_
   
-  - [ ]* 1.2 Write integration tests for Qdrant connection
+  - [x] 1.2 Write integration tests for Qdrant connection
     - **RED**: Test Qdrant connection, collection creation, basic CRUD operations
     - **GREEN**: Implement Qdrant client wrapper with connection pooling
     - **REFACTOR**: Extract configuration to environment variables
     - _Requirements: NFR-RAG-3_
   
-  - [ ] 1.3 Create RAG service directory structure
-    - Create `services/rag-engine/` directory
-    - Create `services/rag-engine/main.py` (FastAPI app)
-    - Create `services/rag-engine/config.py` (configuration)
-    - Create `services/rag-engine/models.py` (Pydantic models)
-    - Create `services/rag-engine/requirements.txt`
-    - Create `services/rag-engine/Dockerfile`
+  - [x] 1.3 Create AlgoRAG service directory structure
+    - Create `services/algorag/` directory
+    - Create `services/algorag/main.py` (FastAPI app)
+    - Create `services/algorag/config.py` (configuration)
+    - Create `services/algorag/models.py` (Pydantic models)
+    - Create `services/algorag/requirements.txt`
+    - Create `services/algorag/Dockerfile`
     - _Requirements: FR-RAG-2_
   
-  - [ ] 1.4 Implement RAG service health check endpoint
+  - [x] 1.4 Implement AlgoRAG service health check endpoint
     - **RED**: Test GET /health returns service status and vector store connection
     - **GREEN**: Implement health check with Qdrant connectivity test
     - **REFACTOR**: Add setup count and version info to response
     - _Requirements: NFR-RAG-3_
 
-- [ ] 2. Checkpoint - Verify infrastructure
+- [-] 2. Checkpoint - Verify infrastructure
   - Ensure Qdrant container starts successfully
   - Ensure RAG service health check passes
   - Ensure all tests pass, ask the user if questions arise.
@@ -279,14 +279,14 @@ This implementation plan breaks down the RAG Enhancement feature into discrete, 
 
 ### Phase 5: ML Pipeline Integration
 
-- [ ] 15. Implement RAG client library
-  - [ ] 15.1 Create RAG client for ML services
-    - Create `ml/rag/client.py` with async HTTP client
+- [ ] 15. Implement AlgoRAG client library
+  - [ ] 15.1 Create AlgoRAG client for ML services
+    - Create `ml/algorag/client.py` with async HTTP client
     - Implement retrieve() method with retry logic
     - Implement connection pooling and timeout handling
     - _Requirements: FR-RAG-5, NFR-RAG-3_
   
-  - [ ]* 15.2 Write unit tests for RAG client
+  - [ ]* 15.2 Write unit tests for AlgoRAG client
     - Test successful retrieval
     - Test retry logic on failures
     - Test timeout handling
@@ -527,7 +527,7 @@ This implementation plan breaks down the RAG Enhancement feature into discrete, 
 
 ## Success Metrics
 
-### MVP (Minimum Viable RAG)
+### MVP (Minimum Viable AlgoRAG)
 - ✅ 500+ historical setups indexed
 - ✅ Retrieval latency < 100ms (p95)
 - ✅ Similarity correlates with outcome (r > 0.5)

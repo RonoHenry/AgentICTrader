@@ -1,4 +1,4 @@
-# RAG System Architecture Diagrams
+# AlgoRAG System Architecture Diagrams
 
 ## 1. High-Level System Architecture
 
@@ -465,7 +465,7 @@ Key Differences:
 
 ## Summary
 
-This RAG system transforms AgentICTrader from a **pattern recognizer** into a **trading memory system** that:
+**AlgoRAG** transforms AgentICTrader from a **pattern recognizer** into a **trading memory system** that:
 
 1. **Stores** every historical setup with rich context
 2. **Retrieves** similar setups based on multi-modal similarity
