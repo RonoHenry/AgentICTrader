@@ -1,8 +1,8 @@
-# RAG Implementation Guide - Practical Steps
+# AlgoRAG Implementation Guide — Practical Steps
 
-## Quick Start: Build Your First RAG Prototype
+## Quick Start: Build Your First AlgoRAG Prototype
 
-This guide walks you through implementing a minimal viable RAG system for AgentICTrader in **2-3 weeks**.
+This guide walks you through implementing a minimal viable AlgoRAG system for AgentICTrader in **2-3 weeks**.
 
 ---
 
@@ -375,11 +375,11 @@ if __name__ == "__main__":
 
 ### Day 8-10: Build RAG FastAPI Service
 
-**Service**: `services/rag-engine/main.py`
+**Service**: `services/algorag/main.py`
 
 ```python
 """
-RAG Engine FastAPI Service
+AlgoRAG FastAPI Service
 """
 
 from fastapi import FastAPI, HTTPException
@@ -390,7 +390,7 @@ import numpy as np
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-app = FastAPI(title="RAG Engine")
+app = FastAPI(title="AlgoRAG")
 
 # Initialize clients
 qdrant_client = QdrantClient(host="localhost", port=6333)
@@ -507,9 +507,9 @@ def compute_rag_metrics(similar_setups: List[Dict[str, Any]]) -> Dict[str, float
         "avg_confluence_count": np.mean([s['setup']['confluence_count'] for s in similar_setups])
     }
 
-@app.post("/rag/retrieve", response_model=RetrievalResponse)
+@app.post("/algorag/retrieve", response_model=RetrievalResponse)
 async def retrieve_similar_setups(setup: CurrentSetup):
-    """Retrieve similar historical setups."""
+    """Retrieve similar historical setups via AlgoRAG."""
     import time
     start_time = time.time()
     
@@ -554,8 +554,8 @@ async def retrieve_similar_setups(setup: CurrentSetup):
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "service": "rag-engine"}
+    """AlgoRAG health check endpoint."""
+    return {"status": "healthy", "service": "algorag"}
 
 if __name__ == "__main__":
     import uvicorn
@@ -702,7 +702,7 @@ print(f"Improvement: {rag_sharpe - baseline_sharpe:.3f}")
 
 ---
 
-## Success Checklist
+## AlgoRAG Success Checklist
 
 - [ ] 500+ historical setups enriched and ingested
 - [ ] Qdrant running and indexed
@@ -716,9 +716,9 @@ print(f"Improvement: {rag_sharpe - baseline_sharpe:.3f}")
 
 ---
 
-## Next Steps
+## AlgoRAG Next Steps
 
-1. **Production Deployment**: Deploy RAG service to production
+1. **Production Deployment**: Deploy AlgoRAG service to production
 2. **Monitoring**: Track retrieval quality, latency, impact on decisions
 3. **Continuous Improvement**: Add new setups daily, refine embeddings
 4. **Advanced Features**: Chart image embeddings, regime-aware retrieval

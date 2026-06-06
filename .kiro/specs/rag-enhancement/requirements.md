@@ -1,8 +1,8 @@
-# RAG Enhancement - Requirements
+# AlgoRAG - Requirements
 
 ## Overview
 
-This spec defines the Retrieval-Augmented Generation (RAG) system that augments AgentICTrader's ML pipeline with contextual intelligence, explainability, and historical precedent retrieval.
+This spec defines **AlgoRAG** — the Retrieval-Augmented Generation system that augments AgentICTrader's ML pipeline with contextual intelligence, explainability, and historical precedent retrieval.
 
 **Type**: Enhancement (Non-blocking)  
 **Timeline**: 10 weeks (parallel to main roadmap)  
@@ -90,7 +90,7 @@ This spec defines the Retrieval-Augmented Generation (RAG) system that augments 
 
 ## Success Criteria
 
-### Minimum Viable RAG (MVR)
+### Minimum Viable AlgoRAG (MVR)
 - [ ] 500+ historical setups indexed
 - [ ] Retrieval latency < 100ms
 - [ ] Similarity correlates with outcome (r > 0.5)

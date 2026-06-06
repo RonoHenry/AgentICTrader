@@ -1,8 +1,8 @@
-# Time-Based PD Array RAG Engine for AgentICTrader
+# AlgoRAG — Time-Based PD Array RAG Engine for AgentICTrader
 
 ## Executive Summary
 
-This document proposes a **Retrieval-Augmented Generation (RAG) system** specifically designed for ICT (Inner Circle Trader) Price Action methodology. The system will augment the existing XGBoost ML pipeline with context-aware pattern matching, explainable trade reasoning, and historical precedent retrieval.
+This document describes **AlgoRAG** — a **Retrieval-Augmented Generation system** for Algorithmic Price Action. AlgoRAG augments the existing XGBoost ML pipeline with context-aware pattern matching, explainable trade reasoning, and historical precedent retrieval.
 
 ---
 
@@ -473,11 +473,11 @@ results = client.search(
 - [ ] Bulk insert historical setups (target: 500+ setups)
 - [ ] Test retrieval queries
 
-### Phase 3: RAG Service (2 weeks)
-- [ ] Create FastAPI service: `services/rag-engine/`
+### Phase 3: AlgoRAG Service (2 weeks)
+- [ ] Create FastAPI service: `services/algorag/`
 - [ ] Implement query construction
 - [ ] Implement retrieval + re-ranking
-- [ ] Expose REST endpoint: `POST /rag/retrieve`
+- [ ] Expose REST endpoint: `POST /algorag/retrieve`
 
 ### Phase 4: ML Integration (1 week)
 - [ ] Add RAG features to Confluence Scorer input
@@ -615,7 +615,7 @@ results = client.search(
 
 ## 14. Conclusion
 
-A **Time-Based PD Array RAG Engine** transforms AgentICTrader from a statistical pattern recognizer into an **intelligent trading memory system** that:
+**AlgoRAG** transforms AgentICTrader from a statistical pattern recognizer into an **intelligent trading memory system** that:
 
 1. **Learns from experience** by storing and retrieving historical precedents
 2. **Explains decisions** by citing actual historical examples
@@ -624,4 +624,4 @@ A **Time-Based PD Array RAG Engine** transforms AgentICTrader from a statistical
 
 This is not a replacement for the ML pipeline, but an **augmentation** that adds context, explainability, and adaptability.
 
-**Next Step**: Create a spec for Phase 1 (Data Preparation) to begin implementation.
+**Next Step**: Create a spec for Phase 1 (Data Preparation) to begin AlgoRAG implementation.

@@ -91,6 +91,52 @@ services:
       timescaledb:
         condition: service_healthy
 
+  # ── VECTOR STORE ─────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"  # gRPC port
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── ALGORAG SERVICE ───────────────────────────────────────
+  algorag:
+    build:
+      context: ..
+      dockerfile: services/algorag/Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_COLLECTION=trading_setups
+      - SERVICE_PORT=8003
+      - SERVICE_VERSION=0.1.0
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8003/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   # ── LEGACY DJANGO BACKEND (auth/user management) ──────────
   backend:
     build:
@@ -125,3 +171,4 @@ volumes:
   zookeeper_data:
   kafka_data:
   mlflow_artifacts:
+  qdrant_data:
