@@ -48,71 +48,71 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - **REFACTOR**: Add setup count and version info to response
     - _Requirements: NFR-RAG-3_
 
-- [-] 2. Checkpoint - Verify infrastructure
+- [x] 2. Checkpoint - Verify infrastructure
   - Ensure Qdrant container starts successfully
   - Ensure RAG service health check passes
   - Ensure all tests pass, ask the user if questions arise.
 
 ### Phase 2: Data Preparation Pipeline
 
-- [ ] 3. Implement historical setup enrichment pipeline
-  - [ ] 3.1 Create setup enrichment script structure
+- [x] 3. Implement historical setup enrichment pipeline
+  - [x] 3.1 Create setup enrichment script structure
     - Create `scripts/rag/prepare_historical_setups.py`
     - Create `scripts/rag/utils/narrative_generator.py`
     - Create `scripts/rag/utils/setup_enricher.py`
     - Define EnrichedSetup data model
     - _Requirements: FR-RAG-1_
   
-  - [ ] 3.2 Implement HTF structure extraction for historical setups
+  - [x] 3.2 Implement HTF structure extraction for historical setups
     - **RED**: Test extraction of HTF bias, projections, and structure from historical candles
     - **GREEN**: Reuse HTFProjectionExtractor to compute HTF context for past trades
     - **REFACTOR**: Add caching for repeated symbol/timeframe queries
     - _Requirements: FR-RAG-1_
   
-  - [ ] 3.3 Implement PD array detection for historical setups
+  - [x] 3.3 Implement PD array detection for historical setups
     - **RED**: Test extraction of order blocks, FVGs, liquidity zones from historical candles
     - **GREEN**: Reuse ZoneFeatureExtractor to detect PD arrays for past trades
     - **REFACTOR**: Optimize batch processing for multiple setups
     - _Requirements: FR-RAG-1_
   
-  - [ ] 3.4 Implement time window classification
+  - [x] 3.4 Implement time window classification
     - **RED**: Test classification of entry time into killzones (London, NY, Asian)
     - **GREEN**: Implement TimeWindowClassifier using SessionFeatureExtractor logic
     - **REFACTOR**: Extract timezone handling to utility function
     - _Requirements: FR-RAG-1_
   
-  - [ ] 3.5 Implement narrative generation
+  - [x] 3.5 Implement narrative generation
     - **RED**: Test generation of human-readable setup descriptions
     - **GREEN**: Implement template-based narrative generator with HTF/PD array context
     - **REFACTOR**: Add narrative quality validation (min length, key terms present)
     - _Requirements: FR-RAG-1_
   
-  - [ ]* 3.6 Write integration tests for enrichment pipeline
+  - [x] 3.6 Write integration tests for enrichment pipeline
     - Test end-to-end enrichment from trade journal to enriched setup
     - Test error handling for missing data
     - Test batch processing performance
     - _Requirements: FR-RAG-1, NFR-RAG-4_
 
-- [ ] 4. Implement embedding generation pipeline
-  - [ ] 4.1 Set up embedding models
+- [x] 4. Implement embedding generation pipeline
+  - [x] 4.1 Set up embedding models
     - Install sentence-transformers library
     - Download all-MiniLM-L6-v2 model
     - Create model loading utility with caching
     - _Requirements: FR-RAG-2_
   
-  - [ ] 4.2 Implement narrative embedding generation
+  - [x] 4.2 Implement narrative embedding generation
     - **RED**: Test SBERT encoding of setup narratives to 384-dim vectors
     - **GREEN**: Implement narrative embedding with sentence-transformers
     - **REFACTOR**: Add batch processing for multiple narratives
     - _Requirements: FR-RAG-2_
   
-  - [ ] 4.3 Implement structured feature embedding
+  - [x] 4.3 Implement structured feature embedding
     - **RED**: Test extraction and encoding of 64 structured features to 128-dim vectors
     - **GREEN**: Implement feature extraction (HTF metrics, PD array counts, confluence factors)
     - **REFACTOR**: Normalize features to [0, 1] range
     - _Requirements: FR-RAG-2_
   
-  - [ ] 4.4 Implement temporal embedding generation
+  - [x] 4.4 Implement temporal embedding generation
     - **RED**: Test cyclical encoding of timestamps to 16-dim vectors
     - **GREEN**: Implement sin/cos transforms for hour, day-of-week, month
     - **REFACTOR**: Add timezone normalization
