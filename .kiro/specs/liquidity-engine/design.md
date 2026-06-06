@@ -828,3 +828,175 @@ class LiquidityMap(BaseModel):
 
 ---
 
+
+## Correctness Properties
+
+*A property is a characteristic or behaviour that should hold true across all valid executions of a system — essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.*
+
+### Property 1: Engine Determinism (Statelessness)
+
+*For any* valid `candles_by_tf` dictionary and instrument/timestamp combination, calling `LiquidityMappingEngine.analyze()` twice with identical inputs SHALL produce two `LiquidityMap` objects that are equal in all fields.
+
+**Validates: Requirements 1.2, 14.1**
+
+---
+
+### Property 2: Input Immutability
+
+*For any* valid `candles_by_tf` input, after calling `LiquidityMappingEngine.analyze()`, every `Candle` object in the input dictionary SHALL have the same field values as before the call.
+
+**Validates: Requirements 1.3**
+
+---
+
+### Property 3: HTF Bias Direction Correctness
+
+*For any* timeframe and any `(current_price, reference_open)` pair where `current_price != reference_open` and the difference exceeds the 0.01% tolerance, `HTFBiasClassifier.classify()` SHALL return `BULLISH` when `current_price > reference_open` and `BEARISH` when `current_price < reference_open`.
+
+**Validates: Requirements 2.1, 2.2**
+
+---
+
+### Property 4: HTF Bias Neutral Band
+
+*For any* `current_price` within 0.01% of `reference_open`, `HTFBiasClassifier.classify()` SHALL return `NEUTRAL`.
+
+**Validates: Requirement 2.3**
+
+---
+
+### Property 5: D1 and W1 Bias Always Present
+
+*For any* valid multi-timeframe candle input that includes D1 and W1 candle series, `LiquidityMap.htf_bias` SHALL contain entries for both `"D1"` and `"W1"`.
+
+**Validates: Requirements 2.6, 10.2**
+
+---
+
+### Property 6: All PDArray High Greater Than Low
+
+*For any* candle sequence, every `PDArray` of any type (FVG, OB, BREAKER, IFVG, BPR, CISD_LEVEL) returned by `PDArrayDetector.detect()` SHALL satisfy `PDArray.high > PDArray.low`.
+
+**Validates: Requirements 4.3, 4.6, 4.12**
+
+---
+
+### Property 7: OTE Zone Structural Ordering
+
+*For any* displacement leg with a non-zero range, the `OTEZone` returned by `OTECalculator.calculate()` SHALL satisfy `fib_62 < fib_705 < fib_79`.
+
+**Validates: Requirement 7.4**
+
+---
+
+### Property 8: OTE Zone Low Less Than High
+
+*For any* displacement leg with a non-zero range, the `OTEZone` returned by `OTECalculator.calculate()` SHALL satisfy `ote_low < ote_high`.
+
+**Validates: Requirements 7.5, 10.4**
+
+---
+
+### Property 9: OTE Golden Level Equals fib_705
+
+*For any* computed `OTEZone`, `golden_level` SHALL equal `fib_705`.
+
+**Validates: Requirement 7.6**
+
+---
+
+### Property 10: OTE Price-In-Zone Flag Correctness
+
+*For any* `OTEZone` and any `current_price`, `price_in_ote` SHALL be `True` if and only if `ote_low <= current_price <= ote_high`.
+
+**Validates: Requirements 7.9, 7.10**
+
+---
+
+### Property 11: UNICORN Overlap Well-Formed
+
+*For any* detected `UnicornPattern`, `overlap_low < overlap_high` SHALL always hold.
+
+**Validates: Requirements 8.3, 10.5**
+
+---
+
+### Property 12: UNICORN Returns Most Recent
+
+*For any* list of qualifying Breaker+FVG pairs with distinct `formed_at` timestamps, `UnicornDetector.detect()` SHALL return the pair with the maximum `formed_at` value.
+
+**Validates: Requirement 8.5**
+
+---
+
+### Property 13: Setup Grade conditions_met Accuracy
+
+*For any* `SetupGradeDetail` object, `conditions_met` SHALL equal the sum of the 8 boolean condition fields: `htf_bias_confirmed + draw_on_liquidity_identified + liquidity_sweep_confirmed + displacement_present + cisd_confirmed + entry_pd_array_present + stop_placement_valid + time_window_aligned`.
+
+**Validates: Requirements 9.2, 10.6**
+
+---
+
+### Property 14: A+ Grade Requires All 8 Conditions
+
+*For any* `LiquidityMap`, the `SetupGrader` SHALL assign grade `A+` if and only if all 8 boolean conditions in `SetupGradeDetail` are `True` (`conditions_met == 8`). No `LiquidityMap` with `conditions_met < 8` SHALL receive grade `A+`.
+
+**Validates: Requirement 9.1**
+
+---
+
+### Property 15: NO_TRADE Grade When Conditions Below Threshold
+
+*For any* `LiquidityMap` where `conditions_met < 6`, OR where `htf_bias_confirmed = False`, OR where `draw_on_liquidity_identified = False`, THE `SetupGrader` SHALL assign grade `NO_TRADE`.
+
+**Validates: Requirement 9.5**
+
+---
+
+### Property 16: draw_on_liquidity Reference Integrity
+
+*For any* `LiquidityMap` where `draw_on_liquidity` is not `None`, `draw_on_liquidity.level_id` SHALL appear as the `level_id` of at least one member of `LiquidityMap.liquidity_levels`.
+
+**Validates: Requirement 10.3**
+
+---
+
+### Property 17: CISD Cascade Validity Requires Both CISDs
+
+*For any* call to `IPDAClassifier.validate_cisd_cascade()`, `CISDCascadeStatus.cascade_valid` SHALL be `True` if and only if both `trigger_cisd.confirmed = True` AND `confirmation_cisd.confirmed = True`.
+
+**Validates: Requirement 6.4**
+
+---
+
+### Property 18: Equal Highs/Lows Satisfy Tolerance Invariant
+
+*For any* candle set and any `tolerance_pct`, every `LiquidityLevel` with source `EQH` or `EQL` SHALL have constituent swing points satisfying `abs(level_a - level_b) / level_a <= tolerance_pct`.
+
+**Validates: Requirement 3.6**
+
+---
+
+### Property 19: Strength Scores in Valid Range
+
+*For any* candle input, every `LiquidityLevel` and every `PDArray` returned by their respective detectors SHALL have `strength_score` in [0.0, 1.0].
+
+**Validates: Requirements 3.8, 4.11**
+
+---
+
+### Property 20: Candle OHLC Invariant
+
+*For any* attempted `Candle` construction with `high < low`, `high < open`, or `high < close`, a `ValueError` SHALL always be raised.
+
+**Validates: Requirements 11.1, 11.2, 11.3**
+
+---
+
+### Property 21: to_agent_context Non-Empty and Complete
+
+*For any* valid `LiquidityMap`, `to_agent_context()` SHALL return a non-empty string containing every timeframe key and bias direction from `htf_bias`, the `grade` value, and the `conditions_met` count.
+
+**Validates: Requirements 10.7, 10.8, 10.9**
+
+---
