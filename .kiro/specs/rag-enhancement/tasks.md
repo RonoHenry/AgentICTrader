@@ -137,33 +137,33 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
 
 ### Phase 3: Vector Store Integration
 
-- [ ] 6. Implement Qdrant collection management
-  - [ ] 6.1 Create vector store schema and collection
+- [x] 6. Implement Qdrant collection management
+  - [x] 6.1 Create vector store schema and collection
     - **RED**: Test collection creation with 528-dim vectors, cosine distance
     - **GREEN**: Implement collection creation with payload schema (trade_id, timestamp, instrument, etc.)
     - **REFACTOR**: Add idempotent collection creation (skip if exists)
     - _Requirements: FR-RAG-1_
   
-  - [ ] 6.2 Implement metadata indexing
+  - [x] 6.2 Implement metadata indexing
     - **RED**: Test creation of indexes on instrument, time_window, htf_open_bias, outcome_result
     - **GREEN**: Implement index creation for fast metadata filtering
     - **REFACTOR**: Add index validation and rebuild capability
     - _Requirements: FR-RAG-2_
   
-  - [ ]* 6.3 Write tests for collection management
+  - [x] 6.3 Write tests for collection management
     - Test collection creation, deletion, recreation
     - Test index creation and query performance
     - Test schema validation
     - _Requirements: FR-RAG-1, NFR-RAG-2_
 
-- [ ] 7. Implement setup ingestion to vector store
-  - [ ] 7.1 Create ingestion service
+- [x] 7. Implement setup ingestion to vector store
+  - [x] 7.1 Create ingestion service
     - **RED**: Test batch ingestion of enriched setups with embeddings to Qdrant
     - **GREEN**: Implement batch upsert with error handling and retry logic
     - **REFACTOR**: Add progress tracking and logging
     - _Requirements: FR-RAG-1, FR-RAG-7_
   
-  - [ ] 7.2 Implement duplicate detection
+  - [x] 7.2 Implement duplicate detection
     - **RED**: Test detection and handling of duplicate trade_ids
     - **GREEN**: Implement upsert logic (update if exists, insert if new)
     - **REFACTOR**: Add conflict resolution strategy
