@@ -118,19 +118,19 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - **REFACTOR**: Add timezone normalization
     - _Requirements: FR-RAG-2_
   
-  - [ ] 4.5 Implement multi-modal embedding combination
+  - [x] 4.5 Implement multi-modal embedding combination
     - **RED**: Test weighted concatenation of 3 embedding types to 528-dim vector
     - **GREEN**: Implement combination with weights (40% narrative, 40% structured, 20% temporal)
     - **REFACTOR**: Add embedding validation (check dimensions, NaN values)
     - _Requirements: FR-RAG-2_
   
-  - [ ]* 4.6 Write unit tests for embedding generation
+  - [x] 4.6 Write unit tests for embedding generation
     - Test each embedding type independently
     - Test edge cases (empty narrative, missing features, invalid timestamps)
     - Test embedding consistency (same input → same output)
     - _Requirements: FR-RAG-2, NFR-RAG-4_
 
-- [ ] 5. Checkpoint - Verify data preparation
+- [x] 5. Checkpoint - Verify data preparation
   - Ensure enrichment pipeline processes 10+ sample setups
   - Ensure embeddings are generated correctly (528-dim, no NaN)
   - Ensure all tests pass, ask the user if questions arise.

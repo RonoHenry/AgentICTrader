@@ -1,8 +1,8 @@
-# RAG Enhancement - Design Document
+# AlgoRAG - Design Document
 
 ## Architecture Overview
 
-The RAG system augments the existing ML pipeline with a vector-based memory system that retrieves and ranks similar historical setups.
+AlgoRAG augments the existing ML pipeline with a vector-based memory system that retrieves and ranks similar historical setups.
 
 **Full Architecture**: See `docs/RAG_ARCHITECTURE.md`  
 **System Diagrams**: See `docs/RAG_SYSTEM_DIAGRAM.md`
@@ -42,11 +42,11 @@ The RAG system augments the existing ML pipeline with a vector-based memory syst
 **Rationale**: Balances precision and recall, prioritizes high-quality examples
 
 ### 4. Integration Pattern: Augmentation Not Replacement
-**Choice**: Add RAG features to existing ML pipeline  
+**Choice**: Add AlgoRAG features to existing ML pipeline  
 **Rationale**:
 - Preserves baseline functionality
 - Allows A/B testing
-- Graceful degradation if RAG fails
+- Graceful degradation if AlgoRAG fails
 - Incremental value delivery
 
 ---
@@ -146,9 +146,9 @@ def generate_embedding(setup):
 
 **Indexes**: instrument, time_window, htf_open_bias, outcome_result
 
-### 4. RAG Service API
+### 4. AlgoRAG Service API
 
-**Service**: `services/rag-engine/main.py`  
+**Service**: `services/algorag/main.py`  
 **Framework**: FastAPI  
 **Port**: 8003
 
@@ -210,7 +210,7 @@ GET /health
 Response:
 {
   "status": "healthy",
-  "service": "rag-engine",
+  "service": "algorag",
   "vector_store": "connected",
   "setup_count": 1247
 }
@@ -314,7 +314,7 @@ Current Setup Detected
     ↓
 [Top-5 Selection]
     ↓
-[Compute RAG Metrics]
+[Compute AlgoRAG Metrics]
     ↓
 Return to Confluence Scorer + LLM
 ```
@@ -327,7 +327,7 @@ Return to Confluence Scorer + LLM
 |-----------|-----------|---------|
 | Vector Store | Qdrant | latest |
 | Embedding Model | Sentence-BERT | all-MiniLM-L6-v2 |
-| RAG Service | FastAPI | 0.115+ |
+| AlgoRAG Service | FastAPI | 0.115+ |
 | LLM | Claude API | claude-3-sonnet |
 | Client Library | qdrant-client | 1.7+ |
 | Embedding Library | sentence-transformers | 2.6+ |
@@ -342,7 +342,7 @@ Return to Confluence Scorer + LLM
 ├─────────────────────────────────────────────────────────┤
 │                                                          │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │
-│  │   Qdrant     │  │  RAG Service │  │  ML Service  │ │
+│  │   Qdrant     │  │AlgoRAG Svc   │  │  ML Service  │ │
 │  │  Port: 6333  │  │  Port: 8003  │  │  Port: 8002  │ │
 │  └──────────────┘  └──────────────┘  └──────────────┘ │
 │                                                          │
@@ -359,20 +359,20 @@ Return to Confluence Scorer + LLM
 ## Monitoring & Observability
 
 ### Metrics to Track
-- Retrieval latency (p50, p95, p99)
+- AlgoRAG retrieval latency (p50, p95, p99)
 - Retrieval accuracy (similarity → outcome correlation)
-- RAG feature impact on confidence scores
+- AlgoRAG feature impact on confidence scores
 - User engagement with similar setups panel
 - Vector store size and query performance
 
 ### Logging
-- All retrieval requests with query parameters
+- All AlgoRAG retrieval requests with query parameters
 - Retrieved setup IDs and similarity scores
-- RAG metrics computed
+- AlgoRAG metrics computed
 - Errors and fallbacks
 
 ### Alerting
-- Retrieval latency > 200ms
+- AlgoRAG retrieval latency > 200ms
 - Vector store connection failures
 - Embedding generation failures
 - Low similarity scores (< 0.5) for all results
