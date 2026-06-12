@@ -46,6 +46,7 @@ from ml.features.htf_projections import HTFProjectionExtractor
 from ml.features.candle_features import CandleFeatureExtractor
 from ml.features.zone_features import ZoneFeatureExtractor
 from ml.features.session_features import TimeWindowClassifier
+from ml.features.ote_extractor import OTEExtractor
 
 
 class DataQualityError(Exception):
@@ -113,6 +114,7 @@ class FeaturePipeline:
         self.candle_extractor = CandleFeatureExtractor()
         self.zone_extractor = ZoneFeatureExtractor()
         self.session_classifier = TimeWindowClassifier()
+        self.ote_extractor = OTEExtractor()
         self.enable_validation = enable_validation
     
     def fit(self, **kwargs):
@@ -141,6 +143,7 @@ class FeaturePipeline:
         true_day_open: Optional[float] = None,
         sentiment_score: float = 0.0,
         blackout_active: bool = False,
+        direction: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         Transform candle data into a flat feature vector.
@@ -160,6 +163,8 @@ class FeaturePipeline:
             blackout_active: Whether a HIGH-impact economic event is within ±15 min.
                             Sourced from Redis key ``blackout:{instrument}`` (TTL 120s).
                             Defaults to False when not provided.
+            direction: Trade direction — "LONG" or "SHORT". If None, derived
+                       automatically from htf_open_bias (BULLISH → LONG, BEARISH → SHORT).
             
         Returns:
             pandas DataFrame with one row and named feature columns
@@ -238,6 +243,31 @@ class FeaturePipeline:
         feature_dict["sentiment_score"] = float(sentiment_score)
         feature_dict["blackout_active"] = bool(blackout_active)
         
+        # Add OTE (Optimal Trade Entry) Fibonacci features
+        # Derive direction from htf_open_bias if not explicitly provided
+        ote_direction = direction
+        if ote_direction is None:
+            bias = feature_dict.get("htf_open_bias", "NEUTRAL")
+            ote_direction = "LONG" if bias == "BULLISH" else "SHORT" if bias == "BEARISH" else "LONG"
+        
+        swing_high = zone_features.swing_high_distance + current_price
+        swing_low = current_price - zone_features.swing_low_distance
+        
+        ote_features = self.ote_extractor.extract(
+            swing_high=swing_high,
+            swing_low=swing_low,
+            current_price=current_price,
+            direction=ote_direction,
+        )
+        feature_dict.update({
+            "ote_in_zone": ote_features.ote_in_zone,
+            "ote_level_705": ote_features.ote_level_705,
+            "ote_level_62": ote_features.ote_level_62,
+            "ote_level_79": ote_features.ote_level_79,
+            "ote_distance_pct": ote_features.ote_distance_pct,
+            "ote_valid": ote_features.ote_valid,
+        })
+        
         # Convert to DataFrame (single row)
         df = pd.DataFrame([feature_dict])
         
@@ -258,6 +288,7 @@ class FeaturePipeline:
         true_day_open: Optional[float] = None,
         sentiment_score: float = 0.0,
         blackout_active: bool = False,
+        direction: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         Fit and transform in one step (equivalent to transform for stateless pipeline).
@@ -289,6 +320,7 @@ class FeaturePipeline:
             true_day_open=true_day_open,
             sentiment_score=sentiment_score,
             blackout_active=blackout_active,
+            direction=direction,
         )
     
     def get_feature_names(self) -> List[str]:
