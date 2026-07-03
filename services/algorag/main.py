@@ -27,6 +27,8 @@ from services.algorag.models import (
     SimilarSetup,
 )
 from services.algorag.qdrant_client import QdrantClientWrapper
+from services.algorag.reranking import ReRankingConfig
+from services.algorag.diversity import apply_diversity_filter
 
 logging.basicConfig(level=settings.service.log_level)
 logger = logging.getLogger(__name__)
@@ -36,6 +38,18 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _qdrant_client: QdrantClientWrapper | None = None
+
+# Default re-ranking configuration (can be made configurable via env vars)
+_reranking_config = ReRankingConfig(
+    outcome_weight=0.5,
+    recency_weight=0.3,
+    confluence_weight=0.2,
+    recency_half_life_days=90.0,
+    max_r_multiple=10.0,
+)
+
+# Default diversity configuration (can be made configurable via env vars)
+_diversity_max_per_day = 3
 
 
 def get_qdrant() -> QdrantClientWrapper:
@@ -181,7 +195,8 @@ async def retrieve_similar_setups(request: RetrievalRequest) -> RetrievalRespons
       2. Apply metadata filters (instrument, time window, HTF bias, outcome)
       3. Run cosine similarity search against Qdrant
       4. Re-rank results (outcome quality + recency + confluence overlap)
-      5. Compute aggregate RAG metrics
+      5. Apply diversity filtering (max 3 setups per day)
+      6. Compute aggregate RAG metrics
     """
     t0 = time.perf_counter()
     wrapper = get_qdrant()
@@ -253,20 +268,26 @@ async def retrieve_similar_setups(request: RetrievalRequest) -> RetrievalRespons
                 outcome_r_multiple=p.get("outcome_r_multiple", 0.0),
                 narrative=p.get("narrative", ""),
                 similarity_score=hit.score,
-                final_score=hit.score,  # TODO (Task 10.4): apply re-ranking
+                final_score=hit.score,  # Will be updated by re-ranking
                 full_setup=p.get("full_setup"),
             )
         )
 
-    # Diversity filter: max 3 setups from same calendar day
-    seen_dates: dict[str, int] = {}
-    diverse: list[SimilarSetup] = []
-    for s in similar:
-        day = str(s.timestamp.date())
-        if seen_dates.get(day, 0) < 3:
-            diverse.append(s)
-            seen_dates[day] = seen_dates.get(day, 0) + 1
+    # Apply re-ranking algorithm (Task 10.4)
+    from services.algorag.reranking import rerank_setups
+    
+    current_confluence_count = len(request.confluence_factors or [])
+    reranked = rerank_setups(
+        setups=similar,
+        current_confluence_count=current_confluence_count,
+        current_timestamp=request.timestamp,
+        config=_reranking_config,  # Use configurable re-ranking weights
+    )
 
+    # Apply diversity filtering (max 3 setups from same calendar day)
+    diverse = apply_diversity_filter(reranked, max_per_day=_diversity_max_per_day)
+
+    # Compute RAG metrics from final results
     rag_metrics = _build_rag_metrics(diverse)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
