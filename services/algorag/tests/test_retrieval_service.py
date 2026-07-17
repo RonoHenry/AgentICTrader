@@ -235,3 +235,47 @@ class TestReRankingAlgorithm:
 
         # Verify: all 5 setups preserved (all from different days)
         assert len(filtered) == 5
+
+    def test_diversity_filtering_configurable_threshold(self):
+        """REFACTOR: Test configurable diversity threshold parameter."""
+        # Setup: 5 setups from the same day
+        same_day = datetime(2024, 3, 15, tzinfo=timezone.utc)
+        setups = []
+        for i in range(5):
+            setups.append(
+                SimilarSetup(
+                    trade_id=f"TRD-{i:03d}",
+                    timestamp=same_day.replace(hour=9 + i),  # Different hours, same day
+                    instrument="EURUSD",
+                    time_window="LONDON_KILLZONE",
+                    htf_open_bias="BULLISH",
+                    confluence_count=3,
+                    outcome_result="WIN",
+                    outcome_r_multiple=2.0 + i * 0.5,  # Different R-multiples
+                    narrative=f"Setup {i}",
+                    similarity_score=0.9 - i * 0.1,  # Decreasing similarity
+                    final_score=0.9 - i * 0.1,
+                )
+            )
+
+        from services.algorag.diversity import apply_diversity_filter
+
+        # Test with different thresholds
+        # Threshold = 1: Only 1 setup per day
+        filtered_1 = apply_diversity_filter(setups, max_per_day=1)
+        assert len(filtered_1) == 1
+        assert filtered_1[0].trade_id == "TRD-000"  # Highest score
+
+        # Threshold = 2: Only 2 setups per day  
+        filtered_2 = apply_diversity_filter(setups, max_per_day=2)
+        assert len(filtered_2) == 2
+        assert filtered_2[0].trade_id == "TRD-000"
+        assert filtered_2[1].trade_id == "TRD-001"
+
+        # Threshold = 5: All 5 setups (threshold >= total)
+        filtered_5 = apply_diversity_filter(setups, max_per_day=5)
+        assert len(filtered_5) == 5
+
+        # Threshold = 0: No setups (edge case)
+        filtered_0 = apply_diversity_filter(setups, max_per_day=0)
+        assert len(filtered_0) == 0

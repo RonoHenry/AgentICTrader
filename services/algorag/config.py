@@ -22,6 +22,8 @@ class ServiceConfig:
     port: int = field(default_factory=lambda: int(os.getenv("SERVICE_PORT", "8003")))
     version: str = field(default_factory=lambda: os.getenv("SERVICE_VERSION", "0.1.0"))
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
+    retrieval_timeout: float = field(default_factory=lambda: float(os.getenv("RETRIEVAL_TIMEOUT", "10.0")))  # 10 second timeout for retrieval operations
+    diversity_max_per_day: int = field(default_factory=lambda: int(os.getenv("DIVERSITY_MAX_PER_DAY", "3")))  # max setups per calendar day
 
 
 @dataclass

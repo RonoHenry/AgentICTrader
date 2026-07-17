@@ -66,6 +66,8 @@ class RetrievalRequest(BaseModel):
     @field_validator("instrument")
     @classmethod
     def instrument_uppercase(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("instrument cannot be empty")
         return v.upper()
 
 

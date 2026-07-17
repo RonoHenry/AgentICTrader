@@ -1,5 +1,280 @@
 # AlgoRAG - Design Document
 
+## Overview
+
+AlgoRAG enhances the AgentICTrader ML pipeline with a vector-based memory system that retrieves
+and re-ranks similar historical trading setups. When a new setup is detected, AlgoRAG finds the
+top-5 most structurally similar past setups from Qdrant, computes outcome statistics from those
+analogues, and injects four additional features into the Confluence Scorer v2 — improving
+prediction accuracy and providing LLM reasoning with concrete historical precedent.
+
+The system is **additive, not a replacement**: every component degrades gracefully when AlgoRAG
+is unavailable, ensuring the trading loop is never blocked by RAG failures.
+
+---
+
+## Architecture
+
+```
+EnrichedSetup ──► EmbeddingGenerator ──► Qdrant (port 6333)
+                                               │
+CurrentSetup ──► QueryEmbedding ──► Filter ──► Search ──► Re-rank ──► RAGMetrics
+                                                                           │
+                                                Confluence Scorer v2 ◄─────┘
+                                                LLM Reasoning ◄────────────┘
+```
+
+**Key architectural decisions:**
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Vector store | Qdrant (self-hosted) | Native filter+search, Rust performance, Docker-friendly |
+| Embedding | 528-dim multi-modal | Combines semantic (384), structural (128), temporal (16) |
+| Retrieval | Filter → Search → Re-rank | Balances precision/recall, prioritises quality examples |
+| Integration | Augmentation pattern | Preserves baseline, enables A/B testing, graceful degradation |
+
+---
+
+## Components and Interfaces
+
+### 1. Data Preparation Pipeline
+
+**Script**: `scripts/rag/prepare_historical_setups.py`  
+**Input**: MongoDB `trade_journal`  
+**Output**: `data/enriched_setups.json`
+
+```python
+class SetupEnricher:
+    def enrich(self, trade: dict, candles: list) -> EnrichedSetup: ...
+
+class NarrativeGenerator:
+    def generate(self, setup: EnrichedSetup) -> str: ...
+```
+
+### 2. Embedding Generator
+
+**Module**: `scripts/rag/utils/` (NarrativeEmbedder, StructuredFeatureEmbedder, TemporalEncoder)
+
+```python
+class MultiModalEmbedder:
+    def embed(self, setup: EnrichedSetup) -> np.ndarray:
+        """Returns 528-dim combined vector."""
+        narrative_emb = self.narrative_embedder.embed(setup.narrative)   # 384-dim
+        structured_emb = self.structured_embedder.embed(setup)           # 128-dim
+        temporal_emb = self.temporal_encoder.encode(setup.timestamp)     # 16-dim
+        return np.concatenate([
+            narrative_emb * 0.4,
+            structured_emb * 0.4,
+            temporal_emb * 0.2,
+        ])  # → 528-dim
+```
+
+### 3. AlgoRAG Service
+
+**Service**: `services/algorag/main.py` (FastAPI, port 8003)
+
+```python
+# POST /rag/retrieve
+class RetrievalRequest(BaseModel):
+    instrument: str
+    timestamp: datetime
+    time_window: str
+    htf_open_bias: str
+    narrative: str
+    htf_structure: dict
+    pd_arrays: dict
+    confluence_factors: list[str]
+
+class RetrievalResponse(BaseModel):
+    similar_setups: list[SimilarSetup]
+    rag_metrics: RAGMetrics
+    query_time_ms: float
+
+# POST /rag/ingest
+class IngestionRequest(BaseModel):
+    setup: dict
+    embedding: list[float]  # 528-dim
+
+# GET /health
+class HealthResponse(BaseModel):
+    status: str
+    vector_store: str
+    setup_count: int
+```
+
+### 4. Qdrant Client Wrapper
+
+**Module**: `services/algorag/qdrant_client.py`
+
+```python
+class QdrantClientWrapper:
+    def search(self, query_vector, filters, top_k=10) -> list[ScoredPoint]: ...
+    def upsert(self, point_id, vector, payload) -> None: ...
+    def count(self) -> int: ...
+```
+
+### 5. Re-ranking Module
+
+Re-ranking score combines three signals:
+
+```
+final_score = 0.5 * outcome_quality
+            + 0.3 * recency_score      # exponential decay, 90-day half-life
+            + 0.2 * confluence_overlap
+```
+
+### 6. Confluence Scorer v2 Integration
+
+RAG injects 4 new features into the feature vector:
+
+```python
+rag_features = [
+    avg_r_multiple_similar,
+    win_rate_similar,
+    sample_size / 100.0,   # normalised
+    max_similarity_score,
+]
+combined = np.concatenate([original_features, rag_features])
+```
+
+---
+
+## Data Models
+
+### EnrichedSetup
+
+```python
+@dataclass
+class EnrichedSetup:
+    trade_id: str
+    timestamp: datetime
+    instrument: str                  # EURUSD, XAUUSD, etc.
+    direction: str                   # LONG | SHORT
+    entry_price: float
+    exit_price: float
+    stop_loss: float
+    take_profit: float
+    r_multiple: float
+    outcome_result: str              # WIN | LOSS | BREAKEVEN
+
+    # HTF context
+    htf_timeframe: str
+    htf_open: float
+    htf_high: float
+    htf_low: float
+    htf_open_bias: str               # BULLISH | BEARISH | NEUTRAL
+    htf_high_proximity_pct: float
+    htf_low_proximity_pct: float
+    htf_body_pct: float
+    htf_close_position: float
+
+    # PD Array flags
+    bos_detected: bool
+    choch_detected: bool
+    fvg_present: bool
+    liquidity_sweep: bool
+    swing_high_distance: float
+    swing_low_distance: float
+
+    # Session context
+    time_window: str
+    time_window_weight: float
+    is_killzone: bool
+
+    # Narrative
+    narrative: str
+    confluence_count: int
+    full_setup: dict
+```
+
+### RAGMetrics
+
+```python
+class RAGMetrics(BaseModel):
+    avg_r_multiple_similar: float
+    win_rate_similar: float         # [0.0, 1.0]
+    sample_size: int                # min 3 for statistical validity
+    max_similarity_score: float     # [0.0, 1.0]
+    avg_confluence_count: float
+```
+
+### Qdrant Payload Schema
+
+```json
+{
+  "trade_id": "TRD-001",
+  "timestamp": "2024-03-15T09:15:00Z",
+  "instrument": "EURUSD",
+  "time_window": "LONDON_KILLZONE",
+  "htf_open_bias": "BULLISH",
+  "confluence_count": 5,
+  "outcome_result": "WIN",
+  "outcome_r_multiple": 4.2,
+  "narrative": "Price swept Asian low...",
+  "full_setup": {}
+}
+```
+
+**Indexed fields** (metadata filter): `instrument`, `time_window`, `htf_open_bias`, `outcome_result`
+
+---
+
+## Correctness Properties
+
+1. **Embedding determinism** — identical `EnrichedSetup` inputs always produce the same 528-dim vector.
+2. **Embedding dimension invariant** — output is always exactly 528 dimensions; no NaN values.
+3. **RAGMetrics bounds** — `win_rate_similar ∈ [0.0, 1.0]`, `max_similarity_score ∈ [0.0, 1.0]`.
+4. **Graceful degradation** — any exception in the RAG path returns neutral fallback values `[0.0, 0.0, 0.0, 0.0]`; the trading loop is never blocked.
+5. **Retrieval ordering** — `similar_setups` are always ordered by `final_score` descending.
+6. **Sample size gate** — `RAGMetrics` is only considered statistically valid when `sample_size >= 3`.
+
+---
+
+## Error Handling
+
+All callers of the RAG service must wrap calls in a try/except and fall back to neutral values:
+
+```python
+try:
+    rag_response = await rag_client.retrieve(setup)
+    rag_features = extract_rag_features(rag_response)
+except Exception:
+    rag_features = [0.0, 0.0, 0.0, 0.0]  # neutral fallback
+```
+
+**Failure modes and responses:**
+
+| Failure | Behaviour |
+|---|---|
+| Qdrant unreachable | Return neutral fallback; log WARNING; do not raise |
+| Embedding model failure | Return neutral fallback; log ERROR |
+| Empty result set | Return `sample_size=0`; skip RAG features in scorer |
+| Ingestion failure | Log ERROR; do not block trade close flow |
+| Latency > 200ms | Log WARNING; continue with cached or neutral fallback |
+
+---
+
+## Testing Strategy
+
+### Unit tests (no Docker required)
+- Embedding dimension invariants — `output.shape == (528,)`, no NaN
+- Temporal encoding correctness — sin/cos values for known timestamps
+- Re-ranking score formula — known inputs produce expected final_score
+- Graceful degradation — exception in RAG client returns neutral `[0.0, 0.0, 0.0, 0.0]`
+- `RAGMetrics` field bounds — `win_rate` clamped to `[0.0, 1.0]`
+
+### Integration tests (`@pytest.mark.integration`, requires Docker)
+- End-to-end ingest → retrieve round trip against real Qdrant
+- Metadata filtering correctness — only WIN setups returned when filter applied
+- Retrieval latency — p50 < 50ms, p95 < 100ms
+
+### Property-based tests (`@pytest.mark.property`, hypothesis)
+- Any `EnrichedSetup` always produces a 528-dim embedding with no NaN
+- Re-ranking score always in `[0.0, 1.0]` for any valid inputs
+- `update_fvg_history` idempotence — same candles, same output
+
+---
+
 ## Architecture Overview
 
 AlgoRAG augments the existing ML pipeline with a vector-based memory system that retrieves and ranks similar historical setups.
