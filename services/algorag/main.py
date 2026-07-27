@@ -27,6 +27,9 @@ from services.algorag.models import (
     SimilarSetup,
 )
 from services.algorag.qdrant_client import QdrantClientWrapper
+from services.algorag.reranking import ReRankingConfig
+from services.algorag.diversity import apply_diversity_filter
+from services.algorag.embedding_generation import generate_query_embedding
 
 logging.basicConfig(level=settings.service.log_level)
 logger = logging.getLogger(__name__)
@@ -36,6 +39,15 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _qdrant_client: QdrantClientWrapper | None = None
+
+# Default re-ranking configuration (can be made configurable via env vars)
+_reranking_config = ReRankingConfig(
+    outcome_weight=0.5,
+    recency_weight=0.3,
+    confluence_weight=0.2,
+    recency_half_life_days=90.0,
+    max_r_multiple=10.0,
+)
 
 
 def get_qdrant() -> QdrantClientWrapper:
@@ -177,61 +189,61 @@ async def retrieve_similar_setups(request: RetrievalRequest) -> RetrievalRespons
     Retrieve historically similar trading setups using vector search.
 
     Steps:
-      1. Build query embedding from the request (stub – real embedding in Task 4)
+      1. Generate query embedding from the request 
       2. Apply metadata filters (instrument, time window, HTF bias, outcome)
       3. Run cosine similarity search against Qdrant
       4. Re-rank results (outcome quality + recency + confluence overlap)
-      5. Compute aggregate RAG metrics
+      5. Apply diversity filtering (max 3 setups per day)
+      6. Compute aggregate RAG metrics
     """
     t0 = time.perf_counter()
     wrapper = get_qdrant()
-
-    # TODO (Task 4): replace stub with real multi-modal embedding generation
-    import numpy as np  # lazy import – not required at module level
-
-    query_vector = np.zeros(528, dtype=float).tolist()
-
-    # Build Qdrant filter
-    from qdrant_client.http import models as qmodels
-
-    must_conditions = [
-        qmodels.FieldCondition(
-            key="instrument",
-            match=qmodels.MatchValue(value=request.instrument),
-        )
-    ]
-    if request.time_window:
-        must_conditions.append(
-            qmodels.FieldCondition(
-                key="time_window",
-                match=qmodels.MatchValue(value=request.time_window),
-            )
-        )
-    if request.htf_open_bias:
-        must_conditions.append(
-            qmodels.FieldCondition(
-                key="htf_open_bias",
-                match=qmodels.MatchValue(value=request.htf_open_bias),
-            )
-        )
-    if request.outcome_filter:
-        must_conditions.append(
-            qmodels.FieldCondition(
-                key="outcome_result",
-                match=qmodels.MatchValue(value=request.outcome_filter),
-            )
-        )
-
-    qdrant_filter = qmodels.Filter(must=must_conditions)
-
+    
     try:
-        hits = await wrapper.search(
-            query_vector=query_vector,
-            query_filter=qdrant_filter,
-            limit=request.top_k,
-        )
+        # Generate query embedding from request (Task 10.3)
+        query_vector = generate_query_embedding(request)
+        
+        # Build Qdrant filter using the new filtering module
+        from services.algorag.filtering import build_qdrant_filter
+        qdrant_filter = build_qdrant_filter(request)
+        
+        # Execute vector search with timeout
+        import asyncio
+        
+        async def search_with_timeout():
+            return await wrapper.search(
+                query_vector=query_vector,
+                query_filter=qdrant_filter,
+                limit=request.top_k,
+            )
+        
+        # Apply retrieval timeout (REFACTOR: configurable timeout)
+        try:
+            hits = await asyncio.wait_for(
+                search_with_timeout(), 
+                timeout=settings.service.retrieval_timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Qdrant search timeout after %.1fs for instrument=%s", 
+                settings.service.retrieval_timeout, 
+                request.instrument
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Vector search timeout - please try again",
+            )
+            
+    except HTTPException:
+        # Re-raise HTTPExceptions (these are intended for the client)
+        raise
     except Exception as exc:
-        logger.error("Qdrant search failed: %s", exc)
+        logger.error(
+            "Vector search failed for instrument=%s, error=%s", 
+            request.instrument, 
+            exc, 
+            exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Vector store unavailable",
@@ -240,34 +252,71 @@ async def retrieve_similar_setups(request: RetrievalRequest) -> RetrievalRespons
     # Map hits → SimilarSetup objects
     similar: list[SimilarSetup] = []
     for hit in hits:
-        p = hit.payload or {}
-        similar.append(
-            SimilarSetup(
-                trade_id=p.get("trade_id", ""),
-                timestamp=p.get("timestamp"),
-                instrument=p.get("instrument", request.instrument),
-                time_window=p.get("time_window", ""),
-                htf_open_bias=p.get("htf_open_bias", ""),
-                confluence_count=p.get("confluence_count", 0),
-                outcome_result=p.get("outcome_result", ""),
-                outcome_r_multiple=p.get("outcome_r_multiple", 0.0),
-                narrative=p.get("narrative", ""),
-                similarity_score=hit.score,
-                final_score=hit.score,  # TODO (Task 10.4): apply re-ranking
-                full_setup=p.get("full_setup"),
+        try:
+            p = hit.payload or {}
+            similar.append(
+                SimilarSetup(
+                    trade_id=p.get("trade_id", ""),
+                    timestamp=p.get("timestamp"),
+                    instrument=p.get("instrument", request.instrument),
+                    time_window=p.get("time_window", ""),
+                    htf_open_bias=p.get("htf_open_bias", ""),
+                    confluence_count=p.get("confluence_count", 0),
+                    outcome_result=p.get("outcome_result", ""),
+                    outcome_r_multiple=p.get("outcome_r_multiple", 0.0),
+                    narrative=p.get("narrative", ""),
+                    similarity_score=hit.score,
+                    final_score=hit.score,  # Will be updated by re-ranking
+                    full_setup=p.get("full_setup"),
+                )
             )
+        except Exception as exc:
+            logger.warning(
+                "Failed to parse search hit %s: %s", 
+                getattr(hit, 'id', 'unknown'),
+                exc
+            )
+            # Skip malformed hits but continue processing others
+            continue
+
+    # Apply re-ranking algorithm (Task 10.4)
+    try:
+        from services.algorag.reranking import rerank_setups
+        
+        current_confluence_count = len(request.confluence_factors or [])
+        reranked = rerank_setups(
+            setups=similar,
+            current_confluence_count=current_confluence_count,
+            current_timestamp=request.timestamp,
+            config=_reranking_config,  # Use configurable re-ranking weights
         )
+    except Exception as exc:
+        logger.warning("Re-ranking failed, using similarity order: %s", exc)
+        # Fallback: sort by similarity score if re-ranking fails
+        reranked = sorted(similar, key=lambda s: s.similarity_score, reverse=True)
 
-    # Diversity filter: max 3 setups from same calendar day
-    seen_dates: dict[str, int] = {}
-    diverse: list[SimilarSetup] = []
-    for s in similar:
-        day = str(s.timestamp.date())
-        if seen_dates.get(day, 0) < 3:
-            diverse.append(s)
-            seen_dates[day] = seen_dates.get(day, 0) + 1
+    # Apply diversity filtering (max N setups from same calendar day, configurable)
+    try:
+        diverse = apply_diversity_filter(reranked, max_per_day=settings.service.diversity_max_per_day)
+    except Exception as exc:
+        logger.warning("Diversity filtering failed, using re-ranked results: %s", exc)
+        # Fallback: use reranked results if diversity filtering fails
+        diverse = reranked
 
-    rag_metrics = _build_rag_metrics(diverse)
+    # Compute RAG metrics from final results
+    try:
+        rag_metrics = _build_rag_metrics(diverse)
+    except Exception as exc:
+        logger.warning("RAG metrics computation failed, using defaults: %s", exc)
+        # Fallback: return empty metrics if computation fails
+        rag_metrics = RAGMetrics(
+            avg_r_multiple_similar=0.0,
+            win_rate_similar=0.0,
+            sample_size=0,
+            max_similarity_score=0.0,
+            avg_confluence_count=0.0,
+        )
+    
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
     return RetrievalResponse(
@@ -289,6 +338,22 @@ async def ingest_setup(request: IngestionRequest) -> IngestionResponse:
 
     Performs an upsert so duplicate trade_ids are updated rather than
     duplicated in the vector store.
+
+    ## Security & Rate Limiting (REFACTOR Phase)
+    
+    In production deployments:
+    - **Authentication**: JWT-based authentication should be enforced at the
+      API gateway level (e.g., Kong, Traefik, AWS API Gateway) or via FastAPI
+      Depends(get_current_user) middleware from services/auth/main.py
+    - **Rate Limiting**: 100 req/min per user should be enforced at the API
+      gateway level using tools like Kong rate-limit plugin, Redis-based
+      rate limiters, or slowapi middleware
+    - **Network Security**: This service should only be accessible from the
+      internal network, not exposed directly to the public internet
+    
+    For development/testing, the endpoint is open to facilitate integration
+    testing and rapid iteration. The auth service (services/auth/main.py)
+    provides JWT authentication that can be integrated when needed.
     """
     wrapper = get_qdrant()
     setup = request.setup
@@ -302,7 +367,7 @@ async def ingest_setup(request: IngestionRequest) -> IngestionResponse:
         payload={
             "trade_id": trade_id,
             "timestamp": setup.get("timestamp"),
-            "instrument": setup.get("instrument", ""),
+            "instrument": str(setup.get("instrument", "")).upper(),
             "time_window": setup.get("time_window", ""),
             "htf_open_bias": setup.get("htf_open_bias", ""),
             "confluence_count": setup.get("confluence_count", 0),
