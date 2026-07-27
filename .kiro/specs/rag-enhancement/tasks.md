@@ -221,20 +221,20 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - **REFACTOR**: Make weights configurable (outcome: 0.5, recency: 0.3, confluence: 0.2)
     - _Requirements: FR-RAG-3_
   
-  - [-] 10.5 Implement diversity filtering
+  - [x] 10.5 Implement diversity filtering
     - **RED**: Test limiting results to max 3 setups from same day
     - **GREEN**: Implement date-based deduplication in top-10 results
     - **REFACTOR**: Add configurable diversity threshold
     - _Requirements: NFR-RAG-4_
   
-  - [ ]* 10.6 Write unit tests for retrieval logic
+  - [x] 10.6 Write unit tests for retrieval logic
     - Test metadata filtering with various combinations
     - Test re-ranking algorithm with mock data
     - Test diversity filtering edge cases
     - _Requirements: FR-RAG-2, FR-RAG-3, NFR-RAG-4_
 
-- [ ] 11. Implement RAG metrics computation
-  - [~] 11.1 Compute aggregate metrics from retrieved setups
+- [x] 11. Implement RAG metrics computation
+  - [x] 11.1 Compute aggregate metrics from retrieved setups
     - **RED**: Test computation of avg_r_multiple, win_rate, sample_size, max_similarity
     - **GREEN**: Implement metrics calculation from top-5 results
     - **REFACTOR**: Add statistical validation (min sample size = 3)
@@ -246,8 +246,8 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - Test numerical stability (division by zero, NaN handling)
     - _Requirements: FR-RAG-4_
 
-- [ ] 12. Implement ingestion endpoint
-  - [~] 12.1 Create ingestion endpoint
+- [x] 12. Implement ingestion endpoint
+  - [x] 12.1 Create ingestion endpoint
     - **RED**: Test POST /rag/ingest accepts setup + embedding and stores in Qdrant
     - **GREEN**: Implement async ingestion with validation
     - **REFACTOR**: Add rate limiting and authentication

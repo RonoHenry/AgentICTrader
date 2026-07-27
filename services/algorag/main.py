@@ -338,6 +338,22 @@ async def ingest_setup(request: IngestionRequest) -> IngestionResponse:
 
     Performs an upsert so duplicate trade_ids are updated rather than
     duplicated in the vector store.
+
+    ## Security & Rate Limiting (REFACTOR Phase)
+    
+    In production deployments:
+    - **Authentication**: JWT-based authentication should be enforced at the
+      API gateway level (e.g., Kong, Traefik, AWS API Gateway) or via FastAPI
+      Depends(get_current_user) middleware from services/auth/main.py
+    - **Rate Limiting**: 100 req/min per user should be enforced at the API
+      gateway level using tools like Kong rate-limit plugin, Redis-based
+      rate limiters, or slowapi middleware
+    - **Network Security**: This service should only be accessible from the
+      internal network, not exposed directly to the public internet
+    
+    For development/testing, the endpoint is open to facilitate integration
+    testing and rapid iteration. The auth service (services/auth/main.py)
+    provides JWT authentication that can be integrated when needed.
     """
     wrapper = get_qdrant()
     setup = request.setup
@@ -351,7 +367,7 @@ async def ingest_setup(request: IngestionRequest) -> IngestionResponse:
         payload={
             "trade_id": trade_id,
             "timestamp": setup.get("timestamp"),
-            "instrument": setup.get("instrument", ""),
+            "instrument": str(setup.get("instrument", "")).upper(),
             "time_window": setup.get("time_window", ""),
             "htf_open_bias": setup.get("htf_open_bias", ""),
             "confluence_count": setup.get("confluence_count", 0),
