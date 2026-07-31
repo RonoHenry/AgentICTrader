@@ -260,19 +260,19 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - _Requirements: FR-RAG-7_
 
 - [ ] 13. Implement performance monitoring
-  - [~] 13.1 Add latency tracking
+  - [x] 13.1 Add latency tracking
     - **RED**: Test query_time_ms is accurately measured and returned
     - **GREEN**: Implement timing decorator for retrieval endpoint
     - **REFACTOR**: Add Prometheus histogram metrics
     - _Requirements: NFR-RAG-1_
   
-  - [~] 13.2 Add error logging
+  - [ ] 13.2 Add error logging
     - **RED**: Test all errors are logged with context (request params, stack trace)
     - **GREEN**: Implement structured logging with correlation IDs
     - **REFACTOR**: Add log aggregation to centralized system
     - _Requirements: NFR-RAG-3_
 
-- [~] 14. Checkpoint - Verify RAG service
+- [ ] 14. Checkpoint - Verify RAG service
   - Ensure retrieval endpoint returns results < 100ms
   - Ensure RAG metrics are computed correctly
   - Ensure all tests pass, ask the user if questions arise.
@@ -280,7 +280,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
 ### Phase 5: ML Pipeline Integration
 
 - [ ] 15. Implement AlgoRAG client library
-  - [~] 15.1 Create AlgoRAG client for ML services
+  - [ ] 15.1 Create AlgoRAG client for ML services
     - Create `ml/algorag/client.py` with async HTTP client
     - Implement retrieve() method with retry logic
     - Implement connection pooling and timeout handling
@@ -294,13 +294,13 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - _Requirements: FR-RAG-5, NFR-RAG-3_
 
 - [ ] 16. Augment Confluence Scorer with RAG features
-  - [~] 16.1 Modify feature extraction to include RAG metrics
+  - [ ] 16.1 Modify feature extraction to include RAG metrics
     - **RED**: Test feature vector includes 4 new RAG features (avg_r_multiple, win_rate, sample_size, max_similarity)
     - **GREEN**: Modify `ml/models/confluence_scorer/features.py` to call RAG client and append metrics
     - **REFACTOR**: Add feature normalization and missing value handling
     - _Requirements: FR-RAG-5_
   
-  - [~] 16.2 Retrain Confluence Scorer with RAG features
+  - [ ] 16.2 Retrain Confluence Scorer with RAG features
     - **RED**: Test training script accepts RAG-augmented feature vectors
     - **GREEN**: Modify `ml/models/confluence_scorer/train_with_rag.py` to include RAG features
     - **REFACTOR**: Add feature importance analysis for RAG features
@@ -313,13 +313,13 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - _Requirements: FR-RAG-5, NFR-RAG-3_
 
 - [ ] 17. Implement A/B testing framework
-  - [~] 17.1 Create model versioning system
+  - [ ] 17.1 Create model versioning system
     - **RED**: Test loading of confluence-scorer-v1 (baseline) and confluence-scorer-v2-rag
     - **GREEN**: Implement model registry with version selection
     - **REFACTOR**: Add feature flags for A/B test control
     - _Requirements: FR-RAG-5_
   
-  - [~] 17.2 Implement traffic splitting
+  - [ ] 17.2 Implement traffic splitting
     - **RED**: Test 50/50 traffic split between v1 and v2 models
     - **GREEN**: Implement random assignment with sticky sessions
     - **REFACTOR**: Add configurable split ratios
@@ -331,7 +331,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - Test metrics collection per variant
     - _Requirements: FR-RAG-5_
 
-- [~] 18. Checkpoint - Verify ML integration
+- [ ] 18. Checkpoint - Verify ML integration
   - Ensure Confluence Scorer v2 trains successfully
   - Ensure A/B test framework works
   - Ensure all tests pass, ask the user if questions arise.
@@ -339,13 +339,13 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
 ### Phase 6: LLM Integration
 
 - [ ] 19. Implement RAG-grounded LLM reasoning
-  - [~] 19.1 Create LLM prompt templates with RAG context
+  - [ ] 19.1 Create LLM prompt templates with RAG context
     - Create `services/nlp/prompts/rag_reasoning.py`
     - Define prompt template with similar setups section
     - Add formatting utilities for historical examples
     - _Requirements: FR-RAG-6_
   
-  - [~] 19.2 Modify LLM reasoning to include RAG retrieval
+  - [ ] 19.2 Modify LLM reasoning to include RAG retrieval
     - **RED**: Test generate_trade_reasoning_with_rag() calls RAG client and includes examples in prompt
     - **GREEN**: Modify `services/nlp/llm_service.py` to retrieve similar setups and format for LLM
     - **REFACTOR**: Add fallback to template-based reasoning if RAG fails
@@ -357,7 +357,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - Test prompt formatting with 0, 1, 3, 5 examples
     - _Requirements: FR-RAG-6, NFR-RAG-3_
 
-- [~] 20. Checkpoint - Verify LLM integration
+- [ ] 20. Checkpoint - Verify LLM integration
   - Ensure LLM reasoning cites historical examples
   - Ensure fallback works when RAG unavailable
   - Ensure all tests pass, ask the user if questions arise.
@@ -365,13 +365,13 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
 ### Phase 7: Real-Time Ingestion
 
 - [ ] 21. Implement real-time setup ingestion
-  - [~] 21.1 Create trade close event handler
+  - [ ] 21.1 Create trade close event handler
     - **RED**: Test event handler triggers on trade close and starts enrichment pipeline
     - **GREEN**: Implement async event handler in trade execution service
     - **REFACTOR**: Add event queue for decoupling
     - _Requirements: FR-RAG-7_
   
-  - [~] 21.2 Implement async enrichment and ingestion
+  - [ ] 21.2 Implement async enrichment and ingestion
     - **RED**: Test enrichment + embedding + ingestion completes within 60 seconds
     - **GREEN**: Implement async pipeline with parallel processing
     - **REFACTOR**: Add progress tracking and error notifications
@@ -383,7 +383,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - Test performance under load (10 concurrent trades)
     - _Requirements: FR-RAG-7, NFR-RAG-1_
 
-- [~] 22. Checkpoint - Verify real-time ingestion
+- [ ] 22. Checkpoint - Verify real-time ingestion
   - Ensure new setups appear in vector store within 60 seconds
   - Ensure no blocking of main trading loop
   - Ensure all tests pass, ask the user if questions arise.
@@ -391,19 +391,19 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
 ### Phase 8: Dashboard Integration
 
 - [ ] 23. Implement similar setups panel
-  - [~] 23.1 Create backend API endpoint for similar setups
+  - [ ] 23.1 Create backend API endpoint for similar setups
     - **RED**: Test GET /api/similar-setups/{trade_id} returns similar historical setups
     - **GREEN**: Implement endpoint that calls RAG service and formats response
     - **REFACTOR**: Add caching for frequently accessed trades
     - _Requirements: FR-RAG-8_
   
-  - [~] 23.2 Create frontend component for similar setups panel
+  - [ ] 23.2 Create frontend component for similar setups panel
     - Create React component `SimilarSetupsPanel.tsx`
     - Display setup cards with date, narrative, outcome, similarity score
     - Add link to historical chart (if available)
     - _Requirements: FR-RAG-8_
   
-  - [~] 23.3 Integrate panel into dashboard
+  - [ ] 23.3 Integrate panel into dashboard
     - **RED**: Test panel appears on trade detail page
     - **GREEN**: Add panel to `services/analytics/dashboard.py` trade detail view
     - **REFACTOR**: Add loading states and error handling
@@ -415,7 +415,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - Test error states (RAG unavailable, no similar setups)
     - _Requirements: FR-RAG-8_
 
-- [~] 24. Checkpoint - Verify dashboard integration
+- [ ] 24. Checkpoint - Verify dashboard integration
   - Ensure similar setups panel displays correctly
   - Ensure user engagement metrics tracked
   - Ensure all tests pass, ask the user if questions arise.
@@ -423,14 +423,14 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
 ### Phase 9: Monitoring & Observability
 
 - [ ] 25. Implement monitoring dashboards
-  - [~] 25.1 Create Prometheus metrics
+  - [ ] 25.1 Create Prometheus metrics
     - Add retrieval latency histogram (p50, p95, p99)
     - Add retrieval count counter
     - Add error rate counter
     - Add vector store size gauge
     - _Requirements: NFR-RAG-1_
   
-  - [~] 25.2 Create Grafana dashboard
+  - [ ] 25.2 Create Grafana dashboard
     - Create dashboard with latency charts
     - Add error rate charts
     - Add vector store growth chart
@@ -444,20 +444,20 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - _Requirements: NFR-RAG-1_
 
 - [ ] 26. Implement alerting
-  - [~] 26.1 Create alert rules
+  - [ ] 26.1 Create alert rules
     - Alert on retrieval latency > 200ms (p95)
     - Alert on vector store connection failures
     - Alert on embedding generation failures
     - Alert on low similarity scores (< 0.5 for all results)
     - _Requirements: NFR-RAG-3_
   
-  - [~] 26.2 Configure alert channels
+  - [ ] 26.2 Configure alert channels
     - Set up Slack notifications
     - Set up email notifications
     - Add runbook links to alerts
     - _Requirements: NFR-RAG-3_
 
-- [~] 27. Checkpoint - Verify monitoring
+- [ ] 27. Checkpoint - Verify monitoring
   - Ensure all metrics are collected
   - Ensure dashboards display correctly
   - Ensure alerts fire correctly
@@ -466,13 +466,13 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
 ### Phase 10: Validation & Production Readiness
 
 - [ ] 28. Implement offline evaluation
-  - [~] 28.1 Create similarity-outcome correlation analysis
+  - [ ] 28.1 Create similarity-outcome correlation analysis
     - **RED**: Test correlation between similarity scores and actual outcomes
     - **GREEN**: Implement analysis script that computes Pearson correlation (target: r > 0.5)
     - **REFACTOR**: Add visualization of correlation
     - _Requirements: NFR-RAG-4_
   
-  - [~] 28.2 Create backtest with RAG features
+  - [ ] 28.2 Create backtest with RAG features
     - **RED**: Test backtest shows Sharpe improvement ≥ 0.1 with RAG features
     - **GREEN**: Run backtest comparing baseline vs. RAG-augmented Confluence Scorer
     - **REFACTOR**: Add statistical significance testing
@@ -485,25 +485,25 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - _Requirements: NFR-RAG-4_
 
 - [ ] 29. Implement production deployment
-  - [~] 29.1 Create deployment scripts
+  - [ ] 29.1 Create deployment scripts
     - Create `scripts/rag/deploy.sh` for production deployment
     - Add environment-specific configurations (dev, staging, prod)
     - Add rollback procedures
     - _Requirements: NFR-RAG-3_
   
-  - [~] 29.2 Create runbooks
+  - [ ] 29.2 Create runbooks
     - Create `docs/runbooks/rag_service.md` with troubleshooting steps
     - Document common issues and resolutions
     - Add escalation procedures
     - _Requirements: NFR-RAG-3_
   
-  - [~] 29.3 Create documentation
+  - [ ] 29.3 Create documentation
     - Update `docs/RAG_ARCHITECTURE.md` with final architecture
     - Create `docs/RAG_OPERATIONS.md` with operational procedures
     - Create `docs/RAG_API.md` with API documentation
     - _Requirements: NFR-RAG-5_
 
-- [~] 30. Final checkpoint - Production readiness
+- [ ] 30. Final checkpoint - Production readiness
   - Ensure 2000+ setups indexed
   - Ensure retrieval latency < 50ms (p50)
   - Ensure A/B test shows statistical significance
