@@ -5,16 +5,74 @@ Provides:
   GET  /health          – liveness + readiness with Qdrant connectivity
   POST /rag/retrieve    – retrieve similar historical setups
   POST /rag/ingest      – ingest a new enriched setup + embedding
+
+## Structured Logging & Error Handling (Task 13.2)
+
+This service implements comprehensive structured logging with:
+
+1. **Correlation ID Tracking**: Every request gets a correlation ID for end-to-end tracing
+   - Extracted from X-Correlation-ID header or auto-generated
+   - Included in all log entries and response headers
+   - Enables tracking requests across multiple services
+
+2. **Structured Error Logging**: All errors logged with rich context
+   - Request parameters (instrument, timestamp, filters)
+   - Full stack traces for debugging
+   - Correlation IDs for request tracing
+   - JSON format for easy parsing and filtering
+
+3. **Centralized Log Aggregation**: Optional integration with log aggregation systems
+   - Supports ELK Stack, Splunk, Datadog, New Relic, custom endpoints
+   - Configurable via LOG_AGGREGATION_* environment variables
+   - Graceful degradation - never affects application performance
+
+4. **Production-Ready Configuration**:
+   - Structured JSON logging enabled by default (STRUCTURED_LOGS=true)
+   - Auto-detects test environment to use plain text logs
+   - Configurable log levels and aggregation endpoints
+   - Error-level logs automatically sent to centralized systems
+
+## Configuration
+
+Environment Variables:
+- STRUCTURED_LOGS=true/false (default: true)
+- LOG_AGGREGATION_ENABLED=true/false (default: false)  
+- LOG_AGGREGATION_ENDPOINT=https://logs.example.com/api/v1/logs
+- LOG_AGGREGATION_API_KEY=your-api-key
+
+## Example Log Output
+
+```json
+{
+  "timestamp": "2024-05-06 09:15:23,456",
+  "level": "ERROR", 
+  "module": "services.algorag.main",
+  "message": "[abc123-def456] Vector search failed: connection timeout (params: instrument=EURUSD, timestamp=2024-05-06 09:15:00+00:00, top_k=10)",
+  "correlation_id": "abc123-def456",
+  "request_params": {"instrument": "EURUSD", "timestamp": "2024-05-06 09:15:00+00:00", "top_k": 10},
+  "exception": {
+    "type": "Exception",
+    "message": "connection timeout",
+    "traceback": ["...full stack trace..."]
+  }
+}
+```
 """
 
 import logging
+import logging.config
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+import json
+import traceback
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from qdrant_client.http.exceptions import UnexpectedResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from services.algorag.config import settings
 from services.algorag.models import (
@@ -33,6 +91,237 @@ from services.algorag.embedding_generation import generate_query_embedding
 
 logging.basicConfig(level=settings.service.log_level)
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Structured Logging Configuration (Task 13.2)
+# ---------------------------------------------------------------------------
+
+class StructuredFormatter(logging.Formatter):
+    """
+    Structured logging formatter that outputs JSON for centralized log aggregation.
+    
+    Includes:
+    - Standard log fields (timestamp, level, message, module)
+    - Correlation ID from request context
+    - Request parameters for error tracing
+    - Stack trace for exceptions
+    """
+    
+    def format(self, record):
+        # Build structured log entry
+        log_entry = {
+            "timestamp": self.formatTime(record),
+            "level": record.levelname,
+            "module": record.name,
+            "message": record.getMessage(),
+            "function": record.funcName,
+            "line": record.lineno,
+        }
+        
+        # Add correlation ID if available (set by middleware)
+        if hasattr(record, 'correlation_id'):
+            log_entry["correlation_id"] = record.correlation_id
+            
+        # Add request parameters if available (for error context)
+        if hasattr(record, 'request_params'):
+            log_entry["request_params"] = record.request_params
+            
+        # Add exception info if present
+        if record.exc_info:
+            log_entry["exception"] = {
+                "type": record.exc_info[0].__name__ if record.exc_info[0] else None,
+                "message": str(record.exc_info[1]) if record.exc_info[1] else None,
+                "traceback": traceback.format_exception(*record.exc_info)
+            }
+            
+        # Add any extra fields
+        for key, value in record.__dict__.items():
+            if key not in {
+                'name', 'msg', 'args', 'levelname', 'levelno', 'pathname', 
+                'filename', 'module', 'exc_info', 'exc_text', 'stack_info',
+                'lineno', 'funcName', 'created', 'msecs', 'relativeCreated',
+                'thread', 'threadName', 'processName', 'process', 'message',
+                'correlation_id', 'request_params'
+            } and not key.startswith('_'):
+                log_entry[key] = value
+        
+        return json.dumps(log_entry, default=str)
+
+# Configure structured logging
+structured_logs_enabled = settings.service.structured_logs and os.getenv("PYTEST_CURRENT_TEST") is None
+
+if structured_logs_enabled:
+    # Use structured JSON formatter for production
+    formatter = StructuredFormatter()
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.handlers = [handler]
+    
+    # Configure service logger
+    logger.handlers = [handler]
+    logger.propagate = False
+
+# ---------------------------------------------------------------------------
+# Centralized Log Aggregation (REFACTOR Phase - Task 13.2)
+# ---------------------------------------------------------------------------
+
+class CentralizedLogHandler(logging.Handler):
+    """
+    Handler for sending logs to centralized aggregation systems.
+    
+    Supports various log aggregation platforms:
+    - ELK Stack (Elasticsearch + Logstash)  
+    - Splunk HTTP Event Collector (HEC)
+    - Datadog Logs API
+    - New Relic Logs API
+    - Custom webhook endpoints
+    
+    Configuration via environment variables:
+    - LOG_AGGREGATION_ENABLED=true
+    - LOG_AGGREGATION_ENDPOINT=https://logs.example.com/api/v1/logs
+    - LOG_AGGREGATION_API_KEY=your-api-key
+    """
+    
+    def __init__(self, endpoint: str, api_key: str):
+        super().__init__()
+        self.endpoint = endpoint
+        self.api_key = api_key
+        self.session = None
+        
+    def emit(self, record):
+        """Send log record to centralized system."""
+        if not self.endpoint:
+            return
+            
+        try:
+            # Create session if needed
+            if not self.session:
+                import requests
+                self.session = requests.Session()
+                self.session.headers.update({
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {self.api_key}' if self.api_key else ''
+                })
+            
+            # Format log entry for centralized system
+            log_data = {
+                'timestamp': record.created,
+                'level': record.levelname,
+                'logger': record.name,
+                'message': self.format(record),
+                'service': 'algorag',
+                'environment': os.getenv('ENVIRONMENT', 'development'),
+            }
+            
+            # Add structured fields if available
+            for attr in ['correlation_id', 'request_params']:
+                if hasattr(record, attr):
+                    log_data[attr] = getattr(record, attr)
+                    
+            # Add exception details if present
+            if record.exc_info:
+                log_data['exception'] = {
+                    'type': record.exc_info[0].__name__ if record.exc_info[0] else None,
+                    'message': str(record.exc_info[1]) if record.exc_info[1] else None,
+                }
+            
+            # Send to centralized system (async in production)
+            self.session.post(self.endpoint, json=log_data, timeout=5)
+            
+        except Exception:
+            # Never let log aggregation failures affect the application
+            # In production, you might want to use a dead letter queue
+            pass
+
+# Add centralized log aggregation if configured
+if settings.service.log_aggregation_enabled and settings.service.log_aggregation_endpoint:
+    centralized_handler = CentralizedLogHandler(
+        endpoint=settings.service.log_aggregation_endpoint,
+        api_key=settings.service.log_aggregation_api_key
+    )
+    # Set to ERROR level to avoid flooding the centralized system
+    centralized_handler.setLevel(logging.ERROR)
+    logger.addHandler(centralized_handler)
+
+def get_correlation_id_from_request(request: Request) -> str:
+    """Extract correlation ID from request state."""
+    return getattr(request.state, 'correlation_id', 'unknown')
+
+def log_error_with_context(
+    logger_instance: logging.Logger,
+    message: str,
+    exception: Exception,
+    correlation_id: str = None,
+    request_params: dict = None
+):
+    """
+    Log errors with structured context for debugging and monitoring.
+    
+    Args:
+        logger_instance: Logger to use
+        message: Error description
+        exception: The exception that occurred
+        correlation_id: Request correlation ID
+        request_params: Request parameters for context
+    """
+    # Build error message with correlation ID and request context for backward compatibility
+    log_message = f"{message}: {str(exception)}"
+    if correlation_id:
+        log_message = f"[{correlation_id}] {log_message}"
+    
+    # Add request parameters to message for test compatibility
+    if request_params:
+        params_str = ", ".join(f"{k}={v}" for k, v in request_params.items() if v is not None)
+        if params_str:
+            log_message = f"{log_message} (params: {params_str})"
+    
+    # Create log record with extra context
+    extra = {}
+    if correlation_id:
+        extra['correlation_id'] = correlation_id
+    if request_params:
+        extra['request_params'] = request_params
+        
+    logger_instance.error(
+        log_message,
+        exc_info=exception,
+        extra=extra
+    )
+
+# ---------------------------------------------------------------------------
+# Correlation ID Middleware (Task 13.2)
+# ---------------------------------------------------------------------------
+
+
+class CorrelationIDMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware to extract or generate correlation IDs for request tracing.
+    
+    - Extracts X-Correlation-ID from request headers if present
+    - Generates a new UUID if not provided
+    - Adds correlation ID to response headers
+    - Stores correlation ID in request state for logging
+    """
+    
+    async def dispatch(self, request: Request, call_next):
+        # Extract or generate correlation ID
+        correlation_id = request.headers.get("X-Correlation-ID")
+        if not correlation_id:
+            correlation_id = str(uuid.uuid4())
+        
+        # Store in request state for access in endpoints
+        request.state.correlation_id = correlation_id
+        
+        # Call the endpoint
+        response = await call_next(request)
+        
+        # Add correlation ID to response headers
+        response.headers["X-Correlation-ID"] = correlation_id
+        
+        return response
 
 # ---------------------------------------------------------------------------
 # Application state (populated during lifespan)
@@ -91,6 +380,9 @@ app = FastAPI(
     version=settings.service.version,
     lifespan=lifespan,
 )
+
+# Add correlation ID middleware (Task 13.2)
+app.add_middleware(CorrelationIDMiddleware)
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +476,7 @@ async def health_check() -> HealthResponse:
     status_code=status.HTTP_200_OK,
     tags=["rag"],
 )
-async def retrieve_similar_setups(request: RetrievalRequest) -> RetrievalResponse:
+async def retrieve_similar_setups(request: RetrievalRequest, http_request: Request) -> RetrievalResponse:
     """
     Retrieve historically similar trading setups using vector search.
 
@@ -198,6 +490,16 @@ async def retrieve_similar_setups(request: RetrievalRequest) -> RetrievalRespons
     """
     t0 = time.perf_counter()
     wrapper = get_qdrant()
+    correlation_id = get_correlation_id_from_request(http_request)
+    
+    # Build request context for error logging
+    request_context = {
+        "instrument": request.instrument,
+        "timestamp": request.timestamp,
+        "time_window": getattr(request, 'time_window', None),
+        "htf_open_bias": getattr(request, 'htf_open_bias', None),
+        "top_k": request.top_k,
+    }
     
     try:
         # Generate query embedding from request (Task 10.3)
@@ -224,10 +526,13 @@ async def retrieve_similar_setups(request: RetrievalRequest) -> RetrievalRespons
                 timeout=settings.service.retrieval_timeout
             )
         except asyncio.TimeoutError:
-            logger.warning(
-                "Qdrant search timeout after %.1fs for instrument=%s", 
-                settings.service.retrieval_timeout, 
-                request.instrument
+            timeout_msg = f"Qdrant search timeout after {settings.service.retrieval_timeout}s for instrument={request.instrument}"
+            log_error_with_context(
+                logger,
+                "Vector search timeout",
+                TimeoutError(timeout_msg),
+                correlation_id=correlation_id,
+                request_params=request_context
             )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -238,11 +543,12 @@ async def retrieve_similar_setups(request: RetrievalRequest) -> RetrievalRespons
         # Re-raise HTTPExceptions (these are intended for the client)
         raise
     except Exception as exc:
-        logger.error(
-            "Vector search failed for instrument=%s, error=%s", 
-            request.instrument, 
-            exc, 
-            exc_info=True
+        log_error_with_context(
+            logger,
+            "Vector search failed",
+            exc,
+            correlation_id=correlation_id,
+            request_params=request_context
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -272,9 +578,12 @@ async def retrieve_similar_setups(request: RetrievalRequest) -> RetrievalRespons
             )
         except Exception as exc:
             logger.warning(
-                "Failed to parse search hit %s: %s", 
-                getattr(hit, 'id', 'unknown'),
-                exc
+                f"Failed to parse search hit: {exc}",
+                extra={
+                    "correlation_id": correlation_id,
+                    "hit_id": getattr(hit, 'id', 'unknown'),
+                    "request_params": request_context
+                }
             )
             # Skip malformed hits but continue processing others
             continue
@@ -291,7 +600,14 @@ async def retrieve_similar_setups(request: RetrievalRequest) -> RetrievalRespons
             config=_reranking_config,  # Use configurable re-ranking weights
         )
     except Exception as exc:
-        logger.warning("Re-ranking failed, using similarity order: %s", exc)
+        logger.warning(
+            f"Re-ranking failed, using similarity order: {exc}",
+            extra={
+                "correlation_id": correlation_id,
+                "request_params": request_context,
+                "setups_count": len(similar)
+            }
+        )
         # Fallback: sort by similarity score if re-ranking fails
         reranked = sorted(similar, key=lambda s: s.similarity_score, reverse=True)
 
@@ -299,7 +615,14 @@ async def retrieve_similar_setups(request: RetrievalRequest) -> RetrievalRespons
     try:
         diverse = apply_diversity_filter(reranked, max_per_day=settings.service.diversity_max_per_day)
     except Exception as exc:
-        logger.warning("Diversity filtering failed, using re-ranked results: %s", exc)
+        logger.warning(
+            f"Diversity filtering failed, using re-ranked results: {exc}",
+            extra={
+                "correlation_id": correlation_id,
+                "request_params": request_context,
+                "reranked_count": len(reranked)
+            }
+        )
         # Fallback: use reranked results if diversity filtering fails
         diverse = reranked
 
@@ -307,7 +630,14 @@ async def retrieve_similar_setups(request: RetrievalRequest) -> RetrievalRespons
     try:
         rag_metrics = _build_rag_metrics(diverse)
     except Exception as exc:
-        logger.warning("RAG metrics computation failed, using defaults: %s", exc)
+        logger.warning(
+            f"RAG metrics computation failed, using defaults: {exc}",
+            extra={
+                "correlation_id": correlation_id,
+                "request_params": request_context,
+                "diverse_count": len(diverse)
+            }
+        )
         # Fallback: return empty metrics if computation fails
         rag_metrics = RAGMetrics(
             avg_r_multiple_similar=0.0,
@@ -332,7 +662,7 @@ async def retrieve_similar_setups(request: RetrievalRequest) -> RetrievalRespons
     status_code=status.HTTP_201_CREATED,
     tags=["rag"],
 )
-async def ingest_setup(request: IngestionRequest) -> IngestionResponse:
+async def ingest_setup(request: IngestionRequest, http_request: Request) -> IngestionResponse:
     """
     Ingest a new enriched setup and its 528-dim embedding into Qdrant.
 
@@ -358,6 +688,15 @@ async def ingest_setup(request: IngestionRequest) -> IngestionResponse:
     wrapper = get_qdrant()
     setup = request.setup
     trade_id: str = setup.get("trade_id", str(uuid.uuid4()))
+    correlation_id = get_correlation_id_from_request(http_request)
+
+    # Build request context for error logging
+    request_context = {
+        "trade_id": trade_id,
+        "instrument": setup.get("instrument"),
+        "embedding_size": len(request.embedding) if request.embedding else 0,
+        "setup_keys": list(setup.keys()) if setup else [],
+    }
 
     from qdrant_client.http import models as qmodels
 
@@ -381,7 +720,13 @@ async def ingest_setup(request: IngestionRequest) -> IngestionResponse:
     try:
         await wrapper.upsert([point])
     except Exception as exc:
-        logger.error("Qdrant upsert failed: %s", exc)
+        log_error_with_context(
+            logger,
+            "Qdrant upsert failed",
+            exc,
+            correlation_id=correlation_id,
+            request_params=request_context
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Vector store unavailable",

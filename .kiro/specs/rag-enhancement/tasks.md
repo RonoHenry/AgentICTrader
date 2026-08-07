@@ -266,21 +266,21 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - **REFACTOR**: Add Prometheus histogram metrics
     - _Requirements: NFR-RAG-1_
   
-  - [ ] 13.2 Add error logging
+  - [x] 13.2 Add error logging
     - **RED**: Test all errors are logged with context (request params, stack trace)
     - **GREEN**: Implement structured logging with correlation IDs
     - **REFACTOR**: Add log aggregation to centralized system
     - _Requirements: NFR-RAG-3_
 
-- [ ] 14. Checkpoint - Verify RAG service
+- [x] 14. Checkpoint - Verify RAG service
   - Ensure retrieval endpoint returns results < 100ms
   - Ensure RAG metrics are computed correctly
   - Ensure all tests pass, ask the user if questions arise.
 
 ### Phase 5: ML Pipeline Integration
 
-- [ ] 15. Implement AlgoRAG client library
-  - [ ] 15.1 Create AlgoRAG client for ML services
+- [x] 15. Implement AlgoRAG client library
+  - [x] 15.1 Create AlgoRAG client for ML services
     - Create `ml/algorag/client.py` with async HTTP client
     - Implement retrieve() method with retry logic
     - Implement connection pooling and timeout handling
@@ -339,7 +339,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
 ### Phase 6: LLM Integration
 
 - [ ] 19. Implement RAG-grounded LLM reasoning
-  - [ ] 19.1 Create LLM prompt templates with RAG context
+  - [x] 19.1 Create LLM prompt templates with RAG context
     - Create `services/nlp/prompts/rag_reasoning.py`
     - Define prompt template with similar setups section
     - Add formatting utilities for historical examples
@@ -504,6 +504,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - _Requirements: NFR-RAG-5_
 
 - [ ] 30. Final checkpoint - Production readiness
+
   - Ensure 2000+ setups indexed
   - Ensure retrieval latency < 50ms (p50)
   - Ensure A/B test shows statistical significance

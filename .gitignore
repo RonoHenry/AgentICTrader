@@ -65,6 +65,9 @@ checkpoints/
 docs/_build/
 site/
 
+# Reference materials (copyrighted PDFs)
+docs/references/*.pdf
+
 # Trading data
 data/*.csv
 data/*.json

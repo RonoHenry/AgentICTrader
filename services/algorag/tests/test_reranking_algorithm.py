@@ -311,30 +311,29 @@ class TestFinalScoreComputation:
             confluence_weight=0.1,
         )
         
-        # Old setup with high R
+        # Test scenario: high R but old setup
         score_outcome = compute_final_score(
-            outcome_r_multiple=10.0,
-            setup_timestamp=current - timedelta(days=180),
+            outcome_r_multiple=10.0,  # High R
+            setup_timestamp=current - timedelta(days=180),  # Old (low recency)
             current_timestamp=current,
             setup_confluence_count=3,
             current_confluence_count=3,
             config=config_outcome,
         )
         
-        # Recent setup with low R
+        # Same scenario with recency-heavy weights
         score_recency = compute_final_score(
-            outcome_r_multiple=10.0,
-            setup_timestamp=current - timedelta(days=180),
+            outcome_r_multiple=10.0,  # High R
+            setup_timestamp=current - timedelta(days=180),  # Old (low recency)
             current_timestamp=current,
             setup_confluence_count=3,
             current_confluence_count=3,
             config=config_recency,
         )
         
-        # With outcome-heavy weights, outcome should dominate
-        # Both should give similar results since they have same inputs
-        # but with different weights
-        assert score_outcome == score_recency  # Same inputs = same score regardless of weights
+        # With outcome-heavy weights, the score should be higher
+        # because it prioritizes the high R-multiple over low recency
+        assert score_outcome > score_recency
 
 
 class TestRerankSetups:
