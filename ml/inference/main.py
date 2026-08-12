@@ -10,11 +10,18 @@ Also runs a background Kafka consumer that:
   - Runs the full inference pipeline (feature extraction → regime → patterns → confluence)
   - Publishes detected setups to setups.detected
 
+NEW: A/B testing support for Confluence Scorer models:
+  - V1: baseline without RAG features  
+  - V2: RAG-augmented with historical context
+  - Feature flag controlled rollout
+  - Per-user sticky sessions
+
 setups.detected message schema:
   {
     instrument, timeframe, time, regime, patterns, confidence_score,
     htf_open, htf_high, htf_low, open_bias,
-    entry_price, sl_price, tp_price
+    entry_price, sl_price, tp_price,
+    model_version, ab_test_active  // NEW: A/B testing metadata
   }
 
 Confidence thresholds (from design.md):

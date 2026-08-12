@@ -223,12 +223,26 @@ class StructuredFeatureEmbedder:
             TypeError: If ``setup`` is not an :class:`EnrichedSetup` instance.
         """
         features = self.extract_features(setup)  # (64,) float32 — also validates
+        return self.project_features(features)
 
-        # Linear projection: (64,) @ (64, 128) → (128,)
-        raw: np.ndarray = features @ self._W.T + self._b
-        # ReLU activation keeps values non-negative
-        result = np.maximum(raw, 0.0).astype(np.float32)
-        return result
+    def project_features(self, features: np.ndarray) -> np.ndarray:
+        """Project a raw 64-dim normalised feature vector to 128-dim.
+
+        Applies the same fixed linear projection used by :meth:`embed`
+        (``relu(features @ W.T + b)``). Exposed separately so callers that
+        build a feature vector from a different source shape (e.g. a live
+        query rather than a full :class:`EnrichedSetup`) can still share the
+        exact projection weights, keeping the embedding space consistent.
+
+        Args:
+            features: A 1-D array of shape ``(64,)`` in the same layout as
+                :meth:`extract_features`.
+
+        Returns:
+            A 1-D numpy array of shape ``(128,)`` with dtype ``float32``.
+        """
+        raw: np.ndarray = np.asarray(features, dtype=np.float32) @ self._W.T + self._b
+        return np.maximum(raw, 0.0).astype(np.float32)
 
     # ------------------------------------------------------------------
     # Private helpers
