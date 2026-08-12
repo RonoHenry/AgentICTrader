@@ -33,6 +33,7 @@ __all__ = [
     "place_order",
     "set_sl_tp",
     "close_position",
+    "partial_close",
     "get_position_status",
 ]
 
@@ -340,6 +341,67 @@ async def close_position(
 
     logger.info("close_position: trade_id=%s closed", trade_id)
     return True
+
+
+async def partial_close(
+    client: OANDABrokerClient,
+    trade_id: str,
+    ratio: float = 0.5,
+) -> dict[str, Any]:
+    """Close a fraction of an open trade's current size at market price.
+
+    OANDA's close endpoint takes an absolute unit count rather than a
+    ratio, so this first fetches the trade's current size and computes
+    the unit count to close before sending the close request.
+
+    Args:
+        client:   Authenticated :class:`OANDABrokerClient`.
+        trade_id: OANDA trade ID to partially close.
+        ratio:    Fraction of the trade's current size to close (0 < ratio <= 1).
+
+    Returns:
+        Dict with keys:
+        - ``trade_id`` (str): The trade ID that was partially closed.
+        - ``closed_units`` (int): Units closed by this request.
+
+    Raises:
+        BrokerError: On API failure, or if the ratio rounds to zero units.
+    """
+    endpoint = f"/trades/{trade_id}"
+
+    try:
+        trade_response = await client._make_request(endpoint, method="GET")
+    except BrokerError:
+        raise
+    except Exception as exc:
+        raise BrokerError(str(exc)) from exc
+
+    trade = trade_response.get("trade", {})
+    current_units = trade.get("currentUnits")
+    if current_units is None:
+        raise BrokerError(f"Trade {trade_id} has no currentUnits — cannot compute partial close")
+
+    close_units = int(round(abs(float(current_units)) * ratio))
+    if close_units < 1:
+        raise BrokerError(
+            f"partial_close: ratio={ratio} of {current_units} units rounds to 0 — nothing to close"
+        )
+
+    close_endpoint = f"/trades/{trade_id}/close"
+    try:
+        await client._make_request(
+            close_endpoint, method="PUT", json={"units": str(close_units)}
+        )
+    except BrokerError:
+        raise
+    except Exception as exc:
+        raise BrokerError(str(exc)) from exc
+
+    logger.info(
+        "partial_close: trade_id=%s ratio=%.2f closed_units=%s",
+        trade_id, ratio, close_units,
+    )
+    return {"trade_id": trade_id, "closed_units": close_units}
 
 
 async def get_position_status(
