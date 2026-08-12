@@ -2,14 +2,20 @@
 
 Public API:
   AgentGraph        — orchestrates the full Observe → Analyse → Decide → Act
-                      → Review → Learn loop.
+                      → Review → Learn loop. Takes any BrokerClient.
   create_agent_app  — FastAPI app with /agent/pause, /agent/resume, /agent/status.
   AgentState        — Pydantic model carrying full agent context.
+  BrokerClient      — abstract interface every broker adapter implements
+                      (agent.brokers.base). AgentGraph depends only on this.
+  create_broker_client — factory: broker name + credentials -> BrokerClient
+                      (agent.brokers.factory). This is how a caller picks
+                      "whatever broker they want" without touching AgentGraph.
   OANDABrokerClient — Async HTTP client for OANDA v20 REST API order execution.
   BrokerError       — Exception raised on broker API failures.
   place_order       — Place a market order via OANDA.
   set_sl_tp         — Update SL/TP on an open trade.
   close_position    — Close an open trade at market.
+  partial_close     — Close a fraction of an open trade at market.
   get_position_status — Fetch live trade status and unrealised P&L.
 
 Execution flow:
@@ -27,8 +33,10 @@ from agent.broker_tools import (
     place_order,
     set_sl_tp,
     close_position,
+    partial_close,
     get_position_status,
 )
+from agent.brokers import BrokerClient, create_broker_client
 
 __all__ = [
     "AgentState",
@@ -36,10 +44,13 @@ __all__ = [
     "DecisionAction",
     "AgentGraph",
     "create_agent_app",
+    "BrokerClient",
+    "create_broker_client",
     "BrokerError",
     "OANDABrokerClient",
     "place_order",
     "set_sl_tp",
     "close_position",
+    "partial_close",
     "get_position_status",
 ]

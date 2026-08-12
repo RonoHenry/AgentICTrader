@@ -24,6 +24,7 @@ from agent.broker_tools import (
     set_sl_tp,
     close_position,
     get_position_status,
+    partial_close,
 )
 
 
@@ -350,6 +351,94 @@ class TestGetPositionStatus:
         # method may be positional or keyword
         method_value = call_args[0][1] if len(call_args[0]) > 1 else call_args.kwargs.get("method", "")
         assert method_value == "GET"
+
+
+# ===========================================================================
+# 5. partial_close closes a ratio of the trade's current units
+# ===========================================================================
+
+class TestPartialClose:
+    """partial_close must close ratio * currentUnits of an open trade."""
+
+    @pytest.mark.asyncio
+    async def test_partial_close_computes_units_from_ratio(self, broker_client):
+        """50% of a 1000-unit trade should close 500 units."""
+        trade_id = "67890"
+
+        with patch.object(
+            broker_client, "_make_request", new_callable=AsyncMock
+        ) as mock_request:
+            mock_request.side_effect = [
+                {"trade": {"id": trade_id, "currentUnits": "1000"}},
+                {"orderFillTransaction": {"tradesClosed": [{"tradeID": trade_id, "units": "-500"}]}},
+            ]
+            result = await partial_close(broker_client, trade_id, ratio=0.5)
+
+        assert result["closed_units"] == 500
+        assert result["trade_id"] == trade_id
+
+        # Second call is the PUT close request with the computed units
+        close_call = mock_request.call_args_list[1]
+        assert f"/trades/{trade_id}/close" in close_call[0][0]
+        assert close_call[1]["json"] == {"units": "500"}
+
+    @pytest.mark.asyncio
+    async def test_partial_close_handles_short_trade_units(self, broker_client):
+        """A short trade has negative currentUnits — closed_units stays positive."""
+        trade_id = "67890"
+
+        with patch.object(
+            broker_client, "_make_request", new_callable=AsyncMock
+        ) as mock_request:
+            mock_request.side_effect = [
+                {"trade": {"id": trade_id, "currentUnits": "-1000"}},
+                {"orderFillTransaction": {"tradesClosed": [{"tradeID": trade_id}]}},
+            ]
+            result = await partial_close(broker_client, trade_id, ratio=0.5)
+
+        assert result["closed_units"] == 500
+
+    @pytest.mark.asyncio
+    async def test_partial_close_defaults_to_half(self, broker_client):
+        """ratio defaults to 0.5 when not specified."""
+        trade_id = "67890"
+
+        with patch.object(
+            broker_client, "_make_request", new_callable=AsyncMock
+        ) as mock_request:
+            mock_request.side_effect = [
+                {"trade": {"id": trade_id, "currentUnits": "200"}},
+                {"orderFillTransaction": {}},
+            ]
+            result = await partial_close(broker_client, trade_id)
+
+        assert result["closed_units"] == 100
+
+    @pytest.mark.asyncio
+    async def test_partial_close_raises_on_zero_rounded_units(self, broker_client):
+        """A tiny ratio that rounds to 0 units must raise, not send a no-op request."""
+        trade_id = "67890"
+
+        with patch.object(
+            broker_client, "_make_request", new_callable=AsyncMock
+        ) as mock_request:
+            mock_request.return_value = {"trade": {"id": trade_id, "currentUnits": "1"}}
+
+            with pytest.raises(BrokerError):
+                await partial_close(broker_client, trade_id, ratio=0.1)
+
+    @pytest.mark.asyncio
+    async def test_partial_close_raises_broker_error_on_api_failure(self, broker_client):
+        """When the underlying API call fails, raise BrokerError."""
+        trade_id = "67890"
+
+        with patch.object(
+            broker_client, "_make_request", new_callable=AsyncMock
+        ) as mock_request:
+            mock_request.side_effect = Exception("Trade not found")
+
+            with pytest.raises(BrokerError):
+                await partial_close(broker_client, trade_id, ratio=0.5)
 
 
 # ===========================================================================
