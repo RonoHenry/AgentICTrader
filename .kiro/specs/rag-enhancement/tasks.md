@@ -293,14 +293,14 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - Test graceful degradation (return empty metrics on error)
     - _Requirements: FR-RAG-5, NFR-RAG-3_
 
-- [ ] 16. Augment Confluence Scorer with RAG features
-  - [ ] 16.1 Modify feature extraction to include RAG metrics
+- [x] 16. Augment Confluence Scorer with RAG features
+  - [x] 16.1 Modify feature extraction to include RAG metrics
     - **RED**: Test feature vector includes 4 new RAG features (avg_r_multiple, win_rate, sample_size, max_similarity)
     - **GREEN**: Modify `ml/models/confluence_scorer/features.py` to call RAG client and append metrics
     - **REFACTOR**: Add feature normalization and missing value handling
     - _Requirements: FR-RAG-5_
   
-  - [ ] 16.2 Retrain Confluence Scorer with RAG features
+  - [x] 16.2 Retrain Confluence Scorer with RAG features
     - **RED**: Test training script accepts RAG-augmented feature vectors
     - **GREEN**: Modify `ml/models/confluence_scorer/train_with_rag.py` to include RAG features
     - **REFACTOR**: Add feature importance analysis for RAG features
@@ -312,26 +312,26 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - Test model prediction with RAG features
     - _Requirements: FR-RAG-5, NFR-RAG-3_
 
-- [ ] 17. Implement A/B testing framework
-  - [ ] 17.1 Create model versioning system
+- [x] 17. Implement A/B testing framework
+  - [x] 17.1 Create model versioning system
     - **RED**: Test loading of confluence-scorer-v1 (baseline) and confluence-scorer-v2-rag
     - **GREEN**: Implement model registry with version selection
     - **REFACTOR**: Add feature flags for A/B test control
     - _Requirements: FR-RAG-5_
   
-  - [ ] 17.2 Implement traffic splitting
+  - [x] 17.2 Implement traffic splitting
     - **RED**: Test 50/50 traffic split between v1 and v2 models
     - **GREEN**: Implement random assignment with sticky sessions
     - **REFACTOR**: Add configurable split ratios
     - _Requirements: FR-RAG-5_
   
-  - [ ]* 17.3 Write tests for A/B testing framework
+  - [x]* 17.3 Write tests for A/B testing framework
     - Test model selection logic
     - Test traffic distribution
     - Test metrics collection per variant
     - _Requirements: FR-RAG-5_
 
-- [ ] 18. Checkpoint - Verify ML integration
+- [x] 18. Checkpoint - Verify ML integration
   - Ensure Confluence Scorer v2 trains successfully
   - Ensure A/B test framework works
   - Ensure all tests pass, ask the user if questions arise.
@@ -345,7 +345,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - Add formatting utilities for historical examples
     - _Requirements: FR-RAG-6_
   
-  - [ ] 19.2 Modify LLM reasoning to include RAG retrieval
+  - [x] 19.2 Modify LLM reasoning to include RAG retrieval
     - **RED**: Test generate_trade_reasoning_with_rag() calls RAG client and includes examples in prompt
     - **GREEN**: Modify `services/nlp/llm_service.py` to retrieve similar setups and format for LLM
     - **REFACTOR**: Add fallback to template-based reasoning if RAG fails
