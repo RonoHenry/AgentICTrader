@@ -79,7 +79,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8, 11.9, 11.10, 14.3, 14.4, 14.5, 15.1, 15.4, 16.7, 17.7_
   - **144c. REFACTOR** — add `model_config = ConfigDict(frozen=True)` on `Candle`; confirm GREEN
 
-- [ ] 145. Implement `liquidity_engine/utils/time_utils.py` and `candle_utils.py`
+- [x] 145. Implement `liquidity_engine/utils/time_utils.py` and `candle_utils.py`
   - **145a. RED — Write failing tests** (`backend/tests/test_liquidity_utils.py`)
     - `test_to_est_from_utc` — UTC datetime correctly offset to EST (UTC-5) / EDT (UTC-4)
     - `test_to_utc_from_est` — EST/EDT correctly converted back to UTC
