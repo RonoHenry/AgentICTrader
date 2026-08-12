@@ -1,0 +1,1 @@
+"""UNICORN pattern detection package."""
