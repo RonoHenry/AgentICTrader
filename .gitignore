@@ -65,8 +65,11 @@ checkpoints/
 docs/_build/
 site/
 
-# Reference materials (copyrighted PDFs)
+# Reference PDFs and large binary documents (add manually, don't commit)
 docs/references/*.pdf
+docs/references/*.docx
+docs/references/*.pptx
+docs/references/*.xlsx
 
 # Trading data
 data/*.csv
