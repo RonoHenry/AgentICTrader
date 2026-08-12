@@ -1,12 +1,18 @@
-﻿# Design Document: Liquidity Engine
+﻿# Design Document: 
+
+**spec**: Liquidity Engine
 
 ## Overview
 
-The Liquidity Engine is a pure-Python analytical package that encodes the complete ICT/TTrades multi-timeframe trading methodology into a deterministic, stateless computation pipeline. It consumes multi-timeframe OHLCV candle data and produces a `LiquidityMap`  a structured object containing every analytical output the methodology requires: HTF bias per timeframe, all identified liquidity levels (BSL/SSL), all PD arrays (FVG, OB, Breaker, IFVG, BPR, CISD), CRT phase classification, CISD cascade status, draw-on-liquidity target, sweep detection, UNICORN pattern detection, OTE Fibonacci zone, and a final setup grade (A+/A/B/NO_TRADE).
+The Liquidity Engine is a pure-Python analytical package that encodes the complete ICT/TTrades multi-timeframe trading methodology into a deterministic, stateless computation pipeline. It consumes multi-timeframe OHLCV candle data and produces a `LiquidityMap`  a structured object containing every analytical output the methodology requires: HTF bias per timeframe, tiered swing structure with BOS/CHoCH events, all identified liquidity levels (BSL/SSL), all PD arrays (FVG, OB, Breaker, IFVG, BPR, CISD), the Fractal Model candle-closure sequence and Equilibrium, CRT phase classification, CISD cascade status, draw-on-liquidity target, sweep detection, UNICORN pattern detection, OTE Fibonacci zone, and a final setup grade (A+/A/B/NO_TRADE).
 
 The engine is designed to be called once per candle close from `agent/nodes/observe_node.py`. Its output is stored on `AgentState.liquidity_map` and injected into the LLM reasoning prompt via `LiquidityMap.to_agent_context()`. It replaces `backend/trader/agents/power_of_3.py`, `backend/trader/analysis/patterns.py`, and the stub `backend/trader/agents/pd_array/` directory. A `services/liquidity/` microservice will wrap it for HTTP/Kafka access post-v1.
 
 This spec is **parked for post-v1 implementation** (after tasks 143 ship). It is written to be complete enough for any developer to implement without further clarification.
+
+### Non-Goals (Deferred)
+
+**SMT (Smart Money Divergence)** — cross-instrument correlation divergence used as continuation confluence in the TTrades "Breaker Continuations" material — is explicitly out of scope. It requires multi-instrument candle input, which is a signature change to `LiquidityMappingEngine.analyze()` (currently single-`instrument`). See `requirements.md` → Non-Goals for the full rationale. Do not add a partial/best-effort SMT hook to this engine; it belongs in a dedicated follow-on spec.
 
 ---
 
@@ -17,14 +23,18 @@ graph TD
     A[Multi-TF OHLCV Input] --> B[LiquidityMappingEngine]
     B --> C[HTFBiasClassifier]
     B --> D[LiquidityLevelDetector]
+    B --> D2[SwingStructureClassifier]
     B --> E[PDArrayDetector]
+    B --> E2[FractalModelTracker]
     B --> F[IPDAClassifier]
     B --> G[OTECalculator]
     B --> H[UnicornDetector]
     B --> I[SetupGrader]
     C --> J[LiquidityMap]
     D --> J
+    D2 --> J
     E --> J
+    E2 --> J
     F --> J
     G --> J
     H --> J
@@ -40,6 +50,7 @@ graph LR
         O[detectors/external.py] --> N
         P[detectors/internal.py] --> N
         Q[detectors/institutional.py] --> N
+        Q2[detectors/structure.py] --> N
         R[ipda/classifier.py] --> N
         S[ipda/cisd.py] --> N
         T[ote/calculator.py] --> N
@@ -47,6 +58,7 @@ graph LR
         V[grader/setup_grader.py] --> N
         W[utils/time_utils.py] --> N
         X[utils/candle_utils.py] --> N
+        X2[fractal/candle_model.py] --> N
     end
     N --> Y[LiquidityMap]
 ```
@@ -63,6 +75,7 @@ liquidity_engine/
     external.py              # BSL/SSL, PWH/PWL/PDH/PDL, equal highs/lows
     internal.py              # FVG, IFVG, OB, Breaker, BPR, CISD level
     institutional.py        # session highs/lows, trendline liquidity
+    structure.py              # STH/STL/ITH/ITL/LTH/LTL tiering + BOS/CHoCH
  ipda/
     __init__.py
     classifier.py            # CRT phase detection (C1/C2/C3/C4)
@@ -76,10 +89,13 @@ liquidity_engine/
  grader/
     __init__.py
     setup_grader.py          # A+/A/B/NO_TRADE scoring
+ fractal/
+    __init__.py
+    candle_model.py           # Candle 1-4 Fractal Model closures + Equilibrium
  utils/
      __init__.py
      time_utils.py            # EST/UTC-4 conversions, killzone windows
-     candle_utils.py          # swing point detection, candle helpers
+     candle_utils.py          # swing point detection, candle helpers, candle type classification
 ```
 
 ---
@@ -94,7 +110,9 @@ sequenceDiagram
     participant LE as LiquidityMappingEngine
     participant HB as HTFBiasClassifier
     participant LD as LiquidityLevelDetector
+    participant SC as SwingStructureClassifier
     participant PD as PDArrayDetector
+    participant FM as FractalModelTracker
     participant IP as IPDAClassifier
     participant OT as OTECalculator
     participant UN as UnicornDetector
@@ -106,8 +124,12 @@ sequenceDiagram
     HB-->>LE: Dict[Timeframe, HTFBias]
     LE->>LD: detect_levels(candles_by_tf)
     LD-->>LE: List[LiquidityLevel]
-    LE->>PD: detect_arrays(candles_by_tf)
+    LE->>SC: classify(candles_by_tf)
+    SC-->>LE: Dict[Timeframe, SwingStructureResult]
+    LE->>PD: detect_arrays(candles_by_tf, structure_events)
     PD-->>LE: List[PDArray]
+    LE->>FM: track(candles, key_level)
+    FM-->>LE: Optional[FractalModelResult]
     LE->>IP: classify_crt(candles_by_tf)
     IP-->>LE: Dict[Timeframe, CRTPhase]
     LE->>IP: validate_cisd_cascade(candles_by_tf)
@@ -142,6 +164,25 @@ sequenceDiagram
 
 ## Components and Interfaces
 
+### Candle Type Classification (utils/candle_utils.py)
+
+**Purpose**: Classifies a single candle's wick-to-range ratio as `EXPANSION`, `REVERSAL`, or `REVERSAL_EXPANSION`. A stateless utility function, not a pipeline stage of `LiquidityMappingEngine.analyze()` — detectors call it directly when it strengthens a `strength_score` (e.g. an OB formed on a `REVERSAL`-type candle is a stronger footprint than one formed on an ambiguous doji).
+
+**Interface**:
+```python
+EXPANSION_WICK_RATIO_MAX: float = 0.25
+REVERSAL_WICK_RATIO_MIN: float = 0.5
+
+def classify_candle_type(candle: Candle) -> CandleType: ...
+```
+
+**Responsibilities**:
+- `wick_ratio = max(candle.upper_wick, candle.lower_wick) / candle.total_range` (candles with `total_range == 0` classify as `EXPANSION`)
+- `wick_ratio <= EXPANSION_WICK_RATIO_MAX` → `EXPANSION` (strong directional close, small opposing wick)
+- `wick_ratio >= REVERSAL_WICK_RATIO_MIN` → `REVERSAL` (large rejection wick)
+- otherwise → `REVERSAL_EXPANSION` (directional body with a moderate rejection wick)
+- Thresholds are named constants, not inline literals, so they can be recalibrated against a backtest without touching call sites
+
 ### LiquidityMappingEngine
 
 **Purpose**: Top-level orchestrator. Accepts raw multi-timeframe candle data, runs all sub-detectors in dependency order, assembles and returns a `LiquidityMap`.
@@ -164,9 +205,21 @@ class LiquidityMappingEngine:
         self, candles_by_tf: Dict[Timeframe, List[Candle]]
     ) -> List[LiquidityLevel]: ...
 
-    def _detect_pd_arrays(
+    def _classify_swing_structure(
         self, candles_by_tf: Dict[Timeframe, List[Candle]]
+    ) -> Dict[Timeframe, SwingStructureResult]: ...
+
+    def _detect_pd_arrays(
+        self,
+        candles_by_tf: Dict[Timeframe, List[Candle]],
+        swing_structure: Dict[Timeframe, SwingStructureResult],
     ) -> List[PDArray]: ...
+
+    def _track_fractal_model(
+        self,
+        candles: List[Candle],
+        key_level: Optional[float],
+    ) -> Optional[FractalModelResult]: ...
 
     def _classify_crt_phases(
         self, candles_by_tf: Dict[Timeframe, List[Candle]]
@@ -259,6 +312,35 @@ class LiquidityLevelDetector:
 - Detect session highs/lows (London, NY AM, NY PM) from intraday candles
 - Score each level by: number of touches, timeframe significance, recency
 
+### SwingStructureClassifier (detectors/structure.py)
+
+**Purpose**: Classifies swing points into a nested Short-Term / Intermediate-Term / Long-Term hierarchy and emits BOS/CHoCH structure events. Implements the "Basic/Advanced Market Structure" layer that the flat swing detection in `utils/candle_utils.py` doesn't cover on its own.
+
+**Interface**:
+```python
+class SwingStructureClassifier:
+    def classify(
+        self,
+        candles_by_tf: Dict[Timeframe, List[Candle]],
+    ) -> Dict[Timeframe, "SwingStructureResult"]: ...
+
+    def _promote_tier(
+        self, swings: List["SwingPoint"], candles: List[Candle]
+    ) -> List["SwingPoint"]: ...
+
+    def _classify_structure_events(
+        self, swings: List["SwingPoint"], candles: List[Candle]
+    ) -> List["StructureEvent"]: ...
+```
+
+**Responsibilities**:
+- Seed `SwingTier.SHORT_TERM` points directly from `candle_utils.find_swing_highs`/`find_swing_lows`
+- Promote a `SHORT_TERM` swing to `INTERMEDIATE_TERM` when the opposite-side short-term swing adjacent to it is broken; promote `INTERMEDIATE_TERM` → `LONG_TERM` the same way one tier up
+- Every promoted `SwingPoint` keeps `derived_from_swing_id` pointing at the lower-tier point it came from
+- Emit a `BOS` `StructureEvent` when price closes beyond the most recent same-tier swing in the direction of the prevailing trend at that tier; emit `CHOCH` when it closes beyond it against the prevailing trend
+- Pure and stateless — same candles in, same `SwingStructureResult` out
+- Output feeds `PDArrayDetector` (Breaker `structure_confirmed`, see below) and `LiquidityMap.swing_structure`
+
 ### PDArrayDetector (detectors/internal.py)
 
 **Purpose**: Detects all Price Delivery Arrays. Implements Layer 6.
@@ -269,6 +351,7 @@ class PDArrayDetector:
     def detect(
         self,
         candles_by_tf: Dict[Timeframe, List[Candle]],
+        swing_structure: Dict[Timeframe, "SwingStructureResult"],
     ) -> List[PDArray]: ...
 
     def _detect_fvg(
@@ -280,7 +363,10 @@ class PDArrayDetector:
     ) -> List[PDArray]: ...
 
     def _detect_breaker_blocks(
-        self, candles: List[Candle], ob_list: List[PDArray]
+        self,
+        candles: List[Candle],
+        ob_list: List[PDArray],
+        structure_events: List["StructureEvent"],
     ) -> List[PDArray]: ...
 
     def _detect_ifvg(
@@ -299,10 +385,35 @@ class PDArrayDetector:
 **Responsibilities**:
 - FVG: 3-candle imbalance  gap between `candles[i-2].low` and `candles[i].high` (bullish) or `candles[i-2].high` and `candles[i].low` (bearish)
 - OB: last up-close candle before bearish expansion (bearish OB); last down-close candle before bullish expansion (bullish OB)
-- Breaker: violated OB that has flipped polarity  track OBs that price has traded through and tag as breaker
+- Breaker: violated OB that has flipped polarity  track OBs that price has traded through and tag as breaker. Additionally sets `structure_confirmed = True` on the `BREAKER` when `structure_events` contains a same-tier BOS/CHoCH on the opposing side of the OB formed after the violation (a sweep-then-structural-break sequence — see `Breaker-Blocks-TTrades-PDF.pdf` pp. 3–13); this is additive and does not change *when* a BREAKER is first tagged, only an added confirmation flag
 - IFVG: previously filled FVG (price has traded through it)  now acts as opposing array
 - BPR: overlapping bullish FVG and bearish FVG at the same price level
 - CISD level: the open price of the first candle in the delivery sequence that was violated
+
+### FractalModelTracker (fractal/candle_model.py)
+
+**Purpose**: Tracks the Candle 1–4 "Fractal Model" continuation/reversal closure sequence relative to an HTF Key Level, and computes the Equilibrium of the developing range. This is the single-candle-resolution layer that sits below CISD and OTE — see `Candle-2-TTrades-PDF.pdf` / `Candle-2-Closure-TTrades-PDF.pdf` / `Candle-3-Closure-TTrades.pdf`.
+
+**Interface**:
+```python
+class FractalModelTracker:
+    def track(
+        self,
+        candles: List[Candle],
+        key_level: Optional[float],
+    ) -> Optional["FractalModelResult"]: ...
+
+    def _classify_closure(
+        self, prior: Candle, current: Candle
+    ) -> "ClosureType": ...
+```
+
+**Responsibilities**:
+- Step 1 = the reference candle, `closure_type = None` (nothing to compare against yet)
+- Step N (N ≥ 2): `CONTINUATION` when the candle's close extends the developing range in the same direction; `REVERSAL` when it closes back within the prior step's range on the opposite side of the prior step's open (this is CISD-equivalent logic at candle-pair granularity)
+- `range_high`/`range_low` only ever expand as steps accumulate; `equilibrium = (range_high + range_low) / 2` always
+- Returns `None` when there isn't enough candle data to seed a sequence, rather than a degenerate/zero-range result
+- `key_level` is supplied by the caller (`LiquidityMappingEngine`), typically a `LiquidityLevel.price` or `HTFBias.reference_open` — this component does not select its own key level
 
 ### IPDAClassifier (ipda/classifier.py + ipda/cisd.py)
 
@@ -441,6 +552,7 @@ class SetupGrader:
 - Grade A: 7/8 conditions  missing killzone alignment OR UNICORN (has OTE or single PD array)
 - Grade B: sweep + CISD confirmed but entry PD array is weaker (FVG only, no breaker)
 - NO_TRADE: fewer than 6 conditions met, or HTF bias missing, or no draw on liquidity
+- When the `entry_array.structure_confirmed = True`, note it in `grade_reason` as corroborating strength — this does **not** add a 9th boolean condition and does **not** change `conditions_met`; likewise `LiquidityMap.fractal_model.price_above_equilibrium` may be referenced in `grade_reason`/`to_agent_context()` narrative but never gates the grade itself
 
 ---
 
@@ -519,6 +631,24 @@ class KillzoneWindow(str, Enum):
     NY_AM     = "NY_AM"       # 07:0010:00 EST
     NY_PM     = "NY_PM"       # 13:3016:00 EST
     NONE      = "NONE"
+
+class SwingTier(str, Enum):
+    SHORT_TERM        = "SHORT_TERM"          # STH / STL
+    INTERMEDIATE_TERM = "INTERMEDIATE_TERM"   # ITH / ITL
+    LONG_TERM         = "LONG_TERM"            # LTH / LTL
+
+class StructureEventType(str, Enum):
+    BOS   = "BOS"     # Break of Structure  continuation
+    CHOCH = "CHOCH"   # Change of Character  first sign of reversal
+
+class CandleType(str, Enum):
+    EXPANSION          = "EXPANSION"
+    REVERSAL           = "REVERSAL"
+    REVERSAL_EXPANSION = "REVERSAL_EXPANSION"
+
+class ClosureType(str, Enum):
+    CONTINUATION = "CONTINUATION"
+    REVERSAL     = "REVERSAL"
 ```
 
 ### Core Candle Model
@@ -638,11 +768,76 @@ class PDArray(BaseModel):
     ob_candle_close: Optional[float] = None
     # For Breaker: reference to the original OB it was derived from
     source_ob_id: Optional[str] = None
+    # For Breaker: True once a same-tier BOS/CHoCH confirms the sweep-then-structural-break
+    # sequence on the opposing side of the source OB (Requirement 4.15). Additive  never
+    # gates BREAKER classification itself, only adds a confirmation signal.
+    structure_confirmed: bool = False
     # For BPR: references to the two FVGs that form it
     bpr_bullish_fvg_id: Optional[str] = None
     bpr_bearish_fvg_id: Optional[str] = None
     # For CISD level: the open of the first candle in the violated sequence
     cisd_sequence_open: Optional[float] = None
+```
+
+### Swing Structure Models
+
+```python
+class SwingPoint(BaseModel):
+    """A single swing high or swing low at a given tier."""
+    swing_id: str                  # UUID
+    tier: SwingTier
+    is_high: bool                  # True = swing high, False = swing low
+    price: float
+    formed_at: datetime
+    broken: bool = False
+    broken_at: Optional[datetime] = None
+    # Present when tier != SHORT_TERM  points at the lower-tier SwingPoint this was promoted from
+    derived_from_swing_id: Optional[str] = None
+
+class StructureEvent(BaseModel):
+    """A BOS or CHoCH confirmation at a specific tier and timeframe."""
+    event_id: str                  # UUID
+    event_type: StructureEventType
+    tier: SwingTier
+    timeframe: Timeframe
+    direction: BiasDirection       # direction of the break
+    broken_swing_id: str           # the SwingPoint that was broken
+    price: float                   # the closing price that confirmed the break
+    confirmed_at: datetime
+
+class SwingStructureResult(BaseModel):
+    """Complete tiered swing structure for one timeframe."""
+    timeframe: Timeframe
+    short_term_highs: List[SwingPoint] = []
+    short_term_lows: List[SwingPoint] = []
+    intermediate_term_highs: List[SwingPoint] = []
+    intermediate_term_lows: List[SwingPoint] = []
+    long_term_highs: List[SwingPoint] = []
+    long_term_lows: List[SwingPoint] = []
+    events: List[StructureEvent] = []
+    latest_event: Optional[StructureEvent] = None
+```
+
+### Fractal Model Result
+
+```python
+class FractalCandleStep(BaseModel):
+    """One candle's position in the Fractal Model closure sequence."""
+    step_index: int                 # 1-based; Step 1 is the reference candle
+    candle_time: datetime
+    close: float
+    high: float
+    low: float
+    closure_type: Optional[ClosureType] = None   # None only for step_index == 1
+
+class FractalModelResult(BaseModel):
+    """Candle 1-4 Fractal Model tracking relative to an HTF Key Level."""
+    key_level: float
+    steps: List[FractalCandleStep] = []
+    range_high: float
+    range_low: float
+    equilibrium: float               # (range_high + range_low) / 2, always
+    price_above_equilibrium: bool
 ```
 
 ### CRT Phase Result
@@ -778,8 +973,14 @@ class LiquidityMap(BaseModel):
     draw_on_liquidity: Optional[LiquidityLevel] = None  # primary target
     sweep_detected: bool = False                         # sweep of draw_on_liquidity
 
+    # Swing Structure  tiered STH/STL/ITH/ITL/LTH/LTL + BOS/CHoCH
+    swing_structure: Dict[str, SwingStructureResult] = {}   # key = Timeframe.value string
+
     # Layer 6  PD Arrays
     pd_arrays: List[PDArray]
+
+    # Fractal Model  Candle 1-4 closures relative to an HTF Key Level + Equilibrium
+    fractal_model: Optional[FractalModelResult] = None
 
     # Layer 3  CRT / IPDA
     crt_phases: Dict[str, CRTPhaseResult]   # key = Timeframe.value string
@@ -828,6 +1029,22 @@ class LiquidityMap(BaseModel):
 
 ---
 
+## Error Handling
+
+- **Missing required timeframes**: `LiquidityMappingEngine.analyze()` raises `ValueError` immediately when D1 or W1 is absent from `candles_by_tf` (Requirement 1.4), before any sub-component runs — there is no partial/degraded analysis mode.
+- **Invalid candle data**: `Candle` validates OHLC integrity (`high >= low`, `high >= open`, `high >= close`) at Pydantic construction time (Requirement 11.1–11.3). The engine never receives a structurally invalid `Candle` — invalid data fails fast at the boundary where it's constructed, not deep inside a detector.
+- **"Nothing found" is not an error**: `FractalModelTracker.track()`, `UnicornDetector.detect()`, and `LiquidityMappingEngine._find_draw_on_liquidity()` all return `None`/`Optional` rather than raising when there's insufficient data or no qualifying pattern — an empty result is an expected, common outcome of pure pattern detection, not a failure.
+- **No defensive exception handling inside the engine**: because the package has zero I/O (Requirement 14.1), there are no network/DB/timeout errors to catch. `LiquidityMappingEngine.analyze()` and every sub-component SHALL let unexpected exceptions (bugs, not bad input) propagate uncaught — swallowing them would hide defects in deterministic, easily-testable pure functions where there is no excuse for a silent failure.
+- **Caller's responsibility**: `agent/nodes/observe_node.py` (Task 160) is the only place that decides what happens if `analyze()` raises — whether that means setting `AgentState.liquidity_map = None` and continuing the candle-close cycle, or halting it. That policy belongs to the agent loop, not the engine.
+
+## Testing Strategy
+
+- Strict RED → GREEN → REFACTOR per task, matching the task boundaries in `tasks.md` — no production code is written before a failing test exists for it.
+- One test file per module in `backend/tests/`, all prefixed `test_liquidity_`, mirroring `liquidity_engine/`'s package layout.
+- Every Correctness Property below has a corresponding Hypothesis property-based test (`property_*`), run with `@settings(max_examples=100)` minimum (Requirement 14.6).
+- `test_liquidity_engine.py` covers two levels: a mocked test asserting the exact sub-component call order (`test_sub_components_called_in_order`), and an unmocked end-to-end run through `analyze()` to catch wiring bugs that per-component unit tests can't see.
+- Coverage gate: ≥ 90% line coverage across `liquidity_engine/`, measured by `pytest-cov`, enforced at the Task 161 final checkpoint (Requirement 14.7).
+- `test_observe_node_liquidity.py` is the only suite in this spec that touches code outside `liquidity_engine/`; its scope is deliberately narrow — verifying `AgentState.liquidity_map` gets populated correctly, not re-testing engine internals already covered above.
 
 ## Correctness Properties
 
@@ -861,7 +1078,7 @@ class LiquidityMap(BaseModel):
 
 *For any* `current_price` within 0.01% of `reference_open`, `HTFBiasClassifier.classify()` SHALL return `NEUTRAL`.
 
-**Validates: Requirement 2.3**
+**Validates: Requirements 2.3**
 
 ---
 
@@ -885,7 +1102,7 @@ class LiquidityMap(BaseModel):
 
 *For any* displacement leg with a non-zero range, the `OTEZone` returned by `OTECalculator.calculate()` SHALL satisfy `fib_62 < fib_705 < fib_79`.
 
-**Validates: Requirement 7.4**
+**Validates: Requirements 7.4**
 
 ---
 
@@ -901,7 +1118,7 @@ class LiquidityMap(BaseModel):
 
 *For any* computed `OTEZone`, `golden_level` SHALL equal `fib_705`.
 
-**Validates: Requirement 7.6**
+**Validates: Requirements 7.6**
 
 ---
 
@@ -925,7 +1142,7 @@ class LiquidityMap(BaseModel):
 
 *For any* list of qualifying Breaker+FVG pairs with distinct `formed_at` timestamps, `UnicornDetector.detect()` SHALL return the pair with the maximum `formed_at` value.
 
-**Validates: Requirement 8.5**
+**Validates: Requirements 8.5**
 
 ---
 
@@ -941,7 +1158,7 @@ class LiquidityMap(BaseModel):
 
 *For any* `LiquidityMap`, the `SetupGrader` SHALL assign grade `A+` if and only if all 8 boolean conditions in `SetupGradeDetail` are `True` (`conditions_met == 8`). No `LiquidityMap` with `conditions_met < 8` SHALL receive grade `A+`.
 
-**Validates: Requirement 9.1**
+**Validates: Requirements 9.1**
 
 ---
 
@@ -949,7 +1166,7 @@ class LiquidityMap(BaseModel):
 
 *For any* `LiquidityMap` where `conditions_met < 6`, OR where `htf_bias_confirmed = False`, OR where `draw_on_liquidity_identified = False`, THE `SetupGrader` SHALL assign grade `NO_TRADE`.
 
-**Validates: Requirement 9.5**
+**Validates: Requirements 9.5**
 
 ---
 
@@ -957,7 +1174,7 @@ class LiquidityMap(BaseModel):
 
 *For any* `LiquidityMap` where `draw_on_liquidity` is not `None`, `draw_on_liquidity.level_id` SHALL appear as the `level_id` of at least one member of `LiquidityMap.liquidity_levels`.
 
-**Validates: Requirement 10.3**
+**Validates: Requirements 10.3**
 
 ---
 
@@ -965,7 +1182,7 @@ class LiquidityMap(BaseModel):
 
 *For any* call to `IPDAClassifier.validate_cisd_cascade()`, `CISDCascadeStatus.cascade_valid` SHALL be `True` if and only if both `trigger_cisd.confirmed = True` AND `confirmation_cisd.confirmed = True`.
 
-**Validates: Requirement 6.4**
+**Validates: Requirements 6.4**
 
 ---
 
@@ -973,7 +1190,7 @@ class LiquidityMap(BaseModel):
 
 *For any* candle set and any `tolerance_pct`, every `LiquidityLevel` with source `EQH` or `EQL` SHALL have constituent swing points satisfying `abs(level_a - level_b) / level_a <= tolerance_pct`.
 
-**Validates: Requirement 3.6**
+**Validates: Requirements 3.6**
 
 ---
 
@@ -998,5 +1215,45 @@ class LiquidityMap(BaseModel):
 *For any* valid `LiquidityMap`, `to_agent_context()` SHALL return a non-empty string containing every timeframe key and bias direction from `htf_bias`, the `grade` value, and the `conditions_met` count.
 
 **Validates: Requirements 10.7, 10.8, 10.9**
+
+---
+
+### Property 22: Swing Tier Promotion Requires a Broken Lower Tier
+
+*For any* `SwingPoint` with `tier != SHORT_TERM`, `derived_from_swing_id` SHALL reference a lower-tier `SwingPoint` with `broken = True`.
+
+**Validates: Requirements 15.2, 15.3, 15.4**
+
+---
+
+### Property 23: BOS/CHoCH Mutual Exclusivity
+
+*For any* `StructureEvent`, `event_type` SHALL be exactly one of `BOS` or `CHOCH`, and `CHOCH` events SHALL always oppose the prevailing trend direction at formation time.
+
+**Validates: Requirements 15.5, 15.6, 15.7**
+
+---
+
+### Property 24: Candle Type Classification Is Total and Exclusive
+
+*For any* valid `Candle`, `classify_candle_type()` SHALL return exactly one of `EXPANSION`, `REVERSAL`, or `REVERSAL_EXPANSION`, and SHALL never raise for a structurally valid candle.
+
+**Validates: Requirements 16.1, 16.2, 16.3, 16.4, 16.5**
+
+---
+
+### Property 25: Fractal Model Range and Equilibrium Correctness
+
+*For any* sequence of candles tracked incrementally, `range_high` SHALL be monotonically non-decreasing, `range_low` SHALL be monotonically non-increasing, and `equilibrium` SHALL equal `(range_high + range_low) / 2` after every step.
+
+**Validates: Requirements 17.3, 17.4**
+
+---
+
+### Property 26: Structure-Confirmed Breaker Requires a Corresponding Structure Event
+
+*For any* `PDArray` with `array_type = BREAKER` and `structure_confirmed = True`, THERE SHALL exist a `StructureEvent` on the opposing side of the originating OB formed at or after the OB's violation.
+
+**Validates: Requirements 4.15**
 
 ---

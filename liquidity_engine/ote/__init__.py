@@ -1,0 +1,1 @@
+"""OTE (Optimal Trade Entry) package."""

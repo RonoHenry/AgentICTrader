@@ -1,4 +1,6 @@
-# Requirements Document — Liquidity Engine
+# Requirements Document
+
+**Spec**: Liquidity Engine
 
 ## Introduction
 
@@ -30,7 +32,7 @@ This spec is **parked for post-v1 implementation** (after task 143 ships). It is
 - **Breaker**: A violated Order Block that has flipped polarity and acts as an opposing array.
 - **BPR**: Balanced Price Range — overlapping bullish FVG and bearish FVG at the same price level.
 - **CISD_LEVEL**: Change in State of Delivery level — the open of the first candle in a violated delivery sequence.
-- **CRT**: Consequent Range Theory — the 4-phase candle delivery model (C1/C2/C3/C4).
+- **CRT**: Candle Range Theory — the 4-phase candle delivery model (C1/C2/C3/C4).
 - **C1 (Accumulation)**: Range-building phase with ATR-relative tight candles.
 - **C2 (Manipulation)**: Candle closing within C1's range, confirmed by lower-timeframe CISD.
 - **C3 (Distribution/Expansion)**: Strong directional candle away from C2.
@@ -56,6 +58,14 @@ This spec is **parked for post-v1 implementation** (after task 143 ships). It is
 
 ---
 
+## Non-Goals (Deferred)
+
+The following concepts appear in the TTrades reference material (`docs/references/`) but are explicitly **out of scope** for this version of the engine. They are recorded here so they are not silently forgotten and are not re-litigated mid-implementation.
+
+- **SMT (Smart Money Divergence)**: Cross-instrument correlation divergence (e.g., a correlated pair failing to confirm a sweep) used as continuation confluence in "Breaker Continuations." `LiquidityMappingEngine.analyze()` is single-instrument by design (Requirement 1.1 takes one `instrument: str`). Supporting SMT requires either a signature change to accept multiple correlated instruments' candle data, or a separate cross-instrument service that computes divergence and passes it in as an auxiliary input to `SetupGrader`. Revisit as its own follow-on spec once the single-instrument engine (this spec) is validated in production — do not bolt it on ad hoc during this implementation.
+
+---
+
 ## Requirements
 
 ### Requirement 1: Core Engine Pipeline
@@ -68,7 +78,7 @@ This spec is **parked for post-v1 implementation** (after task 143 ships). It is
 2. THE `LiquidityMappingEngine` SHALL be stateless — for any two identical `candles_by_tf` inputs, THE Engine SHALL produce identical `LiquidityMap` outputs.
 3. THE `LiquidityMappingEngine` SHALL never mutate the input `candles_by_tf` dictionary or any `Candle` objects within it.
 4. WHEN `candles_by_tf` is missing the D1 or W1 timeframe, THE Engine SHALL raise a `ValueError` with a descriptive message before executing any sub-component.
-5. THE `LiquidityMappingEngine` SHALL invoke sub-components in the following dependency order: `HTFBiasClassifier` → `LiquidityLevelDetector` → `PDArrayDetector` → `IPDAClassifier` → `OTECalculator` → `UnicornDetector` → `SetupGrader`.
+5. THE `LiquidityMappingEngine` SHALL invoke sub-components in the following dependency order: `HTFBiasClassifier` → `LiquidityLevelDetector` → `SwingStructureClassifier` → `PDArrayDetector` → `FractalModelTracker` → `IPDAClassifier` → `OTECalculator` → `UnicornDetector` → `SetupGrader`. `SwingStructureClassifier` SHALL run before `PDArrayDetector` because Breaker `structure_confirmed` (Requirement 4.15) depends on `StructureEvent` output. `FractalModelTracker` SHALL run after `PDArrayDetector` because its `key_level` argument is typically sourced from a detected `LiquidityLevel` or `HTFBias.reference_open`.
 6. WHEN `analyze()` completes successfully, THE Engine SHALL return a `LiquidityMap` where `analyzed_at` is a timezone-aware `datetime` matching the `timestamp` argument.
 7. THE `LiquidityMappingEngine.analyze()` SHALL complete execution within 500ms for any standard multi-timeframe candle input covering up to 1,000 candles per timeframe.
 
@@ -130,12 +140,13 @@ This spec is **parked for post-v1 implementation** (after task 143 ships). It is
 12. FOR ALL detected PDArrays of any type, THE `PDArrayDetector` SHALL ensure `PDArray.high > PDArray.low`.
 13. THE `PDArrayDetector` SHALL detect PD arrays across all provided timeframes and SHALL populate the `timeframe` field on each `PDArray` with the timeframe on which it was detected.
 14. WHEN a `FVG` has been fully filled (price has traded through the entire gap), THE `PDArrayDetector` SHALL set `is_filled = True` and `filled_at` to the timestamp of the filling candle.
+15. THE `PDArray.structure_confirmed` field SHALL default to `False` for every PDArray of any type. FOR a `BREAKER` specifically, THE `PDArrayDetector` SHALL set `structure_confirmed = True` only WHEN, after the initiating OB violation, price subsequently forms a same-tier `StructureEvent` (BOS or CHoCH, per Requirement 15) on the opposing side of the original OB — i.e. a liquidity sweep beyond the OB's range followed by a structural break back through the swing point that preceded it. Requirement 4.7 (the BREAKER classification itself) is unaffected by this criterion — a `BREAKER` is still tagged the moment price violates the OB; `structure_confirmed` is an additive confirmation flag layered on top, not a gate on classification timing. (Source: `Breaker-Blocks-TTrades-PDF.pdf`, pp. 3–13, which shows Breaker confirmation as a two-step sequence — sweep, then structural break back — rather than a single violation.)
 
 ---
 
 ### Requirement 5: CRT Phase Classification
 
-**User Story:** As the methodology engine, I want to classify the Consequent Range Theory phase (C1/C2/C3/C4) for each timeframe, so that the agent understands the current candle delivery context and can confirm manipulation before expecting expansion.
+**User Story:** As the methodology engine, I want to classify the Candle Range Theory phase (C1/C2/C3/C4) for each timeframe, so that the agent understands the current candle delivery context and can confirm manipulation before expecting expansion.
 
 #### Acceptance Criteria
 
@@ -222,6 +233,7 @@ This spec is **parked for post-v1 implementation** (after task 143 ships). It is
 10. THE `SetupGradeDetail.grade_reason` SHALL be a non-empty string providing a human-readable explanation of the assigned grade for every grading output.
 11. THE `SetupGradeDetail.suggested_entry` SHALL be set to the `golden_level` of the OTE zone when `entry_array_is_ote = True`, otherwise to the midpoint of the entry PD array.
 12. THE `SetupGradeDetail.suggested_stop` SHALL be placed beyond the far boundary of the entry PD array (below `PDArray.low` for bullish entries, above `PDArray.high` for bearish entries).
+13. WHEN the `entry_array` has `structure_confirmed = True` (see Requirement 4.15), THE `SetupGrader` SHALL record this in `grade_reason` as corroborating evidence; `structure_confirmed` SHALL NOT alter the 8-condition boolean gate or the `conditions_met` count — it is informational strength context only, not a 9th condition.
 
 ---
 
@@ -307,6 +319,63 @@ This spec is **parked for post-v1 implementation** (after task 143 ships). It is
 6. THE `LiquidityMappingEngine` SHALL be fully covered by property-based tests using the `hypothesis` library with a minimum of 100 examples per property.
 7. THE `liquidity_engine` package SHALL achieve a minimum of 90% line coverage as measured by `pytest-cov`.
 8. THE `LiquidityMap.to_agent_context()` output format SHALL follow the structured template defined in the design document, answering: (1) where price has come from, (2) where it is now, and (3) where it is likely to go.
+
+---
+
+### Requirement 15: Swing Structure Hierarchy and BOS/CHoCH Detection
+
+**User Story:** As the methodology engine, I want to classify swing points into a nested Short-Term / Intermediate-Term / Long-Term hierarchy and detect Break of Structure (BOS) and Change of Character (CHoCH) events, so that the agent has a tiered, faithful reading of market structure rather than a flat list of local extrema.
+
+**Source**: `Basic-Market-Structure-TTrades-PDF.pdf` (bullish/bearish trend HH/HL/LH/LL sequencing) and `Advanced-Market-Structure-TTrades-PDF.pdf` (STH/STL → ITH/ITL → LTH/LTL nesting).
+
+#### Acceptance Criteria
+
+1. THE `SwingStructureClassifier` SHALL classify every local extremum produced by `find_swing_highs`/`find_swing_lows` as a Short-Term High (`STH`) or Short-Term Low (`STL`) — `SwingTier.SHORT_TERM`.
+2. WHEN price closes beyond the `STL` immediately preceding an `STH` (or beyond the `STH` immediately preceding an `STL`), THE `SwingStructureClassifier` SHALL promote that `STH`/`STL` to Intermediate-Term (`ITH`/`ITL`) — `SwingTier.INTERMEDIATE_TERM`.
+3. WHEN price closes beyond the `ITL` immediately preceding an `ITH` (or beyond the `ITH` immediately preceding an `ITL`), THE `SwingStructureClassifier` SHALL promote that `ITH`/`ITL` to Long-Term (`LTH`/`LTL`) — `SwingTier.LONG_TERM`.
+4. EVERY `SwingPoint` promoted to `INTERMEDIATE_TERM` or `LONG_TERM` SHALL retain a reference to the lower-tier `SwingPoint` it was derived from (`derived_from_swing_id`).
+5. THE `SwingStructureClassifier` SHALL emit a `StructureEvent` of type `BOS` WHEN price closes beyond the most recent same-tier swing point in the direction consistent with the prevailing trend at that tier (continuation).
+6. THE `SwingStructureClassifier` SHALL emit a `StructureEvent` of type `CHOCH` WHEN price closes beyond the most recent same-tier swing point in the direction opposite the prevailing trend at that tier (first sign of reversal).
+7. FOR ANY given swing point break, THE `SwingStructureClassifier` SHALL classify the resulting `StructureEvent` as exactly one of `BOS` or `CHOCH`, never both, and never neither.
+8. THE `SwingStructureClassifier.classify(candles, tf) -> SwingStructureResult` SHALL be pure and stateless — identical candle input SHALL always produce an identical `SwingStructureResult`.
+9. THE `LiquidityMap.swing_structure` dictionary SHALL contain one `SwingStructureResult` per timeframe present in `candles_by_tf`, keyed by `Timeframe.value`.
+
+---
+
+### Requirement 16: Candle Type Classification (Wick-Based)
+
+**User Story:** As the methodology engine, I want to classify each candle as an Expansion, Reversal, or Reversal-Expansion candle based on its wick-to-range ratio, so that the agent can read individual candles for manipulation/rejection signals independently of multi-candle pattern detection.
+
+**Source**: `Candle-2-TTrades-PDF.pdf` ("Wick Size", "Reversal Candle", "Reversal Expansion Candle", "Two Types").
+
+#### Acceptance Criteria
+
+1. THE `classify_candle_type(candle)` utility SHALL compute `wick_ratio = max(candle.upper_wick, candle.lower_wick) / candle.total_range` for any candle where `total_range > 0`.
+2. WHEN `wick_ratio <= 0.25`, THE utility SHALL classify the candle as `CandleType.EXPANSION` (small opposing wick; strong directional close near an extreme).
+3. WHEN `wick_ratio >= 0.5`, THE utility SHALL classify the candle as `CandleType.REVERSAL` (large opposing wick; rejection before close).
+4. WHEN `0.25 < wick_ratio < 0.5`, THE utility SHALL classify the candle as `CandleType.REVERSAL_EXPANSION` (a directional body with a moderate rejection wick).
+5. WHEN `candle.total_range == 0`, THE utility SHALL classify the candle as `CandleType.EXPANSION` (a doji/zero-range candle carries no rejection wick to speak of).
+6. THE `classify_candle_type()` thresholds (0.25 / 0.5) ARE first-pass defaults calibrated qualitatively against the TTrades reference material, not derived from a backtest; THE implementation SHALL expose them as named constants (not magic numbers) so they can be recalibrated without touching call sites.
+7. `classify_candle_type()` SHALL NOT be added as a `Candle` property or field — `Candle` remains a pure OHLC geometry model; candle typing is a derived, interpretive classification and SHALL live in `utils/candle_utils.py` as a stateless function.
+
+---
+
+### Requirement 17: Fractal Model Candle Sequence and Equilibrium
+
+**User Story:** As the methodology engine, I want to track the candle-by-candle continuation/reversal closure sequence relative to an HTF Key Level and compute the Equilibrium of the developing range, so that the agent has the granular, single-candle-resolution view of delivery that CISD and OTE operate above.
+
+**Source**: `Candle-2-TTrades-PDF.pdf`, `Candle-2-Closure-TTrades-PDF.pdf`, `Candle-3-Closure-TTrades.pdf` (the "Fractal Model — Candle Closures" series: Candle 1/2/3/4 relative to an HTF Key Level, Continuation vs. Reversal Closure, and the 0.5 Equilibrium of the developing range).
+
+#### Acceptance Criteria
+
+1. THE `FractalModelTracker.track(candles, key_level) -> FractalModelResult` SHALL treat the first candle in `candles` as Step 1 (the reference candle) with `closure_type = None` (there is no prior candle to compare against).
+2. FOR every subsequent candle (Step N, N >= 2), THE `FractalModelTracker` SHALL classify `closure_type = ClosureType.CONTINUATION` WHEN Step N's close extends beyond Step N-1's extreme in the direction of the developing sequence, and `closure_type = ClosureType.REVERSAL` WHEN Step N's close falls back within Step N-1's range on the opposing side of Step N-1's open.
+3. THE `FractalModelResult.range_high` and `range_low` SHALL be updated to encompass the high/low of every step processed so far — these values SHALL only expand (never contract) as new steps are added.
+4. THE `FractalModelResult.equilibrium` SHALL always equal `(range_high + range_low) / 2`.
+5. THE `FractalModelResult.price_above_equilibrium` SHALL be `True` WHEN the latest step's close is greater than `equilibrium`, and `False` otherwise.
+6. THE `FractalModelResult.key_level` SHALL be immutable for the lifetime of a single `track()` call and SHALL be the value passed in by the caller (an HTF Key Level — typically an `HTFBias.reference_open` or a `LiquidityLevel.price`).
+7. `LiquidityMap.fractal_model` SHALL be `Optional[FractalModelResult]`, set to `None` when insufficient candle data is available to seed a sequence.
+8. `FractalModelTracker` SHALL be pure and stateless per Requirement 14.1 (no I/O, no shared mutable state between calls).
 
 ---
 
@@ -495,5 +564,45 @@ This spec is **parked for post-v1 implementation** (after task 143 ships). It is
 *For any* valid `LiquidityMap`, `to_agent_context()` SHALL return a non-empty string that contains: (a) every timeframe key and bias direction from `htf_bias`, (b) the `grade` value and `conditions_met` count from `setup_grade`.
 
 **Validates: Requirements 10.7, 10.8, 10.9**
+
+---
+
+### Property 24: Swing Tier Promotion Requires a Broken Lower Tier
+
+*For any* `SwingPoint` with `tier = INTERMEDIATE_TERM` or `tier = LONG_TERM`, `derived_from_swing_id` SHALL reference a `SwingPoint` one tier below (`SHORT_TERM` → `INTERMEDIATE_TERM`, `INTERMEDIATE_TERM` → `LONG_TERM`) that has `broken = True`. No swing point SHALL be promoted without a broken lower-tier swing point beneath it.
+
+**Validates: Requirement 15.2, 15.3, 15.4**
+
+---
+
+### Property 25: BOS/CHoCH Mutual Exclusivity
+
+*For any* `StructureEvent` emitted by `SwingStructureClassifier`, `event_type` SHALL be exactly one of `BOS` or `CHOCH` — never both, never neither — and `CHOCH` events SHALL always have a `direction` opposite the prevailing trend direction at the time of formation.
+
+**Validates: Requirement 15.5, 15.6, 15.7**
+
+---
+
+### Property 26: Candle Type Classification Is Total and Exclusive
+
+*For any* valid `Candle`, `classify_candle_type(candle)` SHALL return exactly one of `CandleType.EXPANSION`, `CandleType.REVERSAL`, or `CandleType.REVERSAL_EXPANSION` — the function SHALL never raise and SHALL never return `None` for a structurally valid candle.
+
+**Validates: Requirement 16.1–16.5**
+
+---
+
+### Property 27: Fractal Model Range and Equilibrium Correctness
+
+*For any* sequence of candles passed incrementally to `FractalModelTracker.track()`, `range_high` SHALL be monotonically non-decreasing and `range_low` SHALL be monotonically non-increasing as steps accumulate, and `equilibrium` SHALL equal `(range_high + range_low) / 2` after every step.
+
+**Validates: Requirement 17.3, 17.4**
+
+---
+
+### Property 28: Structure-Confirmed Breaker Requires a Corresponding Structure Event
+
+*For any* `PDArray` with `array_type = BREAKER` and `structure_confirmed = True`, THERE SHALL exist a `StructureEvent` (of type `BOS` or `CHOCH`) on the opposing side of the originating OB, formed at or after the OB's violation timestamp.
+
+**Validates: Requirement 4.15**
 
 ---
