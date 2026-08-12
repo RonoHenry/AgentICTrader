@@ -169,7 +169,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - **REFACTOR**: Add conflict resolution strategy
     - _Requirements: FR-RAG-1_
   
-  - [ ]* 7.3 Write integration tests for ingestion
+  - [x] 7.3 Write integration tests for ingestion
     - Test ingestion of 100+ setups
     - Test error handling (network failures, invalid data)
     - Test ingestion performance (< 1s per setup)
