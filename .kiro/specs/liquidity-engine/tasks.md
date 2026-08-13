@@ -432,7 +432,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 9.8, 9.9, 9.10, 9.11, 9.12, 9.13_
   - **155c. REFACTOR** — extract `_build_grade_reason()` helper; confirm GREEN
 
-- [ ] 156. Checkpoint — run grader + upstream test suite; ensure tasks 150–155 are all GREEN
+- [x] 156. Checkpoint — run grader + upstream test suite; ensure tasks 150–155 are all GREEN
   - Run `pytest backend/tests/test_liquidity_cisd.py backend/tests/test_liquidity_ipda_classifier.py backend/tests/test_liquidity_fractal_model.py backend/tests/test_liquidity_ote.py backend/tests/test_liquidity_unicorn.py backend/tests/test_liquidity_grader.py -v`
   - All tests must pass. Ask the user if any failures arise.
 
