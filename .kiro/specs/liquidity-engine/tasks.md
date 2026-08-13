@@ -119,7 +119,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 3.7, 9.9, 14.1, 16.1, 16.2, 16.3, 16.4, 16.5, 16.6_
   - **145c. REFACTOR** — extract `KILLZONE_WINDOWS` dict constant; confirm GREEN
 
-- [ ] 146. Implement `liquidity_engine/detectors/structure.py` — `SwingStructureClassifier`
+- [x] 146. Implement `liquidity_engine/detectors/structure.py` — `SwingStructureClassifier`
   - **146a. RED — Write failing tests** (`backend/tests/test_liquidity_swing_structure.py`)
     - `test_seeds_short_term_highs_from_swing_indices` — every `find_swing_highs` index becomes an `STH` `SwingPoint`
     - `test_seeds_short_term_lows_from_swing_indices` — every `find_swing_lows` index becomes an `STL` `SwingPoint`
@@ -152,7 +152,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8, 15.9_
   - **146c. REFACTOR** — extract `_break_confirmed(swing, candles)` helper shared by promotion and event classification; confirm GREEN
 
-- [ ] 147. Implement `liquidity_engine/detectors/external.py` — `LiquidityLevelDetector`
+- [x] 147. Implement `liquidity_engine/detectors/external.py` — `LiquidityLevelDetector`
   - **147a. RED — Write failing tests** (`backend/tests/test_liquidity_external_detector.py`)
     - `test_pwh_detected_as_bsl` — PWH from W1 candles returned as BSL level
     - `test_pwl_detected_as_ssl` — PWL from W1 candles returned as SSL level
@@ -190,7 +190,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9_
   - **147c. REFACTOR** — extract `_TIMEFRAME_WEIGHT` constant map; confirm GREEN
 
-- [ ] 148. Implement `liquidity_engine/detectors/internal.py` — `PDArrayDetector`
+- [x] 148. Implement `liquidity_engine/detectors/internal.py` — `PDArrayDetector`
   - **148a. RED — Write failing tests** (`backend/tests/test_liquidity_internal_detector.py`)
     - `test_bullish_fvg_detected` — gap between candles[i-2].low and candles[i].high → FVG BULLISH
     - `test_bearish_fvg_detected` — gap between candles[i-2].high and candles[i].low → FVG BEARISH
@@ -231,7 +231,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10, 4.11, 4.12, 4.13, 4.14, 4.15_
   - **148c. REFACTOR** — consolidate `_assign_strength_score()` helper; confirm GREEN
 
-- [ ] 149. Checkpoint — run full test suite; ensure tasks 144–148 are all GREEN
+- [x] 149. Checkpoint — run full test suite; ensure tasks 144–148 are all GREEN
   - Run `pytest backend/tests/test_liquidity_models.py backend/tests/test_liquidity_utils.py backend/tests/test_liquidity_swing_structure.py backend/tests/test_liquidity_external_detector.py backend/tests/test_liquidity_internal_detector.py -v`
   - All tests must pass. Ask the user if any failures arise.
 
