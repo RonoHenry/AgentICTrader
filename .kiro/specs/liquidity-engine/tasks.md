@@ -235,7 +235,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
   - Run `pytest backend/tests/test_liquidity_models.py backend/tests/test_liquidity_utils.py backend/tests/test_liquidity_swing_structure.py backend/tests/test_liquidity_external_detector.py backend/tests/test_liquidity_internal_detector.py -v`
   - All tests must pass. Ask the user if any failures arise.
 
-- [ ] 150. Implement `liquidity_engine/ipda/cisd.py` — `CISDDetector`
+- [x] 150. Implement `liquidity_engine/ipda/cisd.py` — `CISDDetector`
   - **150a. RED — Write failing tests** (`backend/tests/test_liquidity_cisd.py`)
     - `test_bearish_cisd_detected` — series of up-close candles followed by close below first-candle open → CISD BEARISH confirmed
     - `test_bullish_cisd_detected` — series of down-close candles followed by close above first-candle open → CISD BULLISH confirmed
@@ -256,7 +256,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 6.1, 6.2, 6.3, 6.6_
   - **150c. REFACTOR** — extract `_find_sequence_open()` helper; confirm GREEN
 
-- [ ] 151. Implement `liquidity_engine/ipda/classifier.py` — `IPDAClassifier`
+- [x] 151. Implement `liquidity_engine/ipda/classifier.py` — `IPDAClassifier`
   - **151a. RED — Write failing tests** (`backend/tests/test_liquidity_ipda_classifier.py`)
     - `test_c1_accumulation_tight_range` — ATR-relative tight candle series classified as C1_ACCUMULATION
     - `test_c2_manipulation_within_c1_range` — candle closing within C1 range + confirmed lower-TF CISD → C2_MANIPULATION
@@ -291,7 +291,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 6.4, 6.5, 6.7, 6.8_
   - **151c. REFACTOR** — extract `_classify_phase()` pure function; confirm GREEN
 
-- [ ] 152. Implement `liquidity_engine/fractal/candle_model.py` — `FractalModelTracker`
+- [x] 152. Implement `liquidity_engine/fractal/candle_model.py` — `FractalModelTracker`
   - **152a. RED — Write failing tests** (`backend/tests/test_liquidity_fractal_model.py`)
     - `test_step_one_has_no_closure_type` — the first candle in the sequence gets `closure_type = None`
     - `test_continuation_closure_when_extending_range` — Step N closing beyond Step N-1's extreme in the developing direction → ClosureType.CONTINUATION
@@ -316,7 +316,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.6, 17.7, 17.8_
   - **152c. REFACTOR** — extract `_update_range(step, range_high, range_low)` helper; confirm GREEN
 
-- [ ] 153. Implement `liquidity_engine/ote/calculator.py` — `OTECalculator`
+- [x] 153. Implement `liquidity_engine/ote/calculator.py` — `OTECalculator`
   - **153a. RED — Write failing tests** (`backend/tests/test_liquidity_ote.py`)
     - `test_fib_62_computed_correctly` — fib_62 == swing_high - 0.62 * (swing_high - swing_low)
     - `test_fib_705_computed_correctly` — fib_705 == swing_high - 0.705 * (swing_high - swing_low)
@@ -353,7 +353,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9, 7.10, 7.11_
   - **153c. REFACTOR** — extract `_fib_level(swing_high, swing_low, pct, direction)` helper; confirm GREEN
 
-- [ ] 154. Implement `liquidity_engine/unicorn/detector.py` — `UnicornDetector`
+- [x] 154. Implement `liquidity_engine/unicorn/detector.py` — `UnicornDetector`
   - **154a. RED — Write failing tests** (`backend/tests/test_liquidity_unicorn.py`)
     - `test_bullish_unicorn_detected` — bullish BREAKER + bullish FVG overlapping → UnicornPattern returned
     - `test_bearish_unicorn_detected` — bearish BREAKER + bearish FVG overlapping → UnicornPattern returned
@@ -381,7 +381,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8_
   - **154c. REFACTOR** — extract `_compute_overlap()` pure function; confirm GREEN
 
-- [ ] 155. Implement `liquidity_engine/grader/setup_grader.py` — `SetupGrader`
+- [x] 155. Implement `liquidity_engine/grader/setup_grader.py` — `SetupGrader`
   - **155a. RED — Write failing tests** (`backend/tests/test_liquidity_grader.py`)
     - `test_aplus_grade_all_8_conditions_true` — all 8 True → SetupGrade.A_PLUS
     - `test_a_grade_7_conditions_true` — exactly 7 True → SetupGrade.A
