@@ -14,6 +14,11 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
+# liquidity_engine has no dependency on agent/*, so this is not actually a
+# circular import — a plain top-level import keeps AgentState resolvable by
+# Pydantic v2 without needing model_rebuild() against a TYPE_CHECKING-only name.
+from liquidity_engine.models import LiquidityMap
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -174,3 +179,9 @@ class AgentState(BaseModel):
     shadow_period_active: bool = False
     """True when the agent is running in shadow period mode.
     During shadow period all users are forced into HUMAN_IN_LOOP mode."""
+
+    # ── Liquidity Engine (Task 160) ──
+    liquidity_map: Optional[LiquidityMap] = None
+    """Populated by observe_node when the message carries candles_by_tf.
+    None when no candle data was supplied, the setup was rejected as stale,
+    or analysis failed (see observe_node's best-effort handling)."""
