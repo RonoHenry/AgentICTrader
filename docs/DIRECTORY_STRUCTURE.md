@@ -125,13 +125,17 @@ AgentICTrader/
         types/index.ts
 
  docker/
-    docker-compose.yml          # TimescaleDB, Kafka, MongoDB, Redis, MLflow
-    docker-compose.prod.yml
-    docker-compose.test.yml
-    Dockerfile.backend
-    Dockerfile.frontend
+    docker-compose.yml          # infra (TimescaleDB, Kafka, MongoDB, Redis, MLflow, Qdrant)
+                                 # + algorag, risk-engine, ml-inference, liquidity, auth, frontend
+    docker-compose.test.yml     # InfluxDB stub used by run_tests.sh/ps1
     init/timescaledb/
         001_schema.sql          # HTF projection schema
+
+ # Per-service Dockerfiles live next to their service code, not under docker/:
+ #   services/algorag/Dockerfile   services/risk_engine/Dockerfile
+ #   services/liquidity/Dockerfile services/auth/Dockerfile
+ #   ml/inference/Dockerfile       frontend/Dockerfile
+ # backend/ (legacy Django) is not containerized — manage.py has never been implemented.
 
  scripts/
     load_historical_data.py     # 3yr OANDA OHLCV loader

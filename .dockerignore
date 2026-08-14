@@ -1,0 +1,43 @@
+# Version control
+.git
+.gitignore
+
+# Python
+.venv
+agentic.venv
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.hypothesis
+.coverage
+.mypy_cache
+.ruff_cache
+
+# Node / frontend (frontend has its own .dockerignore for its build context)
+frontend/node_modules
+**/node_modules
+
+# Editors / OS
+.vscode
+.idea
+.DS_Store
+
+# Env and secrets
+.env
+.env.local
+*.env.local
+
+# Data / logs / misc
+data
+assets
+*.log
+false
+
+# Docs (not needed inside images)
+docs
+AgentICTrader documentaion
+
+# Kiro / Claude project metadata
+.kiro
+.claude

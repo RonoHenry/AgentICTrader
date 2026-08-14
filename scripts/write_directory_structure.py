@@ -349,17 +349,20 @@ AgentICTrader/
 │       └── test_zone_features.py
 │
 ├── docker/
-│   ├── docker-compose.yml               # TimescaleDB, Kafka, MongoDB, Redis, MLflow
-│   │                                    # market-data, risk-engine, ml-inference,
-│   │                                    # agent, nlp, auth, analytics,
-│   │                                    # liquidity-service (port 8006)
-│   ├── docker-compose.prod.yml
-│   ├── docker-compose.test.yml
-│   ├── Dockerfile.backend
-│   ├── Dockerfile.frontend
+│   ├── docker-compose.yml               # infra (TimescaleDB, Kafka, MongoDB, Redis,
+│   │                                    # MLflow, Qdrant) + algorag (8003),
+│   │                                    # risk-engine (8004), ml-inference (8001),
+│   │                                    # liquidity (8006), auth (8007), frontend (3000)
+│   ├── docker-compose.test.yml          # InfluxDB stub used by run_tests.sh/ps1
 │   └── init/timescaledb/
 │       └── 001_schema.sql               # HTF projection schema
 │                                        # Future: liquidity_snapshots hypertable
+│
+│   # Per-service Dockerfiles live next to their service code:
+│   #   services/algorag/Dockerfile   services/risk_engine/Dockerfile
+│   #   services/liquidity/Dockerfile services/auth/Dockerfile
+│   #   ml/inference/Dockerfile       frontend/Dockerfile
+│   # backend/ (legacy Django) is not containerized — manage.py has never been implemented.
 │
 ├── scripts/
 │   ├── load_historical_data.py          # 3yr OANDA OHLCV (5 instruments, 7 timeframes)
