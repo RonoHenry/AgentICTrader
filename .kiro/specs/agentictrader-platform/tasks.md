@@ -1,4 +1,6 @@
-# AgentICTrader.AI — Executable Task List
+# AgentICTrader.AI — 
+
+**Spec**: Executable Task List
 
 > Tasks are sequenced by phase gate. Each phase must pass its exit criteria before the next begins.
 > Infrastructure (TimescaleDB, Kafka, MongoDB, Redis, MLflow) is already running in docker-compose.yml.
@@ -528,7 +530,8 @@
 - [ ] 39. Live validation run and audit trail
   - Deploy to staging with 10% of account capital
   - Run 30-day live autonomous period
-  - Full audit trail: every decision logged to MongoDB agent_decisions with input context, risk validation result, reasoning, order details
+  - [x] Full audit trail: every decision logged to MongoDB agent_decisions with input context, risk validation result, reasoning, order details
+    - Implemented in `agent/audit_trail.py::log_agent_decision`, wired into `AgentGraph._run_learn` (runs on every route — NOTIFY/EXECUTE/SKIP — same terminal guarantee as `learn_node`). Tests: `backend/tests/test_agent_decisions_audit.py` (14 tests, TDD RED→GREEN).
   - Monitor: daily P&L, drawdown, confidence threshold performance
   - Rollback mechanism: POST /agent/pause immediately halts all new trades; existing positions managed to close
   - Exit criterion: positive P&L, drawdown ≤ 5%, zero risk engine bypasses
