@@ -12,14 +12,83 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from agent.state import AgentState, DecisionAction, Direction, TradePlan
+from liquidity_engine import LiquidityMappingEngine
+from liquidity_engine.models import Candle, LiquidityMap, Timeframe
 
 logger = logging.getLogger(__name__)
 
 # Maximum age of a setup before it is considered stale
 _MAX_AGE_SECONDS: int = 60
+
+
+def _parse_candle_timestamp(raw: Any) -> Optional[datetime]:
+    if isinstance(raw, str):
+        parsed = datetime.fromisoformat(raw)
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _parse_candles_by_tf(
+    raw: Dict[str, Any], instrument: str
+) -> Optional[Dict[Timeframe, List[Candle]]]:
+    """Deserialise a Kafka message's candles_by_tf into engine-ready Candle objects.
+
+    Best-effort: unknown timeframe keys and individually malformed candles are
+    skipped with a warning rather than failing the whole setup.
+    """
+    if not raw:
+        return None
+    result: Dict[Timeframe, List[Candle]] = {}
+    for tf_key, candle_dicts in raw.items():
+        try:
+            tf = Timeframe(tf_key)
+        except ValueError:
+            logger.warning("Unknown timeframe in candles_by_tf: %s", tf_key)
+            continue
+        candles: List[Candle] = []
+        for c in candle_dicts or []:
+            candle_ts = _parse_candle_timestamp(c.get("timestamp"))
+            if candle_ts is None:
+                continue
+            try:
+                candles.append(
+                    Candle(
+                        timestamp=candle_ts,
+                        open=c["open"],
+                        high=c["high"],
+                        low=c["low"],
+                        close=c["close"],
+                        volume=c.get("volume"),
+                        timeframe=tf,
+                        instrument=instrument,
+                    )
+                )
+            except Exception as exc:
+                logger.warning("Invalid candle skipped for %s: %s", tf_key, exc)
+        if candles:
+            result[tf] = candles
+    return result or None
+
+
+def _build_liquidity_map(
+    message: Dict[str, Any], instrument: str, detected_at: datetime
+) -> Optional[LiquidityMap]:
+    candles_raw = message.get("candles_by_tf")
+    if not candles_raw:
+        return None
+    try:
+        candles_by_tf = _parse_candles_by_tf(candles_raw, instrument)
+        if not candles_by_tf:
+            return None
+        return LiquidityMappingEngine().analyze(candles_by_tf, instrument, detected_at)
+    except Exception as exc:
+        logger.warning("Liquidity engine analysis failed for instrument=%s: %s", instrument, exc)
+        return None
 
 
 def observe_node(message: Dict[str, Any]) -> AgentState:
@@ -110,6 +179,8 @@ def observe_node(message: Dict[str, Any]) -> AgentState:
         price_vs_daily_open=message.get("price_vs_daily_open"),
         price_vs_weekly_open=message.get("price_vs_weekly_open"),
         price_vs_true_day_open=message.get("price_vs_true_day_open"),
+        # Liquidity Engine (Task 160)
+        liquidity_map=_build_liquidity_map(message, instrument, detected_at),
     )
 
     logger.info(

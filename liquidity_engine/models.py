@@ -455,5 +455,61 @@ class LiquidityMap(BaseModel):
         ]
 
     def to_agent_context(self) -> str:
-        """Convert to agent context string - stub implementation."""
-        return ""
+        """Render this LiquidityMap as an LLM-readable narrative.
+
+        Answers the three questions the agent's reasoning is built around, in
+        order: where has price come from, where is it now, where is it likely
+        to go. Sections with nothing to report (no structure event yet, no
+        fractal model, no draw target) are omitted rather than left blank.
+        """
+        lines: List[str] = [f"# Liquidity Analysis: {self.instrument}", ""]
+
+        lines.append("## Where has price come from?")
+        for tf_value, bias in self.htf_bias.items():
+            lines.append(f"- {tf_value} bias: {bias.direction.value} (open {bias.reference_open})")
+        latest_event = self._latest_structure_event()
+        if latest_event is not None:
+            lines.append(
+                f"- Most recent structure event: {latest_event.event_type.value} "
+                f"({latest_event.direction.value}, {latest_event.tier.value}, "
+                f"{latest_event.timeframe.value})"
+            )
+        lines.append("")
+
+        lines.append("## Where is it now?")
+        if self.crt_phases:
+            for tf_value, phase in self.crt_phases.items():
+                lines.append(f"- {tf_value} CRT phase: {phase.phase.value}")
+        if self.fractal_model is not None:
+            stance = "above" if self.fractal_model.price_above_equilibrium else "at or below"
+            lines.append(f"- Price is {stance} the Fractal Model equilibrium ({self.fractal_model.equilibrium})")
+        lines.append("")
+
+        lines.append("## Where is it likely to go?")
+        if self.draw_on_liquidity is not None:
+            lines.append(
+                f"- Draw on liquidity: {self.draw_on_liquidity.source.value} "
+                f"at {self.draw_on_liquidity.price} ({self.draw_on_liquidity.liquidity_type.value})"
+            )
+        if self.ote_zone is not None:
+            lines.append(
+                f"- OTE zone: {self.ote_zone.ote_low}-{self.ote_zone.ote_high} "
+                f"(golden level {self.ote_zone.golden_level})"
+            )
+        if self.setup_grade is not None:
+            lines.append(
+                f"- Setup grade: {self.setup_grade.grade.value} "
+                f"({self.setup_grade.conditions_met}/8 conditions met)"
+            )
+
+        return "\n".join(lines)
+
+    def _latest_structure_event(self) -> Optional["StructureEvent"]:
+        events = [
+            result.latest_event
+            for result in self.swing_structure.values()
+            if result.latest_event is not None
+        ]
+        if not events:
+            return None
+        return max(events, key=lambda e: e.confirmed_at)
