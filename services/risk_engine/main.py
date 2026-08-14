@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Optional
 
 from fastapi import FastAPI, Query
@@ -283,3 +284,30 @@ def create_app(redis_client=None) -> FastAPI:
         return engine.get_status()
 
     return app
+
+
+# ---------------------------------------------------------------------------
+# Entry point — module-level app for `uvicorn services.risk_engine.main:app`
+# ---------------------------------------------------------------------------
+
+def _build_redis_client():
+    """Build the production Redis client from REDIS_HOST/REDIS_PORT env vars."""
+    import redis
+
+    return redis.Redis(
+        host=os.getenv("REDIS_HOST", "localhost"),
+        port=int(os.getenv("REDIS_PORT", "6379")),
+        decode_responses=True,
+    )
+
+
+app = create_app(redis_client=_build_redis_client())
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "services.risk_engine.main:app",
+        host="0.0.0.0",
+        port=int(os.getenv("RISK_ENGINE_PORT", "8004")),
+    )

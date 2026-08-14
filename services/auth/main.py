@@ -413,6 +413,11 @@ def create_app(
     # Routes
     # ------------------------------------------------------------------
 
+    @app.get("/health")
+    async def health() -> dict:
+        """Liveness check."""
+        return {"status": "ok"}
+
     @app.post("/auth/register", response_model=TokenResponse, status_code=201)
     async def register(request: RegisterRequest) -> TokenResponse:
         """Register a new user and return JWT tokens."""
@@ -454,3 +459,19 @@ def create_app(
         )
 
     return app
+
+
+# ---------------------------------------------------------------------------
+# Entry point — module-level app for `uvicorn services.auth.main:app`
+# ---------------------------------------------------------------------------
+
+app = create_app()
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "services.auth.main:app",
+        host="0.0.0.0",
+        port=int(os.environ.get("AUTH_SERVICE_PORT", "8007")),
+    )

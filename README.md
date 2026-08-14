@@ -59,36 +59,30 @@ cp .env.example .env
 # Edit .env with your configuration
 ```
 
-5. Start services using Docker:
+5. Start the full stack with Docker:
 ```bash
-docker-compose up -d
+docker compose -f docker/docker-compose.yml up -d --build
 ```
-
-6. Run database migrations:
-```bash
-cd backend
-python manage.py migrate
-```
+This brings up infrastructure (TimescaleDB, MongoDB, Redis, Kafka, MLflow, Qdrant) plus every
+containerized service: `algorag` (8003), `risk-engine` (8004), `ml-inference` (8001),
+`liquidity` (8006), `auth` (8007), and `frontend` (3000).
 
 ## 🏃‍♂️ Running the Application
 
 ### Development Mode
 ```bash
-# Start backend services
-docker-compose up -d
-cd backend
-python manage.py runserver
-
-# Start frontend development server
-cd frontend
-npm install
-npm start
+docker compose -f docker/docker-compose.yml up -d --build
+```
+To iterate on a single service outside Docker instead, run it directly, e.g.:
+```bash
+cd frontend && npm install && npm run dev
+uvicorn services.risk_engine.main:app --reload --port 8004
 ```
 
 ### Production Mode
-```bash
-docker-compose -f docker-compose.prod.yml up -d
-```
+Not yet set up — the stack currently only has a development compose file
+(`docker/docker-compose.yml`). The legacy Django `backend/` is not containerized;
+its `manage.py` has never been implemented.
 
 ## 🧪 Testing
 
@@ -121,8 +115,7 @@ AgentI.C.Trader/
 │   ├── infrastructure/   # Infrastructure tests
 │   └── trader/          # Trading logic tests
 ├── docker/               # Docker configuration
-│   ├── Dockerfile.backend
-│   └── docker-compose.yml
+│   └── docker-compose.yml   # infra + algorag, risk-engine, ml-inference, liquidity, auth, frontend
 └── docs/                 # Documentation
     ├── design.md        # System design
     ├── tech_stack.md    # Technology choices

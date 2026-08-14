@@ -8,7 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Install CPU-only torch first. sentence-transformers depends on torch, and
+# the default PyPI wheel drags in ~5GB of unused CUDA/nvidia-* packages since
+# this service only ever runs embedding inference on CPU.
+RUN pip install --no-cache-dir torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining Python dependencies
 COPY services/algorag/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
@@ -21,6 +26,10 @@ COPY services/__init__.py /app/services/__init__.py
 ENV PYTHONPATH=/app \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
+
+RUN useradd --create-home --uid 1000 appuser \
+    && chown -R appuser:appuser /app
+USER appuser
 
 EXPOSE 8003
 

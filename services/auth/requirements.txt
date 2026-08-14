@@ -1,0 +1,7 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+pydantic==2.9.2
+motor==3.6.0
+bcrypt==4.2.1
+cryptography==43.0.3
+python-jose[cryptography]==3.3.0
