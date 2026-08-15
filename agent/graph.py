@@ -29,7 +29,9 @@ Design notes:
     routing logic in agent/edges.py is identical to what would be registered
     as conditional edges in a StateGraph.
   - learn_node is always the terminal node — it logs every outcome (including
-    skipped setups) to MongoDB for full auditability (FR-6).
+    skipped setups) to MongoDB for full auditability (FR-6). log_agent_decision
+    (agent/audit_trail.py) runs immediately after it, writing the same decision
+    to MongoDB agent_decisions for the Phase 4 Task 39 audit trail.
 
 Validates: Requirements FR-6, FR-7, FR-9
 """
@@ -50,6 +52,7 @@ from agent.nodes.notify_node import notify_node
 from agent.nodes.execute_node import execute_node
 from agent.nodes.review_node import review_node
 from agent.nodes.learn_node import learn_node
+from agent.audit_trail import log_agent_decision
 from agent.edges import route_after_decide, route_after_observe, NOTIFY, EXECUTE, LEARN
 from services.risk_engine.main import RiskEngine
 
@@ -87,6 +90,9 @@ class AgentGraph:
                                   May be None in HUMAN_IN_LOOP mode.
         trade_journal_collection: PyMongo Collection for learn_node.
         user_id:                  User identifier forwarded to the Risk Engine.
+        agent_decisions_collection: PyMongo Collection for the audit trail
+                                  (agent/audit_trail.py, Phase 4 Task 39).
+                                  Optional — when None, no audit record is written.
     """
 
     def __init__(
@@ -98,6 +104,7 @@ class AgentGraph:
         trade_journal_collection: Any,
         user_id: str = "default",
         shadow_enforcer: Optional[Any] = None,
+        agent_decisions_collection: Optional[Any] = None,
     ) -> None:
         self._redis = redis_client
         self._risk_engine = risk_engine
@@ -106,6 +113,7 @@ class AgentGraph:
         self._journal = trade_journal_collection
         self._user_id = user_id
         self._shadow_enforcer = shadow_enforcer
+        self._agent_decisions = agent_decisions_collection
 
     # ------------------------------------------------------------------
     # Public API
@@ -206,9 +214,15 @@ class AgentGraph:
         return self._run_learn(state)
 
     def _run_learn(self, state: AgentState) -> AgentState:
-        """Run learn_node (always the terminal node)."""
+        """Run learn_node, then the audit trail — both always terminal."""
         if self._journal is not None:
             state = learn_node(state, trade_journal_collection=self._journal)
+        if self._agent_decisions is not None:
+            state = log_agent_decision(
+                state,
+                agent_decisions_collection=self._agent_decisions,
+                user_id=self._user_id,
+            )
         return state
 
     def _set_kill_switch(self, active: bool) -> None:

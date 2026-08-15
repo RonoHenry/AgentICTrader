@@ -159,6 +159,29 @@ services:
       retries: 5
       start_period: 15s
 
+  # ── VISUAL MODEL SERVICE (VLM-based ICT chart perception) ─
+  visual-model:
+    build:
+      context: ..
+      dockerfile: services/visual_model/Dockerfile
+    ports:
+      - "8005:8005"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - VISION_MODEL_PRIMARY=${VISION_MODEL_PRIMARY:-claude-opus-5}
+      - VISION_MODEL_FALLBACK=${VISION_MODEL_FALLBACK:-claude-sonnet-5}
+      - REDIS_URL=redis://redis:6379/0
+      - S3_BUCKET_CHARTS=${S3_BUCKET_CHARTS:-agentict-charts}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8005/visual/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
   # ── AUTH SERVICE (JWT auth, RBAC, encrypted broker keys) ──
   auth:
     build:

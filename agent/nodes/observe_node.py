@@ -75,20 +75,29 @@ def _parse_candles_by_tf(
     return result or None
 
 
-def _build_liquidity_map(
+def _build_liquidity_context(
     message: Dict[str, Any], instrument: str, detected_at: datetime
-) -> Optional[LiquidityMap]:
+) -> tuple[Optional[LiquidityMap], Optional[Dict[Timeframe, List[Candle]]]]:
+    """Parse candles_by_tf once and return both the computed LiquidityMap and
+    the parsed candles themselves.
+
+    The candles are retained (not just the derived LiquidityMap) so that
+    services/visual_model's chart renderer, called later from analyse_node,
+    scores the identical candle snapshot the numerical engine already
+    analysed rather than a re-fetched, possibly divergent one.
+    """
     candles_raw = message.get("candles_by_tf")
     if not candles_raw:
-        return None
+        return None, None
     try:
         candles_by_tf = _parse_candles_by_tf(candles_raw, instrument)
         if not candles_by_tf:
-            return None
-        return LiquidityMappingEngine().analyze(candles_by_tf, instrument, detected_at)
+            return None, None
+        liquidity_map = LiquidityMappingEngine().analyze(candles_by_tf, instrument, detected_at)
+        return liquidity_map, candles_by_tf
     except Exception as exc:
         logger.warning("Liquidity engine analysis failed for instrument=%s: %s", instrument, exc)
-        return None
+        return None, None
 
 
 def observe_node(message: Dict[str, Any]) -> AgentState:
@@ -158,6 +167,9 @@ def observe_node(message: Dict[str, Any]) -> AgentState:
             decision=DecisionAction.SKIP,
         )
 
+    # Liquidity Engine (Task 160) + retained candle window (Task 174)
+    liquidity_map, candles_by_tf = _build_liquidity_context(message, instrument, detected_at)
+
     # Build full state from message
     state = AgentState(
         setup_id=setup_id,
@@ -180,7 +192,9 @@ def observe_node(message: Dict[str, Any]) -> AgentState:
         price_vs_weekly_open=message.get("price_vs_weekly_open"),
         price_vs_true_day_open=message.get("price_vs_true_day_open"),
         # Liquidity Engine (Task 160)
-        liquidity_map=_build_liquidity_map(message, instrument, detected_at),
+        liquidity_map=liquidity_map,
+        # Visual Model (Task 174)
+        candles_by_tf=candles_by_tf,
     )
 
     logger.info(

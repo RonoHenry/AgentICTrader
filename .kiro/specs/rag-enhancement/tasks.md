@@ -514,6 +514,223 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
 
 ---
 
+## Task Dependency Graph
+
+Local task numbers below (1–30) refer to this document's own numbering. References of the form "platform Task N" refer to `.kiro/specs/agentictrader-platform/tasks.md`'s numbering — the two are independent sequences and are not interchangeable (e.g. local Task 22 here is "Implement ingestion endpoint," which is unrelated to platform Task 22, "Confluence Scorer"). Dependencies are denoted as `prerequisite → dependent`.
+
+```json
+{
+  "waves": [
+    {
+      "name": "Infrastructure Setup",
+      "tasks": ["1", "2"],
+      "description": "Qdrant vector store, AlgoRAG service scaffold, health check"
+    },
+    {
+      "name": "Data Preparation Pipeline",
+      "tasks": ["3", "4", "5"],
+      "description": "Historical setup enrichment and multi-modal embedding generation",
+      "dependencies": ["platform Task 10", "platform Task 11", "platform Task 12", "platform Task 13", "platform Task 15"]
+    },
+    {
+      "name": "Vector Store Integration",
+      "tasks": ["6", "7", "8", "9"],
+      "description": "Collection management, ingestion, and initial 500+ setup load",
+      "dependencies": ["Infrastructure Setup", "Data Preparation Pipeline"]
+    },
+    {
+      "name": "RAG Retrieval Service",
+      "tasks": ["10", "11", "12", "13", "14"],
+      "description": "Similarity search, re-ranking, metrics, ingestion endpoint, perf monitoring",
+      "dependencies": ["Vector Store Integration"]
+    },
+    {
+      "name": "ML Pipeline Integration",
+      "tasks": ["15", "16", "17", "18"],
+      "description": "AlgoRAG client, Confluence Scorer augmentation, A/B testing framework",
+      "dependencies": ["RAG Retrieval Service"]
+    },
+    {
+      "name": "LLM Integration",
+      "tasks": ["19", "20"],
+      "description": "RAG-grounded trade reasoning generation",
+      "dependencies": ["RAG Retrieval Service"]
+    },
+    {
+      "name": "Real-Time Ingestion",
+      "tasks": ["21", "22"],
+      "description": "Trade-close event handling and async enrichment/ingestion",
+      "dependencies": ["Data Preparation Pipeline", "RAG Retrieval Service"]
+    },
+    {
+      "name": "Dashboard Integration",
+      "tasks": ["23", "24"],
+      "description": "Similar-setups panel, backend endpoint, frontend component",
+      "dependencies": ["RAG Retrieval Service"]
+    },
+    {
+      "name": "Monitoring & Observability",
+      "tasks": ["25", "26", "27"],
+      "description": "Prometheus metrics, Grafana dashboards, alerting",
+      "dependencies": ["RAG Retrieval Service"]
+    },
+    {
+      "name": "Validation & Production Readiness",
+      "tasks": ["28", "29", "30"],
+      "description": "Offline evaluation, backtest, deployment, docs, final checkpoint",
+      "dependencies": ["ML Pipeline Integration", "LLM Integration", "Real-Time Ingestion", "Dashboard Integration", "Monitoring & Observability"]
+    }
+  ]
+}
+```
+
+### Infrastructure Setup
+```
+1 (Qdrant + Service Scaffold) → 2 (Infra Checkpoint)
+```
+
+### Data Preparation Pipeline
+```
+platform Task 10 (HTF Extractor) + platform Task 11 (Candle Extractor) + platform Task 12 (Zone Extractor) + platform Task 13 (Session Extractor) + platform Task 15 (Trade Journal Importer) → 3 (Enrichment Pipeline)
+3 (Enrichment) → 4 (Embedding Generation)
+3 + 4 → 5 (Data Prep Checkpoint)
+```
+
+### Vector Store Integration
+```
+2 (Infra Checkpoint) + 5 (Data Prep Checkpoint) → 6 (Collection Management)
+6 (Collection Management) → 7 (Setup Ingestion)
+6 + 7 → 8 (Initial Data Load)
+6 + 7 + 8 → 9 (Vector Store Checkpoint)
+```
+
+### RAG Retrieval Service
+```
+9 (Vector Store Checkpoint) → 10 (Retrieval Endpoint)
+10 (Retrieval Endpoint) → 11 (RAG Metrics Computation)
+9 → 12 (Ingestion Endpoint)
+10 → 13 (Performance Monitoring)
+10 + 11 + 12 + 13 → 14 (RAG Service Checkpoint)
+```
+
+### ML Pipeline Integration
+```
+14 (RAG Service Checkpoint) → 15 (AlgoRAG Client Library)
+15 (Client Library) → 16 (Confluence Scorer Augmentation)
+16 (Augmented Scorer) → 17 (A/B Testing Framework)
+15 + 16 + 17 → 18 (ML Integration Checkpoint)
+```
+
+### LLM Integration
+```
+14 (RAG Service Checkpoint) → 19 (RAG-Grounded LLM Reasoning)
+19 → 20 (LLM Integration Checkpoint)
+```
+
+### Real-Time Ingestion
+```
+3 (Enrichment Pipeline) + 12 (Ingestion Endpoint) → 21 (Real-Time Event Handler + Async Pipeline)
+21 → 22 (Real-Time Ingestion Checkpoint)
+```
+
+### Dashboard Integration
+```
+14 (RAG Service Checkpoint) → 23 (Similar Setups Panel)
+23 → 24 (Dashboard Checkpoint)
+```
+
+### Monitoring & Observability
+```
+14 (RAG Service Checkpoint) → 25 (Prometheus/Grafana Dashboards)
+25 → 26 (Alerting)
+25 + 26 → 27 (Monitoring Checkpoint)
+```
+
+### Validation & Production Readiness
+```
+18 (ML Integration Checkpoint) + 20 (LLM Integration Checkpoint) + 22 (Real-Time Ingestion Checkpoint) + 24 (Dashboard Checkpoint) + 27 (Monitoring Checkpoint) → 28 (Offline Evaluation)
+28 → 29 (Production Deployment)
+28 + 29 → 30 (Final Checkpoint)
+```
+
+### Dependency Summary by Phase
+
+**Phase 1 — Infrastructure Setup (Tasks 1–2)**
+- 1: Qdrant vector store and AlgoRAG service scaffold (no dependencies)
+- 2: Infrastructure checkpoint (requires 1)
+
+**Phase 2 — Data Preparation Pipeline (Tasks 3–5)**
+- 3: Historical setup enrichment (requires platform Tasks 10, 11, 12, 13, 15; independent of Phase 1)
+- 4: Multi-modal embedding generation (requires 3)
+- 5: Data preparation checkpoint (requires 3 + 4)
+
+**Phase 3 — Vector Store Integration (Tasks 6–9)**
+- 6: Qdrant collection management (requires 2 + 5)
+- 7: Setup ingestion to vector store (requires 6)
+- 8: Initial data load, 500+ setups (requires 6 + 7)
+- 9: Vector store checkpoint (requires 6 + 7 + 8)
+
+**Phase 4 — RAG Retrieval Service (Tasks 10–14)**
+- 10: Retrieval endpoint (requires 9)
+- 11: RAG metrics computation (requires 10)
+- 12: Ingestion endpoint (requires 9)
+- 13: Performance monitoring (requires 10)
+- 14: RAG service checkpoint (requires 10 + 11 + 12 + 13)
+
+**Phase 5 — ML Pipeline Integration (Tasks 15–18)**
+- 15: AlgoRAG client library (requires 14)
+- 16: Confluence Scorer augmentation (requires 15)
+- 17: A/B testing framework (requires 16)
+- 18: ML integration checkpoint (requires 15 + 16 + 17)
+
+**Phase 6 — LLM Integration (Tasks 19–20)**
+- 19: RAG-grounded LLM reasoning (requires 14; independent of Phase 5)
+- 20: LLM integration checkpoint (requires 19)
+
+**Phase 7 — Real-Time Ingestion (Tasks 21–22)**
+- 21: Trade-close event handler and async pipeline (requires 3 + 12)
+- 22: Real-time ingestion checkpoint (requires 21)
+
+**Phase 8 — Dashboard Integration (Tasks 23–24)**
+- 23: Similar setups panel, backend + frontend (requires 14)
+- 24: Dashboard checkpoint (requires 23)
+
+**Phase 9 — Monitoring & Observability (Tasks 25–27)**
+- 25: Prometheus metrics and Grafana dashboards (requires 14)
+- 26: Alerting (requires 25)
+- 27: Monitoring checkpoint (requires 25 + 26)
+
+**Phase 10 — Validation & Production Readiness (Tasks 28–30)**
+- 28: Offline evaluation — correlation analysis and backtest (requires 18 + 20 + 22 + 24 + 27)
+- 29: Production deployment, runbooks, documentation (requires 28)
+- 30: Final checkpoint — production readiness (requires 28 + 29)
+
+### Critical Path
+```
+1 → 2 → 6 → 7 → 8 → 9 → 10 → 11 → 14 → 15 → 16 → 17 → 18 → 28 → 29 → 30
+```
+(Phase 2's enrichment/embedding work runs in parallel with Phase 1 and feeds into 6 alongside it — see Parallel Execution Opportunities.)
+
+### Parallel Execution Opportunities
+- **Phase 1 and Phase 2 have no dependency on each other** — Qdrant/service scaffolding (1–2) and historical setup enrichment/embedding (3–5) can proceed simultaneously, both feeding into Vector Store Integration (6–9)
+- **After 14 (RAG Service Checkpoint)**: Phases 5 (ML Pipeline), 6 (LLM Integration), 8 (Dashboard), and 9 (Monitoring) can all proceed in parallel — none depends on another
+- **Phase 7 (Real-Time Ingestion)** only needs 3 (Enrichment) and 12 (Ingestion Endpoint), so it can start before the full RAG Service Checkpoint (14) lands
+- **Phase 10 (Validation)** is the sync point — it gates on every other phase completing
+
+### Testing Dependencies
+- Task 2: infrastructure tests cover Task 1 (Qdrant container health, service health check)
+- Task 5: data-prep tests cover Tasks 3–4 (enrichment correctness, embedding dimensions/NaN checks)
+- Task 9: vector-store tests cover Tasks 6–8 (collection schema, ingestion, initial load quality)
+- Task 14: RAG service tests cover Tasks 10–13 (retrieval, re-ranking, metrics, ingestion endpoint, latency)
+- Task 18: ML integration tests cover Tasks 15–17 (client, augmented scorer, A/B split)
+- Task 20: LLM integration tests cover Task 19 (RAG-grounded reasoning, fallback behaviour)
+- Task 22: real-time ingestion tests cover Task 21 (event-to-indexed latency, retry logic)
+- Task 24: dashboard tests cover Task 23 (panel rendering, API integration, error states)
+- Task 27: monitoring tests cover Tasks 25–26 (metric emission, alert firing)
+- Task 30: aggregate validation across Tasks 28–29 plus every prior checkpoint, gating production readiness
+
+---
+
 ## Notes
 
 - **Tasks marked with `*` are optional** and can be skipped for faster MVP delivery
