@@ -675,3 +675,42 @@ class TestAgentStateFullPopulation:
         assert state.price_vs_true_day_open == "BELOW"
         assert len(state.patterns) == 1
         assert state.patterns[0].type == "BOS_CONFIRMED"
+
+
+# ---------------------------------------------------------------------------
+# TestAgentStateVisualModelFields
+# ---------------------------------------------------------------------------
+
+class TestAgentStateVisualModelFields:
+    """Tests for the fields added to integrate services/visual_model.
+
+    **Validates: Requirement 8.5 (.kiro/specs/visual-model/requirements.md)**
+    """
+
+    def test_agent_state_candles_by_tf_optional_defaults_none(self):
+        state = _minimal_state()
+        assert state.candles_by_tf is None
+
+    def test_agent_state_visual_analysis_optional_defaults_none(self):
+        state = _minimal_state()
+        assert state.visual_analysis is None
+
+    def test_agent_state_visual_modifier_optional_defaults_none(self):
+        state = _minimal_state()
+        assert state.visual_modifier is None
+
+    def test_agent_state_visual_hard_block_reason_optional_defaults_none(self):
+        state = _minimal_state()
+        assert state.visual_hard_block_reason is None
+
+    def test_agent_state_visual_narrative_optional_defaults_none(self):
+        state = _minimal_state()
+        assert state.visual_narrative is None
+
+    def test_agent_state_construction_unaffected_for_existing_callers(self):
+        """Regression guard: adding the new Optional fields must not change
+        construction behaviour for callers that only pass the pre-existing
+        required fields."""
+        state = _minimal_state()
+        assert state.setup_id == "setup-001"
+        assert state.instrument == "EURUSD"

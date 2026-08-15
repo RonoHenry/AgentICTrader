@@ -28,18 +28,72 @@ _MISALIGNED_PENALTY: float = 0.03  # -3% when sentiment opposes direction
 _SENTIMENT_KEY = "sentiment:{instrument}"
 _BLACKOUT_KEY = "blackout:{instrument}"
 
+# Grades that clear the bar for a visual-model call (see liquidity_engine's
+# SetupGrader — NO_TRADE setups are never worth the VLM cost).
+_VISUAL_GATE_GRADES = frozenset({"A+", "A", "B"})
 
-def analyse_node(state: AgentState, redis_client: Any = None) -> AgentState:
-    """Enrich AgentState with sentiment and calendar data from Redis.
+_DIRECTION_TO_BIAS = {
+    Direction.LONG: "BULLISH",
+    Direction.SHORT: "BEARISH",
+}
+
+
+def _call_visual_model_if_graded(state: AgentState, visual_model_client: Any) -> dict:
+    """Grade-gated services/visual_model call (Task 175).
+
+    Only invoked when the setup already graded B or better AND the same
+    candle window observe_node analysed is available — never for NO_TRADE,
+    never without a visual_model_client injected, never without candles.
+
+    **Validates: Requirements 8.1-8.5 (.kiro/specs/visual-model/requirements.md)**
+    """
+    if visual_model_client is None:
+        return {}
+    if state.candles_by_tf is None:
+        return {}
+    setup_grade = state.liquidity_map.setup_grade if state.liquidity_map is not None else None
+    if setup_grade is None or setup_grade.grade.value not in _VISUAL_GATE_GRADES:
+        return {}
+
+    numerical_direction = _DIRECTION_TO_BIAS.get(state.direction) if state.direction else None
+
+    result = visual_model_client.analyse(
+        candles_by_tf=state.candles_by_tf,
+        liquidity_map=state.liquidity_map,
+        instrument=state.instrument,
+        timestamp=state.detected_at,
+        numerical_direction=numerical_direction,
+    )
+
+    return {
+        "visual_analysis": result.analysis,
+        "visual_modifier": result.visual_modifier,
+        "visual_hard_block_reason": result.hard_block_reason,
+        "visual_narrative": result.analysis.visual_insights.narrative
+        if result.analysis is not None
+        else None,
+    }
+
+
+def analyse_node(
+    state: AgentState, redis_client: Any = None, visual_model_client: Any = None
+) -> AgentState:
+    """Enrich AgentState with sentiment, calendar, and visual-model data.
 
     Args:
-        state:        Current AgentState (output of observe_node).
-        redis_client: Synchronous Redis-compatible client with
-                      ``decode_responses=True``.  Accepts fakeredis in tests.
+        state:               Current AgentState (output of observe_node).
+        redis_client:        Synchronous Redis-compatible client with
+                              ``decode_responses=True``. Accepts fakeredis
+                              in tests.
+        visual_model_client: Optional synchronous client exposing
+                              ``analyse(...)`` (see
+                              agent/visual_model_client.py). When None, the
+                              visual layer is skipped entirely and behaviour
+                              is identical to before this integration existed.
 
     Returns:
         Updated AgentState with sentiment_score, sentiment_aligned,
-        calendar_clear, and adjusted final_confidence.
+        calendar_clear, visual_* fields, and adjusted final_confidence.
     """
     updates: dict = {}
 
@@ -84,6 +138,13 @@ def analyse_node(state: AgentState, redis_client: Any = None) -> AgentState:
         adjusted_confidence = min(1.0, base_confidence + _ALIGNED_BOOST)
     elif sentiment_aligned is False:
         adjusted_confidence = max(0.0, base_confidence - _MISALIGNED_PENALTY)
+
+    # ── 2b. Grade-gated visual-model enrichment (Task 175) ─────────────────
+    visual_updates = _call_visual_model_if_graded(state, visual_model_client)
+    updates.update(visual_updates)
+
+    visual_modifier = visual_updates.get("visual_modifier") or 0.0
+    adjusted_confidence = max(0.0, min(1.0, adjusted_confidence + visual_modifier))
 
     updates["final_confidence"] = adjusted_confidence
 

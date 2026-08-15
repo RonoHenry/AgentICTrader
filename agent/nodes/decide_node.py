@@ -47,6 +47,21 @@ def decide_node(
         state.raw_confidence if state.raw_confidence is not None else 0.0
     )
 
+    # ── 0. Visual hard-block gate (Task 176) ───────────────────────────────
+    # Direction conflict or an active C2_MANIPULATION read from the visual
+    # model blocks the trade regardless of final_confidence - joins the
+    # existing gate stack, checked before the confidence floor.
+    #
+    # **Validates: Requirements 9.1-9.4 (.kiro/specs/visual-model/requirements.md)**
+    if state.visual_hard_block_reason:
+        logger.info(
+            "decide_node: SKIP — visual hard block: %s", state.visual_hard_block_reason
+        )
+        return state.model_copy(update={
+            "decision": DecisionAction.SKIP,
+            "decision_reason": state.visual_hard_block_reason,
+        })
+
     # ── 1. Confidence floor gate ───────────────────────────────────────────
     if confidence < _CONFIDENCE_FLOOR:
         logger.info(

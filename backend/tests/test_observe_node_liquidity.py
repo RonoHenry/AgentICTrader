@@ -68,3 +68,37 @@ class TestObserveNodeLiquidityIntegration:
 
     def test_agent_state_has_liquidity_map_field(self):
         assert "liquidity_map" in AgentState.model_fields
+
+
+class TestObserveNodeCandlesByTf:
+    """Tests for observe_node retaining the parsed candle window on state
+    (task 174) - services/visual_model's chart_renderer needs the same
+    candles the numerical engine already analysed, not a re-fetched, possibly
+    divergent snapshot.
+
+    **Validates: Requirement 13.5 (.kiro/specs/visual-model/requirements.md)**
+    """
+
+    def test_observe_node_stores_candles_by_tf_on_state_when_present(self):
+        state = observe_node(_base_message(candles_by_tf=_valid_candles_by_tf()))
+        assert state.candles_by_tf is not None
+        assert "D1" in state.candles_by_tf
+        assert "W1" in state.candles_by_tf
+        assert len(state.candles_by_tf["D1"]) == 10
+
+    def test_observe_node_candles_by_tf_none_when_message_lacks_candle_data(self):
+        state = observe_node(_base_message())
+        assert state.candles_by_tf is None
+
+    def test_observe_node_candles_by_tf_none_on_malformed_candles(self):
+        state = observe_node(_base_message(candles_by_tf={"D1": [{"open": "not-a-number"}]}))
+        assert state.candles_by_tf is None
+
+    def test_observe_node_liquidity_map_computation_unchanged(self):
+        """Regression: retaining candles_by_tf must not change liquidity_map's
+        value or the fact that it's still computed from the same parse."""
+        state = observe_node(_base_message(candles_by_tf=_valid_candles_by_tf()))
+        assert state.liquidity_map is not None
+        assert isinstance(state.liquidity_map, LiquidityMap)
+        # The retained candles are exactly what liquidity_map was built from.
+        assert state.liquidity_map.instrument == "EURUSD"

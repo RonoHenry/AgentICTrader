@@ -1,0 +1,22 @@
+# services/visual_model/requirements.txt
+
+# Core
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+pydantic==2.7.0
+
+# Image processing
+Pillow==10.3.0
+numpy==1.26.4
+
+# LLM (VLM)
+anthropic>=0.25.0
+
+# Caching
+redis[asyncio]==5.0.4
+
+# AWS (chart image storage)
+boto3==1.34.0
+
+# Utilities
+httpx==0.27.0

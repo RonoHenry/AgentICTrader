@@ -383,6 +383,218 @@ class TestAnalyseNode:
 
 
 # ---------------------------------------------------------------------------
+# TestAnalyseNodeVisualModel
+# ---------------------------------------------------------------------------
+
+class TestAnalyseNodeVisualModel:
+    """Tests for analyse_node's grade-gated services/visual_model integration
+    (task 175) - the visual client is only called for setups already graded
+    B or better, and its modifier folds into the same final_confidence
+    arithmetic sentiment_bonus already contributes to.
+
+    **Validates: Requirements 8.1-8.5 (.kiro/specs/visual-model/requirements.md)**
+    """
+
+    @staticmethod
+    def _make_liquidity_map(grade):
+        from liquidity_engine.models import LiquidityMap, SetupGradeDetail
+
+        setup_grade = None
+        if grade is not None:
+            setup_grade = SetupGradeDetail(
+                grade=grade,
+                conditions_met=8 if grade.value == "A+" else 6,
+                htf_bias_confirmed=True,
+                draw_on_liquidity_identified=True,
+                liquidity_sweep_confirmed=True,
+                displacement_present=True,
+                cisd_confirmed=True,
+                entry_pd_array_present=True,
+                stop_placement_valid=True,
+                time_window_aligned=True,
+                grade_reason="test fixture",
+            )
+        return LiquidityMap(
+            analyzed_at=_now_utc(),
+            instrument="EURUSD",
+            htf_bias={},
+            liquidity_levels=[],
+            pd_arrays=[],
+            crt_phases={},
+            cisd_cascade=None,
+            draw_on_liquidity=None,
+            sweep_detected=False,
+            ote_zone=None,
+            unicorn=None,
+            setup_grade=setup_grade,
+        )
+
+    @staticmethod
+    def _make_candles_by_tf():
+        from liquidity_engine.models import Candle, Timeframe
+
+        base_ts = _now_utc()
+        return {
+            "M15": [
+                Candle(
+                    timestamp=base_ts + timedelta(minutes=15 * i),
+                    open=1.1000 + i * 0.0001,
+                    high=1.1005 + i * 0.0001,
+                    low=1.0995 + i * 0.0001,
+                    close=1.1002 + i * 0.0001,
+                    volume=100,
+                    timeframe=Timeframe.M15,
+                    instrument="EURUSD",
+                )
+                for i in range(5)
+            ]
+        }
+
+    @staticmethod
+    def _mock_visual_client(visual_modifier=0.08, hard_block_reason=None, degraded=False):
+        from services.visual_model.api.schemas import VisualAnalysisResponse
+
+        client = MagicMock()
+        client.analyse.return_value = VisualAnalysisResponse(
+            analysis=None,
+            visual_modifier=visual_modifier,
+            hard_block_reason=hard_block_reason,
+            degraded=degraded,
+        )
+        return client
+
+    def test_analyse_node_calls_visual_client_when_grade_b_or_better(self, fake_redis):
+        from liquidity_engine.models import SetupGrade
+
+        liquidity_map = self._make_liquidity_map(SetupGrade.B)
+        state = _make_state(
+            liquidity_map=liquidity_map, candles_by_tf=self._make_candles_by_tf()
+        )
+        client = self._mock_visual_client()
+
+        analyse_node(state, redis_client=fake_redis, visual_model_client=client)
+
+        client.analyse.assert_called_once()
+
+    def test_analyse_node_skips_visual_client_when_grade_no_trade(self, fake_redis):
+        from liquidity_engine.models import SetupGrade
+
+        liquidity_map = self._make_liquidity_map(SetupGrade.NO_TRADE)
+        state = _make_state(
+            liquidity_map=liquidity_map, candles_by_tf=self._make_candles_by_tf()
+        )
+        client = self._mock_visual_client()
+
+        analyse_node(state, redis_client=fake_redis, visual_model_client=client)
+
+        client.analyse.assert_not_called()
+
+    def test_analyse_node_skips_visual_client_when_setup_grade_none(self, fake_redis):
+        liquidity_map = self._make_liquidity_map(None)
+        state = _make_state(
+            liquidity_map=liquidity_map, candles_by_tf=self._make_candles_by_tf()
+        )
+        client = self._mock_visual_client()
+
+        analyse_node(state, redis_client=fake_redis, visual_model_client=client)
+
+        client.analyse.assert_not_called()
+
+    def test_analyse_node_skips_visual_client_when_candles_by_tf_none(self, fake_redis):
+        from liquidity_engine.models import SetupGrade
+
+        liquidity_map = self._make_liquidity_map(SetupGrade.A)
+        state = _make_state(liquidity_map=liquidity_map, candles_by_tf=None)
+        client = self._mock_visual_client()
+
+        analyse_node(state, redis_client=fake_redis, visual_model_client=client)
+
+        client.analyse.assert_not_called()
+
+    def test_analyse_node_folds_visual_modifier_into_final_confidence(self, fake_redis):
+        from liquidity_engine.models import SetupGrade
+
+        liquidity_map = self._make_liquidity_map(SetupGrade.A_PLUS)
+        state = _make_state(
+            liquidity_map=liquidity_map,
+            candles_by_tf=self._make_candles_by_tf(),
+            raw_confidence=0.70,
+            final_confidence=0.70,
+        )
+        client = self._mock_visual_client(visual_modifier=0.10)
+
+        result = analyse_node(state, redis_client=fake_redis, visual_model_client=client)
+
+        assert result.final_confidence is not None
+        assert result.final_confidence > 0.70
+
+    def test_analyse_node_stores_visual_fields_on_state(self, fake_redis):
+        from liquidity_engine.models import SetupGrade
+
+        liquidity_map = self._make_liquidity_map(SetupGrade.A)
+        state = _make_state(
+            liquidity_map=liquidity_map, candles_by_tf=self._make_candles_by_tf()
+        )
+        client = self._mock_visual_client(visual_modifier=0.05, hard_block_reason=None)
+
+        result = analyse_node(state, redis_client=fake_redis, visual_model_client=client)
+
+        assert result.visual_modifier == 0.05
+        assert result.visual_hard_block_reason is None
+
+    def test_analyse_node_no_visual_client_leaves_fields_unset(self, fake_redis):
+        """When visual_model_client is not injected at all (feature not
+        wired up / disabled), behaviour must match today's numerical-only
+        flow exactly - no crash, no visual fields populated."""
+        state = _make_state()
+        result = analyse_node(state, redis_client=fake_redis, visual_model_client=None)
+        assert result.visual_analysis is None
+        assert result.visual_modifier is None
+
+    @pytest.mark.parametrize(
+        "sentiment_bonus,calendar_dummy,visual_modifier",
+        [(0.0, None, m) for m in (-0.15, -0.05, 0.0, 0.05, 0.15)],
+    )
+    def test_property_final_confidence_clamped(
+        self, fake_redis, sentiment_bonus, calendar_dummy, visual_modifier
+    ):
+        """Property 3: final_confidence Remains Clamped."""
+        from liquidity_engine.models import SetupGrade
+
+        liquidity_map = self._make_liquidity_map(SetupGrade.A_PLUS)
+        state = _make_state(
+            liquidity_map=liquidity_map,
+            candles_by_tf=self._make_candles_by_tf(),
+            raw_confidence=0.95,
+            final_confidence=0.95,
+        )
+        client = self._mock_visual_client(visual_modifier=visual_modifier)
+
+        result = analyse_node(state, redis_client=fake_redis, visual_model_client=client)
+
+        assert 0.0 <= result.final_confidence <= 1.0
+
+    @pytest.mark.parametrize("grade_value", ["A+", "A", "B", "NO_TRADE", None])
+    def test_property_visual_gate_only_on_graded_setups(self, fake_redis, grade_value):
+        """Property 9: Visual Model Only Runs on Graded Setups."""
+        from liquidity_engine.models import SetupGrade
+
+        grade = SetupGrade(grade_value) if grade_value is not None else None
+        liquidity_map = self._make_liquidity_map(grade)
+        state = _make_state(
+            liquidity_map=liquidity_map, candles_by_tf=self._make_candles_by_tf()
+        )
+        client = self._mock_visual_client()
+
+        analyse_node(state, redis_client=fake_redis, visual_model_client=client)
+
+        if grade_value in ("A+", "A", "B"):
+            client.analyse.assert_called_once()
+        else:
+            client.analyse.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # TestDecideNode
 # ---------------------------------------------------------------------------
 
@@ -540,6 +752,116 @@ class TestDecideNode:
 
         assert result.risk_validation is not None
         assert result.risk_validation.verdict == RiskVerdictEnum.APPROVED
+
+
+# ---------------------------------------------------------------------------
+# TestDecideNodeVisualHardBlock
+# ---------------------------------------------------------------------------
+
+class TestDecideNodeVisualHardBlock:
+    """Tests for decide_node's visual hard-block gate (task 176) - joins the
+    existing gate stack (calendar_clear, confidence floor, Risk Engine)
+    rather than replacing or bypassing any of them.
+
+    **Validates: Requirements 9.1-9.4 (.kiro/specs/visual-model/requirements.md)**
+    """
+
+    def test_decide_node_skips_on_visual_hard_block_reason_regardless_of_confidence(self):
+        from services.risk_engine.main import RiskEngine
+
+        risk_engine = RiskEngine(redis_client=None)
+        state = _make_state(
+            raw_confidence=0.95,
+            final_confidence=0.95,
+            visual_hard_block_reason="visual/numerical direction conflict",
+        )
+
+        result = decide_node(state, risk_engine=risk_engine)
+
+        assert result.decision == DecisionAction.SKIP
+        assert result.decision_reason == "visual/numerical direction conflict"
+
+    def test_decide_node_hard_block_check_before_confidence_threshold(self):
+        """Ordering: the visual hard-block fires even when confidence is well
+        above the 0.65 floor - proving it runs as an independent gate, not
+        merely a tie-breaker applied only to already-low-confidence setups.
+
+        Note: agent-architecture.md documents a calendar_clear hard block in
+        decide_node, but the current implementation never reads
+        state.calendar_clear (analyse_node sets it; nothing consumes it) -
+        that is a pre-existing gap unrelated to this spec, so this test does
+        not assert on it."""
+        from services.risk_engine.main import RiskEngine
+
+        risk_engine = RiskEngine(redis_client=None)
+        state = _make_state(
+            raw_confidence=0.95,
+            final_confidence=0.95,
+            visual_hard_block_reason="visual model: M15 still in C2_MANIPULATION",
+        )
+        result = decide_node(state, risk_engine=risk_engine)
+        assert result.decision == DecisionAction.SKIP
+        assert "manipulation" in (result.decision_reason or "").lower()
+
+    def test_decide_node_unaffected_when_hard_block_reason_none(self):
+        mock_engine = MagicMock()
+        from services.risk_engine.main import ValidateResponse
+
+        mock_engine.validate.return_value = ValidateResponse(approved=True, position_size=5.0)
+        state = _make_state(
+            raw_confidence=0.80, final_confidence=0.80, visual_hard_block_reason=None
+        )
+
+        result = decide_node(state, risk_engine=mock_engine, user_id="user1")
+
+        assert result.decision == DecisionAction.NOTIFY
+
+    def test_decide_node_unaffected_when_visual_analysis_none(self):
+        """Visual model never called / degraded - decide_node behaves exactly
+        as it did before this integration existed."""
+        mock_engine = MagicMock()
+        from services.risk_engine.main import ValidateResponse
+
+        mock_engine.validate.return_value = ValidateResponse(approved=True, position_size=5.0)
+        state = _make_state(raw_confidence=0.80, final_confidence=0.80)
+
+        result = decide_node(state, risk_engine=mock_engine, user_id="user1")
+
+        assert result.decision == DecisionAction.NOTIFY
+
+    @pytest.mark.parametrize(
+        "reason", ["visual/numerical direction conflict: BULLISH vs BEARISH"]
+    )
+    def test_property_direction_conflict_always_blocks(self, reason):
+        """Property 4: Direction Conflict Always Blocks."""
+        from services.risk_engine.main import RiskEngine
+
+        risk_engine = RiskEngine(redis_client=None)
+        for confidence in (0.66, 0.80, 0.99):
+            state = _make_state(
+                raw_confidence=confidence,
+                final_confidence=confidence,
+                visual_hard_block_reason=reason,
+            )
+            result = decide_node(state, risk_engine=risk_engine)
+            assert result.decision == DecisionAction.SKIP
+
+    @pytest.mark.parametrize(
+        "reason", ["visual model: M15 still in C2_MANIPULATION, not yet distribution"]
+    )
+    def test_property_manipulation_always_blocks(self, reason):
+        """Property 5: Active Manipulation Always Blocks."""
+        from services.risk_engine.main import RiskEngine
+
+        risk_engine = RiskEngine(redis_client=None)
+        for confidence in (0.66, 0.80, 0.99):
+            state = _make_state(
+                raw_confidence=confidence,
+                final_confidence=confidence,
+                visual_hard_block_reason=reason,
+            )
+            result = decide_node(state, risk_engine=risk_engine)
+            assert result.decision == DecisionAction.SKIP
 
 
 # ---------------------------------------------------------------------------

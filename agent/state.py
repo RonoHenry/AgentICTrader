@@ -17,7 +17,12 @@ from pydantic import BaseModel
 # liquidity_engine has no dependency on agent/*, so this is not actually a
 # circular import — a plain top-level import keeps AgentState resolvable by
 # Pydantic v2 without needing model_rebuild() against a TYPE_CHECKING-only name.
-from liquidity_engine.models import LiquidityMap
+from liquidity_engine.models import Candle, LiquidityMap
+
+# services/visual_model has no dependency on agent/* either (see
+# services/visual_model/fusion/visual_modifier.py's module docstring) — same
+# one-directional import safety as liquidity_engine above.
+from services.visual_model.schemas.visual_analysis import VisualAnalysis
 
 
 # ---------------------------------------------------------------------------
@@ -185,3 +190,28 @@ class AgentState(BaseModel):
     """Populated by observe_node when the message carries candles_by_tf.
     None when no candle data was supplied, the setup was rejected as stale,
     or analysis failed (see observe_node's best-effort handling)."""
+
+    # ── Visual Model (Task 173) ──
+    candles_by_tf: Optional[Dict[str, List[Candle]]] = None
+    """Retained by observe_node from the same parse that built liquidity_map,
+    so analyse_node's visual-model call scores the identical candle snapshot
+    the numerical engine already analysed. None when no candle data was
+    supplied on the incoming message."""
+
+    visual_analysis: Optional[VisualAnalysis] = None
+    """Full structured VLM output from services/visual_model, when called.
+    None when the setup graded below B, candles_by_tf was unavailable, or
+    the visual-model call degraded (see analyse_node's grade-gated call)."""
+
+    visual_modifier: Optional[float] = None
+    """Bounded [-0.15, 0.15] float folded into final_confidence alongside
+    sentiment_bonus/calendar_bonus. None when the visual model was never
+    called; 0.0 when it was called but returned a neutral/degraded result."""
+
+    visual_hard_block_reason: Optional[str] = None
+    """Set by the visual model on a direction conflict or an active
+    C2_MANIPULATION read — checked by decide_node alongside calendar_clear."""
+
+    visual_narrative: Optional[str] = None
+    """VisualAnalysis.visual_insights.narrative, surfaced for logging and
+    trade_reasoning context."""
