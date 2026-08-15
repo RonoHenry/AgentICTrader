@@ -100,13 +100,24 @@ class TestModelVersionRegistry:
         # MLflow should only be called once due to caching
         assert mock_load_model.call_count == 1
     
-    def test_fallback_when_model_unavailable(self):
+    @patch('ml.inference.model_versioning.mlflow.sklearn.load_model')
+    @patch('ml.inference.model_versioning.mlflow.tracking.MlflowClient')
+    def test_fallback_when_model_unavailable(self, mock_mlflow_client, mock_load_model):
         """RED: Test fallback to stub when model not in registry."""
+        # No registered versions for this model name - MLflow client returns
+        # empty, never a real network call (this used to be unmocked and hung
+        # / polluted global mlflow tracking state for every later test in the
+        # same process - see .kiro memory test_suite_isolation_bug.md).
+        mock_client_instance = Mock()
+        mock_client_instance.get_latest_versions.return_value = []
+        mock_mlflow_client.return_value = mock_client_instance
+
         registry = ModelVersionRegistry()
-        
+
         # Should fallback gracefully for non-existent model
         model = registry.load_model("non-existent-model", ModelVersion.V1_BASELINE)
         assert model is None or hasattr(model, "predict")  # Either None or stub
+        mock_load_model.assert_not_called()
 
 
 class TestTrafficSplitter:

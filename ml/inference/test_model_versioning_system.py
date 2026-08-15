@@ -25,49 +25,71 @@ from ml.inference.feature_flags import get_feature_flags
 class TestModelVersioningSystemRED:
     """RED phase: Write failing tests for model versioning system."""
     
-    def test_load_confluence_scorer_v1_baseline(self):
+    @patch('ml.inference.model_versioning.mlflow.tracking.MlflowClient')
+    def test_load_confluence_scorer_v1_baseline(self, mock_mlflow_client):
         """RED: Test loading confluence-scorer-v1 (baseline) model."""
+        # No real MLflow server in this environment - previously unmocked,
+        # this hung retrying a real connection to http://localhost:5000 and
+        # polluted global mlflow tracking state for every later test in the
+        # process (see .kiro memory test_suite_isolation_bug.md). Mocking
+        # only the network boundary: get_latest_versions() returning empty
+        # exercises the real, already-correct _load_from_mlflow ->
+        # _create_stub_model fallback path this test's assertions expect.
+        mock_client_instance = Mock()
+        mock_client_instance.get_latest_versions.return_value = []
+        mock_mlflow_client.return_value = mock_client_instance
+
         registry = ModelVersionRegistry()
-        
+
         # Should be able to load v1 baseline model
         model = registry.load_model("confluence-scorer", ModelVersion.V1_BASELINE)
-        
+
         # At this point, model should fail to load because we haven't implemented it yet
         # But the test defines the expected behavior
         assert model is not None, "Should be able to load confluence-scorer-v1 baseline"
-        
+
         # Model should have standard sklearn interface
         assert hasattr(model, 'predict'), "Model should have predict method"
         assert hasattr(model, 'predict_proba'), "Model should have predict_proba method"
-        
+
         # Should work with feature vectors (original 64 features)
         test_features = np.random.rand(1, 64)
         prediction = model.predict_proba(test_features)
         assert prediction.shape == (1, 2), "Should return binary classification probabilities"
-    
-    def test_load_confluence_scorer_v2_rag(self):
+
+    @patch('ml.inference.model_versioning.mlflow.tracking.MlflowClient')
+    def test_load_confluence_scorer_v2_rag(self, mock_mlflow_client):
         """RED: Test loading confluence-scorer-v2-rag model."""
+        mock_client_instance = Mock()
+        mock_client_instance.get_latest_versions.return_value = []
+        mock_mlflow_client.return_value = mock_client_instance
+
         registry = ModelVersionRegistry()
-        
-        # Should be able to load v2 RAG-enhanced model  
+
+        # Should be able to load v2 RAG-enhanced model
         model = registry.load_model("confluence-scorer", ModelVersion.V2_RAG)
-        
+
         # At this point, model should fail to load because we haven't implemented it yet
         assert model is not None, "Should be able to load confluence-scorer-v2-rag"
-        
+
         # Model should have standard sklearn interface
         assert hasattr(model, 'predict'), "Model should have predict method"
         assert hasattr(model, 'predict_proba'), "Model should have predict_proba method"
-        
+
         # Should work with extended feature vectors (64 original + 4 RAG features = 68)
         test_features = np.random.rand(1, 68)
         prediction = model.predict_proba(test_features)
         assert prediction.shape == (1, 2), "Should return binary classification probabilities"
-    
-    def test_model_registry_version_selection(self):
+
+    @patch('ml.inference.model_versioning.mlflow.tracking.MlflowClient')
+    def test_model_registry_version_selection(self, mock_mlflow_client):
         """RED: Test model registry can select between versions."""
+        mock_client_instance = Mock()
+        mock_client_instance.get_latest_versions.return_value = []
+        mock_mlflow_client.return_value = mock_client_instance
+
         registry = ModelVersionRegistry()
-        
+
         # Should be able to get both versions
         v1_model = registry.load_model("confluence-scorer", ModelVersion.V1_BASELINE)
         v2_model = registry.load_model("confluence-scorer", ModelVersion.V2_RAG)

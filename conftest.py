@@ -1,6 +1,23 @@
 """
 Root conftest.py — shared fixtures available across all services and tests.
 """
+import os
+
+# Several test files (ml/inference/test_model_versioning*.py,
+# ml/models/confluence_scorer/train.py's MLflowTracker, and others) construct
+# MLflow tracking/registry objects with a default http://localhost:5000 URI
+# and no test mocking. With no MLflow server running locally, MLflow's client
+# falls through to its deprecated local filesystem store ("./mlruns"), which
+# newer MLflow versions guard behind a hard exception unless this flag is set.
+# Once one test hits that exception, MLflow's cached tracking-URI resolution
+# stays corrupted for the rest of the pytest process, cascading into ~30+
+# unrelated failures in later-collected files that pass individually but fail
+# only when run as part of the full suite. Setting this here (module import
+# time, before any test collection) makes the fallback path actually work
+# instead of raising, which is the correct behaviour for local/CI runs
+# without a real MLflow server. See memory: test_suite_isolation_bug.md.
+os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
+
 import pytest
 import numpy as np
 from datetime import datetime, timezone
