@@ -10,7 +10,7 @@ from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel
 
-from liquidity_engine.models import Candle, LiquidityMap, Timeframe
+from pd_array_engine.models import Candle, LiquidityMap, Timeframe
 
 
 class ChartAnalysisRequest(BaseModel):

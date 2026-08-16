@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from agent.visual_model_client import VisualModelClient
-from liquidity_engine.models import Candle, Timeframe
+from pd_array_engine.models import Candle, Timeframe
 from services.visual_model.api.schemas import VisualAnalysisResponse
 
 

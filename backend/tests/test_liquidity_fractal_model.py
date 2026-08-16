@@ -1,4 +1,4 @@
-"""Tests for liquidity_engine.fractal.candle_model.FractalModelTracker."""
+"""Tests for pd_array_engine.fractal.candle_model.FractalModelTracker."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from hypothesis import given, settings, strategies as st
 
-from liquidity_engine.fractal.candle_model import FractalModelTracker
-from liquidity_engine.models import Candle, ClosureType, Timeframe
+from pd_array_engine.fractal.candle_model import FractalModelTracker
+from pd_array_engine.models import Candle, ClosureType, Timeframe
 
 _BASE = datetime(2024, 1, 1, tzinfo=timezone.utc)
 

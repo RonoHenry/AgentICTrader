@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict, List
 
-from liquidity_engine.models import BiasDirection, Candle, HTFBias, Timeframe
+from pd_array_engine.models import BiasDirection, Candle, HTFBias, Timeframe
 
 # Within this band (as a fraction of reference_open), direction is NEUTRAL.
 _NEUTRAL_BAND_PCT: float = 0.0001

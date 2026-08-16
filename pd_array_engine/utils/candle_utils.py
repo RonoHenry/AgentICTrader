@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import List
 
-from liquidity_engine.models import Candle, CandleType
+from pd_array_engine.models import Candle, CandleType
 
 # Named thresholds (Requirement 16.6) — first-pass defaults calibrated
 # qualitatively against the TTrades reference material, not backtest-derived.

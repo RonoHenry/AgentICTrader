@@ -3,12 +3,12 @@ VisualAnalysis output schema for the Visual Model service.
 
 The structured result of a single VLM chart-reasoning call. Vocabulary is
 constrained to match the numerical engine's own terminology:
-- crt phases use the same five values liquidity_engine.ipda.classifier
+- crt phases use the same five values pd_array_engine.ipda.classifier
   .classify_crt_phase() can return (C1-C4/UNKNOWN) - no AMD, no sixth
   "reversal"/"retracement" value (see .kiro/specs/visual-model/design.md,
   Non-Goals: AMDX/X is deferred).
 - structure section asks about BOS/CHoCH, not MSS, matching
-  liquidity_engine.models.StructureEventType.
+  pd_array_engine.models.StructureEventType.
 
 **Validates: Requirements 6.1-6.7 (.kiro/specs/visual-model/requirements.md)**
 """
@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 
 class CRTPhaseLiteral(str, Enum):
-    """The same five values liquidity_engine.ipda.classifier.classify_crt_phase()
+    """The same five values pd_array_engine.ipda.classifier.classify_crt_phase()
     can return. No REVERSAL/RETRACEMENT value - see Non-Goals in design.md."""
 
     C1_ACCUMULATION = "C1_ACCUMULATION"

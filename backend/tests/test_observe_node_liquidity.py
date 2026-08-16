@@ -1,4 +1,4 @@
-"""Tests for observe_node's Liquidity Engine integration (task 160)."""
+"""Tests for observe_node's PD Array Engine integration (task 160)."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 
 from agent.nodes.observe_node import observe_node
 from agent.state import AgentState
-from liquidity_engine.models import LiquidityMap
+from pd_array_engine.models import LiquidityMap
 
 _BASE = datetime(2024, 1, 1, tzinfo=timezone.utc)
 

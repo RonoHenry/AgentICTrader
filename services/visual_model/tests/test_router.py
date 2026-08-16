@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from liquidity_engine.models import Candle, Timeframe
+from pd_array_engine.models import Candle, Timeframe
 from services.visual_model.api.router import get_vlm_reasoner, router
 from services.visual_model.perception.vlm_reasoner import VLMAnalysisError
 from services.visual_model.schemas.visual_analysis import (

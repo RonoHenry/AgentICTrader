@@ -1,10 +1,10 @@
 ﻿# Design Document: 
 
-**spec**: Liquidity Engine
+**spec**: PD Array Engine
 
 ## Overview
 
-The Liquidity Engine is a pure-Python analytical package that encodes the complete ICT/TTrades multi-timeframe trading methodology into a deterministic, stateless computation pipeline. It consumes multi-timeframe OHLCV candle data and produces a `LiquidityMap`  a structured object containing every analytical output the methodology requires: HTF bias per timeframe, tiered swing structure with BOS/CHoCH events, all identified liquidity levels (BSL/SSL), all PD arrays (FVG, OB, Breaker, IFVG, BPR, CISD), the Fractal Model candle-closure sequence and Equilibrium, CRT phase classification, CISD cascade status, draw-on-liquidity target, sweep detection, UNICORN pattern detection, OTE Fibonacci zone, and a final setup grade (A+/A/B/NO_TRADE).
+The PD Array Engine is a pure-Python analytical package that encodes the complete ICT/TTrades multi-timeframe trading methodology into a deterministic, stateless computation pipeline. It consumes multi-timeframe OHLCV candle data and produces a `LiquidityMap`  a structured object containing every analytical output the methodology requires: HTF bias per timeframe, tiered swing structure with BOS/CHoCH events, all identified liquidity levels (BSL/SSL), all PD arrays (FVG, OB, Breaker, IFVG, BPR, CISD), the Fractal Model candle-closure sequence and Equilibrium, CRT phase classification, CISD cascade status, draw-on-liquidity target, sweep detection, UNICORN pattern detection, OTE Fibonacci zone, and a final setup grade (A+/A/B/NO_TRADE).
 
 The engine is designed to be called once per candle close from `agent/nodes/observe_node.py`. Its output is stored on `AgentState.liquidity_map` and injected into the LLM reasoning prompt via `LiquidityMap.to_agent_context()`. It replaces `backend/trader/agents/power_of_3.py`, `backend/trader/analysis/patterns.py`, and the stub `backend/trader/agents/pd_array/` directory. A `services/liquidity/` microservice will wrap it for HTTP/Kafka access post-v1.
 
@@ -45,7 +45,7 @@ graph TD
 
 ```mermaid
 graph LR
-    subgraph liquidity_engine/
+    subgraph pd_array_engine/
         M[models.py] --> N[engine.py]
         O[detectors/external.py] --> N
         P[detectors/internal.py] --> N
@@ -66,7 +66,7 @@ graph LR
 ### Package Layout
 
 ```
-liquidity_engine/
+pd_array_engine/
  __init__.py                  # exports: LiquidityMappingEngine, LiquidityMap
  models.py                    # all Pydantic v2 data models
  engine.py                    # LiquidityMappingEngine (orchestrator)
@@ -1040,11 +1040,11 @@ class LiquidityMap(BaseModel):
 ## Testing Strategy
 
 - Strict RED → GREEN → REFACTOR per task, matching the task boundaries in `tasks.md` — no production code is written before a failing test exists for it.
-- One test file per module in `backend/tests/`, all prefixed `test_liquidity_`, mirroring `liquidity_engine/`'s package layout.
+- One test file per module in `backend/tests/`, all prefixed `test_liquidity_`, mirroring `pd_array_engine/`'s package layout.
 - Every Correctness Property below has a corresponding Hypothesis property-based test (`property_*`), run with `@settings(max_examples=100)` minimum (Requirement 14.6).
-- `test_liquidity_engine.py` covers two levels: a mocked test asserting the exact sub-component call order (`test_sub_components_called_in_order`), and an unmocked end-to-end run through `analyze()` to catch wiring bugs that per-component unit tests can't see.
-- Coverage gate: ≥ 90% line coverage across `liquidity_engine/`, measured by `pytest-cov`, enforced at the Task 161 final checkpoint (Requirement 14.7).
-- `test_observe_node_liquidity.py` is the only suite in this spec that touches code outside `liquidity_engine/`; its scope is deliberately narrow — verifying `AgentState.liquidity_map` gets populated correctly, not re-testing engine internals already covered above.
+- `test_pd_array_engine.py` covers two levels: a mocked test asserting the exact sub-component call order (`test_sub_components_called_in_order`), and an unmocked end-to-end run through `analyze()` to catch wiring bugs that per-component unit tests can't see.
+- Coverage gate: ≥ 90% line coverage across `pd_array_engine/`, measured by `pytest-cov`, enforced at the Task 161 final checkpoint (Requirement 14.7).
+- `test_observe_node_liquidity.py` is the only suite in this spec that touches code outside `pd_array_engine/`; its scope is deliberately narrow — verifying `AgentState.liquidity_map` gets populated correctly, not re-testing engine internals already covered above.
 
 ## Correctness Properties
 

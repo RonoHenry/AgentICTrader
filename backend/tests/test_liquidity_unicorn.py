@@ -1,4 +1,4 @@
-"""Tests for liquidity_engine.unicorn.detector.UnicornDetector."""
+"""Tests for pd_array_engine.unicorn.detector.UnicornDetector."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from hypothesis import given, settings, strategies as st
 
-from liquidity_engine.models import BiasDirection, PDArray, PDArrayType, Timeframe
-from liquidity_engine.unicorn.detector import UnicornDetector
+from pd_array_engine.models import BiasDirection, PDArray, PDArrayType, Timeframe
+from pd_array_engine.unicorn.detector import UnicornDetector
 
 _BASE = datetime(2024, 1, 1, tzinfo=timezone.utc)
 

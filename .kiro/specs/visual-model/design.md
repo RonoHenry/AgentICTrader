@@ -6,7 +6,7 @@
 
 The Visual Model is a new FastAPI microservice, `services/visual_model/`, that gives the agent a second, independent opinion on a setup by looking at a *rendered chart image* rather than OHLCV numbers. It sends a deterministically-rendered multi-timeframe candlestick grid to a Claude vision-capable model with an ICT-specific prompt, and returns a structured `VisualAnalysis` — a qualitative read on structure cleanliness, CISD displacement dominance, OB/IFVG ambiguity, CRT phase, and fractal coherence.
 
-It runs **in parallel with**, never in place of, `liquidity_engine`'s deterministic `SetupGrader`. The numerical engine still owns setup detection and grading (`SetupGradeDetail`, A+/A/B/NO_TRADE) exactly as designed in `.kiro/specs/liquidity-engine/`. The Visual Model only runs for setups that already clear that bar (grade B or better — see Architecture), and its output does two things downstream, both inside the *existing* agent machinery rather than a new parallel decision system:
+It runs **in parallel with**, never in place of, `pd_array_engine`'s deterministic `SetupGrader`. The numerical engine still owns setup detection and grading (`SetupGradeDetail`, A+/A/B/NO_TRADE) exactly as designed in `.kiro/specs/pd-array-engine/`. The Visual Model only runs for setups that already clear that bar (grade B or better — see Architecture), and its output does two things downstream, both inside the *existing* agent machinery rather than a new parallel decision system:
 
 1. Contributes a small bounded modifier to `final_confidence`, computed the same way `sentiment_bonus`/`calendar_bonus` already are in `analyse_node` (`.kiro/steering/agent-architecture.md`).
 2. Can force a hard `SKIP`, joining the existing gate checks in `decide_node` (`calendar_clear`, Risk Engine) — never bypassing them, never replacing the confidence threshold floor.
@@ -17,11 +17,11 @@ This spec covers **Phase 3 only**: prompt-based VLM reasoning against a general-
 
 ### Non-Goals (Deferred)
 
-- **AMDX / "X" phase (reversal, retracement)**: not classified by `liquidity_engine.ipda.classifier.classify_crt_phase()` today (it only ever returns `C1_ACCUMULATION`/`C2_MANIPULATION`/`C3_DISTRIBUTION`/`C4_CONTINUATION`/`UNKNOWN`), so the Visual Model scores against exactly that same five-value vocabulary. Neither side invents a phase the other doesn't have. Formalizing reversal/retracement as a real `CRTPhase` value is its own future spec, touching the numerical classifier first.
+- **AMDX / "X" phase (reversal, retracement)**: not classified by `pd_array_engine.ipda.classifier.classify_crt_phase()` today (it only ever returns `C1_ACCUMULATION`/`C2_MANIPULATION`/`C3_DISTRIBUTION`/`C4_CONTINUATION`/`UNKNOWN`), so the Visual Model scores against exactly that same five-value vocabulary. Neither side invents a phase the other doesn't have. Formalizing reversal/retracement as a real `CRTPhase` value is its own future spec, touching the numerical classifier first.
 - **`services/visual_model/perception/clip_embedder.py`, `vit_detector.py`, `training/clip_trainer.py`, `training/vit_finetuner.py`, `training/quality_labeller.py`, and the entire `visual_algorag/` package**: all Phase 4/5. Not scaffolded in this spec. Phase 4 needs ≥500 self-generated, VLM-labelled samples (produced by this spec's `training/data_pipeline.py`) before it's worth building the embedder.
 - **pgvector**: not used anywhere on this platform. `services/algorag/` runs on Qdrant (`services/algorag/config.py:14`, 528-dim vectors). When Visual AlgoRAG is eventually built (Phase 4), it targets a Qdrant collection, not a pgvector `ALTER TABLE`.
 - **16 instruments / 12 timeframes**: scoped to the 6 instruments `agent/state.py` and `project-conventions.md` actually support today (EURUSD, GBPUSD, USDJPY, XAUUSD, US500, US30) and the 4-timeframe render grid (H4/H1/M15/M5).
-- **Modifying `SetupGrader.grade()` or `SetupGradeDetail`'s 8 conditions**: `liquidity_engine/grader/setup_grader.py` stays exactly as specified in the liquidity-engine spec — pure, synchronous, no I/O. The Visual Model is never called from inside it. See Architecture for why.
+- **Modifying `SetupGrader.grade()` or `SetupGradeDetail`'s 8 conditions**: `pd_array_engine/grader/setup_grader.py` stays exactly as specified in the pd-array-engine spec — pure, synchronous, no I/O. The Visual Model is never called from inside it. See Architecture for why.
 - **A standalone `fusion/multimodal_scorer.py`-style decision module**: rejected. Visual scoring is folded into the confidence arithmetic `analyse_node` already does, and visual hard-blocks join the gate list `decide_node` already has. One decision pipeline, not two.
 
 ---
@@ -66,11 +66,11 @@ graph LR
 
 ### Why grading and visual analysis stay in separate processes
 
-`SetupGrader.grade()` is called synchronously and in-process from `liquidity_engine/engine.py:123`, with no I/O anywhere in its call path (`.kiro/specs/liquidity-engine/requirements.md`, Requirement 14.1: "pure Python with no I/O side effects"). A Claude vision call is a network round-trip with multi-second latency and its own failure modes (timeouts, rate limits, malformed JSON). Putting it inside `grade()` would turn a fast, pure, always-succeeds function into one that can hang or fail on a dependency that has nothing to do with candle arithmetic. So the Visual Model is invoked **after** grading, as an enrichment step — structurally the same slot `sentiment_score` (fetched from Redis) and `calendar_clear` (checked against the economic calendar) already occupy in `analyse_node`.
+`SetupGrader.grade()` is called synchronously and in-process from `pd_array_engine/engine.py:123`, with no I/O anywhere in its call path (`.kiro/specs/pd-array-engine/requirements.md`, Requirement 14.1: "pure Python with no I/O side effects"). A Claude vision call is a network round-trip with multi-second latency and its own failure modes (timeouts, rate limits, malformed JSON). Putting it inside `grade()` would turn a fast, pure, always-succeeds function into one that can hang or fail on a dependency that has nothing to do with candle arithmetic. So the Visual Model is invoked **after** grading, as an enrichment step — structurally the same slot `sentiment_score` (fetched from Redis) and `calendar_clear` (checked against the economic calendar) already occupy in `analyse_node`.
 
 ### Why the Visual Model only runs on graded setups, not every candle close
 
-`observe_node` runs `LiquidityMappingEngine.analyze()` on every relevant candle close, but most of those closes don't produce a setup worth trading — `SetupGrader` grades the majority `NO_TRADE` (fewer than 6 of 8 conditions met, Requirement 9.5 in the liquidity-engine spec). Calling the vision API for those would be pure waste — VLM calls are the single most expensive per-inference cost anywhere in this system. `analyse_node` only calls the visual-model client when `state.liquidity_map.setup_grade.grade` is `B`, `A`, or `A+`.
+`observe_node` runs `LiquidityMappingEngine.analyze()` on every relevant candle close, but most of those closes don't produce a setup worth trading — `SetupGrader` grades the majority `NO_TRADE` (fewer than 6 of 8 conditions met, Requirement 9.5 in the pd-array-engine spec). Calling the vision API for those would be pure waste — VLM calls are the single most expensive per-inference cost anywhere in this system. `analyse_node` only calls the visual-model client when `state.liquidity_map.setup_grade.grade` is `B`, `A`, or `A+`.
 
 ### Why raw candles need to reach `analyse_node`, not just `LiquidityMap`
 
@@ -260,7 +260,7 @@ def build_user_prompt() -> str: ...  # the 8-section question set, CRT/BOS-CHoCH
 ```
 
 **Responsibilities**:
-- Section 1 asks about **BOS** and **CHoCH** (not MSS) on H4/H1, matching `StructureEventType` in `liquidity_engine/models.py:110-114`
+- Section 1 asks about **BOS** and **CHoCH** (not MSS) on H4/H1, matching `StructureEventType` in `pd_array_engine/models.py:110-114`
 - Section 3 asks the VLM to classify each timeframe's phase as exactly one of `C1_ACCUMULATION | C2_MANIPULATION | C3_DISTRIBUTION | C4_CONTINUATION | UNKNOWN` — the same five values `classify_crt_phase()` can return, not the original doc's six-value AMD set
 - Sections 2, 4, 5, 6, 7, 8 (dealing range/liquidity, CISD, M5 precision, fractal coherence, quality, visual-numerical divergence) are otherwise unchanged from the original draft — CISD/OB/IFVG/BSL/SSL terminology already matched the codebase from the start
 - Requests JSON-only output against `schemas/visual_analysis.py`'s schema, no preamble
@@ -553,7 +553,7 @@ Both new checks sit *after* `calendar_clear` and *before* the confidence floor, 
 
 ## Testing Strategy
 
-- **Rendering determinism**: property test — same `candles_by_tf` input rendered twice produces byte-identical PNGs (`sha256` equality), consistent with `liquidity_engine`'s own Property 1 (Engine Determinism) pattern.
+- **Rendering determinism**: property test — same `candles_by_tf` input rendered twice produces byte-identical PNGs (`sha256` equality), consistent with `pd_array_engine`'s own Property 1 (Engine Determinism) pattern.
 - **`vlm_reasoner`**: all tests mock the Anthropic client — the real Claude API is never called in CI. Fixture responses cover: valid JSON, invalid JSON once, invalid JSON twice, timeout.
 - **`fusion/visual_modifier.py`**: pure-function unit tests — modifier bounds `[-0.15, 0.15]` for the full input range; direction-conflict and `C2_MANIPULATION` hard blocks fire correctly; a `None`/degraded input never raises.
 - **Validation fixtures**: the original draft cited two specific dated trades (a USDJPY short, an AUD/USD short) with specific R-multiples as ground truth. Those cannot be verified against this system's actual trade journal from this spec alone, so they are **not** carried forward as fact. Real fixtures should instead be pulled from `learn_node`'s MongoDB trade journal — an actual closed trade with a known `r_multiple` and known chart, so the fixture's expected `quality.overall_score`/`conviction_level` is grounded in a real outcome rather than an assumed one. `tests/fixtures/README.md` documents this sourcing requirement instead of hardcoding invented data.
@@ -615,7 +615,7 @@ Both new checks sit *after* `calendar_clear` and *before* the confidence floor, 
 
 *For any* `LiquidityMap`, `SetupGrader.grade()`'s output SHALL be identical whether or not `services/visual_model` is running, reachable, or has ever been called — grading has zero dependency on visual analysis.
 
-**Validates**: Architecture decision to keep `liquidity_engine` pure and untouched by this spec.
+**Validates**: Architecture decision to keep `pd_array_engine` pure and untouched by this spec.
 
 ---
 
@@ -637,7 +637,7 @@ Both new checks sit *after* `calendar_clear` and *before* the confidence floor, 
 
 ### Property 10: CRT Vocabulary Consistency
 
-*For any* `VisualAnalysis.crt.{h4,h1,m15}_phase`, the value SHALL be one of exactly `{C1_ACCUMULATION, C2_MANIPULATION, C3_DISTRIBUTION, C4_CONTINUATION, UNKNOWN}` — the same five values `liquidity_engine.ipda.classifier.classify_crt_phase()` can return. No `REVERSAL`/`RETRACEMENT`/`CONTINUATION`-as-sixth-value or other AMD-only label SHALL appear.
+*For any* `VisualAnalysis.crt.{h4,h1,m15}_phase`, the value SHALL be one of exactly `{C1_ACCUMULATION, C2_MANIPULATION, C3_DISTRIBUTION, C4_CONTINUATION, UNKNOWN}` — the same five values `pd_array_engine.ipda.classifier.classify_crt_phase()` can return. No `REVERSAL`/`RETRACEMENT`/`CONTINUATION`-as-sixth-value or other AMD-only label SHALL appear.
 
 **Validates**: terminology sync decision (deferred AMDX/X scope).
 

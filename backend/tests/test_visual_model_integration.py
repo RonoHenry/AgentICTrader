@@ -29,7 +29,7 @@ from agent.nodes.analyse_node import analyse_node
 from agent.nodes.decide_node import decide_node
 from agent.state import AgentState, AgentMode, DecisionAction, Direction, TradePlan
 from agent.visual_model_client import VisualModelClient
-from liquidity_engine.models import Candle, LiquidityMap, SetupGrade, SetupGradeDetail, Timeframe
+from pd_array_engine.models import Candle, LiquidityMap, SetupGrade, SetupGradeDetail, Timeframe
 from services.risk_engine.main import RiskEngine, ValidateResponse
 from services.visual_model.api.schemas import VisualAnalysisResponse
 

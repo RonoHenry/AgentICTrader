@@ -1,4 +1,4 @@
-"""Tests for liquidity_engine.detectors.external.LiquidityLevelDetector."""
+"""Tests for pd_array_engine.detectors.external.LiquidityLevelDetector."""
 from __future__ import annotations
 
 import uuid
@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 
 from hypothesis import given, settings, strategies as st
 
-from liquidity_engine.detectors.external import LiquidityLevelDetector
-from liquidity_engine.models import Candle, LiquiditySource, LiquidityType, Timeframe
+from pd_array_engine.detectors.external import LiquidityLevelDetector
+from pd_array_engine.models import Candle, LiquiditySource, LiquidityType, Timeframe
 
 _BASE = datetime(2024, 1, 1, tzinfo=timezone.utc)
 NY = ZoneInfo("America/New_York")

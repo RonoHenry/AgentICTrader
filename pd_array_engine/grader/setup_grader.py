@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from liquidity_engine.models import (
+from pd_array_engine.models import (
     BiasDirection,
     LiquidityMap,
     PDArray,
@@ -21,7 +21,7 @@ from liquidity_engine.models import (
     SetupGradeDetail,
     Timeframe,
 )
-from liquidity_engine.utils.time_utils import is_in_killzone
+from pd_array_engine.utils.time_utils import is_in_killzone
 
 # Stop is placed this fraction of the entry array's own range beyond its far
 # boundary — a stop sitting exactly on the boundary isn't "beyond" it.

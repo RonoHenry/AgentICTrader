@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from liquidity_engine.models import BiasDirection, Candle, CISDResult
-from liquidity_engine.utils.candle_utils import find_swing_highs, find_swing_lows
+from pd_array_engine.models import BiasDirection, Candle, CISDResult
+from pd_array_engine.utils.candle_utils import find_swing_highs, find_swing_lows
 
 
 class CISDDetector:

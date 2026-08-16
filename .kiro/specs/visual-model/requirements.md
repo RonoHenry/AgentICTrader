@@ -4,7 +4,7 @@
 
 ## Introduction
 
-The Visual Model is a new microservice, `services/visual_model/`, that gives the agent a second, independent read on a graded setup by analysing a *rendered chart image* through a Claude vision model, rather than analysing OHLCV numbers. It corroborates or contradicts `liquidity_engine`'s deterministic `SetupGrader` output on things numbers alone struggle to express — whether a displacement candle visually dominates its neighbours, whether an Order Block is ambiguous, whether the chart "looks" clean to a trained eye.
+The Visual Model is a new microservice, `services/visual_model/`, that gives the agent a second, independent read on a graded setup by analysing a *rendered chart image* through a Claude vision model, rather than analysing OHLCV numbers. It corroborates or contradicts `pd_array_engine`'s deterministic `SetupGrader` output on things numbers alone struggle to express — whether a displacement candle visually dominates its neighbours, whether an Order Block is ambiguous, whether the chart "looks" clean to a trained eye.
 
 It never replaces `SetupGrader` and never runs inside it. It runs downstream, in `agent/nodes/analyse_node.py`, only for setups that already graded `B` or better, and its output folds into the same `final_confidence` arithmetic `sentiment_bonus`/`calendar_bonus` already contribute to, plus a small set of hard blocks that join `decide_node`'s existing gate stack.
 
@@ -18,7 +18,7 @@ This spec covers **Phase 3 only** — prompt-based reasoning against a general-p
 
 ## Glossary
 
-Terms already defined in `.kiro/specs/liquidity-engine/requirements.md` are reused as-is and not redefined here: **CISD**, **OB**, **FVG**, **IFVG**, **Breaker**, **BSL/SSL**, **CRT**, **C1/C2/C3/C4**, **BOS**, **CHoCH**, **OTE Zone**, **Killzone**, **SetupGrade**, **SetupGradeDetail**, **HTFBias**, **LiquidityMap**, **Candle**, **Timeframe**, **AgentState**, **observe_node**.
+Terms already defined in `.kiro/specs/pd-array-engine/requirements.md` are reused as-is and not redefined here: **CISD**, **OB**, **FVG**, **IFVG**, **Breaker**, **BSL/SSL**, **CRT**, **C1/C2/C3/C4**, **BOS**, **CHoCH**, **OTE Zone**, **Killzone**, **SetupGrade**, **SetupGradeDetail**, **HTFBias**, **LiquidityMap**, **Candle**, **Timeframe**, **AgentState**, **observe_node**.
 
 New terms introduced by this spec:
 
@@ -36,11 +36,11 @@ New terms introduced by this spec:
 
 ## Non-Goals (Deferred)
 
-- **AMDX / "X" phase (reversal, retracement)**: `classify_crt_phase()` in `liquidity_engine/ipda/classifier.py` never returns a reversal or retracement phase today — only `C1_ACCUMULATION`/`C2_MANIPULATION`/`C3_DISTRIBUTION`/`C4_CONTINUATION`/`UNKNOWN`. This spec's `VisualAnalysis.crt` section is constrained to that same five-value vocabulary. Formalizing a sixth "X" phase is its own future spec, and would need to land in the numerical classifier first.
+- **AMDX / "X" phase (reversal, retracement)**: `classify_crt_phase()` in `pd_array_engine/ipda/classifier.py` never returns a reversal or retracement phase today — only `C1_ACCUMULATION`/`C2_MANIPULATION`/`C3_DISTRIBUTION`/`C4_CONTINUATION`/`UNKNOWN`. This spec's `VisualAnalysis.crt` section is constrained to that same five-value vocabulary. Formalizing a sixth "X" phase is its own future spec, and would need to land in the numerical classifier first.
 - **CLIP-style visual embedder, ViT fine-tuning, Visual AlgoRAG (`visual_algorag/` package)**: Phase 4/5. Requires ≥500 self-generated, VLM-labelled samples before it's worth building — this spec's training pipeline exists to start accumulating that corpus, not to consume it.
 - **pgvector**: not used anywhere on this platform (`services/algorag` runs on Qdrant). Not referenced by this spec at all, including in its deferred Phase 4 description.
 - **16 instruments / 12 timeframes**: scoped to the 6 instruments actually supported (`EURUSD`, `GBPUSD`, `USDJPY`, `XAUUSD`, `US500`, `US30`) and the 4-timeframe render grid.
-- **Modifying `SetupGrader.grade()` or adding a 9th boolean condition to `SetupGradeDetail`**: out of scope. `liquidity_engine` remains pure, synchronous, and untouched.
+- **Modifying `SetupGrader.grade()` or adding a 9th boolean condition to `SetupGradeDetail`**: out of scope. `pd_array_engine` remains pure, synchronous, and untouched.
 - **A standalone fusion/decision module independent of `analyse_node`/`decide_node`**: rejected in favour of extending the two existing gate/scoring points.
 
 ---
@@ -91,7 +91,7 @@ New terms introduced by this spec:
 
 ### Requirement 4: ICT-Specific VLM Prompt Construction
 
-**User Story:** As the Visual Model service, I want a prompt that asks the VLM about the exact ICT vocabulary this codebase already uses, so that its structured output is directly comparable to `liquidity_engine`'s output rather than requiring translation between two different terminologies.
+**User Story:** As the Visual Model service, I want a prompt that asks the VLM about the exact ICT vocabulary this codebase already uses, so that its structured output is directly comparable to `pd_array_engine`'s output rather than requiring translation between two different terminologies.
 
 #### Acceptance Criteria
 
@@ -225,7 +225,7 @@ New terms introduced by this spec:
 1. `services/visual_model/` SHALL follow the directory layout defined in `design.md`'s Package Layout section.
 2. ALL Pydantic models in `services/visual_model/schemas/` SHALL use Pydantic v2 syntax, consistent with `project-conventions.md`.
 3. THE service SHALL target the 6 supported instruments (`EURUSD`, `GBPUSD`, `USDJPY`, `XAUUSD`, `US500`, `US30`) and SHALL NOT assume a larger instrument universe in any hardcoded logic.
-4. `liquidity_engine/grader/setup_grader.py`'s `grade()` method SHALL remain unmodified by this spec's implementation — no import of, or call into, `services/visual_model` SHALL appear anywhere in the `liquidity_engine` package.
+4. `pd_array_engine/grader/setup_grader.py`'s `grade()` method SHALL remain unmodified by this spec's implementation — no import of, or call into, `services/visual_model` SHALL appear anywhere in the `pd_array_engine` package.
 5. `agent/nodes/observe_node.py` SHALL retain the `candles_by_tf` dict it already parses (currently discarded after building `LiquidityMap`) onto `AgentState.candles_by_tf`, without changing the timing or logic of the existing `LiquidityMappingEngine.analyze()` call.
 6. THE Visual Model's Qdrant usage (Phase 4, when built) SHALL target a Qdrant collection, consistent with `services/algorag/config.py`'s existing `QDRANT_COLLECTION` pattern — this requirement exists to prevent a future implementer from reintroducing pgvector.
 

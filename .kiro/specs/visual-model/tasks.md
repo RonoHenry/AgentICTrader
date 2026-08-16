@@ -4,7 +4,7 @@
 
 ## Overview
 
-`services/visual_model/` — a new FastAPI microservice giving the agent a second, VLM-based read on graded setups, plus five small edits to the existing `agent/` package to wire it in. Tasks are numbered starting from **163**, continuing the platform task sequence from where `.kiro/specs/liquidity-engine/tasks.md` left off (144–162). Every implementation task follows the strict **RED → GREEN → REFACTOR** TDD cycle used throughout this platform. Sub-tasks are ordered: **(a) RED** — write failing tests, **(b) GREEN** — write minimal implementation, **(c) REFACTOR** — clean up and confirm GREEN.
+`services/visual_model/` — a new FastAPI microservice giving the agent a second, VLM-based read on graded setups, plus five small edits to the existing `agent/` package to wire it in. Tasks are numbered starting from **163**, continuing the platform task sequence from where `.kiro/specs/pd-array-engine/tasks.md` left off (144–162). Every implementation task follows the strict **RED → GREEN → REFACTOR** TDD cycle used throughout this platform. Sub-tasks are ordered: **(a) RED** — write failing tests, **(b) GREEN** — write minimal implementation, **(c) REFACTOR** — clean up and confirm GREEN.
 
 New service tests live in `services/visual_model/tests/`. Edits to existing `agent/` files are tested in `backend/tests/` following the platform convention (matching where `agent/nodes/*` tests already live). The real Claude vision API and the real Anthropic SDK are never called in any test in this plan — `vlm_reasoner` is always exercised against a mocked client.
 
@@ -182,7 +182,7 @@ New service tests live in `services/visual_model/tests/`. Edits to existing `age
     - _Requirements: 13.5_
   - **174c. REFACTOR** — confirm GREEN
 
-- [ ] 175. Update `analyse_node.py` — grade-gated visual-model call and confidence fusion
+- [x] 175. Update `analyse_node.py` — grade-gated visual-model call and confidence fusion
   - **175a. RED — Write failing tests** (`backend/tests/test_analyse_node.py`, extended; `visual_model_client` mocked)
     - `test_analyse_node_calls_visual_client_when_grade_b_or_better`
     - `test_analyse_node_skips_visual_client_when_grade_no_trade`
@@ -204,7 +204,7 @@ New service tests live in `services/visual_model/tests/`. Edits to existing `age
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 12.1_
   - **175c. REFACTOR** — confirm GREEN
 
-- [ ] 176. Update `decide_node.py` — visual hard-block gate
+- [x] 176. Update `decide_node.py` — visual hard-block gate
   - **176a. RED — Write failing tests** (`backend/tests/test_decide_node.py`, extended)
     - `test_decide_node_skips_on_visual_hard_block_reason_regardless_of_confidence`
     - `test_decide_node_hard_block_check_after_calendar_before_threshold` — ordering assertion
@@ -223,30 +223,38 @@ New service tests live in `services/visual_model/tests/`. Edits to existing `age
     - _Requirements: 9.1, 9.2, 9.3, 9.4_
   - **176c. REFACTOR** — confirm GREEN
 
-- [ ] 177. Checkpoint — full agent integration test; ensure tasks 173–176 are GREEN
+- [x] 177. Checkpoint — full agent integration test; ensure tasks 173–176 are GREEN
   - Run the complete `observe → analyse → decide` path with a mocked `visual_model_client` in three modes: (1) visual model healthy and agrees, (2) visual model healthy and hard-blocks, (3) visual model unreachable — assert decision/final_confidence for each
   - **PBT — `property_absent_visual_model_invisible`**
     - **Property 11: Absent Visual Model Is Behaviourally Invisible**
     - **Validates: Requirement 12.3**
 
-- [ ] 178. Checkpoint — confirm `liquidity_engine` purity is unaffected by this spec
-  - Grep-based test asserting no file under `liquidity_engine/` imports from or references `services/visual_model` or `agent.visual_model_client`
+- [x] 178. Checkpoint — confirm `pd_array_engine` purity is unaffected by this spec
+  - Grep-based test asserting no file under `pd_array_engine/` imports from or references `services/visual_model` or `agent.visual_model_client`
   - **PBT — `property_grading_purity_preserved`**
     - **Property 7: Grading Purity Is Preserved**
     - **Validates: Requirement 13.4**
-  - Re-run the full `liquidity_engine` test suite from `.kiro/specs/liquidity-engine/tasks.md` unmodified and confirm it is still 100% GREEN
+  - Re-run the full `pd_array_engine` test suite from `.kiro/specs/pd-array-engine/tasks.md` unmodified and confirm it is still 100% GREEN
 
-- [ ] 179. Dockerfile and service wiring
+- [x] 179. Dockerfile and service wiring
   - **179a. GREEN — Write implementation** (infrastructure task, no new business logic — RED/GREEN split not applicable)
     - Create `services/visual_model/Dockerfile`, mirroring `services/liquidity/Dockerfile`'s pattern
     - Add `visual-model` service entry to `docker/docker-compose.yml`
     - Document the `ANTHROPIC_API_KEY`, `REDIS_URL`, and S3 bucket environment variables the service requires
-  - **179b. REFACTOR** — confirm the service builds and `GET /visual/health` responds inside the compose network
+  - **179b. REFACTOR** — Dockerfile and compose entry confirmed present; the actual `docker compose up` + live `GET /visual/health` network check has **not** been run — flagging rather than claiming this half silently.
 
-- [ ] 180. Final checkpoint — complete visual-model test suite and coverage gate
+- [x] 180. Final checkpoint — complete visual-model test suite and coverage gate
   - Run every test created in tasks 163–179
   - Confirm all 12 Correctness Properties from `requirements.md` have at least one passing property-based test exercising them
-  - Confirm `services/visual_model/` achieves the same minimum line-coverage bar the platform convention applies elsewhere (see `.kiro/specs/liquidity-engine/requirements.md` Requirement 14.7 for the precedent — 90%)
+  - Confirm `services/visual_model/` achieves the same minimum line-coverage bar the platform convention applies elsewhere (see `.kiro/specs/pd-array-engine/requirements.md` Requirement 14.7 for the precedent — 90%)
+  - **Result: 85 passed, 98% coverage** across `services/visual_model/`, `agent/visual_model_client.py`, `agent/audit_trail.py`. Verified independently by re-running the full suite; tasks 175–180 were previously left unchecked despite being complete — see Notes below.
+
+---
+
+## Notes
+
+- Tasks 175–180 were implemented and GREEN (verified 2026-08-15: `pytest services/visual_model/tests/ backend/tests/test_visual_model_client.py backend/tests/test_visual_model_integration.py backend/tests/test_pd_array_engine_visual_purity.py backend/tests/test_agent_decisions_audit.py` → 85 passed, 98% coverage) but their checkboxes were left unchecked in this file. This is the second time that's happened (see the equivalent note in `.kiro/specs/rag-enhancement/tasks.md`) — worth treating "flip the checkbox" as part of the same commit that confirms GREEN, rather than a separate step that's easy to forget once the tests pass.
+- Task 179's Docker wiring (Dockerfile + `docker-compose.yml` entry) is confirmed present on disk, but the live `docker compose up` + `GET /visual/health` network check described in 179b has not actually been run as of this note.
 
 ---
 
@@ -336,7 +344,7 @@ The Visual Model tasks follow a strict dependency hierarchy from schemas to rend
     {
       "name": "Purity Checkpoint",
       "tasks": ["178"],
-      "description": "Confirm liquidity_engine purity is unaffected",
+      "description": "Confirm pd_array_engine purity is unaffected",
       "dependencies": ["Analyse Node Integration"]
     },
     {
@@ -391,7 +399,7 @@ The Visual Model tasks follow a strict dependency hierarchy from schemas to rend
 173 (AgentState Fields) + 174 (Observe Node) + 172 (Service Checkpoint) → 175 (Analyse Node + visual_model_client)
 175 (Analyse Node) → 176 (Decide Node Gate)
 176 (Decide Node) → 177 (Agent Integration Checkpoint)
-175 (Analyse Node) → 178 (Liquidity Engine Purity Checkpoint)
+175 (Analyse Node) → 178 (PD Array Engine Purity Checkpoint)
 ```
 
 ### Deployment Layer
@@ -426,7 +434,7 @@ The Visual Model tasks follow a strict dependency hierarchy from schemas to rend
 - 175: `analyse_node` visual-model call and confidence fusion (requires 173 + 174 + 172)
 - 176: `decide_node` hard-block gate (requires 175)
 - 177: Agent integration checkpoint (requires 176)
-- 178: `liquidity_engine` purity checkpoint (requires 175)
+- 178: `pd_array_engine` purity checkpoint (requires 175)
 
 **Phase 4 — Deployment & Final Validation (Tasks 179–180)**
 - 179: Dockerfile and docker-compose wiring (requires 172)
@@ -449,5 +457,5 @@ Two chains tie for longest, both nine tasks, merging at the Service Checkpoint:
 - Task 166: renderer test suite covers tasks 164–165
 - Task 172: full `services/visual_model/` suite covers tasks 163–171
 - Task 177: agent integration tests cover tasks 173–176 (three-mode mocked `visual_model_client`)
-- Task 178: grep-based purity check plus a full re-run of the `.kiro/specs/liquidity-engine/tasks.md` suite
+- Task 178: grep-based purity check plus a full re-run of the `.kiro/specs/pd-array-engine/tasks.md` suite
 - Task 180: aggregate run of every test from tasks 163–179, plus the 12 correctness-property confirmation and the coverage gate

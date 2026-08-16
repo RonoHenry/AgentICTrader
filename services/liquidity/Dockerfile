@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY services/liquidity/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-# Service code + the liquidity_engine library it depends on
-COPY liquidity_engine/ /app/liquidity_engine/
+# Service code + the pd_array_engine library it depends on
+COPY pd_array_engine/ /app/pd_array_engine/
 COPY services/liquidity/ /app/services/liquidity/
 COPY services/__init__.py /app/services/__init__.py
 

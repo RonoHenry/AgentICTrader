@@ -397,7 +397,7 @@ class TestAnalyseNodeVisualModel:
 
     @staticmethod
     def _make_liquidity_map(grade):
-        from liquidity_engine.models import LiquidityMap, SetupGradeDetail
+        from pd_array_engine.models import LiquidityMap, SetupGradeDetail
 
         setup_grade = None
         if grade is not None:
@@ -431,7 +431,7 @@ class TestAnalyseNodeVisualModel:
 
     @staticmethod
     def _make_candles_by_tf():
-        from liquidity_engine.models import Candle, Timeframe
+        from pd_array_engine.models import Candle, Timeframe
 
         base_ts = _now_utc()
         return {
@@ -464,7 +464,7 @@ class TestAnalyseNodeVisualModel:
         return client
 
     def test_analyse_node_calls_visual_client_when_grade_b_or_better(self, fake_redis):
-        from liquidity_engine.models import SetupGrade
+        from pd_array_engine.models import SetupGrade
 
         liquidity_map = self._make_liquidity_map(SetupGrade.B)
         state = _make_state(
@@ -477,7 +477,7 @@ class TestAnalyseNodeVisualModel:
         client.analyse.assert_called_once()
 
     def test_analyse_node_skips_visual_client_when_grade_no_trade(self, fake_redis):
-        from liquidity_engine.models import SetupGrade
+        from pd_array_engine.models import SetupGrade
 
         liquidity_map = self._make_liquidity_map(SetupGrade.NO_TRADE)
         state = _make_state(
@@ -501,7 +501,7 @@ class TestAnalyseNodeVisualModel:
         client.analyse.assert_not_called()
 
     def test_analyse_node_skips_visual_client_when_candles_by_tf_none(self, fake_redis):
-        from liquidity_engine.models import SetupGrade
+        from pd_array_engine.models import SetupGrade
 
         liquidity_map = self._make_liquidity_map(SetupGrade.A)
         state = _make_state(liquidity_map=liquidity_map, candles_by_tf=None)
@@ -512,7 +512,7 @@ class TestAnalyseNodeVisualModel:
         client.analyse.assert_not_called()
 
     def test_analyse_node_folds_visual_modifier_into_final_confidence(self, fake_redis):
-        from liquidity_engine.models import SetupGrade
+        from pd_array_engine.models import SetupGrade
 
         liquidity_map = self._make_liquidity_map(SetupGrade.A_PLUS)
         state = _make_state(
@@ -529,7 +529,7 @@ class TestAnalyseNodeVisualModel:
         assert result.final_confidence > 0.70
 
     def test_analyse_node_stores_visual_fields_on_state(self, fake_redis):
-        from liquidity_engine.models import SetupGrade
+        from pd_array_engine.models import SetupGrade
 
         liquidity_map = self._make_liquidity_map(SetupGrade.A)
         state = _make_state(
@@ -559,7 +559,7 @@ class TestAnalyseNodeVisualModel:
         self, fake_redis, sentiment_bonus, calendar_dummy, visual_modifier
     ):
         """Property 3: final_confidence Remains Clamped."""
-        from liquidity_engine.models import SetupGrade
+        from pd_array_engine.models import SetupGrade
 
         liquidity_map = self._make_liquidity_map(SetupGrade.A_PLUS)
         state = _make_state(
@@ -577,7 +577,7 @@ class TestAnalyseNodeVisualModel:
     @pytest.mark.parametrize("grade_value", ["A+", "A", "B", "NO_TRADE", None])
     def test_property_visual_gate_only_on_graded_setups(self, fake_redis, grade_value):
         """Property 9: Visual Model Only Runs on Graded Setups."""
-        from liquidity_engine.models import SetupGrade
+        from pd_array_engine.models import SetupGrade
 
         grade = SetupGrade(grade_value) if grade_value is not None else None
         liquidity_map = self._make_liquidity_map(grade)

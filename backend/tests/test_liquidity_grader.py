@@ -1,4 +1,4 @@
-"""Tests for liquidity_engine.grader.setup_grader.SetupGrader."""
+"""Tests for pd_array_engine.grader.setup_grader.SetupGrader."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -6,8 +6,8 @@ from zoneinfo import ZoneInfo
 
 from hypothesis import given, settings, strategies as st
 
-from liquidity_engine.grader.setup_grader import SetupGrader
-from liquidity_engine.models import (
+from pd_array_engine.grader.setup_grader import SetupGrader
+from pd_array_engine.models import (
     BiasDirection,
     CISDCascadeStatus,
     FractalModelResult,

@@ -1,4 +1,4 @@
-"""Tests for liquidity_engine.models module."""
+"""Tests for pd_array_engine.models module."""
 from __future__ import annotations
 
 import pytest
@@ -7,7 +7,7 @@ from decimal import Decimal
 from hypothesis import given, strategies as st
 from uuid import uuid4
 
-from liquidity_engine.models import (
+from pd_array_engine.models import (
     Candle, HTFBias, LiquidityLevel, PDArray, CRTPhaseResult, CISDResult, 
     CISDCascadeStatus, OTEZone, UnicornPattern, SetupGradeDetail, SwingPoint,
     StructureEvent, SwingStructureResult, FractalCandleStep, FractalModelResult, 

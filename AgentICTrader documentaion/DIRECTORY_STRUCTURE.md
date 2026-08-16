@@ -1,11 +1,11 @@
 # AgentICTrader.AI — Directory Structure
-> Version: 2.0  |  May 26, 2026  |  Includes Liquidity Engine
+> Version: 2.0  |  May 26, 2026  |  Includes PD Array Engine
 > Excludes: node_modules, __pycache__, .hypothesis, .pytest_cache, .git, .venv
 
 ```
 AgentICTrader/
 │
-├── liquidity_engine/                    # Core liquidity mapping package
+├── pd_array_engine/                    # Core liquidity mapping package
 │   │                                    # Imported by agent/, ml/, and services/
 │   ├── __init__.py                      # Exports LiquidityMappingEngine + all models
 │   ├── models.py                        # LiquidityLevel, LiquidityMap, IPDARoute,
@@ -295,13 +295,13 @@ AgentICTrader/
 │   │   └── db/influx.py
 │   ├── trader/
 │   │   ├── agents/
-│   │   │   ├── market_structure.py      # Keep until fully migrated to liquidity_engine
-│   │   │   ├── power_of_3.py            # ⚠ RETIRED → liquidity_engine/ipda_classifier.py
-│   │   │   ├── pd_array/                # ⚠ RETIRED → liquidity_engine/detectors/institutional.py
+│   │   │   ├── market_structure.py      # Keep until fully migrated to pd_array_engine
+│   │   │   ├── power_of_3.py            # ⚠ RETIRED → pd_array_engine/ipda_classifier.py
+│   │   │   ├── pd_array/                # ⚠ RETIRED → pd_array_engine/detectors/institutional.py
 │   │   │   └── rl_agent.py              # ⚠ DROPPED  — replaced by XGBoost + LangGraph
 │   │   ├── analysis/
-│   │   │   ├── patterns.py              # ⚠ RETIRED → liquidity_engine/detectors/external.py
-│   │   │   ├── pdarray.py               # ⚠ RETIRED → liquidity_engine/detectors/internal.py
+│   │   │   ├── patterns.py              # ⚠ RETIRED → pd_array_engine/detectors/external.py
+│   │   │   ├── pdarray.py               # ⚠ RETIRED → pd_array_engine/detectors/internal.py
 │   │   │   └── timeframes.py
 │   │   └── infrastructure/
 │   │       ├── deriv_api.py             # Legacy Deriv connector
@@ -420,7 +420,7 @@ market.ticks (Kafka)   market.candles (Kafka)
 timescaledb_writer     services/liquidity/kafka_consumer.py
                              │
                              ▼
-                       liquidity_engine/engine.map()
+                       pd_array_engine/engine.map()
                              │  LiquidityMap
                              ├──→ Redis cache (TTL: 1 candle)
                              └──→ TimescaleDB snapshot

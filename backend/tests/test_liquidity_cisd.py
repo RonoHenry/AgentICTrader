@@ -1,10 +1,10 @@
-"""Tests for liquidity_engine.ipda.cisd.CISDDetector."""
+"""Tests for pd_array_engine.ipda.cisd.CISDDetector."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from liquidity_engine.ipda.cisd import CISDDetector
-from liquidity_engine.models import BiasDirection, Candle, Timeframe
+from pd_array_engine.ipda.cisd import CISDDetector
+from pd_array_engine.models import BiasDirection, Candle, Timeframe
 
 _BASE = datetime(2024, 1, 1, tzinfo=timezone.utc)
 

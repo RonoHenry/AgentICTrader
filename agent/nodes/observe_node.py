@@ -15,8 +15,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 from agent.state import AgentState, DecisionAction, Direction, TradePlan
-from liquidity_engine import LiquidityMappingEngine
-from liquidity_engine.models import Candle, LiquidityMap, Timeframe
+from pd_array_engine import LiquidityMappingEngine
+from pd_array_engine.models import Candle, LiquidityMap, Timeframe
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +167,7 @@ def observe_node(message: Dict[str, Any]) -> AgentState:
             decision=DecisionAction.SKIP,
         )
 
-    # Liquidity Engine (Task 160) + retained candle window (Task 174)
+    # PD Array Engine (Task 160) + retained candle window (Task 174)
     liquidity_map, candles_by_tf = _build_liquidity_context(message, instrument, detected_at)
 
     # Build full state from message
@@ -191,7 +191,7 @@ def observe_node(message: Dict[str, Any]) -> AgentState:
         price_vs_daily_open=message.get("price_vs_daily_open"),
         price_vs_weekly_open=message.get("price_vs_weekly_open"),
         price_vs_true_day_open=message.get("price_vs_true_day_open"),
-        # Liquidity Engine (Task 160)
+        # PD Array Engine (Task 160)
         liquidity_map=liquidity_map,
         # Visual Model (Task 174)
         candles_by_tf=candles_by_tf,

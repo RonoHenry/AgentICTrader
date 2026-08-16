@@ -1,4 +1,4 @@
-"""Tests for liquidity_engine.ote.calculator.OTECalculator."""
+"""Tests for pd_array_engine.ote.calculator.OTECalculator."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from hypothesis import given, settings, strategies as st
 
-from liquidity_engine.models import BiasDirection, Candle, Timeframe
-from liquidity_engine.ote.calculator import OTECalculator
+from pd_array_engine.models import BiasDirection, Candle, Timeframe
+from pd_array_engine.ote.calculator import OTECalculator
 
 _BASE = datetime(2024, 1, 1, tzinfo=timezone.utc)
 

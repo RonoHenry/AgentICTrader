@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from hypothesis import given, settings, strategies as st
 
-from liquidity_engine.detectors.bias import HTFBiasClassifier
-from liquidity_engine.models import (
+from pd_array_engine.detectors.bias import HTFBiasClassifier
+from pd_array_engine.models import (
     BiasDirection,
     Candle,
     CISDCascadeStatus,

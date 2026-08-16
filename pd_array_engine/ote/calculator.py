@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-from liquidity_engine.models import BiasDirection, Candle, OTEZone
+from pd_array_engine.models import BiasDirection, Candle, OTEZone
 
 
 class OTECalculator:

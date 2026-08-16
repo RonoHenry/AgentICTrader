@@ -4,10 +4,10 @@ ICT-specific prompt construction for the VLM chart-reasoning call.
 Vocabulary is constrained to match this codebase's own terminology, not the
 original draft's AMD/MSS framing (see .kiro/specs/visual-model/design.md,
 Non-Goals):
-- Asks about BOS and CHoCH (liquidity_engine.models.StructureEventType),
+- Asks about BOS and CHoCH (pd_array_engine.models.StructureEventType),
   never MSS.
 - Offers exactly the five CRTPhaseLiteral values
-  (liquidity_engine.ipda.classifier.classify_crt_phase() can never return a
+  (pd_array_engine.ipda.classifier.classify_crt_phase() can never return a
   sixth "reversal"/"retracement" phase), never AMD's six-value set.
 
 **Validates: Requirements 4.1-4.5 (.kiro/specs/visual-model/requirements.md)**

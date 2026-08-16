@@ -11,9 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY services/visual_model/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-# Service code + the liquidity_engine library it depends on (Candle,
+# Service code + the pd_array_engine library it depends on (Candle,
 # Timeframe, LiquidityMap types on the request/response schemas)
-COPY liquidity_engine/ /app/liquidity_engine/
+COPY pd_array_engine/ /app/pd_array_engine/
 COPY services/visual_model/ /app/services/visual_model/
 COPY services/__init__.py /app/services/__init__.py
 

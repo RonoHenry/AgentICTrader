@@ -15,8 +15,8 @@ from typing import Dict, List, Optional
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
-from liquidity_engine import LiquidityMappingEngine
-from liquidity_engine.models import Candle, LiquidityMap, Timeframe
+from pd_array_engine import LiquidityMappingEngine
+from pd_array_engine.models import Candle, LiquidityMap, Timeframe
 
 logger = logging.getLogger(__name__)
 

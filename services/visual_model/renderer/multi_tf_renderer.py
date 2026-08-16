@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 
 from PIL import Image
 
-from liquidity_engine.models import Candle, Timeframe
+from pd_array_engine.models import Candle, Timeframe
 from services.visual_model.config import settings
 from services.visual_model.renderer.chart_renderer import render_single_timeframe
 from services.visual_model.renderer.styles import BACKGROUND_COLOR

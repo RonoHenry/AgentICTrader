@@ -125,7 +125,7 @@ class TestFireAndForgetScheduling:
     def test_store_training_sample_never_called_on_degraded_response(self) -> None:
         client = self._app_client()
         incomplete = _candles_by_tf()
-        from liquidity_engine.models import Timeframe
+        from pd_array_engine.models import Timeframe
 
         del incomplete[Timeframe.M5]
         with patch(

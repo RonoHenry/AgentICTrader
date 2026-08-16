@@ -1,4 +1,4 @@
-"""Tests for liquidity_engine.utils (time_utils, candle_utils)."""
+"""Tests for pd_array_engine.utils (time_utils, candle_utils)."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -7,15 +7,15 @@ from zoneinfo import ZoneInfo
 import pytest
 from hypothesis import given, strategies as st
 
-from liquidity_engine.models import Candle, CandleType, KillzoneWindow, Timeframe
-from liquidity_engine.utils.time_utils import (
+from pd_array_engine.models import Candle, CandleType, KillzoneWindow, Timeframe
+from pd_array_engine.utils.time_utils import (
     KILLZONE_WINDOWS,
     get_killzone,
     is_in_killzone,
     to_est,
     to_utc,
 )
-from liquidity_engine.utils.candle_utils import (
+from pd_array_engine.utils.candle_utils import (
     EXPANSION_WICK_RATIO_MAX,
     REVERSAL_WICK_RATIO_MIN,
     calculate_atr,

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from liquidity_engine.models import (
+from pd_array_engine.models import (
     BiasDirection,
     Candle,
     PDArray,
@@ -19,8 +19,8 @@ from liquidity_engine.models import (
     SwingStructureResult,
     Timeframe,
 )
-from liquidity_engine.utils.candle_utils import calculate_atr
-from liquidity_engine.utils.id_utils import deterministic_id
+from pd_array_engine.utils.candle_utils import calculate_atr
+from pd_array_engine.utils.id_utils import deterministic_id
 
 # Minimum multiple of ATR a candle's range must reach to count as a
 # significant expansion move for Order Block detection.

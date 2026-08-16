@@ -1,4 +1,4 @@
-"""Tests for liquidity_engine.engine.LiquidityMappingEngine."""
+"""Tests for pd_array_engine.engine.LiquidityMappingEngine."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -7,15 +7,15 @@ from typing import Dict, List
 import pytest
 from hypothesis import given, settings, strategies as st
 
-from liquidity_engine.detectors.bias import HTFBiasClassifier
-from liquidity_engine.detectors.external import LiquidityLevelDetector
-from liquidity_engine.detectors.internal import PDArrayDetector
-from liquidity_engine.detectors.structure import SwingStructureClassifier
-from liquidity_engine.engine import LiquidityMappingEngine
-from liquidity_engine.fractal.candle_model import FractalModelTracker
-from liquidity_engine.grader.setup_grader import SetupGrader
-from liquidity_engine.ipda.classifier import IPDAClassifier
-from liquidity_engine.models import (
+from pd_array_engine.detectors.bias import HTFBiasClassifier
+from pd_array_engine.detectors.external import LiquidityLevelDetector
+from pd_array_engine.detectors.internal import PDArrayDetector
+from pd_array_engine.detectors.structure import SwingStructureClassifier
+from pd_array_engine.engine import LiquidityMappingEngine
+from pd_array_engine.fractal.candle_model import FractalModelTracker
+from pd_array_engine.grader.setup_grader import SetupGrader
+from pd_array_engine.ipda.classifier import IPDAClassifier
+from pd_array_engine.models import (
     BiasDirection,
     Candle,
     HTFBias,
@@ -24,8 +24,8 @@ from liquidity_engine.models import (
     LiquidityType,
     Timeframe,
 )
-from liquidity_engine.ote.calculator import OTECalculator
-from liquidity_engine.unicorn.detector import UnicornDetector
+from pd_array_engine.ote.calculator import OTECalculator
+from pd_array_engine.unicorn.detector import UnicornDetector
 
 _BASE = datetime(2024, 1, 1, tzinfo=timezone.utc)
 

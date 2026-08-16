@@ -28,7 +28,7 @@ _MISALIGNED_PENALTY: float = 0.03  # -3% when sentiment opposes direction
 _SENTIMENT_KEY = "sentiment:{instrument}"
 _BLACKOUT_KEY = "blackout:{instrument}"
 
-# Grades that clear the bar for a visual-model call (see liquidity_engine's
+# Grades that clear the bar for a visual-model call (see pd_array_engine's
 # SetupGrader — NO_TRADE setups are never worth the VLM cost).
 _VISUAL_GATE_GRADES = frozenset({"A+", "A", "B"})
 

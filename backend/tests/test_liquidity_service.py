@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from liquidity_engine.models import LiquidityMap
+from pd_array_engine.models import LiquidityMap
 from services.liquidity.kafka_consumer import (
     TOPIC_LIQUIDITY_ANALYZED,
     LiquidityKafkaConsumer,

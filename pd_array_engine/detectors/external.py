@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict, List, Tuple
 
-from liquidity_engine.models import (
+from pd_array_engine.models import (
     Candle,
     KillzoneWindow,
     LiquidityLevel,
@@ -17,9 +17,9 @@ from liquidity_engine.models import (
     LiquidityType,
     Timeframe,
 )
-from liquidity_engine.utils.candle_utils import find_swing_highs, find_swing_lows
-from liquidity_engine.utils.id_utils import deterministic_id
-from liquidity_engine.utils.time_utils import get_killzone
+from pd_array_engine.utils.candle_utils import find_swing_highs, find_swing_lows
+from pd_array_engine.utils.id_utils import deterministic_id
+from pd_array_engine.utils.time_utils import get_killzone
 
 # Previous-period high/low sources, keyed by the timeframe they're derived from.
 _PREV_HIGH_LOW_SOURCES: Dict[Timeframe, Tuple[LiquiditySource, LiquiditySource]] = {

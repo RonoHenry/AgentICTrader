@@ -17,7 +17,7 @@ from typing import Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
-from liquidity_engine.models import Timeframe
+from pd_array_engine.models import Timeframe
 from services.visual_model.api.schemas import HealthResponse, VisualAnalysisResponse
 from services.visual_model.fusion.visual_modifier import compute_visual_modifier
 from services.visual_model.perception.vlm_reasoner import VLMAnalysisError, VLMReasoner

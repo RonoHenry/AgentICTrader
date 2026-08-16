@@ -19,14 +19,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from liquidity_engine.detectors.bias import HTFBiasClassifier
-from liquidity_engine.detectors.external import LiquidityLevelDetector
-from liquidity_engine.detectors.internal import PDArrayDetector
-from liquidity_engine.detectors.structure import SwingStructureClassifier
-from liquidity_engine.fractal.candle_model import FractalModelTracker
-from liquidity_engine.grader.setup_grader import SetupGrader
-from liquidity_engine.ipda.classifier import IPDAClassifier
-from liquidity_engine.models import (
+from pd_array_engine.detectors.bias import HTFBiasClassifier
+from pd_array_engine.detectors.external import LiquidityLevelDetector
+from pd_array_engine.detectors.internal import PDArrayDetector
+from pd_array_engine.detectors.structure import SwingStructureClassifier
+from pd_array_engine.fractal.candle_model import FractalModelTracker
+from pd_array_engine.grader.setup_grader import SetupGrader
+from pd_array_engine.ipda.classifier import IPDAClassifier
+from pd_array_engine.models import (
     BiasDirection,
     Candle,
     CISDCascadeStatus,
@@ -36,8 +36,8 @@ from liquidity_engine.models import (
     LiquidityType,
     Timeframe,
 )
-from liquidity_engine.ote.calculator import OTECalculator
-from liquidity_engine.unicorn.detector import UnicornDetector
+from pd_array_engine.ote.calculator import OTECalculator
+from pd_array_engine.unicorn.detector import UnicornDetector
 
 # Finest-to-coarsest, used to pick a single "live price" source and to
 # supply the Fractal Model / OTE displacement leg with intraday resolution.

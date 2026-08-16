@@ -19,7 +19,7 @@ import pytest
 from hypothesis import given, settings as hyp_settings, strategies as st
 from PIL import Image, ImageDraw
 
-from liquidity_engine.models import Candle, Timeframe
+from pd_array_engine.models import Candle, Timeframe
 from services.visual_model.config import settings as vm_settings
 from services.visual_model.renderer.chart_renderer import render_single_timeframe
 from services.visual_model.renderer.multi_tf_renderer import render_multi_timeframe_grid

@@ -1,7 +1,7 @@
 """
-TDD - Task 178: liquidity_engine purity checkpoint.
+TDD - Task 178: pd_array_engine purity checkpoint.
 
-Confirms services/visual_model never got imported into liquidity_engine -
+Confirms services/visual_model never got imported into pd_array_engine -
 grading must remain a pure, synchronous, in-process function with zero
 dependency on the (network-calling) visual model.
 
@@ -12,9 +12,9 @@ from __future__ import annotations
 import os
 
 
-def _liquidity_engine_python_files():
+def _pd_array_engine_python_files():
     root = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "liquidity_engine")
+        os.path.join(os.path.dirname(__file__), "..", "..", "pd_array_engine")
     )
     for dirpath, _dirnames, filenames in os.walk(root):
         if "__pycache__" in dirpath:
@@ -27,19 +27,19 @@ def _liquidity_engine_python_files():
 class TestLiquidityEnginePurity:
     def test_no_file_references_services_visual_model(self) -> None:
         offenders = []
-        for path in _liquidity_engine_python_files():
+        for path in _pd_array_engine_python_files():
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
             if "services.visual_model" in content or "visual_model_client" in content:
                 offenders.append(path)
-        assert offenders == [], f"liquidity_engine references the visual model: {offenders}"
+        assert offenders == [], f"pd_array_engine references the visual model: {offenders}"
 
     def test_grade_output_identical_with_and_without_visual_model_importable(self) -> None:
         """Property 7: Grading Purity Is Preserved."""
         from datetime import datetime, timedelta, timezone
 
-        from liquidity_engine import LiquidityMappingEngine
-        from liquidity_engine.models import Candle, Timeframe
+        from pd_array_engine import LiquidityMappingEngine
+        from pd_array_engine.models import Candle, Timeframe
 
         base = datetime(2024, 1, 1, tzinfo=timezone.utc)
 

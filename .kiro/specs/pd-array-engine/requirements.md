@@ -1,10 +1,10 @@
 # Requirements Document
 
-**Spec**: Liquidity Engine
+**Spec**: PD Array Engine
 
 ## Introduction
 
-The Liquidity Engine is a pure-Python analytical package that encodes the complete ICT/TTrades multi-timeframe Price Action methodology into a deterministic, stateless computation pipeline. It consumes `Dict[Timeframe, List[Candle]]` — multi-timeframe OHLCV candle data — and produces a single structured output object, `LiquidityMap`, containing every analytical result the methodology requires.
+The PD Array Engine is a pure-Python analytical package that encodes the complete ICT/TTrades multi-timeframe Price Action methodology into a deterministic, stateless computation pipeline. It consumes `Dict[Timeframe, List[Candle]]` — multi-timeframe OHLCV candle data — and produces a single structured output object, `LiquidityMap`, containing every analytical result the methodology requires.
 
 The engine is called once per candle close from `agent/nodes/observe_node.py`. Its output is stored on `AgentState.liquidity_map` and injected into the LLM reasoning prompt via `LiquidityMap.to_agent_context()`. It replaces `backend/trader/agents/power_of_3.py`, `backend/trader/analysis/patterns.py`, and the stub `backend/trader/agents/pd_array/` directory.
 
@@ -278,14 +278,14 @@ The following concepts appear in the TTrades reference material (`docs/reference
 
 ### Requirement 12: Integration with AgentState and observe_node
 
-**User Story:** As the agent loop, I want the Liquidity Engine to integrate cleanly with `observe_node.py` and `AgentState`, so that every candle close triggers a complete analysis that is immediately available for the analyse and decide nodes.
+**User Story:** As the agent loop, I want the PD Array Engine to integrate cleanly with `observe_node.py` and `AgentState`, so that every candle close triggers a complete analysis that is immediately available for the analyse and decide nodes.
 
 #### Acceptance Criteria
 
 1. WHEN `observe_node` calls `LiquidityMappingEngine.analyze()`, THE Engine SHALL complete and return a `LiquidityMap` within 500ms.
 2. WHEN `LiquidityMappingEngine.analyze()` returns successfully, THE `observe_node` SHALL store the result on `AgentState.liquidity_map`.
 3. THE `LiquidityMappingEngine` SHALL accept a `Dict[Timeframe, List[Candle]]` as its primary input without requiring any external I/O, database connections, or network calls.
-4. THE `liquidity_engine` package SHALL export `LiquidityMappingEngine` and `LiquidityMap` from its `__init__.py`.
+4. THE `pd_array_engine` package SHALL export `LiquidityMappingEngine` and `LiquidityMap` from its `__init__.py`.
 5. THE `LiquidityMappingEngine` SHALL replace the analytical responsibilities of `backend/trader/agents/power_of_3.py`, `backend/trader/analysis/patterns.py`, and the stub `backend/trader/agents/pd_array/` directory without breaking any existing passing tests in the test suite.
 
 ---
@@ -307,17 +307,17 @@ The following concepts appear in the TTrades reference material (`docs/reference
 
 ### Requirement 14: Non-Functional Requirements
 
-**User Story:** As the platform engineering team, I want the Liquidity Engine to meet strict non-functional standards so that it integrates reliably into the production agent loop and remains maintainable.
+**User Story:** As the platform engineering team, I want the PD Array Engine to meet strict non-functional standards so that it integrates reliably into the production agent loop and remains maintainable.
 
 #### Acceptance Criteria
 
-1. THE `liquidity_engine` package SHALL be pure Python with no I/O side effects — no file reads, database calls, network calls, or global state mutations during `analyze()`.
-2. THE `liquidity_engine` package SHALL use only dependencies already present in `requirements.txt` (Pydantic v2, standard library).
-3. THE `liquidity_engine` package layout SHALL match the directory structure defined in the design document exactly: `liquidity_engine/__init__.py`, `models.py`, `engine.py`, `detectors/`, `ipda/`, `ote/`, `unicorn/`, `grader/`, `utils/`.
-4. ALL Pydantic models in `liquidity_engine/models.py` SHALL use Pydantic v2 syntax (`model_config`, `field_validator` with `@classmethod`).
+1. THE `pd_array_engine` package SHALL be pure Python with no I/O side effects — no file reads, database calls, network calls, or global state mutations during `analyze()`.
+2. THE `pd_array_engine` package SHALL use only dependencies already present in `requirements.txt` (Pydantic v2, standard library).
+3. THE `pd_array_engine` package layout SHALL match the directory structure defined in the design document exactly: `pd_array_engine/__init__.py`, `models.py`, `engine.py`, `detectors/`, `ipda/`, `ote/`, `unicorn/`, `grader/`, `utils/`.
+4. ALL Pydantic models in `pd_array_engine/models.py` SHALL use Pydantic v2 syntax (`model_config`, `field_validator` with `@classmethod`).
 5. ALL price values in all models SHALL be `float`. ALL timestamps SHALL be timezone-aware `datetime` objects stored in UTC.
 6. THE `LiquidityMappingEngine` SHALL be fully covered by property-based tests using the `hypothesis` library with a minimum of 100 examples per property.
-7. THE `liquidity_engine` package SHALL achieve a minimum of 90% line coverage as measured by `pytest-cov`.
+7. THE `pd_array_engine` package SHALL achieve a minimum of 90% line coverage as measured by `pytest-cov`.
 8. THE `LiquidityMap.to_agent_context()` output format SHALL follow the structured template defined in the design document, answering: (1) where price has come from, (2) where it is now, and (3) where it is likely to go.
 
 ---

@@ -13,8 +13,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from liquidity_engine import LiquidityMappingEngine
-from liquidity_engine.models import Candle, Timeframe
+from pd_array_engine import LiquidityMappingEngine
+from pd_array_engine.models import Candle, Timeframe
 
 app = FastAPI(title="Liquidity Engine Service")
 _engine = LiquidityMappingEngine()

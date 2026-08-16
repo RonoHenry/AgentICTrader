@@ -2,7 +2,7 @@
 Chart annotation overlays sourced from an already-computed LiquidityMap.
 
 This module never re-detects PD arrays, liquidity levels, or CISD events -
-it only projects what liquidity_engine already found onto pixel coordinates.
+it only projects what pd_array_engine already found onto pixel coordinates.
 The overlays exist to orient the VLM's attention (e.g. "here's the OB the
 numerical engine flagged"), not to hand it the answer - the whole point of
 the visual layer is an independent read of the same chart.
@@ -17,7 +17,7 @@ from typing import Callable, List, Optional
 
 from PIL import ImageDraw
 
-from liquidity_engine.models import (
+from pd_array_engine.models import (
     Candle,
     LiquidityLevel,
     LiquidityMap,
@@ -51,7 +51,7 @@ class ICTAnnotations:
 
 def build_annotations(liquidity_map: LiquidityMap, timeframe: Timeframe) -> ICTAnnotations:
     """Filter LiquidityMap.pd_arrays / liquidity_levels down to one timeframe's
-    overlays. Purely a filter - detection already happened in liquidity_engine."""
+    overlays. Purely a filter - detection already happened in pd_array_engine."""
     arrays = [a for a in liquidity_map.pd_arrays if a.timeframe == timeframe]
     levels = [lv for lv in liquidity_map.liquidity_levels if lv.timeframe == timeframe]
 

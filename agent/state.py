@@ -14,14 +14,14 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
-# liquidity_engine has no dependency on agent/*, so this is not actually a
+# pd_array_engine has no dependency on agent/*, so this is not actually a
 # circular import — a plain top-level import keeps AgentState resolvable by
 # Pydantic v2 without needing model_rebuild() against a TYPE_CHECKING-only name.
-from liquidity_engine.models import Candle, LiquidityMap
+from pd_array_engine.models import Candle, LiquidityMap
 
 # services/visual_model has no dependency on agent/* either (see
 # services/visual_model/fusion/visual_modifier.py's module docstring) — same
-# one-directional import safety as liquidity_engine above.
+# one-directional import safety as pd_array_engine above.
 from services.visual_model.schemas.visual_analysis import VisualAnalysis
 
 
@@ -185,7 +185,7 @@ class AgentState(BaseModel):
     """True when the agent is running in shadow period mode.
     During shadow period all users are forced into HUMAN_IN_LOOP mode."""
 
-    # ── Liquidity Engine (Task 160) ──
+    # ── PD Array Engine (Task 160) ──
     liquidity_map: Optional[LiquidityMap] = None
     """Populated by observe_node when the message carries candles_by_tf.
     None when no candle data was supplied, the setup was rejected as stale,

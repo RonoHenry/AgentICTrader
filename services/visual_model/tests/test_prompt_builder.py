@@ -3,7 +3,7 @@ TDD - Task 167: ICT-specific VLM prompt construction.
 
 RED phase: the prompt must ask about BOS/CHoCH (not MSS) and the five CRT
 phase values classify_crt_phase() can return (not AMD's six-value set),
-matching liquidity_engine's own vocabulary.
+matching pd_array_engine's own vocabulary.
 GREEN phase: services/visual_model/perception/prompt_builder.py.
 
 **Validates: Requirements 4.1-4.5 (.kiro/specs/visual-model/requirements.md)**

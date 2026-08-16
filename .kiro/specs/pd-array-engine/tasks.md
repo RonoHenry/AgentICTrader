@@ -1,6 +1,6 @@
 # Implementation Plan: 
 
-**spec**: Liquidity Engine
+**spec**: PD Array Engine
 
 ## Overview
 
@@ -11,7 +11,7 @@ REFACTOR** TDD cycle. Sub-tasks are ordered: **(a) RED** — write failing tests
 write minimal implementation, **(c) REFACTOR** — clean up and confirm GREEN.
 
 Tests live in `backend/tests/` following the platform convention. Property-based tests use
-`hypothesis`. The package lives at `liquidity_engine/` in the workspace root.
+`hypothesis`. The package lives at `pd_array_engine/` in the workspace root.
 
 > **This spec is parked for post-v1 implementation (after task 143 ships).**
 
@@ -27,7 +27,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
 
 ## Tasks
 
-- [x] 144. Create `liquidity_engine/` package scaffold and `models.py`
+- [x] 144. Create `pd_array_engine/` package scaffold and `models.py`
   - **144a. RED — Write failing tests** (`backend/tests/test_liquidity_models.py`)
     - `test_candle_valid_construction` — Candle constructs without error given valid OHLCV
     - `test_candle_high_lt_low_raises` — ValueError when high < low
@@ -59,8 +59,8 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - **Validates: Requirements 11.1, 11.2, 11.3**
     - Confirm all tests FAIL (RED)
   - **144b. GREEN — Write minimal implementation**
-    - Create `liquidity_engine/__init__.py` — exports `LiquidityMappingEngine`, `LiquidityMap`
-    - Create `liquidity_engine/models.py` — all Pydantic v2 enums and data models:
+    - Create `pd_array_engine/__init__.py` — exports `LiquidityMappingEngine`, `LiquidityMap`
+    - Create `pd_array_engine/models.py` — all Pydantic v2 enums and data models:
       - Enums: `Timeframe`, `BiasDirection`, `PDArrayType`, `LiquidityType`, `LiquiditySource`, `CRTPhase`, `PricePhase`, `SetupGrade`, `KillzoneWindow`, `SwingTier`, `StructureEventType`, `CandleType`, `ClosureType`
       - Models: `Candle`, `HTFBias`, `LiquidityLevel`, `PDArray` (incl. `structure_confirmed: bool = False`), `CRTPhaseResult`, `CISDResult`, `CISDCascadeStatus`, `OTEZone`, `UnicornPattern`, `SetupGradeDetail`, `SwingPoint`, `StructureEvent`, `SwingStructureResult`, `FractalCandleStep`, `FractalModelResult`, `LiquidityMap`
       - All `field_validator` decorators with `@classmethod` (Pydantic v2)
@@ -68,18 +68,18 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - `LiquidityMap.swing_structure: Dict[str, SwingStructureResult] = {}` and `LiquidityMap.fractal_model: Optional[FractalModelResult] = None` fields
       - `LiquidityMap` convenience methods: `get_bias()`, `get_arrays_by_type()`, `get_arrays_in_range()`
       - Stub `LiquidityMap.to_agent_context()` returning `""`
-    - Create `liquidity_engine/detectors/__init__.py`
-    - Create `liquidity_engine/ipda/__init__.py`
-    - Create `liquidity_engine/ote/__init__.py`
-    - Create `liquidity_engine/unicorn/__init__.py`
-    - Create `liquidity_engine/grader/__init__.py`
-    - Create `liquidity_engine/fractal/__init__.py`
-    - Create `liquidity_engine/utils/__init__.py`
+    - Create `pd_array_engine/detectors/__init__.py`
+    - Create `pd_array_engine/ipda/__init__.py`
+    - Create `pd_array_engine/ote/__init__.py`
+    - Create `pd_array_engine/unicorn/__init__.py`
+    - Create `pd_array_engine/grader/__init__.py`
+    - Create `pd_array_engine/fractal/__init__.py`
+    - Create `pd_array_engine/utils/__init__.py`
     - Confirm all tests PASS (GREEN)
     - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8, 11.9, 11.10, 14.3, 14.4, 14.5, 15.1, 15.4, 16.7, 17.7_
   - **144c. REFACTOR** — add `model_config = ConfigDict(frozen=True)` on `Candle`; confirm GREEN
 
-- [x] 145. Implement `liquidity_engine/utils/time_utils.py` and `candle_utils.py`
+- [x] 145. Implement `pd_array_engine/utils/time_utils.py` and `candle_utils.py`
   - **145a. RED — Write failing tests** (`backend/tests/test_liquidity_utils.py`)
     - `test_to_est_from_utc` — UTC datetime correctly offset to EST (UTC-5) / EDT (UTC-4)
     - `test_to_utc_from_est` — EST/EDT correctly converted back to UTC
@@ -104,12 +104,12 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - **Validates: Requirements 16.1, 16.2, 16.3, 16.4, 16.5**
     - Confirm all tests FAIL (RED)
   - **145b. GREEN — Write minimal implementation**
-    - Create `liquidity_engine/utils/time_utils.py`:
+    - Create `pd_array_engine/utils/time_utils.py`:
       - `to_est(dt: datetime) -> datetime` using `zoneinfo.ZoneInfo("America/New_York")`
       - `to_utc(dt: datetime) -> datetime`
       - `get_killzone(dt: datetime) -> KillzoneWindow` — London / NY AM / NY PM / NONE
       - `is_in_killzone(dt: datetime) -> bool`
-    - Create `liquidity_engine/utils/candle_utils.py`:
+    - Create `pd_array_engine/utils/candle_utils.py`:
       - `find_swing_highs(candles, lookback=2) -> List[int]` — indices of swing highs
       - `find_swing_lows(candles, lookback=2) -> List[int]` — indices of swing lows
       - `calculate_atr(candles, period=14) -> float`
@@ -119,7 +119,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 3.7, 9.9, 14.1, 16.1, 16.2, 16.3, 16.4, 16.5, 16.6_
   - **145c. REFACTOR** — extract `KILLZONE_WINDOWS` dict constant; confirm GREEN
 
-- [x] 146. Implement `liquidity_engine/detectors/structure.py` — `SwingStructureClassifier`
+- [x] 146. Implement `pd_array_engine/detectors/structure.py` — `SwingStructureClassifier`
   - **146a. RED — Write failing tests** (`backend/tests/test_liquidity_swing_structure.py`)
     - `test_seeds_short_term_highs_from_swing_indices` — every `find_swing_highs` index becomes an `STH` `SwingPoint`
     - `test_seeds_short_term_lows_from_swing_indices` — every `find_swing_lows` index becomes an `STL` `SwingPoint`
@@ -144,7 +144,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - **Validates: Requirements 15.5, 15.6, 15.7**
     - Confirm all tests FAIL (RED)
   - **146b. GREEN — Write minimal implementation**
-    - Create `liquidity_engine/detectors/structure.py`:
+    - Create `pd_array_engine/detectors/structure.py`:
       - `SwingStructureClassifier.classify(candles_by_tf) -> Dict[Timeframe, SwingStructureResult]`
       - `SwingStructureClassifier._promote_tier(swings, candles) -> List[SwingPoint]`
       - `SwingStructureClassifier._classify_structure_events(swings, candles) -> List[StructureEvent]`
@@ -152,7 +152,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8, 15.9_
   - **146c. REFACTOR** — extract `_break_confirmed(swing, candles)` helper shared by promotion and event classification; confirm GREEN
 
-- [x] 147. Implement `liquidity_engine/detectors/external.py` — `LiquidityLevelDetector`
+- [x] 147. Implement `pd_array_engine/detectors/external.py` — `LiquidityLevelDetector`
   - **147a. RED — Write failing tests** (`backend/tests/test_liquidity_external_detector.py`)
     - `test_pwh_detected_as_bsl` — PWH from W1 candles returned as BSL level
     - `test_pwl_detected_as_ssl` — PWL from W1 candles returned as SSL level
@@ -179,18 +179,18 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - **Validates: Requirements 3.8**
     - Confirm all tests FAIL (RED)
   - **147b. GREEN — Write minimal implementation**
-    - Create `liquidity_engine/detectors/external.py`:
+    - Create `pd_array_engine/detectors/external.py`:
       - `LiquidityLevelDetector.detect(candles_by_tf, timestamp) -> List[LiquidityLevel]`
       - `_detect_previous_highs_lows(candles_by_tf) -> List[LiquidityLevel]`
       - `_detect_equal_highs_lows(candles, tolerance_pct=0.001) -> List[LiquidityLevel]`
       - `_detect_session_highs_lows(candles, timestamp) -> List[LiquidityLevel]`
       - `_score_level(level, candles) -> float` — touches + timeframe weight + recency
-    - Create `liquidity_engine/detectors/institutional.py` (session + trendline stubs for post-v1)
+    - Create `pd_array_engine/detectors/institutional.py` (session + trendline stubs for post-v1)
     - Confirm all tests PASS (GREEN)
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9_
   - **147c. REFACTOR** — extract `_TIMEFRAME_WEIGHT` constant map; confirm GREEN
 
-- [x] 148. Implement `liquidity_engine/detectors/internal.py` — `PDArrayDetector`
+- [x] 148. Implement `pd_array_engine/detectors/internal.py` — `PDArrayDetector`
   - **148a. RED — Write failing tests** (`backend/tests/test_liquidity_internal_detector.py`)
     - `test_bullish_fvg_detected` — gap between candles[i-2].low and candles[i].high → FVG BULLISH
     - `test_bearish_fvg_detected` — gap between candles[i-2].high and candles[i].low → FVG BEARISH
@@ -219,7 +219,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - **Validates: Requirements 4.15**
     - Confirm all tests FAIL (RED)
   - **148b. GREEN — Write minimal implementation**
-    - Create `liquidity_engine/detectors/internal.py`:
+    - Create `pd_array_engine/detectors/internal.py`:
       - `PDArrayDetector.detect(candles_by_tf, swing_structure) -> List[PDArray]`
       - `_detect_fvg(candles, tf) -> List[PDArray]`
       - `_detect_order_blocks(candles, tf) -> List[PDArray]`
@@ -235,7 +235,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
   - Run `pytest backend/tests/test_liquidity_models.py backend/tests/test_liquidity_utils.py backend/tests/test_liquidity_swing_structure.py backend/tests/test_liquidity_external_detector.py backend/tests/test_liquidity_internal_detector.py -v`
   - All tests must pass. Ask the user if any failures arise.
 
-- [x] 150. Implement `liquidity_engine/ipda/cisd.py` — `CISDDetector`
+- [x] 150. Implement `pd_array_engine/ipda/cisd.py` — `CISDDetector`
   - **150a. RED — Write failing tests** (`backend/tests/test_liquidity_cisd.py`)
     - `test_bearish_cisd_detected` — series of up-close candles followed by close below first-candle open → CISD BEARISH confirmed
     - `test_bullish_cisd_detected` — series of down-close candles followed by close above first-candle open → CISD BULLISH confirmed
@@ -249,14 +249,14 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - `test_no_cisd_on_single_candle` — single candle returns confirmed=False
     - Confirm all tests FAIL (RED)
   - **150b. GREEN — Write minimal implementation**
-    - Create `liquidity_engine/ipda/cisd.py`:
+    - Create `pd_array_engine/ipda/cisd.py`:
       - `CISDDetector.detect(candles) -> Optional[CISDResult]`
       - `_has_swing_point_prerequisite(candles) -> bool` — validates 3-candle swing
     - Confirm all tests PASS (GREEN)
     - _Requirements: 6.1, 6.2, 6.3, 6.6_
   - **150c. REFACTOR** — extract `_find_sequence_open()` helper; confirm GREEN
 
-- [x] 151. Implement `liquidity_engine/ipda/classifier.py` — `IPDAClassifier`
+- [x] 151. Implement `pd_array_engine/ipda/classifier.py` — `IPDAClassifier`
   - **151a. RED — Write failing tests** (`backend/tests/test_liquidity_ipda_classifier.py`)
     - `test_c1_accumulation_tight_range` — ATR-relative tight candle series classified as C1_ACCUMULATION
     - `test_c2_manipulation_within_c1_range` — candle closing within C1 range + confirmed lower-TF CISD → C2_MANIPULATION
@@ -283,7 +283,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - **Validates: Requirement 6.4**
     - Confirm all tests FAIL (RED)
   - **151b. GREEN — Write minimal implementation**
-    - Create `liquidity_engine/ipda/classifier.py`:
+    - Create `pd_array_engine/ipda/classifier.py`:
       - `IPDAClassifier.classify_crt_phase(candles, tf) -> CRTPhaseResult`
       - `IPDAClassifier.validate_cisd_cascade(candles_by_tf, trigger_tf) -> CISDCascadeStatus`
       - `CISD_CASCADE` dict constant with all 6 timeframe mappings
@@ -291,7 +291,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 6.4, 6.5, 6.7, 6.8_
   - **151c. REFACTOR** — extract `_classify_phase()` pure function; confirm GREEN
 
-- [x] 152. Implement `liquidity_engine/fractal/candle_model.py` — `FractalModelTracker`
+- [x] 152. Implement `pd_array_engine/fractal/candle_model.py` — `FractalModelTracker`
   - **152a. RED — Write failing tests** (`backend/tests/test_liquidity_fractal_model.py`)
     - `test_step_one_has_no_closure_type` — the first candle in the sequence gets `closure_type = None`
     - `test_continuation_closure_when_extending_range` — Step N closing beyond Step N-1's extreme in the developing direction → ClosureType.CONTINUATION
@@ -309,14 +309,14 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - **Validates: Requirements 17.3, 17.4**
     - Confirm all tests FAIL (RED)
   - **152b. GREEN — Write minimal implementation**
-    - Create `liquidity_engine/fractal/candle_model.py`:
+    - Create `pd_array_engine/fractal/candle_model.py`:
       - `FractalModelTracker.track(candles, key_level) -> Optional[FractalModelResult]`
       - `FractalModelTracker._classify_closure(prior, current) -> ClosureType`
     - Confirm all tests PASS (GREEN)
     - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.6, 17.7, 17.8_
   - **152c. REFACTOR** — extract `_update_range(step, range_high, range_low)` helper; confirm GREEN
 
-- [x] 153. Implement `liquidity_engine/ote/calculator.py` — `OTECalculator`
+- [x] 153. Implement `pd_array_engine/ote/calculator.py` — `OTECalculator`
   - **153a. RED — Write failing tests** (`backend/tests/test_liquidity_ote.py`)
     - `test_fib_62_computed_correctly` — fib_62 == swing_high - 0.62 * (swing_high - swing_low)
     - `test_fib_705_computed_correctly` — fib_705 == swing_high - 0.705 * (swing_high - swing_low)
@@ -344,7 +344,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - **Validates: Requirements 7.9, 7.10**
     - Confirm all tests FAIL (RED)
   - **153b. GREEN — Write minimal implementation**
-    - Create `liquidity_engine/ote/calculator.py`:
+    - Create `pd_array_engine/ote/calculator.py`:
       - `OTECalculator.FIBONACCI_LEVELS`, `OTE_LOW`, `OTE_HIGH`, `GOLDEN_LEVEL` constants
       - `OTECalculator.calculate(swing_high, swing_low, direction) -> OTEZone`
       - `OTECalculator.find_displacement_leg(candles, direction) -> Optional[tuple[float, float]]`
@@ -353,7 +353,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9, 7.10, 7.11_
   - **153c. REFACTOR** — extract `_fib_level(swing_high, swing_low, pct, direction)` helper; confirm GREEN
 
-- [x] 154. Implement `liquidity_engine/unicorn/detector.py` — `UnicornDetector`
+- [x] 154. Implement `pd_array_engine/unicorn/detector.py` — `UnicornDetector`
   - **154a. RED — Write failing tests** (`backend/tests/test_liquidity_unicorn.py`)
     - `test_bullish_unicorn_detected` — bullish BREAKER + bullish FVG overlapping → UnicornPattern returned
     - `test_bearish_unicorn_detected` — bearish BREAKER + bearish FVG overlapping → UnicornPattern returned
@@ -374,14 +374,14 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - **Validates: Requirement 8.5**
     - Confirm all tests FAIL (RED)
   - **154b. GREEN — Write minimal implementation**
-    - Create `liquidity_engine/unicorn/detector.py`:
+    - Create `pd_array_engine/unicorn/detector.py`:
       - `UnicornDetector.detect(pd_arrays, overlap_tolerance_pct=0.001) -> Optional[UnicornPattern]`
       - `UnicornDetector._arrays_overlap(a, b, tolerance_pct) -> bool`
     - Confirm all tests PASS (GREEN)
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8_
   - **154c. REFACTOR** — extract `_compute_overlap()` pure function; confirm GREEN
 
-- [x] 155. Implement `liquidity_engine/grader/setup_grader.py` — `SetupGrader`
+- [x] 155. Implement `pd_array_engine/grader/setup_grader.py` — `SetupGrader`
   - **155a. RED — Write failing tests** (`backend/tests/test_liquidity_grader.py`)
     - `test_aplus_grade_all_8_conditions_true` — all 8 True → SetupGrade.A_PLUS
     - `test_a_grade_7_conditions_true` — exactly 7 True → SetupGrade.A
@@ -417,7 +417,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - **Validates: Requirement 9.5**
     - Confirm all tests FAIL (RED)
   - **155b. GREEN — Write minimal implementation**
-    - Create `liquidity_engine/grader/setup_grader.py`:
+    - Create `pd_array_engine/grader/setup_grader.py`:
       - `SetupGrader.grade(liquidity_map, timestamp) -> SetupGrade`
       - `SetupGrader._check_htf_bias(lm) -> bool`
       - `SetupGrader._check_draw_on_liquidity(lm) -> bool`
@@ -436,8 +436,8 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
   - Run `pytest backend/tests/test_liquidity_cisd.py backend/tests/test_liquidity_ipda_classifier.py backend/tests/test_liquidity_fractal_model.py backend/tests/test_liquidity_ote.py backend/tests/test_liquidity_unicorn.py backend/tests/test_liquidity_grader.py -v`
   - All tests must pass. Ask the user if any failures arise.
 
-- [x] 157. Implement `liquidity_engine/engine.py` — `LiquidityMappingEngine`
-  - **157a. RED — Write failing tests** (`backend/tests/test_liquidity_engine.py`)
+- [x] 157. Implement `pd_array_engine/engine.py` — `LiquidityMappingEngine`
+  - **157a. RED — Write failing tests** (`backend/tests/test_pd_array_engine.py`)
     - `test_analyze_returns_liquidity_map` — valid candles_by_tf → LiquidityMap returned
     - `test_analyze_requires_d1_timeframe` — missing D1 raises ValueError
     - `test_analyze_requires_w1_timeframe` — missing W1 raises ValueError
@@ -473,7 +473,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - **Validates: Requirement 10.3**
     - Confirm all tests FAIL (RED)
   - **157b. GREEN — Write minimal implementation**
-    - Create `liquidity_engine/engine.py`:
+    - Create `pd_array_engine/engine.py`:
       - `LiquidityMappingEngine.analyze(candles_by_tf, instrument, timestamp) -> LiquidityMap`
       - `_classify_htf_bias(candles_by_tf) -> Dict[Timeframe, HTFBias]`
         - Uses `HTFBiasClassifier` (inline or in `detectors/external.py`)
@@ -487,7 +487,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - `_find_draw_on_liquidity(bias, levels) -> Optional[LiquidityLevel]`
       - `_detect_sweep(candles_by_tf, draw) -> bool`
       - Wire: HTFBiasClassifier → LiquidityLevelDetector → SwingStructureClassifier → PDArrayDetector → FractalModelTracker → IPDAClassifier → OTECalculator → UnicornDetector → SetupGrader (per amended Requirement 1.5)
-    - Update `liquidity_engine/__init__.py` to export `LiquidityMappingEngine` and `LiquidityMap`
+    - Update `pd_array_engine/__init__.py` to export `LiquidityMappingEngine` and `LiquidityMap`
     - Confirm all tests PASS (GREEN)
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 15.9, 17.7_
   - **157c. REFACTOR** — ensure no sub-component holds mutable state between calls; confirm GREEN
@@ -523,11 +523,11 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - **Validates: Requirements 10.7, 10.8, 10.9**
     - Confirm all tests FAIL (RED)
   - **158b. GREEN — Write minimal implementation**
-    - Implement `LiquidityMap.to_agent_context()` in `liquidity_engine/models.py` following the 3-question narrative template:
+    - Implement `LiquidityMap.to_agent_context()` in `pd_array_engine/models.py` following the 3-question narrative template:
       1. "Where has price come from?" — HTF context, PD arrays swept/respected, most recent BOS/CHoCH
       2. "Where is it now?" — current time window, price vs daily/weekly open, CRT phase, price vs. Fractal Model equilibrium
       3. "Where is it likely to go?" — draw-on-liquidity target, OTE zone, setup grade
-    - Implement `HTFBiasClassifier` in `liquidity_engine/engine.py` or a dedicated `detectors/bias.py`:
+    - Implement `HTFBiasClassifier` in `pd_array_engine/engine.py` or a dedicated `detectors/bias.py`:
       - `classify(candles_by_tf, current_price) -> Dict[Timeframe, HTFBias]`
       - `_get_reference_open(tf, candles, timestamp) -> float`
     - Confirm all tests PASS (GREEN)
@@ -535,10 +535,10 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
   - **158c. REFACTOR** — format `to_agent_context()` output as structured Markdown sections; confirm GREEN
 
 - [x] 159. Checkpoint — full engine integration test; ensure tasks 157–158 GREEN
-  - Run `pytest backend/tests/test_liquidity_engine.py backend/tests/test_liquidity_context.py -v`
-  - Run `pytest backend/tests/ -k "liquidity" --cov=liquidity_engine --cov-report=term-missing`
+  - Run `pytest backend/tests/test_pd_array_engine.py backend/tests/test_liquidity_context.py -v`
+  - Run `pytest backend/tests/ -k "liquidity" --cov=pd_array_engine --cov-report=term-missing`
   - Coverage must be ≥ 90%. Ask the user if below threshold.
-  - **Result: 244 passed, 97% coverage across `liquidity_engine/`** (only `detectors/institutional.py`,
+  - **Result: 244 passed, 97% coverage across `pd_array_engine/`** (only `detectors/institutional.py`,
     a deliberate post-v1 stub, is uncovered).
 
 - [x] 160. Integrate `LiquidityMappingEngine` with `agent/nodes/observe_node.py` and `AgentState`
@@ -558,16 +558,16 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
       - Store result on `state.liquidity_map`
     - Confirm all tests PASS (GREEN)
     - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.5_
-  - **160c. REFACTOR** — `liquidity_engine` has no dependency on `agent/*` (verified: none of its
+  - **160c. REFACTOR** — `pd_array_engine` has no dependency on `agent/*` (verified: none of its
     modules import from `agent`), so there is no actual cycle to guard against. Used a plain
-    top-level `from liquidity_engine.models import LiquidityMap` in `agent/state.py` instead of a
+    top-level `from pd_array_engine.models import LiquidityMap` in `agent/state.py` instead of a
     `TYPE_CHECKING`-only import, which would otherwise leave Pydantic v2 unable to resolve the
     forward reference at schema-build time without an explicit `model_rebuild()`. Confirmed GREEN.
 
 - [x] 161. Final checkpoint — complete liquidity engine test suite and coverage gate
   - Run full backend test suite: `pytest backend/tests/ -v --tb=short`
-  - Run coverage: `pytest backend/tests/ -k "liquidity" --cov=liquidity_engine --cov-report=term-missing`
-  - Assert ≥ 90% line coverage across the `liquidity_engine/` package (_Requirement 14.7_)
+  - Run coverage: `pytest backend/tests/ -k "liquidity" --cov=pd_array_engine --cov-report=term-missing`
+  - Assert ≥ 90% line coverage across the `pd_array_engine/` package (_Requirement 14.7_)
   - Assert zero regressions in existing passing tests
   - Ask the user if any failures arise before proceeding
   - **Note**: 7 pre-existing test modules (`test_auth_service.py`, `test_calendar_ingestion.py`,
@@ -598,7 +598,7 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
 
 ## Task Dependency Graph
 
-The Liquidity Engine tasks follow a strict dependency hierarchy from foundational models to advanced analytics. Dependencies are denoted as `prerequisite → dependent`.
+The PD Array Engine tasks follow a strict dependency hierarchy from foundational models to advanced analytics. Dependencies are denoted as `prerequisite → dependent`.
 
 ```json
 {
@@ -763,7 +763,7 @@ Each checkpoint task has specific test dependencies:
 - Every implementation task follows RED → GREEN → REFACTOR. No production code without a failing test first.
 - Hypothesis PBT tasks (`property_*`) run with `@settings(max_examples=100)` minimum.
 - Tests in `backend/tests/` — all file names prefixed `test_liquidity_`.
-- The `liquidity_engine/` package must have zero I/O side effects: no file reads, no DB calls, no network calls during `analyze()` (_Requirement 14.1_).
+- The `pd_array_engine/` package must have zero I/O side effects: no file reads, no DB calls, no network calls during `analyze()` (_Requirement 14.1_).
 - The package must use only dependencies already in `requirements.txt` — Pydantic v2 and stdlib only (_Requirement 14.2_).
 - `SwingStructureClassifier` (task 146) and `FractalModelTracker` (task 152) are new components added after cross-checking this spec against the TTrades reference decks (`Basic-/Advanced-Market-Structure`, `Candle-2-/Candle-2-Closure-/Candle-3-Closure-TTrades`). They are additive: no existing detector's classification timing changes, only new fields (`structure_confirmed` on `PDArray`) and new `LiquidityMap` sections (`swing_structure`, `fractal_model`).
 - SMT (Smart Money Divergence) was identified during that same review and deliberately excluded — see `requirements.md` → Non-Goals. Do not add it ad hoc to any task above; it requires a multi-instrument signature change and belongs in its own follow-on spec.

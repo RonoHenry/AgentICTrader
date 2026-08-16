@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Callable, List, Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
-from liquidity_engine.models import Candle, Timeframe
+from pd_array_engine.models import Candle, Timeframe
 from services.visual_model.config import settings
 from services.visual_model.renderer.styles import (
     BACKGROUND_COLOR,

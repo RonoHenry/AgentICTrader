@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from PIL import Image, ImageDraw
 
-from liquidity_engine.models import (
+from pd_array_engine.models import (
     BiasDirection,
     Candle,
     CISDCascadeStatus,

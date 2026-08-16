@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from liquidity_engine.models import (
+from pd_array_engine.models import (
     BiasDirection,
     Candle,
     StructureEvent,
@@ -26,8 +26,8 @@ from liquidity_engine.models import (
     SwingTier,
     Timeframe,
 )
-from liquidity_engine.utils.candle_utils import find_swing_highs, find_swing_lows
-from liquidity_engine.utils.id_utils import deterministic_id
+from pd_array_engine.utils.candle_utils import find_swing_highs, find_swing_lows
+from pd_array_engine.utils.id_utils import deterministic_id
 
 _NEXT_TIER: Dict[SwingTier, SwingTier] = {
     SwingTier.SHORT_TERM: SwingTier.INTERMEDIATE_TERM,

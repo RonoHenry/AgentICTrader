@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from liquidity_engine.ipda.cisd import CISDDetector
-from liquidity_engine.models import (
+from pd_array_engine.ipda.cisd import CISDDetector
+from pd_array_engine.models import (
     Candle,
     CISDCascadeStatus,
     CISDResult,
@@ -26,7 +26,7 @@ from liquidity_engine.models import (
     CRTPhaseResult,
     Timeframe,
 )
-from liquidity_engine.utils.candle_utils import calculate_atr
+from pd_array_engine.utils.candle_utils import calculate_atr
 
 _ATR_PERIOD = 14
 # Number of candles forming the C1 accumulation baseline window. Fixed-size

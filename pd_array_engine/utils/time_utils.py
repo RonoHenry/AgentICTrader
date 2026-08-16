@@ -1,5 +1,5 @@
 """
-Time and killzone utilities for the Liquidity Engine.
+Time and killzone utilities for the PD Array Engine.
 
 All conversions are pure and stateless; no I/O, no shared mutable state.
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
-from liquidity_engine.models import KillzoneWindow
+from pd_array_engine.models import KillzoneWindow
 
 _NY_TZ = ZoneInfo("America/New_York")
 

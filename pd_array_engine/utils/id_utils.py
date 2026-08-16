@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from uuid import NAMESPACE_URL, uuid5
 
-_NAMESPACE = uuid5(NAMESPACE_URL, "liquidity_engine")
+_NAMESPACE = uuid5(NAMESPACE_URL, "pd_array_engine")
 
 
 def deterministic_id(*parts: object) -> str:

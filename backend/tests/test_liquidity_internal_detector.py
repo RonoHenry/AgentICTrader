@@ -1,12 +1,12 @@
-"""Tests for liquidity_engine.detectors.internal.PDArrayDetector."""
+"""Tests for pd_array_engine.detectors.internal.PDArrayDetector."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
 from hypothesis import given, settings, strategies as st
 
-from liquidity_engine.detectors.internal import PDArrayDetector
-from liquidity_engine.models import (
+from pd_array_engine.detectors.internal import PDArrayDetector
+from pd_array_engine.models import (
     BiasDirection,
     Candle,
     PDArrayType,

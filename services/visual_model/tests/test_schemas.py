@@ -2,7 +2,7 @@
 TDD - Task 163: VisualAnalysis Pydantic schemas.
 
 RED phase: assert the VisualAnalysis output schema, its CRT-phase vocabulary
-(matching liquidity_engine's classify_crt_phase(), not the original AMD/MSS
+(matching pd_array_engine's classify_crt_phase(), not the original AMD/MSS
 draft), and score-field bounds.
 GREEN phase: implementation in services/visual_model/schemas/visual_analysis.py
 and services/visual_model/api/schemas.py satisfies all assertions.

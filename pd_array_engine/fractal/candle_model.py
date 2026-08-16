@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-from liquidity_engine.models import Candle, ClosureType, FractalCandleStep, FractalModelResult
+from pd_array_engine.models import Candle, ClosureType, FractalCandleStep, FractalModelResult
 
 
 class FractalModelTracker:
