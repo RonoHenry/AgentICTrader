@@ -24,6 +24,7 @@ aiokafka>=0.10.0
 # ── MARKET DATA ──────────────────────────────────────────
 websockets>=12.0
 aiohttp>=3.9.0
+MetaTrader5>=5.0.45; sys_platform == "win32"   # local MT5 terminal bridge, see agent/brokers/mt5.py
 
 # ── DATA PROCESSING ──────────────────────────────────────
 numpy>=1.26.0

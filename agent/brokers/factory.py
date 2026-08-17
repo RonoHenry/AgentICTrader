@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent.brokers.base import BrokerClient
+from agent.brokers.mt5 import MT5BrokerAdapter
 from agent.brokers.oanda import OANDABrokerAdapter
 from agent.brokers.pepperstone import PepperstoneBrokerClient
 
@@ -27,6 +28,7 @@ class UnsupportedBrokerError(ValueError):
 BROKER_REGISTRY: dict[str, type[BrokerClient]] = {
     "oanda": OANDABrokerAdapter,
     "pepperstone": PepperstoneBrokerClient,
+    "mt5": MT5BrokerAdapter,
 }
 
 
