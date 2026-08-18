@@ -40,8 +40,15 @@ def mock_mt5():
         mock.ORDER_TYPE_SELL = 1
         mock.TRADE_ACTION_DEAL = 1
         mock.TRADE_ACTION_SLTP = 2
+        mock.TRADE_ACTION_PENDING = 5
+        mock.ORDER_TYPE_BUY_LIMIT = 2
+        mock.ORDER_TYPE_SELL_LIMIT = 3
         mock.ORDER_TIME_GTC = 0
         mock.ORDER_FILLING_IOC = 1
+        mock.ORDER_FILLING_RETURN = 2
+        mock.symbol_info.return_value = MagicMock(
+            filling_mode=2, volume_step=0.01, volume_min=0.01, volume_max=100.0
+        )
         yield mock
 
 
@@ -132,7 +139,7 @@ class TestMT5BrokerAdapterPlaceOrder:
 
         result = adapter.place_order({"instrument": "EURUSD", "direction": "LONG", "size": 0.01})
 
-        assert result == {"order_id": "777", "trade_id": "777"}
+        assert result == {"order_id": "777", "trade_id": "777", "pending": False}
 
     def test_place_order_raises_on_bad_retcode(self, adapter, mock_mt5):
         mock_mt5.symbol_info_tick.return_value = MagicMock(ask=1.0900, bid=1.0898)
@@ -167,6 +174,106 @@ class TestMT5BrokerAdapterPlaceOrder:
         mock_mt5.symbol_info_tick.assert_called_once_with("EURUSD.a")
         sent_request = mock_mt5.order_send.call_args[0][0]
         assert sent_request["symbol"] == "EURUSD.a"
+
+
+class TestMT5BrokerAdapterPendingOrders:
+    """ICT setups grade a zone as valid to trade from, not necessarily
+    fillable this instant — a requested entry away from the live price
+    must become a resting limit order, not a market order with SL/TP
+    computed relative to a price never actually entered at."""
+
+    def test_long_entry_below_ask_places_buy_limit(self, adapter, mock_mt5):
+        mock_mt5.symbol_info_tick.return_value = MagicMock(ask=1.0900, bid=1.0898)
+        mock_mt5.order_send.return_value = MagicMock(retcode=mock_mt5.TRADE_RETCODE_DONE, order=555)
+
+        result = adapter.place_order({
+            "instrument": "EURUSD", "direction": "LONG", "size": 0.01,
+            "entry": 1.0850, "stop_loss": 1.0820, "take_profit": 1.0950,
+        })
+
+        sent_request = mock_mt5.order_send.call_args[0][0]
+        assert sent_request["action"] == mock_mt5.TRADE_ACTION_PENDING
+        assert sent_request["type"] == mock_mt5.ORDER_TYPE_BUY_LIMIT
+        assert sent_request["price"] == 1.0850
+        assert sent_request["type_filling"] == mock_mt5.ORDER_FILLING_RETURN
+        assert result["pending"] is True
+
+    def test_short_entry_above_bid_places_sell_limit(self, adapter, mock_mt5):
+        mock_mt5.symbol_info_tick.return_value = MagicMock(ask=1.0900, bid=1.0898)
+        mock_mt5.order_send.return_value = MagicMock(retcode=mock_mt5.TRADE_RETCODE_DONE, order=556)
+
+        result = adapter.place_order({
+            "instrument": "EURUSD", "direction": "SHORT", "size": 0.01,
+            "entry": 1.0950, "stop_loss": 1.0980, "take_profit": 1.0850,
+        })
+
+        sent_request = mock_mt5.order_send.call_args[0][0]
+        assert sent_request["action"] == mock_mt5.TRADE_ACTION_PENDING
+        assert sent_request["type"] == mock_mt5.ORDER_TYPE_SELL_LIMIT
+        assert sent_request["price"] == 1.0950
+        assert result["pending"] is True
+
+    def test_long_entry_already_reached_falls_back_to_market(self, adapter, mock_mt5):
+        mock_mt5.symbol_info_tick.return_value = MagicMock(ask=1.0900, bid=1.0898)
+        mock_mt5.order_send.return_value = MagicMock(retcode=mock_mt5.TRADE_RETCODE_DONE, order=557)
+
+        result = adapter.place_order({
+            "instrument": "EURUSD", "direction": "LONG", "size": 0.01,
+            "entry": 1.0900, "stop_loss": 1.0850, "take_profit": 1.0950,
+        })
+
+        sent_request = mock_mt5.order_send.call_args[0][0]
+        assert sent_request["action"] == mock_mt5.TRADE_ACTION_DEAL
+        assert sent_request["type"] == mock_mt5.ORDER_TYPE_BUY
+        assert sent_request["price"] == 1.0900
+        assert result["pending"] is False
+
+    def test_missing_entry_falls_back_to_market(self, adapter, mock_mt5):
+        mock_mt5.symbol_info_tick.return_value = MagicMock(ask=1.0900, bid=1.0898)
+        mock_mt5.order_send.return_value = MagicMock(retcode=mock_mt5.TRADE_RETCODE_DONE, order=558)
+
+        result = adapter.place_order({"instrument": "EURUSD", "direction": "LONG", "size": 0.01})
+
+        sent_request = mock_mt5.order_send.call_args[0][0]
+        assert sent_request["action"] == mock_mt5.TRADE_ACTION_DEAL
+        assert result["pending"] is False
+
+
+class TestMT5BrokerAdapterVolumeNormalization:
+    """A risk-engine-computed size is rarely already a clean multiple of the
+    broker's volume_step — MT5 rejects anything else outright with "Invalid
+    volume" rather than rounding it for you (observed live: 0.032 lots
+    rejected on a 0.01 step)."""
+
+    def test_rounds_to_volume_step(self, adapter, mock_mt5):
+        mock_mt5.symbol_info_tick.return_value = MagicMock(ask=1.0900, bid=1.0898)
+        mock_mt5.order_send.return_value = MagicMock(retcode=mock_mt5.TRADE_RETCODE_DONE, order=555)
+
+        adapter.place_order({"instrument": "EURUSD", "direction": "LONG", "size": 0.032})
+
+        sent_request = mock_mt5.order_send.call_args[0][0]
+        assert sent_request["volume"] == 0.03
+
+    def test_clamps_to_volume_min(self, adapter, mock_mt5):
+        mock_mt5.symbol_info_tick.return_value = MagicMock(ask=1.0900, bid=1.0898)
+        mock_mt5.order_send.return_value = MagicMock(retcode=mock_mt5.TRADE_RETCODE_DONE, order=555)
+
+        adapter.place_order({"instrument": "EURUSD", "direction": "LONG", "size": 0.001})
+
+        sent_request = mock_mt5.order_send.call_args[0][0]
+        assert sent_request["volume"] == 0.01
+
+    def test_clamps_to_volume_max(self, adapter, mock_mt5):
+        mock_mt5.symbol_info.return_value = MagicMock(
+            filling_mode=2, volume_step=0.01, volume_min=0.01, volume_max=5.0
+        )
+        mock_mt5.symbol_info_tick.return_value = MagicMock(ask=1.0900, bid=1.0898)
+        mock_mt5.order_send.return_value = MagicMock(retcode=mock_mt5.TRADE_RETCODE_DONE, order=555)
+
+        adapter.place_order({"instrument": "EURUSD", "direction": "LONG", "size": 12.0})
+
+        sent_request = mock_mt5.order_send.call_args[0][0]
+        assert sent_request["volume"] == 5.0
 
 
 class TestMT5BrokerAdapterSetSlTp:
