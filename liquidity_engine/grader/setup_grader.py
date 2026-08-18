@@ -27,6 +27,18 @@ from liquidity_engine.utils.time_utils import is_in_killzone
 # boundary — a stop sitting exactly on the boundary isn't "beyond" it.
 _STOP_BUFFER_RATIO = 0.1
 
+# HTF PD arrays (D1/W1/H4/...) inform bias and the draw-on-liquidity target,
+# but are not where an entry is actually taken from — a wide HTF Breaker or
+# BPR can carry a higher strength_score than a precise LTF FVG purely by
+# array-type weighting (see PDArrayDetector._assign_strength_score, which is
+# type-only, not timeframe-aware), which previously let entry/stop get
+# selected from a zone nowhere near live price. Entry array selection is
+# restricted to M15-and-below; HTF arrays still count for _check_displacement
+# (evidence an expansion move happened, regardless of which timeframe shows
+# it) since that's about confirming institutional footprint, not entry
+# mechanics.
+_ENTRY_ELIGIBLE_TIMEFRAMES = frozenset({Timeframe.M1, Timeframe.M3, Timeframe.M5, Timeframe.M15})
+
 
 class SetupGrader:
     """Evaluates the 8 A+ conditions and assigns a deterministic setup grade."""
@@ -79,6 +91,9 @@ class SetupGrader:
             grade_reason=self._build_grade_reason(liquidity_map, grade, conditions_met, entry_array),
             suggested_entry=self._suggested_entry(liquidity_map, entry_array),
             suggested_stop=self._suggested_stop(entry_array),
+            entry_array_high=entry_array.high if entry_array is not None else None,
+            entry_array_low=entry_array.low if entry_array is not None else None,
+            entry_array_direction=entry_array.direction if entry_array is not None else None,
         )
 
     def _check_htf_bias(self, lm: LiquidityMap) -> bool:
@@ -106,8 +121,17 @@ class SetupGrader:
     def _check_cisd(self, lm: LiquidityMap) -> bool:
         return lm.cisd_cascade is not None and lm.cisd_cascade.cascade_valid
 
+    def _entry_eligible_arrays(self, lm: LiquidityMap) -> List[PDArray]:
+        """Unfilled PD arrays on M15-and-below only — see module-level
+        _ENTRY_ELIGIBLE_TIMEFRAMES docstring for why HTF arrays are excluded
+        here specifically."""
+        return [
+            a for a in lm.pd_arrays
+            if not a.is_filled and a.timeframe in _ENTRY_ELIGIBLE_TIMEFRAMES
+        ]
+
     def _check_entry_pd_array(self, lm: LiquidityMap) -> bool:
-        return any(not a.is_filled for a in lm.pd_arrays)
+        return bool(self._entry_eligible_arrays(lm))
 
     def _check_stop_placement(self, lm: LiquidityMap) -> bool:
         # A stop is placed relative to the same array used for entry, so
@@ -118,7 +142,7 @@ class SetupGrader:
         return is_in_killzone(ts)
 
     def _select_entry_array(self, lm: LiquidityMap) -> Optional[PDArray]:
-        unfilled = [a for a in lm.pd_arrays if not a.is_filled]
+        unfilled = self._entry_eligible_arrays(lm)
         if not unfilled:
             return None
         return max(unfilled, key=lambda a: a.strength_score)
@@ -150,9 +174,14 @@ class SetupGrader:
     ) -> bool:
         if not (sweep and cisd and entry_present):
             return False
-        has_breaker = any(a.array_type == PDArrayType.BREAKER for a in lm.pd_arrays)
+        # B-grade characterizes the entry array itself (FVG-only, no
+        # Breaker/UNICORN) — scoped to the same LTF-eligible pool
+        # _select_entry_array draws from, not every array on every
+        # timeframe supplied.
+        entry_eligible = self._entry_eligible_arrays(lm)
+        has_breaker = any(a.array_type == PDArrayType.BREAKER for a in entry_eligible)
         has_unicorn = lm.unicorn is not None
-        has_fvg = any(a.array_type == PDArrayType.FVG and not a.is_filled for a in lm.pd_arrays)
+        has_fvg = any(a.array_type == PDArrayType.FVG for a in entry_eligible)
         return has_fvg and not has_breaker and not has_unicorn
 
     def _suggested_entry(self, lm: LiquidityMap, entry_array: Optional[PDArray]) -> Optional[float]:

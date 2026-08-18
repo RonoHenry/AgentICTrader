@@ -256,6 +256,50 @@ class TestSuggestedEntryAndStop:
         assert detail.suggested_stop > 101.0
 
 
+class TestEntryArrayTimeframeRestriction:
+    """HTF PD arrays (D1/W1/H4/...) inform bias and the draw-on-liquidity
+    target but must never be selected as the entry array itself — only
+    M15-and-below is entry-eligible (see setup_grader._ENTRY_ELIGIBLE_TIMEFRAMES).
+    A wide HTF Breaker previously out-ranked a precise LTF FVG purely by
+    array-type weight, regardless of timeframe."""
+
+    def test_htf_array_never_selected_as_entry_even_with_higher_strength(self):
+        htf_breaker = make_pdarray(
+            PDArrayType.BREAKER, BiasDirection.BULLISH, 105.0, 95.0, strength_score=0.99, tf=Timeframe.D1,
+        )
+        ltf_fvg = make_pdarray(
+            PDArrayType.FVG, BiasDirection.BULLISH, 101.0, 100.2, strength_score=0.5, tf=Timeframe.M5,
+        )
+        lm = full_liquidity_map(pd_arrays=[htf_breaker, ltf_fvg])
+        detail = SetupGrader().grade(lm, LONDON_TS)
+        assert detail.suggested_entry == (101.0 + 100.2) / 2
+
+    def test_htf_only_arrays_do_not_satisfy_entry_pd_array_present(self):
+        htf_only = make_pdarray(PDArrayType.BREAKER, BiasDirection.BULLISH, 105.0, 95.0, tf=Timeframe.D1)
+        lm = full_liquidity_map(pd_arrays=[htf_only])
+        assert SetupGrader()._check_entry_pd_array(lm) is False
+
+    def test_h1_array_does_not_satisfy_entry_pd_array_present(self):
+        # M15-and-below only — H1 is HTF-side for this purpose, same as H4/D1/W1.
+        h1_only = make_pdarray(PDArrayType.FVG, BiasDirection.BULLISH, 101.0, 100.0, tf=Timeframe.H1)
+        lm = full_liquidity_map(pd_arrays=[h1_only])
+        assert SetupGrader()._check_entry_pd_array(lm) is False
+
+    def test_m15_array_satisfies_entry_pd_array_present(self):
+        m15_only = make_pdarray(PDArrayType.FVG, BiasDirection.BULLISH, 101.0, 100.0, tf=Timeframe.M15)
+        lm = full_liquidity_map(pd_arrays=[m15_only])
+        assert SetupGrader()._check_entry_pd_array(lm) is True
+
+    def test_b_grade_breaker_exclusion_scoped_to_ltf(self):
+        # An HTF Breaker sitting alongside an LTF FVG must not disqualify B
+        # grade — only a Breaker in the entry-eligible pool should.
+        htf_breaker = make_pdarray(PDArrayType.BREAKER, BiasDirection.BULLISH, 105.0, 95.0, tf=Timeframe.D1)
+        ltf_fvg = make_pdarray(PDArrayType.FVG, BiasDirection.BULLISH, 101.0, 100.2, tf=Timeframe.M5)
+        lm = full_liquidity_map(pd_arrays=[htf_breaker, ltf_fvg])
+        detail = SetupGrader().grade(lm, OFF_HOURS_TS)
+        assert detail.grade == SetupGrade.B
+
+
 class TestGradeReasonContent:
     def test_grade_reason_mentions_structure_confirmed_when_true(self):
         entry_array = make_pdarray(

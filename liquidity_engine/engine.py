@@ -34,9 +34,11 @@ from liquidity_engine.models import (
     LiquidityLevel,
     LiquidityMap,
     LiquidityType,
+    SetupGradeDetail,
     Timeframe,
 )
 from liquidity_engine.ote.calculator import OTECalculator
+from liquidity_engine.projections.standard_deviation import StandardDeviationCalculator
 from liquidity_engine.unicorn.detector import UnicornDetector
 
 # Finest-to-coarsest, used to pick a single "live price" source and to
@@ -48,7 +50,11 @@ _TIMEFRAME_PRIORITY: List[Timeframe] = [
     Timeframe.M15,
     Timeframe.M30,
     Timeframe.H1,
+    Timeframe.H3,
     Timeframe.H4,
+    Timeframe.H6,
+    Timeframe.H8,
+    Timeframe.H12,
     Timeframe.D1,
     Timeframe.W1,
     Timeframe.MN1,
@@ -119,8 +125,14 @@ class LiquidityMappingEngine:
             setup_grade=None,
             swing_structure={tf.value: result for tf, result in swing_structure.items()},
             fractal_model=fractal_model,
+            sd_projection=None,
         )
         liquidity_map.setup_grade = SetupGrader().grade(liquidity_map, timestamp)
+        # SD projection anchors on the entry array's own range — the local
+        # LTF leg price retraces into its discount/premium *within*, not
+        # the broader HTF displacement leg OTEZone anchors on — so it can
+        # only be computed once the grader has selected that array.
+        liquidity_map.sd_projection = self._calculate_sd_projection(liquidity_map.setup_grade)
         return liquidity_map
 
     def _finest_candles(self, candles_by_tf: Dict[Timeframe, List[Candle]]) -> List[Candle]:
@@ -171,12 +183,8 @@ class LiquidityMappingEngine:
         self, ipda: IPDAClassifier, candles_by_tf: Dict[Timeframe, List[Candle]]
     ) -> CISDCascadeStatus:
         for trigger_tf in _CASCADE_TRIGGER_PRIORITY:
-            confirmation_tf = ipda.CISD_CASCADE.get(trigger_tf)
-            if (
-                trigger_tf in candles_by_tf
-                and confirmation_tf is not None
-                and confirmation_tf in candles_by_tf
-            ):
+            confirmation_candidates = ipda.CISD_CASCADE.get(trigger_tf, [])
+            if trigger_tf in candles_by_tf and any(tf in candles_by_tf for tf in confirmation_candidates):
                 return ipda.validate_cisd_cascade(candles_by_tf, trigger_tf)
         return CISDCascadeStatus(cascade_valid=False, cascade_chain=[])
 
@@ -196,6 +204,26 @@ class LiquidityMappingEngine:
         zone = calculator.calculate(swing_high, swing_low, direction)
         zone.price_in_ote = calculator.price_in_ote(current_price, zone)
         return zone
+
+    def _calculate_sd_projection(self, setup_grade: Optional[SetupGradeDetail]):
+        # Anchored on the entry array's own high/low and direction — the
+        # local LTF leg price retraces into its discount/premium *within*
+        # (see StandardDeviationCalculator's module docstring) — not the
+        # broader HTF displacement leg OTEZone anchors on. Using the entry
+        # array's own direction (rather than D1 bias) also guarantees this
+        # always agrees with the direction the grader actually placed the
+        # stop for, which D1 bias does not (a countertrend micro-structure
+        # entry array is graded against D1 bias, not aligned with it).
+        if setup_grade is None:
+            return None
+        high, low, direction = (
+            setup_grade.entry_array_high,
+            setup_grade.entry_array_low,
+            setup_grade.entry_array_direction,
+        )
+        if high is None or low is None or direction is None:
+            return None
+        return StandardDeviationCalculator().project(high, low, direction)
 
 
 __all__ = ["LiquidityMappingEngine"]

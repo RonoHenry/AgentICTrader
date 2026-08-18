@@ -23,7 +23,11 @@ class Timeframe(str, Enum):
     M15 = "M15"
     M30 = "M30"
     H1 = "H1"
+    H3 = "H3"
     H4 = "H4"
+    H6 = "H6"
+    H8 = "H8"
+    H12 = "H12"
     D1 = "D1"
     W1 = "W1"
     MN1 = "MN1"
@@ -373,6 +377,25 @@ class OTEZone(BaseModel):
     displacement_leg_low: float
 
 
+class SDProjection(BaseModel):
+    """Standard Deviation projection targets beyond a displacement leg.
+
+    Anchored on the same leg/direction convention as OTEZone (see
+    liquidity_engine/ote/calculator.py's module docstring): anchor_0 is the
+    "0%" fib point (swing_high for bullish, swing_low for bearish — where
+    retracement measurement starts), anchor_1 is the "100%" point (the
+    opposite extreme). Targets project *beyond* anchor_0, in the direction
+    away from anchor_1 — i.e. the continuation direction once the leg's own
+    retracement (OTE) completes. ``targets`` keys are the SD multiples
+    TTrades charts as 1/-1, 2/-2, 2.5/-2.5, 4/-4, 4.5/-4.5 — stored here as
+    positive multiples since the sign in TTrades' own UI only encodes "past
+    the 0 anchor," not a separate direction.
+    """
+    anchor_0: float
+    anchor_1: float
+    targets: Dict[float, float]
+
+
 class UnicornPattern(BaseModel):
     """UNICORN pattern - overlapping Breaker Block and FVG."""
     breaker_array_id: str
@@ -401,6 +424,13 @@ class SetupGradeDetail(BaseModel):
     grade_reason: str
     suggested_entry: Optional[float] = None
     suggested_stop: Optional[float] = None
+    # The entry array's own range/direction — the local LTF leg price
+    # retraces into its discount/premium *within*, as distinct from the
+    # broader HTF displacement leg OTEZone anchors on. Used to project SD
+    # targets at a scale proportionate to this entry, not the whole swing.
+    entry_array_high: Optional[float] = None
+    entry_array_low: Optional[float] = None
+    entry_array_direction: Optional[BiasDirection] = None
 
 
 class FractalCandleStep(BaseModel):
@@ -436,6 +466,7 @@ class LiquidityMap(BaseModel):
     setup_grade: Optional[SetupGradeDetail]
     swing_structure: Dict[str, SwingStructureResult] = {}    # Keyed by Timeframe.value
     fractal_model: Optional[FractalModelResult] = None
+    sd_projection: Optional[SDProjection] = None
 
     def get_bias(self, timeframe: Timeframe) -> Optional[HTFBias]:
         """Get HTF bias for a specific timeframe."""
@@ -496,6 +527,11 @@ class LiquidityMap(BaseModel):
                 f"- OTE zone: {self.ote_zone.ote_low}-{self.ote_zone.ote_high} "
                 f"(golden level {self.ote_zone.golden_level})"
             )
+        if self.sd_projection is not None:
+            targets_str = ", ".join(
+                f"{level}={price:.5f}" for level, price in sorted(self.sd_projection.targets.items())
+            )
+            lines.append(f"- SD projection targets: {targets_str}")
         if self.setup_grade is not None:
             lines.append(
                 f"- Setup grade: {self.setup_grade.grade.value} "
