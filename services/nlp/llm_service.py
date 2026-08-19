@@ -19,7 +19,8 @@ Usage::
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,49 @@ class LLMService:
 
         return self._reason_template(setup)
 
+    async def generate_trade_reasoning_with_rag(self, setup: dict, rag_client: Any) -> str:
+        """Generate trade reasoning grounded in similar historical setups.
+
+        Queries AlgoRAG for setups similar to *setup* and folds them into the
+        reasoning as precedent (e.g. "similar setups won 80% of the time,
+        averaging 3.5R"), on top of the same 3-question framework used by
+        :meth:`generate_trade_reasoning`. Degrades gracefully: an AlgoRAG
+        outage or an empty result set never blocks reasoning generation —
+        ``rag_client.retrieve_with_fallback`` already absorbs AlgoRAG errors,
+        and a Claude failure here falls back to a template exactly like
+        :meth:`generate_trade_reasoning` does.
+
+        Args:
+            setup: Same setup dict accepted by :meth:`generate_trade_reasoning`.
+            rag_client: AlgoRAG client exposing an async
+                ``retrieve_with_fallback(request: dict) -> dict`` (see
+                ``ml/algorag/client.py::AlgoRAGClient``).
+
+        Returns:
+            A structured reasoning string (never empty).
+        """
+        rag_request = {
+            "instrument": setup.get("instrument", "UNKNOWN"),
+            "timestamp": datetime.now(timezone.utc),
+            "time_window": setup.get("time_window"),
+            "htf_open_bias": setup.get("htf_open_bias"),
+            "narrative": self._build_setup_narrative(setup),
+        }
+        rag_result = await rag_client.retrieve_with_fallback(rag_request)
+        similar_setups = rag_result.get("similar_setups", [])
+        rag_metrics = rag_result.get("rag_metrics", {})
+
+        if self._client is not None:
+            try:
+                return await self._reason_with_claude_rag(setup, similar_setups)
+            except Exception as exc:
+                logger.warning(
+                    "Claude generate_trade_reasoning_with_rag failed (%s) — using template fallback",
+                    exc,
+                )
+
+        return self._reason_template_with_rag(setup, similar_setups, rag_metrics)
+
     # ------------------------------------------------------------------
     # Claude implementations
     # ------------------------------------------------------------------
@@ -284,6 +328,99 @@ class LLMService:
             messages=[{"role": "user", "content": prompt}],
         )
         return message.content[0].text.strip()
+
+    async def _reason_with_claude_rag(self, setup: dict, similar_setups: list) -> str:
+        """Call Claude with the standard reasoning prompt plus a RAG examples section."""
+        prompt = self._build_reasoning_prompt_with_rag(setup)
+        if similar_setups:
+            prompt += "\n\n" + self._format_similar_setups(similar_setups)
+
+        message = self._client.messages.create(  # type: ignore[union-attr]
+            model=self._claude_model,
+            max_tokens=self._max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return message.content[0].text.strip()
+
+    def _build_reasoning_prompt_with_rag(self, setup: dict) -> str:
+        """Same field set as :meth:`_reason_with_claude`'s prompt, kept as a
+        separate copy rather than a shared helper so this method's prompt can
+        evolve (e.g. to reference the RAG section below it) without touching
+        the already-covered :meth:`generate_trade_reasoning` prompt."""
+        instrument = setup.get("instrument", "Unknown")
+        direction = setup.get("direction", "")
+        htf_bias = setup.get("htf_open_bias", "NEUTRAL")
+        htf_open = setup.get("htf_open", 0.0)
+        htf_high = setup.get("htf_high", 0.0)
+        htf_low = setup.get("htf_low", 0.0)
+        time_window = setup.get("time_window", "OFF_HOURS")
+        narrative_phase = setup.get("narrative_phase", "OFF")
+        price_vs_daily = setup.get("price_vs_daily_open", "")
+        patterns = setup.get("patterns", [])
+        confidence = setup.get("confidence_score", 0.0)
+        entry = setup.get("entry_price", 0.0)
+        sl = setup.get("sl_price", 0.0)
+        tp = setup.get("tp_price", 0.0)
+
+        window_label = _WINDOW_LABELS.get(time_window, time_window)
+        phase_desc = _PHASE_DESCRIPTIONS.get(narrative_phase, narrative_phase)
+
+        return (
+            f"You are a professional ICT-trained trader. Generate structured trade "
+            f"reasoning for the following setup using the 3-question framework, "
+            f"grounded in the similar historical setups provided below (if any).\n\n"
+            f"Instrument: {instrument}\n"
+            f"Direction: {direction}\n"
+            f"HTF Open Bias: {htf_bias} (HTF open: {htf_open}, high: {htf_high}, low: {htf_low})\n"
+            f"Time Window: {window_label} — {phase_desc}\n"
+            f"Price vs Daily Open: {price_vs_daily}\n"
+            f"Patterns detected: {', '.join(patterns) if patterns else 'None'}\n"
+            f"Confidence score: {confidence:.2f}\n"
+            f"Entry: {entry}, SL: {sl}, TP: {tp}\n\n"
+            f"Answer these 3 questions in 2–4 sentences total, then add one more "
+            f"sentence citing how the similar historical setups performed if any "
+            f"are listed below:\n"
+            f"1. Where has price come from? (HTF context, PD arrays swept/respected)\n"
+            f"2. Where is it now? (time window phase, price vs reference opens)\n"
+            f"3. Where is it likely to go? (nearest liquidity pool or imbalance)\n\n"
+            f"Reasoning:"
+        )
+
+    def _format_similar_setups(self, similar_setups: list) -> str:
+        """Render retrieved AlgoRAG examples as a prompt section.
+
+        Format is deliberately explicit (trade id, narrative, outcome,
+        R-multiple, similarity %) so Claude can cite concrete precedent
+        rather than a vague "similar setups did well" — that's why the
+        reasoning prompt asks it to cite this section instead of just
+        summarising the numbers itself.
+        """
+        lines = ["SIMILAR HISTORICAL SETUPS:"]
+        for item in similar_setups:
+            s = item.get("setup", {})
+            similarity_pct = round(item.get("similarity_score", 0.0) * 100)
+            r_multiple = s.get("outcome_r_multiple")
+            r_label = f"{r_multiple:.1f}R" if r_multiple is not None else "N/A"
+            lines.append(
+                f'- {s.get("trade_id", "?")} ({s.get("timestamp", "")}): '
+                f'"{s.get("narrative", "")}" — {s.get("outcome_result", "?")}, '
+                f"{r_label}, {similarity_pct}% similarity"
+            )
+        return "\n".join(lines)
+
+    def _build_setup_narrative(self, setup: dict) -> str:
+        """Short one-line description of *setup*, used as the AlgoRAG query
+        narrative (semantic search needs text, not just structured fields)."""
+        instrument = setup.get("instrument", "")
+        direction = setup.get("direction", "")
+        time_window = setup.get("time_window", "")
+        patterns = setup.get("patterns", [])
+
+        window_label = _WINDOW_LABELS.get(time_window, time_window) if time_window else ""
+        parts = [p for p in (f"{instrument} {direction}".strip(), window_label) if p]
+        if patterns:
+            parts.append(", ".join(patterns))
+        return " — ".join(parts)
 
     # ------------------------------------------------------------------
     # Template fallbacks
@@ -468,6 +605,28 @@ class LLMService:
             )
 
         return " ".join(parts)
+
+    def _reason_template_with_rag(
+        self, setup: dict, similar_setups: list, rag_metrics: dict
+    ) -> str:
+        """Template-based reasoning (no LLM required) with a historical-context
+        sentence appended, so AlgoRAG's effect is visible even when Claude is
+        unavailable — not just when it's up."""
+        base = self._reason_template(setup)
+        instrument = setup.get("instrument", "Unknown")
+
+        if similar_setups:
+            avg_r = rag_metrics.get("avg_r_multiple_similar", 0.0)
+            win_rate = rag_metrics.get("win_rate_similar", 0.0)
+            sample_size = rag_metrics.get("sample_size", len(similar_setups))
+            historical_note = (
+                f"Historical context for {instrument}: {sample_size} similar setups found, "
+                f"{win_rate:.0%} win rate, averaging {avg_r:.1f}R."
+            )
+        else:
+            historical_note = f"No similar historical setups found for {instrument}."
+
+        return f"{base} {historical_note}"
 
 
 # ---------------------------------------------------------------------------
