@@ -594,6 +594,145 @@ class TestAnalyseNodeVisualModel:
             client.analyse.assert_not_called()
 
 
+class TestAnalyseNodeAlgoRAG:
+    """Tests for analyse_node's grade-gated services/algorag integration —
+    same B-or-better bar as the visual model call, and its modifier folds
+    into the same final_confidence arithmetic sentiment_bonus/visual_modifier
+    already contribute to.
+    """
+
+    @staticmethod
+    def _make_liquidity_map(grade):
+        return TestAnalyseNodeVisualModel._make_liquidity_map(grade)
+
+    @staticmethod
+    def _mock_algorag_client(rag_modifier=0.05, similar_setups=None, degraded=False):
+        from agent.algorag_client import AlgoRAGResult
+
+        client = MagicMock()
+        client.retrieve.return_value = AlgoRAGResult(
+            similar_setups=similar_setups or [],
+            rag_metrics=None,
+            rag_modifier=rag_modifier,
+            degraded=degraded,
+        )
+        return client
+
+    def test_analyse_node_calls_algorag_client_when_grade_b_or_better(self, fake_redis):
+        from liquidity_engine.models import SetupGrade
+
+        liquidity_map = self._make_liquidity_map(SetupGrade.B)
+        state = _make_state(liquidity_map=liquidity_map)
+        client = self._mock_algorag_client()
+
+        analyse_node(state, redis_client=fake_redis, algorag_client=client)
+
+        client.retrieve.assert_called_once()
+
+    def test_analyse_node_skips_algorag_client_when_grade_no_trade(self, fake_redis):
+        from liquidity_engine.models import SetupGrade
+
+        liquidity_map = self._make_liquidity_map(SetupGrade.NO_TRADE)
+        state = _make_state(liquidity_map=liquidity_map)
+        client = self._mock_algorag_client()
+
+        analyse_node(state, redis_client=fake_redis, algorag_client=client)
+
+        client.retrieve.assert_not_called()
+
+    def test_analyse_node_skips_algorag_client_when_setup_grade_none(self, fake_redis):
+        liquidity_map = self._make_liquidity_map(None)
+        state = _make_state(liquidity_map=liquidity_map)
+        client = self._mock_algorag_client()
+
+        analyse_node(state, redis_client=fake_redis, algorag_client=client)
+
+        client.retrieve.assert_not_called()
+
+    def test_analyse_node_no_algorag_client_leaves_fields_unset(self, fake_redis):
+        """When algorag_client is not injected at all (feature not wired up /
+        disabled), behaviour must match today's flow exactly — no crash, no
+        RAG fields populated."""
+        state = _make_state()
+        result = analyse_node(state, redis_client=fake_redis, algorag_client=None)
+        assert result.similar_setups == []
+        assert result.rag_modifier is None
+
+    def test_analyse_node_folds_rag_modifier_into_final_confidence(self, fake_redis):
+        from liquidity_engine.models import SetupGrade
+
+        liquidity_map = self._make_liquidity_map(SetupGrade.A_PLUS)
+        state = _make_state(
+            liquidity_map=liquidity_map, raw_confidence=0.70, final_confidence=0.70,
+        )
+        client = self._mock_algorag_client(rag_modifier=0.10)
+
+        result = analyse_node(state, redis_client=fake_redis, algorag_client=client)
+
+        assert result.final_confidence is not None
+        assert result.final_confidence > 0.70
+
+    def test_analyse_node_stores_similar_setups_on_state(self, fake_redis):
+        from liquidity_engine.models import SetupGrade
+        from services.algorag.models import SimilarSetup
+
+        liquidity_map = self._make_liquidity_map(SetupGrade.A)
+        state = _make_state(liquidity_map=liquidity_map)
+        example = SimilarSetup(
+            trade_id="TRD-001",
+            timestamp=_now_utc(),
+            instrument="EURUSD",
+            time_window="LONDON_KILLZONE",
+            htf_open_bias="BULLISH",
+            confluence_count=4,
+            outcome_result="WIN",
+            outcome_r_multiple=4.2,
+            narrative="Price swept Asian low",
+            similarity_score=0.94,
+            final_score=0.97,
+        )
+        client = self._mock_algorag_client(rag_modifier=0.05, similar_setups=[example])
+
+        result = analyse_node(state, redis_client=fake_redis, algorag_client=client)
+
+        assert len(result.similar_setups) == 1
+        assert result.similar_setups[0].trade_id == "TRD-001"
+        assert result.rag_modifier == 0.05
+
+    @pytest.mark.parametrize(
+        "rag_modifier", [-0.10, -0.05, 0.0, 0.05, 0.10],
+    )
+    def test_property_final_confidence_clamped_with_rag_modifier(self, fake_redis, rag_modifier):
+        """final_confidence must remain in [0.0, 1.0] regardless of modifier sign/magnitude."""
+        from liquidity_engine.models import SetupGrade
+
+        liquidity_map = self._make_liquidity_map(SetupGrade.A_PLUS)
+        state = _make_state(
+            liquidity_map=liquidity_map, raw_confidence=0.95, final_confidence=0.95,
+        )
+        client = self._mock_algorag_client(rag_modifier=rag_modifier)
+
+        result = analyse_node(state, redis_client=fake_redis, algorag_client=client)
+
+        assert 0.0 <= result.final_confidence <= 1.0
+
+    @pytest.mark.parametrize("grade_value", ["A+", "A", "B", "NO_TRADE", None])
+    def test_property_algorag_gate_only_on_graded_setups(self, fake_redis, grade_value):
+        from liquidity_engine.models import SetupGrade
+
+        grade = SetupGrade(grade_value) if grade_value is not None else None
+        liquidity_map = self._make_liquidity_map(grade)
+        state = _make_state(liquidity_map=liquidity_map)
+        client = self._mock_algorag_client()
+
+        analyse_node(state, redis_client=fake_redis, algorag_client=client)
+
+        if grade_value in ("A+", "A", "B"):
+            client.retrieve.assert_called_once()
+        else:
+            client.retrieve.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # TestDecideNode
 # ---------------------------------------------------------------------------
@@ -1062,6 +1201,105 @@ class TestExecuteNode:
 
         mock_broker.place_order.assert_not_called()
         assert result.decision == DecisionAction.SKIP
+
+    def test_execute_node_increments_open_trades_after_successful_fill(self):
+        """Without this, RiskEngine's concurrent-trades gate never reflects
+        trades this engine itself approved (see
+        RiskEngine.increment_open_trades docstring)."""
+        mock_engine = MagicMock()
+        from services.risk_engine.main import ValidateResponse
+        mock_engine.validate.return_value = ValidateResponse(
+            approved=True, position_size=5.0, risk_amount=100.0,
+        )
+
+        mock_broker = MagicMock()
+        mock_broker.place_order.return_value = {"order_id": "ORD-001", "trade_id": "TRD-001"}
+
+        state = _make_state(
+            raw_confidence=0.80, final_confidence=0.80, mode=AgentMode.AUTONOMOUS,
+        )
+
+        execute_node(state, risk_engine=mock_engine, broker_client=mock_broker, user_id="user1")
+
+        mock_engine.increment_open_trades.assert_called_once_with("user1")
+
+    def test_execute_node_does_not_increment_open_trades_when_recheck_fails(self):
+        mock_engine = MagicMock()
+        from services.risk_engine.main import ValidateResponse
+        mock_engine.validate.return_value = ValidateResponse(
+            approved=False, reason="kill switch active",
+        )
+        mock_broker = MagicMock()
+
+        state = _make_state(
+            raw_confidence=0.80, final_confidence=0.80, mode=AgentMode.AUTONOMOUS,
+        )
+
+        execute_node(state, risk_engine=mock_engine, broker_client=mock_broker, user_id="user1")
+
+        mock_engine.increment_open_trades.assert_not_called()
+
+    def test_execute_node_does_not_increment_open_trades_when_broker_raises(self):
+        mock_engine = MagicMock()
+        from services.risk_engine.main import ValidateResponse
+        mock_engine.validate.return_value = ValidateResponse(
+            approved=True, position_size=5.0, risk_amount=100.0,
+        )
+        mock_broker = MagicMock()
+        mock_broker.place_order.side_effect = RuntimeError("broker rejected order")
+
+        state = _make_state(
+            raw_confidence=0.80, final_confidence=0.80, mode=AgentMode.AUTONOMOUS,
+        )
+
+        result = execute_node(state, risk_engine=mock_engine, broker_client=mock_broker, user_id="user1")
+
+        mock_engine.increment_open_trades.assert_not_called()
+        assert result.decision == DecisionAction.SKIP
+
+    def test_execute_node_sets_decision_reason_on_broker_failure(self):
+        """decision_reason must actually explain the SKIP — previously only
+        `error` was set on a broker failure, leaving decision_reason stale
+        with decide_node's earlier "approved" text even though the order
+        never went through."""
+        mock_engine = MagicMock()
+        from services.risk_engine.main import ValidateResponse
+        mock_engine.validate.return_value = ValidateResponse(
+            approved=True, position_size=5.0, risk_amount=100.0,
+        )
+        mock_broker = MagicMock()
+        mock_broker.place_order.side_effect = RuntimeError("Invalid stops")
+
+        state = _make_state(
+            raw_confidence=0.80, final_confidence=0.80, mode=AgentMode.AUTONOMOUS,
+        )
+
+        result = execute_node(state, risk_engine=mock_engine, broker_client=mock_broker, user_id="user1")
+
+        assert result.decision == DecisionAction.SKIP
+        assert result.decision_reason is not None
+        assert "Invalid stops" in result.decision_reason
+
+    def test_execute_node_forwards_risk_amount_to_broker_order(self):
+        """order["risk_amount"] must carry RiskEngine's broker-agnostic money
+        figure through to the broker client — MT5BrokerAdapter needs it to
+        size in real lots instead of treating order["size"] as a lot count."""
+        mock_engine = MagicMock()
+        from services.risk_engine.main import ValidateResponse
+        mock_engine.validate.return_value = ValidateResponse(
+            approved=True, position_size=5.0, risk_amount=123.45,
+        )
+        mock_broker = MagicMock()
+        mock_broker.place_order.return_value = {"order_id": "ORD-001", "trade_id": "TRD-001"}
+
+        state = _make_state(
+            raw_confidence=0.80, final_confidence=0.80, mode=AgentMode.AUTONOMOUS,
+        )
+
+        execute_node(state, risk_engine=mock_engine, broker_client=mock_broker, user_id="user1")
+
+        sent_order = mock_broker.place_order.call_args[0][0]
+        assert sent_order["risk_amount"] == 123.45
 
 
 # ---------------------------------------------------------------------------

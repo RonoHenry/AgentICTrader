@@ -118,6 +118,11 @@ def execute_node(
         "stop_loss": state.trade_plan.stop_loss if state.trade_plan else None,
         "take_profit": state.trade_plan.take_profit_1 if state.trade_plan else None,
         "size": position_size,
+        # Broker-agnostic money risk (equity * RISK_PER_TRADE) alongside the
+        # OANDA-style unit "size" above — lot-based brokers (MT5BrokerAdapter)
+        # use this to size in native lots instead of treating "size" as a
+        # lot count. See services/risk_engine/main.py::ValidateResponse.
+        "risk_amount": recheck_response.risk_amount,
         "setup_id": state.setup_id,
     }
 
@@ -131,6 +136,10 @@ def execute_node(
             state.setup_id, broker_order_id, trade_id,
         )
 
+        # Must run after every successful fill — see RiskEngine.increment_open_trades
+        # for why the concurrent-trades gate is otherwise a no-op.
+        risk_engine.increment_open_trades(user_id)
+
         return state.model_copy(update={
             "broker_order_id": broker_order_id,
             "trade_id": trade_id,
@@ -141,4 +150,5 @@ def execute_node(
         return state.model_copy(update={
             "error": f"Broker order failed: {exc}",
             "decision": DecisionAction.SKIP,
+            "decision_reason": f"Broker order failed: {exc}",
         })

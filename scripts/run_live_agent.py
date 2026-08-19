@@ -18,23 +18,36 @@ If the live market currently has no A+/A/B-grade setup on a given
 instrument/timeframe, this reports that honestly and moves on — it does
 not force a trade.
 
-Known gaps:
-  - RiskEngine.compute_position_size() (services/risk_engine/main.py)
-    returns equity * 1% / sl_pips, a figure designed for unit-based
-    brokers (OANDA). MT5BrokerAdapter passes that value straight through
-    as lot volume, which is a real unit mismatch — untouched, a normal
-    account equity would compute to several standard lots. This runner
-    seeds a small, explicit demo equity via Redis (_DEMO_EQUITY below) so
-    the resulting order size stays sane; it does not fix the underlying
-    mismatch.
-  - Nothing in agent/nodes/execute_node.py or learn_node.py writes an
-    incremented `open_trades` back to Redis after a successful fill, so
-    RiskEngine's "max concurrent trades" check is a structural no-op in
-    production today — it only ever sees whatever open_trades was last
-    seeded with. This runner works around that locally (see
-    _bump_open_trades below) so the cap is actually honored *within this
-    one run* across the instrument basket; it does not fix the underlying
-    gap in execute_node/learn_node.
+Both gaps noted in earlier revisions of this docstring are now fixed at
+the source rather than worked around here:
+  - RiskEngine.validate() now also returns risk_amount (equity *
+    RISK_PER_TRADE, broker-agnostic money terms) alongside the OANDA-unit
+    position_size. execute_node forwards it as order["risk_amount"], and
+    MT5BrokerAdapter._compute_lots_from_risk() converts that into real MT5
+    lots using the symbol's own trade_tick_value/trade_tick_size — no more
+    treating an OANDA-unit figure as if it were already a lot count.
+  - execute_node now calls RiskEngine.increment_open_trades() itself after
+    every successful fill, so the max-concurrent-trades gate reflects real
+    state in production, not just within a single run of this script (the
+    _bump_open_trades workaround that used to live here is gone — it would
+    now double-count against execute_node's own increment).
+_DEMO_EQUITY is kept as a deliberately small seed equity regardless — a
+smoke test placing several-standard-lot orders against a real demo account
+the moment risk_amount happens to be large is still not something to risk
+by default.
+
+The agent message now also carries the same candle window already fetched
+above (candles_by_tf), and AgentGraph is constructed with real
+VisualModelClient/AlgoRAGSyncClient instances — both previously-missing
+pieces of "AgentGraph decide/execute loop" above. Concretely: observe_node
+used to re-derive liquidity_map=None (candles_by_tf was absent from the
+message), and AgentGraph never had a visual_model_client to pass to
+analyse_node at all, so the grade-gated visual-model/AlgoRAG calls in
+analyse_node were dead code in this runner even for an A+ setup. They now
+actually fire — requires services/visual_model + services/algorag (+
+qdrant) running via docker-compose and a real ANTHROPIC_API_KEY in .env;
+both clients degrade to a neutral result rather than failing the run if
+those aren't up.
 
 Usage:
     OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python scripts/run_live_agent.py \\
@@ -68,8 +81,10 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import MetaTrader5 as mt5
 
+from agent.algorag_client import AlgoRAGSyncClient
 from agent.brokers.factory import create_broker_client
 from agent.graph import AgentGraph
+from agent.visual_model_client import VisualModelClient
 from liquidity_engine import LiquidityMappingEngine
 from liquidity_engine.models import BiasDirection, Candle, SetupGrade, Timeframe
 from ml.features.session_features import TimeWindowClassifier
@@ -133,6 +148,16 @@ _GRADE_TO_CONFIDENCE = {
 # would compute to given the current unit mismatch.
 _DEMO_EQUITY = 200.0
 
+# services/visual_model and services/algorag are read from the host machine
+# here (this script isn't itself containerized) — docker-compose publishes
+# both to localhost, not the compose-network hostnames VisualModelClient/
+# AlgoRAGSyncClient default to ("visual-model"/"algorag"), which only
+# resolve from inside the compose network. Both clients degrade gracefully
+# to a neutral result if these aren't running, so it's always safe to wire
+# them in — no "is docker up" check needed.
+_VISUAL_MODEL_URL = "http://localhost:8005"
+_ALGORAG_URL = "http://localhost:8003"
+
 
 class _InMemoryJournal:
     """Minimal stand-in for a PyMongo Collection — Redis/Mongo aren't
@@ -169,20 +194,6 @@ def _fetch_candles(symbol: str, tf: Timeframe, instrument: str) -> list[Candle]:
     ]
 
 
-def _bump_open_trades(redis_client, user_id: str) -> None:
-    """Increment the shared exposure key's open_trades count by 1.
-
-    Works around the real production gap noted in the module docstring:
-    execute_node/learn_node never write this back themselves. Called after
-    every successful fill in this run so RiskEngine's max-concurrent-trades
-    check sees an accurate count for the *next* instrument in the basket.
-    """
-    key = f"risk:exposure:{user_id}"
-    exposure = json.loads(redis_client.get(key))
-    exposure["open_trades"] += 1
-    redis_client.set(key, json.dumps(exposure))
-
-
 # Standard Deviation projection levels used for targets (see
 # liquidity_engine.projections.standard_deviation) — TTrades' own
 # reference material explicitly labels the 2.5 level as "Target" on its
@@ -212,6 +223,31 @@ def _pick_sd_targets(liquidity_map, entry: float, direction: str) -> tuple[float
         if lands_correctly:
             return tp1, tp2
     return liquidity_map.draw_on_liquidity.price, None
+
+
+def _serialize_candles_by_tf(candles_by_tf: dict[Timeframe, list[Candle]]) -> dict:
+    """Serialise the already-fetched candle window onto the agent message.
+
+    Without this, observe_node's own candles_by_tf parse (message.get(
+    "candles_by_tf")) finds nothing, re-derives liquidity_map=None, and the
+    grade-gated visual-model/AlgoRAG calls in analyse_node never fire even
+    though this function already graded a real setup off real candles —
+    exactly the gap noted when this runner was first wired up.
+    """
+    return {
+        tf.value: [
+            {
+                "timestamp": c.timestamp.isoformat(),
+                "open": c.open,
+                "high": c.high,
+                "low": c.low,
+                "close": c.close,
+                "volume": c.volume,
+            }
+            for c in candles
+        ]
+        for tf, candles in candles_by_tf.items()
+    }
 
 
 def _build_patterns(liquidity_map) -> list[dict]:
@@ -257,7 +293,6 @@ def _process_instrument(
     entry_tf: Timeframe,
     symbol_suffix: str,
     graph: AgentGraph,
-    redis_client,
     min_rr: float,
 ) -> dict:
     """Fetch, grade, and (if warranted) trade one instrument. Returns a
@@ -339,6 +374,7 @@ def _process_instrument(
         "is_killzone": time_features.is_killzone,
         "price_vs_daily_open": time_features.price_vs_daily_open,
         "price_vs_weekly_open": time_features.price_vs_weekly_open,
+        "candles_by_tf": _serialize_candles_by_tf(candles_by_tf),
     }
 
     print(f"[{instrument}] Setup graded {setup_grade.grade.value} — {direction}")
@@ -354,9 +390,6 @@ def _process_instrument(
     print(f"[{instrument}] decision={final_state.decision}  reason={final_state.decision_reason}")
     if final_state.error:
         print(f"[{instrument}] error: {final_state.error}")
-
-    if final_state.broker_order_id:
-        _bump_open_trades(redis_client, "demo-runner")
 
     return {
         "instrument": instrument,
@@ -408,6 +441,8 @@ def main() -> None:
         broker_client=broker_client,
         trade_journal_collection=_InMemoryJournal(),
         user_id="demo-runner",
+        visual_model_client=VisualModelClient(base_url=_VISUAL_MODEL_URL),
+        algorag_client=AlgoRAGSyncClient(base_url=_ALGORAG_URL),
     )
 
     print(
@@ -419,7 +454,7 @@ def main() -> None:
     for instrument in instruments:
         try:
             results.append(
-                _process_instrument(instrument, entry_tf, symbol_suffix, graph, redis_client, args.min_rr)
+                _process_instrument(instrument, entry_tf, symbol_suffix, graph, args.min_rr)
             )
         except Exception as exc:
             logger.error("[%s] failed: %s", instrument, exc)

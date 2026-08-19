@@ -74,7 +74,12 @@ class ValidateResponse(BaseModel):
 
     approved: bool
     reason: Optional[str] = None          # rejection reason when approved=False
-    position_size: Optional[float] = None  # computed when approved=True
+    position_size: Optional[float] = None  # computed when approved=True — OANDA-style units
+    risk_amount: Optional[float] = None    # computed when approved=True — money terms,
+    # broker-agnostic (equity * RISK_PER_TRADE). Lot-based brokers (see
+    # agent/brokers/mt5.py::MT5BrokerAdapter) convert this into native lot
+    # volume themselves using their own contract-size/tick-value data,
+    # rather than treating position_size as if it were already a lot count.
 
 
 class ExposureResponse(BaseModel):
@@ -180,6 +185,7 @@ class RiskEngine:
         return ValidateResponse(
             approved=True,
             position_size=position_size,
+            risk_amount=equity * RISK_PER_TRADE,
         )
 
     def get_exposure(self, user_id: str) -> ExposureResponse:
@@ -202,6 +208,29 @@ class RiskEngine:
             healthy=True,
             kill_switch_active=self._is_kill_switch_active(),
         )
+
+    def increment_open_trades(self, user_id: str) -> None:
+        """Increment open_trades by 1 in the Redis exposure key for *user_id*.
+
+        Must be called once per successfully placed order. Without this,
+        check 6 in validate() (concurrent trades limit) always compares
+        against whatever open_trades was last seeded with — it never
+        reflects trades this engine itself approved, so
+        MAX_CONCURRENT_TRADES never actually caps anything in production.
+
+        Never raises: this runs after the broker order is already placed,
+        so a Redis hiccup here must not surface as an execute_node failure —
+        it only means the next validate() undercounts open trades by one.
+        """
+        if self._redis is None:
+            return
+        try:
+            exposure = self._get_exposure(user_id)
+            exposure["open_trades"] = int(exposure.get("open_trades", 0)) + 1
+            key = _EXPOSURE_KEY.format(user_id=user_id)
+            self._redis.set(key, json.dumps(exposure))
+        except Exception as exc:
+            logger.error("increment_open_trades: failed for user_id=%s: %s", user_id, exc)
 
     def compute_position_size(self, equity: float, sl_distance_pips: float) -> float:
         """Compute position size so that risk == equity * RISK_PER_TRADE.

@@ -24,6 +24,10 @@ from liquidity_engine.models import Candle, LiquidityMap
 # one-directional import safety as liquidity_engine above.
 from services.visual_model.schemas.visual_analysis import VisualAnalysis
 
+# services/algorag/models.py is a standalone Pydantic module with no
+# dependency on agent/* — same one-directional import safety as above.
+from services.algorag.models import SimilarSetup
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -215,3 +219,16 @@ class AgentState(BaseModel):
     visual_narrative: Optional[str] = None
     """VisualAnalysis.visual_insights.narrative, surfaced for logging and
     trade_reasoning context."""
+
+    # ── AlgoRAG ──
+    similar_setups: List[SimilarSetup] = []
+    """Historically similar setups retrieved from services/algorag, when the
+    setup graded B or better and an algorag_client was injected into
+    analyse_node. Empty when the grade gate wasn't cleared, no client was
+    injected, or the call degraded (see analyse_node's grade-gated call)."""
+
+    rag_modifier: Optional[float] = None
+    """Bounded [-0.10, 0.10] float folded into final_confidence alongside
+    sentiment_bonus/visual_modifier, derived from the win rate of
+    similar_setups. None when AlgoRAG was never called; 0.0 when called but
+    the retrieved sample was too small (< 3) or the call degraded."""

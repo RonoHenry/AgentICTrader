@@ -158,6 +158,41 @@ class MT5BrokerAdapter(BrokerClient):
         decimals = len(str(step).split(".")[-1]) if "." in str(step) else 0
         return round(normalized, decimals)
 
+    def _compute_lots_from_risk(
+        self, symbol: str, entry: Any, stop_loss: Any, risk_amount: float
+    ) -> float | None:
+        """Convert a money risk amount into MT5 lot volume.
+
+        RiskEngine.compute_position_size() returns equity*RISK_PER_TRADE/
+        sl_pips, a figure that's only correct as a lot count for unit-based
+        brokers like OANDA — passing it straight through as MT5 volume is a
+        real unit mismatch (a normal account equity computes to several
+        standard lots, wildly over-risking the account). This uses the
+        symbol's own trade_tick_value/trade_tick_size instead — MT5 already
+        computes those per-symbol in account currency (contract size and any
+        cross-currency conversion included), so there's no need to hand-roll
+        pip-value math that would silently be wrong for JPY pairs, indices,
+        or an account currency that isn't the quote currency.
+
+        Returns None (caller falls back to the legacy order["size"]
+        passthrough) when entry/stop_loss/tick data isn't available to
+        compute a real number from.
+        """
+        if not entry or not stop_loss:
+            return None
+        info = mt5.symbol_info(symbol)
+        if info is None:
+            return None
+        tick_size = getattr(info, "trade_tick_size", None)
+        tick_value = getattr(info, "trade_tick_value", None)
+        if not tick_size or not tick_value:
+            return None
+        price_distance = abs(float(entry) - float(stop_loss))
+        loss_per_lot = (price_distance / tick_size) * tick_value
+        if loss_per_lot <= 0:
+            return None
+        return risk_amount / loss_per_lot
+
     def _send_closing_deal(self, position: Any, volume: float) -> Any:
         symbol = position.symbol
         tick = mt5.symbol_info_tick(symbol)
@@ -192,6 +227,31 @@ class MT5BrokerAdapter(BrokerClient):
             raise MT5BrokerError(f"No open position for ticket {ticket}")
         return positions[0]
 
+    def _lookup_trade(self, trade_id: str) -> tuple[str, Any]:
+        """Look up *trade_id* across both mt5.positions_get() (filled) and
+        mt5.orders_get() (still pending) — positions_get() alone can't tell
+        "still pending" apart from "closed/never existed", which used to
+        make get_position_status()/close_position()/partial_close() all
+        misreport a live resting limit order as gone.
+
+        Returns ("OPEN", position) | ("PENDING", order) | ("CLOSED", None).
+        """
+        ticket = int(trade_id)
+        positions = mt5.positions_get(ticket=ticket)
+        if positions:
+            return "OPEN", positions[0]
+        pending = mt5.orders_get(ticket=ticket)
+        if pending:
+            return "PENDING", pending[0]
+        return "CLOSED", None
+
+    def _cancel_pending_order(self, ticket: int) -> Any:
+        request = {"action": mt5.TRADE_ACTION_REMOVE, "order": ticket}
+        result = mt5.order_send(request)
+        if _order_send_failed(result):
+            raise MT5BrokerError(f"MT5 order_send failed: {_describe_order_send_failure(result)}")
+        return result
+
     def place_order(self, order: dict[str, Any]) -> dict[str, Any]:
         """Place a market or pending order depending on where ``entry`` sits.
 
@@ -211,20 +271,27 @@ class MT5BrokerAdapter(BrokerClient):
         places a market order exactly as before — existing callers that
         never set "entry" are unaffected.
 
-        Known follow-on gap: get_position_status()/close_position()/
-        partial_close() all look the order ticket up via
-        mt5.positions_get(), which only returns *filled* positions. A
-        pending order that hasn't triggered yet won't be found there — it
-        reads as CLOSED/"no open position" rather than "still pending".
-        Distinguishing those states needs its own tracking and isn't done
-        here.
+        get_position_status()/close_position()/partial_close() all look the
+        ticket up via _lookup_trade(), which checks mt5.orders_get() (still
+        pending) as well as mt5.positions_get() (filled) — a resting limit
+        order placed here reads as PENDING, not CLOSED, until it actually
+        fills.
         """
         self._ensure_connected()
 
         symbol = self._resolve_symbol(order["instrument"])
         direction = order.get("direction", "LONG").upper()
-        size = self._normalize_volume(symbol, float(order.get("size", 0.01)))
         requested_entry = order.get("entry")
+
+        raw_size = float(order.get("size", 0.01))
+        risk_amount = order.get("risk_amount")
+        if risk_amount:
+            lots = self._compute_lots_from_risk(
+                symbol, requested_entry, order.get("stop_loss"), float(risk_amount)
+            )
+            if lots is not None:
+                raw_size = lots
+        size = self._normalize_volume(symbol, raw_size)
 
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
@@ -292,33 +359,61 @@ class MT5BrokerAdapter(BrokerClient):
         return True
 
     def close_position(self, trade_id: str) -> bool:
+        """Close an open position, or cancel a still-pending resting order.
+
+        "Close this trade" is the caller's intent either way — a pending
+        limit order that never filled has nothing to close via a market
+        deal, so it's cancelled instead of raising "no open position" for
+        a trade that's actually still live and working.
+        """
         self._ensure_connected()
-        position = self._get_open_position(trade_id)
-        self._send_closing_deal(position, position.volume)
-        return True
+        state, obj = self._lookup_trade(trade_id)
+        if state == "OPEN":
+            self._send_closing_deal(obj, obj.volume)
+            return True
+        if state == "PENDING":
+            self._cancel_pending_order(int(trade_id))
+            return True
+        raise MT5BrokerError(f"No open position or pending order for ticket {trade_id}")
 
     def partial_close(self, trade_id: str, ratio: float = 0.5) -> dict[str, Any]:
+        """Close ``ratio`` of an open position's current size at market.
+
+        Only meaningful for an already-filled position — review_node only
+        calls this once r_multiple is computable, which structurally
+        implies a fill already happened — so a still-pending order here
+        raises a clear, specific error rather than silently misreporting
+        as "no open position" (the pre-fix behaviour) or inventing
+        partial-cancel semantics that don't have a clean real-world
+        meaning for a resting limit order.
+        """
         self._ensure_connected()
+        state, obj = self._lookup_trade(trade_id)
+        if state == "PENDING":
+            raise MT5BrokerError(
+                f"Cannot partial-close ticket {trade_id}: order is still pending, not yet filled"
+            )
+        if state == "CLOSED":
+            raise MT5BrokerError(f"No open position for ticket {trade_id}")
         ticket = int(trade_id)
-        position = self._get_open_position(trade_id)
-        volume = round(position.volume * ratio, 2)
-        self._send_closing_deal(position, volume)
+        volume = round(obj.volume * ratio, 2)
+        self._send_closing_deal(obj, volume)
         return {"trade_id": str(ticket), "closed_units": volume}
 
     def get_position_status(self, trade_id: str) -> dict[str, Any]:
         self._ensure_connected()
-        ticket = int(trade_id)
-        positions = mt5.positions_get(ticket=ticket)
-        if not positions:
-            return {"status": "CLOSED", "unrealised_pnl": 0.0, "current_price": None}
+        state, obj = self._lookup_trade(trade_id)
 
-        position = positions[0]
-        tick = mt5.symbol_info_tick(position.symbol)
-        is_buy_position = position.type == mt5.ORDER_TYPE_BUY
-        current_price = tick.bid if is_buy_position else tick.ask
+        if state == "OPEN":
+            tick = mt5.symbol_info_tick(obj.symbol)
+            is_buy_position = obj.type == mt5.ORDER_TYPE_BUY
+            current_price = tick.bid if is_buy_position else tick.ask
+            return {"status": "OPEN", "unrealised_pnl": obj.profit, "current_price": current_price}
 
-        return {
-            "status": "OPEN",
-            "unrealised_pnl": position.profit,
-            "current_price": current_price,
-        }
+        if state == "PENDING":
+            tick = mt5.symbol_info_tick(obj.symbol)
+            is_buy_order = obj.type == mt5.ORDER_TYPE_BUY_LIMIT
+            current_price = (tick.ask if is_buy_order else tick.bid) if tick is not None else None
+            return {"status": "PENDING", "unrealised_pnl": 0.0, "current_price": current_price}
+
+        return {"status": "CLOSED", "unrealised_pnl": 0.0, "current_price": None}

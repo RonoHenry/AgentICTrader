@@ -93,6 +93,12 @@ class AgentGraph:
         agent_decisions_collection: PyMongo Collection for the audit trail
                                   (agent/audit_trail.py, Phase 4 Task 39).
                                   Optional — when None, no audit record is written.
+        visual_model_client:      Optional synchronous client exposing
+                                  ``analyse(...)`` (agent/visual_model_client.py).
+                                  When None, analyse_node's visual layer is skipped.
+        algorag_client:           Optional synchronous client exposing
+                                  ``retrieve(...)`` (agent/algorag_client.py).
+                                  When None, analyse_node's AlgoRAG layer is skipped.
     """
 
     def __init__(
@@ -105,6 +111,8 @@ class AgentGraph:
         user_id: str = "default",
         shadow_enforcer: Optional[Any] = None,
         agent_decisions_collection: Optional[Any] = None,
+        visual_model_client: Optional[Any] = None,
+        algorag_client: Optional[Any] = None,
     ) -> None:
         self._redis = redis_client
         self._risk_engine = risk_engine
@@ -113,6 +121,8 @@ class AgentGraph:
         self._journal = trade_journal_collection
         self._user_id = user_id
         self._shadow_enforcer = shadow_enforcer
+        self._visual_model_client = visual_model_client
+        self._algorag_client = algorag_client
         self._agent_decisions = agent_decisions_collection
 
     # ------------------------------------------------------------------
@@ -149,7 +159,12 @@ class AgentGraph:
             return self._run_learn(state)
 
         # ── Node 2: analyse ────────────────────────────────────────────
-        state = analyse_node(state, redis_client=self._redis)
+        state = analyse_node(
+            state,
+            redis_client=self._redis,
+            visual_model_client=self._visual_model_client,
+            algorag_client=self._algorag_client,
+        )
 
         # ── Node 3: decide ─────────────────────────────────────────────
         state = decide_node(state, risk_engine=self._risk_engine, user_id=self._user_id)
