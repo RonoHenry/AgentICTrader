@@ -1,0 +1,576 @@
+# Design Document
+
+**Spec**: AlgoBacktester
+**Requirements**: `.kiro/specs/algo-backtester/requirements.md` (open decisions D1–D8 accepted at their proposed defaults)
+
+## Overview
+
+AlgoBacktester replays M1 history through the live decision path and simulates the resulting orders with a conservative, cost-aware fill model. Its correctness rests on three design choices:
+
+1. **Shared code, not copies.** Each piece of logic that both live and backtest need moves into one module that both import:
+   - the as-of candle view
+   - the setup-to-order logic
+   - the fill model
+   - instrument specs
+
+   The backtester then drives the real `AgentGraph` (decide → execute) against a simulated broker, so risk gating, confidence floors and execution guards are the live ones.
+2. **Two phases.** Phase A, signal generation, is pure and depends only on candles, so it runs per instrument, in parallel, and is cacheable. Phase B, account simulation, is stateful and runs once, in strict time order across all instruments. It applies the rules that span the whole account: one trade per instrument, concurrent-trade limit and drawdown.
+3. **Time is injected everywhere.** Nothing on the decision or fill path reads the wall clock during a backtest. Every component that today calls `datetime.now()` on that path takes a clock.
+
+### Changes to existing live code
+
+These are deliberate, small, and each is covered by its own task:
+
+| # | Change | Why | Requirement |
+|---|---|---|---|
+| L1 | Extract setup-to-order logic from `scripts/run_live_agent.py` into `agent/order_intent.py`, and its constants into `agent/strategy_config.py` | One implementation for live and backtest | 1.2, 1.6 |
+| L2 | `setup_id` becomes deterministic, derived from the entry PD array's id (new `SetupGradeDetail.entry_array_id`) instead of `uuid4()` | Re-grading the same array yields the same id: needed for D6 (one attempt per setup) and for duplicate-order protection | 1.3, D6 |
+| L3 | Live runner builds its candle window with `compose_as_of_view()` (closed entry-TF bars) | Live evaluates exactly what the backtest replays | 2.7, D5 |
+| L4 | `PaperBrokerAdapter` delegates fills to `agent/brokers/fill_model.py` and takes an injectable clock | One fill model; parity with backtests | 4.1, 4.2, D4 |
+| L5 | `AgentGraph`, `observe_node`, `learn_node` and `log_agent_decision` accept a clock (default: wall clock) | `observe_node`'s 60-second staleness check reads `datetime.now()` and would reject every replayed setup | 2.5 |
+| L6 | `scripts/load_historical_data_mt5.py` stores each bar's spread, in price units | Cost model | 3.5, 5.1 |
+| L7 | Delete `ml/backtesting/engine.py` and `backend/tests/test_backtesting_engine.py` | Superseded | — |
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Data["Data (per instrument)"]
+        DB[(TimescaleDB candles<br/>M1 + native HTF warm-up)]
+        SRC[CandleSource]
+        AGG[HTF aggregation<br/>VenueCalendar]
+        DB --> SRC --> AGG
+    end
+
+    subgraph PhaseA["Phase A: signals (parallel per instrument, cacheable)"]
+        VIEW[compose_as_of_view<br/>shared with live]
+        ENG[LiquidityMappingEngine.analyze]
+        OI[build_order_intent<br/>shared with live]
+        AGG --> VIEW --> ENG --> OI
+        OI --> SIG[(SignalRecords)]
+    end
+
+    subgraph PhaseB["Phase B: account simulation (one pass, time-ordered)"]
+        LOOP[EventLoop<br/>merges M1 bars + signals]
+        ACC[SimAccount<br/>equity, drawdown anchors]
+        GRAPH[AgentGraph decide → execute<br/>clock = simulated t, AI clients off]
+        RISK[RiskEngine.validate<br/>fakeredis exposure from SimAccount]
+        SB[SimBroker : BrokerClient]
+        FM[FillModel<br/>shared with PaperBroker]
+        SIG --> LOOP
+        AGG --> LOOP
+        LOOP --> GRAPH --> RISK
+        GRAPH --> SB --> FM
+        LOOP --> SB
+        SB --> ACC --> RISK
+    end
+
+    subgraph Out["Outputs: data/backtests/run_id/"]
+        MAN[manifest.json]
+        JRN[journal.csv]
+        SUM[summary.json + summary.md]
+    end
+    LOOP --> JRN
+    ACC --> SUM
+    LOOP --> MAN
+```
+
+### Package layout
+
+```
+agent/
+  order_intent.py          # NEW (L1): build_order_intent(), OrderIntent, NoTrade
+  strategy_config.py       # NEW (L1): StrategyConfig (windows, min R:R, grade→confidence, expiry rule)
+  instruments.py           # NEW: InstrumentSpec, tick value conversion, spec loading
+  brokers/fill_model.py    # NEW (L4): FillModel, Bar, SimOrder, FillEvent
+  brokers/paper.py         # CHANGED (L4): delegates to FillModel, injectable clock
+  graph.py, nodes/*.py     # CHANGED (L5): clock injection
+services/market_data/
+  venue_calendar.py        # NEW: Mt5Calendar, BinanceCalendar — period boundaries per TF
+  as_of_view.py            # NEW (L3): aggregate(), compose_as_of_view()
+config/
+  instruments/mt5.toml     # NEW: per-instrument specs + commission (exported from MT5, D2)
+  instruments/binance.toml
+  backtests/base.toml      # NEW: base run configuration + named variants
+algo_backtester/           # NEW package (backtest-only; not shipped in the paper-trader image)
+  config.py                # RunConfig, StudyConfig, variant resolution
+  data.py                  # CandleSource (TimescaleSource, CsvSource), coverage check, fingerprint
+  signals.py               # Phase A
+  cache.py                 # Phase A cache
+  sim_broker.py            # SimBroker(BrokerClient): sizing, costs, FillModel
+  account.py               # SimAccount: equity, drawdown anchors, exposure for RiskEngine
+  simulation.py            # Phase B event loop
+  metrics.py               # summary statistics, bootstrap CI, breakdowns
+  report.py                # manifest / journal / summary writers
+  compare.py               # side-by-side comparison of runs
+  __main__.py              # CLI: run | compare | check-data
+scripts/
+  export_instrument_specs.py    # NEW: MT5 symbol_info + deal-history commission → config/instruments/mt5.toml
+  export_forward_test_fixture.py # NEW: forward-test period → parity fixture
+```
+
+Tests follow the existing convention for engine and agent code: `backend/tests/test_backtest_*.py`, with fixtures under `backend/tests/fixtures/backtester/`. `data/backtests/` is added to `.gitignore`.
+
+---
+
+## Components and Interfaces
+
+### VenueCalendar (`services/market_data/venue_calendar.py`)
+
+Defines where each timeframe's bars start, so aggregated bars match the venue's native bars (Req 3.3, 3.4).
+
+```python
+class VenueCalendar(Protocol):
+    def period_start(self, t: datetime, tf: Timeframe) -> datetime: ...   # UTC in, UTC out
+    def period_end(self, t: datetime, tf: Timeframe) -> datetime: ...
+
+class Mt5Calendar(VenueCalendar):
+    def __init__(self, clock: MT5ServerClock): ...
+class BinanceCalendar(VenueCalendar): ...
+```
+
+- **MT5:** floor the instant in **server wall time**, using `MT5ServerClock`, then convert back to UTC.
+  - Intraday bars floor to multiples of their length from server midnight. H3, H4, H6, H8 and H12 all divide 24 hours, so they nest inside D1.
+  - D1 starts at server midnight, which is 17:00 New York on `ny_close`.
+  - W1 starts at the server's Sunday 00:00.
+  - DST is handled because the server clock follows New York.
+- **Binance:** floor in UTC. D1 starts at 00:00 UTC; W1 starts Monday 00:00 UTC.
+
+### As-of view (`services/market_data/as_of_view.py`)
+
+```python
+def aggregate(bars: Sequence[Candle], tf: Timeframe, calendar: VenueCalendar) -> list[Candle]:
+    """Closed-period OHLCV bars of `tf` built from finer bars (M1 in backtests)."""
+
+def compose_as_of_view(
+    closed: Mapping[Timeframe, Sequence[Candle]],  # closed bars per TF, oldest first
+    recent_m1: Sequence[Candle],                   # M1 bars covering the largest in-progress HTF period
+    t: datetime,
+    entry_tf: Timeframe,
+    windows: Mapping[Timeframe, int],              # StrategyConfig.candle_counts
+    calendar: VenueCalendar,
+) -> dict[Timeframe, list[Candle]]:
+```
+
+Rules, matching Req 2.1–2.4:
+- A bar is *closed at t* when `bar.timestamp + duration(tf) <= t`. This uses M1 close times, never open times.
+- **Entry timeframe and below:** the last `windows[tf]` closed bars.
+- **Higher timeframes:** the last `windows[tf] - 1` closed bars, plus one in-progress bar. The in-progress bar is aggregated from `recent_m1` bars that start at or after `calendar.period_start(t, tf)` and closed at or before `t`. If no such M1 bar exists yet, there is no in-progress bar and the window holds `windows[tf]` closed bars.
+- The function is pure: no I/O and no clock.
+
+**How each side supplies its inputs:**
+- **Backtest:** `closed` comes from `aggregate()` over stored M1. Where M1 history starts after the warm-up a window needs (W1 × 30 is about 30 weeks), it falls back to the stored native HTF bars, and the manifest records the warm-up source per TF.
+- **Live (L3):** `closed` is the venue's native bars with the forming bar dropped. `recent_m1` is fetched to cover the current W1 period (about 7,200 M1 bars at most: one MT5 call, or 8 Binance requests).
+- **Equivalence:** the aggregation-parity test (Req 3.4) is what makes "native closed bars" and "aggregated closed bars" interchangeable.
+
+### StrategyConfig (`agent/strategy_config.py`)
+
+A frozen Pydantic model that holds what is now scattered through `run_live_agent.py`:
+- `entry_tf` and `context_tfs` (H12, H8, H6, H4, H3)
+- `candle_counts` (today's `_CANDLE_COUNT`)
+- `min_rr` (default 3.0)
+- `grade_confidence` (A+ 0.90, A 0.80, B 0.70)
+- `tp_levels` (2.5, 4.0)
+- `pending_expiry`: `KILLZONE_END` with `fallback_ttl` 3h, or `FIXED_TTL`
+
+`fingerprint()` hashes the model's canonical JSON. Grader parameters stay in `liquidity_engine` and enter the manifest through the engine code fingerprint.
+
+### Order intent (`agent/order_intent.py`)
+
+```python
+@dataclass(frozen=True)
+class OrderIntent:
+    setup_id: str; instrument: str; entry_tf: Timeframe; as_of: datetime
+    grade: SetupGrade; direction: Literal["LONG", "SHORT"]
+    entry: float; stop_loss: float; take_profit_1: float; take_profit_2: float | None
+    r_ratio: float; confidence: float
+    time_features: TimeFeatures; patterns: list[dict]; regime: str
+    def to_message(self, mode: AgentMode) -> dict: ...   # the AgentGraph message the runner builds today
+
+@dataclass(frozen=True)
+class NoTrade:
+    instrument: str; as_of: datetime; grade: str; reason: str   # NO_GRADE | NO_TRADE | RR_BELOW_MIN
+
+def build_order_intent(liquidity_map, view, instrument, as_of, cfg: StrategyConfig) -> OrderIntent | NoTrade:
+```
+
+It is a move of `_process_instrument` lines 447–509 with behaviour unchanged, apart from the deterministic `setup_id` (L2):
+
+```python
+setup_id = deterministic_id("setup", instrument, cfg.entry_tf.value, grade_detail.entry_array_id)
+```
+
+Both the live runner and Phase A call this function, so Req 1.3 holds by construction. A test also asserts it by running the refactored runner path and Phase A on the same fixture view.
+
+`to_message()` omits `candles_by_tf`. Without it, `observe_node` doesn't run the engine a second time. That second run is redundant today (the runner already analysed), and the AI layers that consume its output are disabled in backtests anyway.
+
+### InstrumentSpec (`agent/instruments.py`, `config/instruments/*.toml`)
+
+```python
+@dataclass(frozen=True)
+class InstrumentSpec:
+    symbol: str; venue: Literal["mt5", "binance"]
+    point: float; tick_size: float; contract_size: float
+    volume_min: float; volume_step: float; volume_max: float
+    base_ccy: str; quote_ccy: str
+    default_spread: float                  # price units, used when a bar has no recorded spread
+    commission: CommissionSpec             # PER_LOT_PER_SIDE (MT5) | RATE_PER_SIDE (Binance, 0.001)
+    stop_slippage: float                   # D3: price units (FX 0.2 pip) or rate (crypto 0.0005)
+
+def money_per_price_unit(spec, price: float, conversion: float | None, account_ccy="USD") -> float:
+```
+
+- Value of a one-price-unit move for one lot, in account currency:
+  - quote = USD: `contract_size`
+  - base = USD (USDJPY, USDCAD): `contract_size / price`
+  - crosses: multiply by `conversion`, the quote→USD rate at that time, taken from the conversion pair's M1 series. That pair must be present in the store, or the run refuses the instrument (Req 3.6 coverage check).
+- `scripts/export_instrument_specs.py` reads `mt5.symbol_info()` for each instrument. It takes commission per lot per side from the account's recent deal history (`history_deals_get`, deal `commission` field ÷ volume), which settles D2.
+
+### FillModel (`agent/brokers/fill_model.py`)
+
+A pure state machine shared by `PaperBrokerAdapter` and `SimBroker` (Req 4.1).
+
+```python
+@dataclass(frozen=True)
+class Bar:            # one M1 bar; prices are BID (MT5 convention)
+    timestamp: datetime; open: float; high: float; low: float; close: float
+    spread: float     # price units; ask = bid + spread
+
+@dataclass
+class SimOrder:
+    order_id: str; setup_id: str; instrument: str; direction: Literal["LONG", "SHORT"]
+    kind: Literal["MARKET", "LIMIT"]; entry: float; stop: float; target: float | None
+    placed_at: datetime; expires_at: datetime | None
+    status: Literal["PENDING", "OPEN", "CLOSED"]
+    ideal_fill: float | None; fill: float | None          # ideal = before spread/slippage
+    ideal_exit: float | None; exit: float | None; exit_reason: str | None
+    filled_at: datetime | None; closed_at: datetime | None
+    mae_price: float | None; mfe_price: float | None
+
+class FillModel:
+    def __init__(self, stop_slippage: float, slippage_is_rate: bool): ...
+    def step(self, order: SimOrder, bar: Bar) -> list[FillEvent]:   # mutates order; returns FILLED/SL/TP/EXPIRED events
+```
+
+Rules, implementing Req 4. Throughout, `ask = bid + spread`.
+
+| Rule | Behaviour |
+|---|---|
+| Eligibility | Only bars with `timestamp >= placed_at` are considered. |
+| Market entry (4.3) | Fills at the next bar's open: ask for LONG, bid for SHORT. `ideal_fill` = bid open. |
+| Limit entry (4.4) | LONG fills when `low + spread < entry`, at `entry`. SHORT fills when `high > entry`, at `entry`. Strict inequality: a touch is not a fill. |
+| Expiry (4.10) | PENDING and `bar.timestamp >= expires_at` gives EXPIRED. No bars exist while the venue is closed, so nothing fills then (4.11), and an order expiring over a weekend expires on the first bar after reopening. |
+| Stop (4.5–4.7) | LONG triggers when bid `low <= stop`. SHORT triggers when ask `high + spread >= stop`. Exit price is `stop`, or the bar open if the bar opened beyond the stop (gap), then worsened by `stop_slippage`. |
+| Target (4.5) | LONG exits when bid `high >= target`. SHORT exits when ask `low + spread <= target`. Exit at `target`, no slippage (it is a resting limit). |
+| Same bar (4.8) | Stop and target both reachable: stop wins. |
+| Fill bar (4.9) | On the bar a limit fills, a stop-out may occur; a target exit may not. |
+| Excursions (4.12) | `mae_price` / `mfe_price` update on every bar while OPEN, using the side that would close the position: bid for LONG, ask for SHORT. |
+
+**Expiry rule `KILLZONE_END`:** `expires_at` is the end of the killzone containing `placed_at`, using `liquidity_engine.utils.time_utils.KILLZONE_WINDOWS`. If `placed_at` falls outside every killzone, `expires_at = placed_at + fallback_ttl` (3h, today's paper default). The expiry time is computed when the order is placed, by the broker (paper or sim), from `StrategyConfig.pending_expiry`.
+
+**PaperBroker after L4:**
+- Builds `Bar` objects from its candles. Binance klines carry no spread, so it uses the instrument's `default_spread`.
+- Gets its clock from the constructor.
+- Keeps its public API, report and JSON state, and adds the new fields.
+- Its old `fee_rate` maps onto `CommissionSpec.RATE_PER_SIDE`.
+
+### SimBroker (`algo_backtester/sim_broker.py`)
+
+A `BrokerClient` that `execute_node` calls through `AgentGraph`, exactly as live code calls the paper or MT5 broker.
+
+- `place_order(order)` mirrors `MT5BrokerAdapter`:
+  - **Order type:** LIMIT if the entry is on the discount/premium side of the current price, else MARKET.
+  - **Sizing:** `lots = risk_amount / (|entry - stop| × money_per_price_unit)`, rounded **down** to `volume_step`.
+  - **Minimum volume:** if `volume_min × |entry - stop| × money_per_price_unit > risk_amount × (1 + 0.10)`, it raises `SimBrokerError("MIN_VOLUME_OVER_RISK")`. `execute_node` already turns broker exceptions into `decision=SKIP`, and the journal records the reason (Req 6.2).
+  - **Missing fields:** a missing `direction` or `stop_loss` raises, rather than defaulting.
+  - **Order ids:** sequential (`sim-000001`), not random (Req 9.5).
+- `advance(instrument, bar)` steps every active order for that instrument through `FillModel` and books closed trades into `SimAccount`.
+- `active_trade(instrument)` supports the one-trade-per-instrument rule, as `PaperBrokerAdapter.active_trade` does live.
+
+**R accounting for a closed trade** (Req 4.12, 5.3):
+- `initial_risk = |ideal_fill - stop|` (planned risk)
+- `gross_r = direction × (ideal_exit - ideal_fill) / initial_risk`
+- `net_r = direction × (exit - fill) / initial_risk - commission_r`
+- `commission_r = commission_money / (lots × initial_risk × money_per_price_unit)`
+- `cost_r = gross_r - net_r`, reported split into its spread, slippage and commission components.
+
+### SimAccount (`algo_backtester/account.py`)
+
+- **Equity:** with `compounding = false` (the default, Req 6.4), `risk_amount = initial_equity × risk_per_trade` and stays fixed. Equity still moves, for drawdown purposes.
+- **Drawdown anchors (Req 6.3):** at 17:00 New York, the start-of-day equity anchor is reset. The weekly anchor resets at the Sunday open.
+  - `daily_dd_pct = max(0, (day_anchor - equity_mark) / day_anchor × 100)`, where `equity_mark` includes open positions marked at the bar close. The weekly figure is computed the same way.
+- **Exposure:** `exposure()` returns the dict `RiskEngine` reads from `risk:exposure:{user_id}`. Phase B writes it to the run's fakeredis before every `AgentGraph.run()` (Req 1.4).
+
+### Phase A: signal generation (`algo_backtester/signals.py`)
+
+```python
+@dataclass(frozen=True)
+class SignalRecord:
+    t: datetime; instrument: str
+    result: OrderIntent | NoTrade | EngineError      # EngineError: analyze() raised (kept, counted)
+
+def generate_signals(instrument, source, calendar, cfg, start, end) -> Iterator[SignalRecord]:
+```
+
+For every entry-TF close `t` in `[start, end]` with data:
+
+```
+view = compose_as_of_view(...)
+liquidity_map = LiquidityMappingEngine().analyze(view, instrument, t)
+record build_order_intent(liquidity_map, view, instrument, t, cfg)
+```
+
+- **Incremental windows:** aggregated series and window indices advance with `t`; nothing is re-sliced from scratch per step.
+- **Parallelism:** one process per instrument (`ProcessPoolExecutor`). Each worker writes its records to the cache.
+
+**Cache (`algo_backtester/cache.py`, Req 7.4)**
+- **Key:** `sha256(data_fingerprint[instrument], engine_code_fingerprint, StrategyConfig.fingerprint(), instrument, start, end)`.
+- **Storage:** `data/backtests/cache/<key>.jsonl`, written to a temporary file and then renamed, so a crash never leaves a half-written cache entry.
+- **Engine code fingerprint:** a sha256 over the sorted contents of `liquidity_engine/**/*.py`, `agent/order_intent.py` and `agent/strategy_config.py`. Any edit to analysis or order logic therefore invalidates the cache automatically.
+- **Invariant:** a cache hit and a fresh run give identical Phase B input.
+
+### Phase B: account simulation (`algo_backtester/simulation.py`)
+
+One `AgentGraph` per run:
+- `risk_engine = RiskEngine(fakeredis)`, `broker_client = SimBroker`, `mode = AUTONOMOUS`
+- `visual_model_client = None`, `algorag_client = None`
+- `clock = lambda: sim_now`, an in-memory journal, and `agent_decisions_collection` set to a list-backed collection
+
+The event loop runs over the merged, time-ordered stream of M1 bars (all instruments) and SignalRecords. For each minute boundary `t`:
+
+1. **Advance positions.** For every instrument with an M1 bar closing at `t` (alphabetical order, for determinism), call `sim_broker.advance(bar)`, then `account.mark(bar)`.
+2. **Act on signals.** For each SignalRecord with time `t` (alphabetical order):
+   - If it is `NoTrade` or `EngineError`, write a journal row.
+   - If `sim_broker.active_trade(instrument)` exists, write a journal row with reason `IN_TRADE`. Live runs skip evaluation in this case.
+   - If the `setup_id` has already been attempted, write a journal row with reason `SETUP_ALREADY_ATTEMPTED` (D6).
+   - Otherwise write `account.exposure()` to fakeredis, set `sim_now = t`, call `graph.run(intent.to_message(AUTONOMOUS))`, and journal the final state: decision, reason and `order_id`.
+3. **Exposure.** Account-wide rules (concurrent trades, drawdown) see the true state because step 1 completes for every instrument before any step 2 at the same `t` (Req 7.5).
+
+**Ordering and look-ahead:**
+- Ordering matches live: fills and exits first, then evaluation.
+- An order placed at `t` is only eligible for bars with `timestamp >= t`, i.e. bars that open after the decision, so there is no same-bar look-ahead.
+
+**Walk-forward (Req 7.3):** `run --walk-forward 3M` splits `[start, end)` into consecutive windows. Each window is a full Phase B run, with warm-up data taken from before the window start (Phase A records are shared through the cache). The combined result concatenates the windows' trades.
+
+**Hold-out (Req 7.2):** `StudyConfig` in `config/backtests/<study>.toml` sets `holdout_start` once. Its default is D7: the most recent 3 months at study creation. A run whose `[start, end)` overlaps the hold-out is refused unless `--final` is passed, and the manifest records `final_validation: true`.
+
+---
+
+## Data Models
+
+### Run configuration (`config/backtests/base.toml`)
+
+```toml
+[run]
+venue = "mt5"
+instruments = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]   # D1
+start = "2025-01-01"
+end = "2026-07-01"
+study = "baseline-2026q3"
+
+[account]
+initial_equity = 10000.0
+risk_per_trade = 0.01
+compounding = false
+
+[strategy]            # → StrategyConfig
+entry_tf = "M15"
+min_rr = 3.0
+pending_expiry = "KILLZONE_END"
+fallback_ttl_minutes = 180
+
+[data]
+max_gap_minutes = 30          # outside weekends/holidays (Req 3.6)
+allow_gaps = false
+
+[report]
+min_trades = 30               # D8
+cost_flag_fraction = 0.25     # Req 5.5
+bootstrap_resamples = 10000
+
+[variants.min_rr_5]
+strategy.min_rr = 5.0
+```
+
+A variant is a dotted-key override of the base. The CLI takes `--variant min_rr_5`.
+
+### Run manifest (`manifest.json`)
+
+- **Identity:** `run_id` is the sha256 of the canonical manifest content, excluding `created_at`. Identical manifests therefore produce the same id and the same outputs (Req 9.5).
+- **Fields:**
+  - `git_commit`, `git_dirty`
+  - `engine_code_fingerprint`, `strategy_config` (full), `run_config` (resolved, variant applied)
+  - `variant`, `study`, `final_validation`
+  - `data`: per instrument `{start, end, m1_rows, sha256, warmup_source_by_tf, default_spread_bars}`
+  - `instrument_specs` (resolved)
+  - `ai_modifiers: "disabled"`, `news_filter: "not_applied"` (Non-Goals)
+  - `bootstrap_seed`, derived from `run_id`
+  - `created_at`, the only non-deterministic field
+
+### Journal (`journal.csv`), one row per SignalRecord that reached Phase B
+
+The columns:
+- **Identity:** `t`, `instrument`, `setup_id`, `grade`
+- **Decision:** `decision` (`NO_TRADE` / `RR_BELOW_MIN` / `IN_TRADE` / `SETUP_ALREADY_ATTEMPTED` / `SKIP` / `EXECUTE` / `ENGINE_ERROR`), `reason`
+- **Setup levels:** `direction`, `entry`, `stop`, `target`, `r_ratio`, `confidence`
+- **Order lifecycle:** `order_id`, `order_kind`, `placed_at`, `expires_at`, `filled_at`, `fill`, `ideal_fill`, `closed_at`, `exit`, `ideal_exit`, `exit_reason`
+- **Size:** `lots`
+- **Results:** `gross_r`, `net_r`, `cost_r_spread`, `cost_r_slippage`, `cost_r_commission`, `mae_r`, `mfe_r`, `holding_minutes`
+- **Flags:** `cost_flag` (Req 5.5)
+
+Floats are written with fixed precision and rows are sorted by `(t, instrument)`, so identical runs produce byte-identical files.
+
+### Summary (`summary.json`, `summary.md`)
+
+- **Overall figures (Req 8.2):** trade count, win rate, average gross/net R, expectancy net R with bootstrap 95% CI, profit factor, max drawdown (R and %), longest losing streak, average holding time, cost share of gross R.
+- **Breakdowns (Req 8.3):** by instrument, grade, killzone (from `time_window`), direction and month.
+- **Evidence flag (Req 8.4):** every bucket with `n < min_trades` carries `"evidence": "insufficient"`, and `summary.md` renders those buckets greyed and labelled.
+
+---
+
+## Correctness Properties
+
+Each property is checked with Hypothesis over generated inputs: random-walk M1 series, random orders and random bar sequences. The truncation property instead uses fixture data, because `analyze()` is slow.
+
+### Property 1: No Look-Ahead (Truncation Invariance)
+
+*For any* instrument series and any entry-TF close `t` within it, the SignalRecord produced at `t` from the full series SHALL equal the SignalRecord produced at `t` from the series truncated to M1 bars closed at or before `t`.
+
+**Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5, 2.6**
+
+---
+
+### Property 2: As-of View Contains Only Known Data
+
+*For any* `t`, every bar `compose_as_of_view()` returns for the entry TF and below SHALL have `timestamp + duration(tf) <= t`. Each HTF window SHALL contain at most one bar whose period has not ended, and that bar SHALL be built only from M1 bars closed at or before `t`.
+
+**Validates: Requirements 2.1, 2.2, 2.3**
+
+---
+
+### Property 3: Aggregation Consistency
+
+*For any* M1 series, `aggregate(aggregate(m1, H1), D1)` SHALL equal `aggregate(m1, D1)`. For every aggregated bar, `low <= min(open, close)` and `max(open, close) <= high` SHALL hold.
+
+**Validates: Requirements 3.3**
+
+---
+
+### Property 4: No Fill Before Placement or After Expiry
+
+*For any* order and bar sequence, bars with `timestamp < placed_at` SHALL NOT change the order's state. A pending order SHALL NOT fill on any bar with `timestamp >= expires_at`.
+
+**Validates: Requirements 4.3, 4.10**
+
+---
+
+### Property 5: Fills Are Never Better Than the Order's Levels
+
+*For any* order and bar sequence:
+- a LONG limit fill price SHALL be `<= entry`, and a SHORT limit fill `>= entry`;
+- a stop exit SHALL be at or beyond the stop: `<= stop` for LONG, `>= stop` for SHORT;
+- when one bar reaches both stop and target, the exit reason SHALL be `SL`.
+
+**Validates: Requirements 4.4, 4.5, 4.6, 4.7, 4.8**
+
+---
+
+### Property 6: Costs Only Subtract
+
+*For any* closed trade, `cost_r_spread`, `cost_r_slippage` and `cost_r_commission` SHALL each be `>= 0`, and `net_r <= gross_r`.
+
+**Validates: Requirements 5.3**
+
+---
+
+### Property 7: Loss Is Bounded by the Stop Unless Price Gapped
+
+*For any* closed trade whose stop-out bar did not open beyond the stop, `gross_r >= -1`. Only a gap can produce a loss larger than the planned risk.
+
+**Validates: Requirements 4.6**
+
+---
+
+### Property 8: Sizing Never Over-Risks
+
+*For any* accepted order:
+- `lots` SHALL be a whole multiple of `volume_step` within `[volume_min, volume_max]`;
+- `lots × |entry - stop| × money_per_price_unit` SHALL be `<= risk_amount × 1.10`.
+
+**Validates: Requirements 6.1, 6.2**
+
+---
+
+### Property 9: Account State Matches Positions
+
+*For any* point in a simulation:
+- `SimAccount.exposure()["open_trades"]` SHALL equal the number of PENDING or OPEN orders;
+- `daily_dd_pct` and `weekly_dd_pct` SHALL be `>= 0`;
+- no instrument SHALL have more than one PENDING or OPEN order.
+
+**Validates: Requirements 1.4, 1.5, 6.3**
+
+---
+
+### Property 10: Determinism and Cache Transparency
+
+*For any* run configuration:
+- two runs with identical manifests SHALL produce byte-identical `journal.csv` and `summary.json`;
+- a run served from the Phase A cache SHALL produce the same outputs as a run with an empty cache.
+
+**Validates: Requirements 7.4, 9.5**
+
+---
+
+## Error Handling
+
+| Condition | Behaviour |
+|---|---|
+| Coverage gap or late history start (Req 3.6) | `check-data` and `run` stop before Phase A with a per-instrument report, unless `allow_gaps = true`. That flag is recorded in the manifest. |
+| Missing instrument spec or conversion pair | Refuse that instrument; refuse the run if any requested instrument is refused. |
+| `analyze()` raises at some `t` | Record `EngineError`, continue, and report the count. The run fails if errors exceed 1% of evaluations, since that indicates a systematic problem. |
+| `SimBroker` rejects an order (min volume, missing fields) | `execute_node` records SKIP with the reason, and the journal keeps it. |
+| Stale or corrupt cache entry | The key includes all inputs, so a mismatch can't hit. A corrupt file is deleted and recomputed. |
+| Hold-out overlap without `--final` | Refuse with a message naming the hold-out range. |
+| `compare` across different data ranges or fingerprints | Refuse (Req 8.5). |
+
+---
+
+## Testing Strategy
+
+The tests follow the TDD steering doc: each task is written RED first. They live at `backend/tests/test_backtest_*.py` unless noted.
+
+| Test | Covers | Kind |
+|---|---|---|
+| `test_backtest_fill_model.py` | Every row of the FillModel table, using hand-built bars: gap, same-bar, fill-bar, weekend expiry, spread side conventions, MAE/MFE | Unit (Req 4, 9.1) |
+| `test_backtest_venue_calendar.py` | Period boundaries across DST changes, for MT5 `ny_close` and Binance | Unit (Req 3.3) |
+| `test_backtest_aggregation_parity.py` | Aggregated M1 equals native HTF bars within one tick, on a committed fixture exported from MT5 and Binance | Fixture (Req 3.4) |
+| `test_backtest_as_of_view.py` | Closed-bar rules, in-progress HTF bar, window sizes | Unit (Req 2.1–2.4) |
+| `test_backtest_truncation.py` | Hypothesis picks `t` in a fixture series. `generate_signals` on data cut at `t` equals the record at `t` from the full series. Capped at `max_examples=25` because `analyze()` is slow. | Property (Req 2.6, 9.2) |
+| `test_backtest_order_intent_parity.py` | Refactored runner path and Phase A give the same `OrderIntent` for the same view; `setup_id` is stable across consecutive bars for the same entry array | Unit (Req 1.3, L2) |
+| `test_backtest_sim_broker.py` | Sizing per instrument class (USD quote, USD base, cross), rounding down, `MIN_VOLUME_OVER_RISK`, R and cost accounting | Unit (Req 5, 6.1–6.2) |
+| `test_backtest_account.py` | Drawdown anchors at 17:00 New York (including DST), exposure dict consumed by `RiskEngine.validate()` | Unit (Req 6.3, 1.4) |
+| `test_backtest_metrics.py` | Statistics on known trade lists, seeded bootstrap determinism, insufficient-evidence flag, compare refusal | Unit (Req 8) |
+| `test_backtest_golden.py` | End-to-end run on `fixtures/backtester/golden/`: two weeks of EURUSD M1 plus a native-HTF warm-up, journal equal to the committed expected file; a second run is byte-identical | Golden (Req 9.4, 9.5) |
+| `test_backtest_parity.py` | Replays the forward-test fixture and matches its trades | Fixture (Req 9.3) |
+| `test_paper_broker.py` (existing, updated) | PaperBroker behaviour on the shared FillModel, plus the clock injection | Unit (L4) |
+
+**Parity timing.** The parity fixture can only exist once the forward test has run on the shared FillModel (L4). Trades from before the switch were filled with the old optimistic rules and can't match. Task order is therefore: L4, then let the forward test accumulate trades, then export the fixture with `scripts/export_forward_test_fixture.py`, then the parity test. Until the fixture exists, the test is not written. It is never written as skipped.
+
+---
+
+## Requirement Traceability
+
+| Requirement | Design element |
+|---|---|
+| 1 Same decision code | L1, L2, `build_order_intent`, Phase B through `AgentGraph` + `RiskEngine`, `StrategyConfig` |
+| 2 No look-ahead | `compose_as_of_view`, closed-bar rule, clock injection (L5), truncation test, L3 |
+| 3 Data and aggregation | `VenueCalendar`, `aggregate`, `CandleSource`, coverage check, fingerprint, L6 |
+| 4 Fill model | `FillModel`, `KILLZONE_END` expiry, L4 |
+| 5 Costs | `InstrumentSpec`, `CommissionSpec`, R accounting, `cost_flag` |
+| 6 Sizing and account | `SimBroker` sizing, `SimAccount` |
+| 7 Run modes | `RunConfig` variants, `StudyConfig` hold-out, walk-forward, Phase A cache, two-phase parallelism |
+| 8 Reporting | `report.py`, `metrics.py`, `compare.py` |
+| 9 Self-validation | Testing Strategy table |
