@@ -22,6 +22,12 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from services.nlp.prompts.rag_reasoning import (
+    format_similar_setups_for_template,
+    normalize_similar_setup,
+    to_float,
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -193,10 +199,13 @@ class LLMService:
         reasoning as precedent (e.g. "similar setups won 80% of the time,
         averaging 3.5R"), on top of the same 3-question framework used by
         :meth:`generate_trade_reasoning`. Degrades gracefully: an AlgoRAG
-        outage or an empty result set never blocks reasoning generation —
-        ``rag_client.retrieve_with_fallback`` already absorbs AlgoRAG errors,
-        and a Claude failure here falls back to a template exactly like
-        :meth:`generate_trade_reasoning` does.
+        outage or an empty result set never blocks reasoning generation.
+        ``AlgoRAGClient.retrieve_with_fallback`` absorbs transport errors
+        itself, but *rag_client* is duck-typed, so any exception it raises
+        (or a malformed, non-dict response) is caught here too and the call
+        degrades to plain :meth:`generate_trade_reasoning`. A Claude failure
+        falls back to a template exactly like :meth:`generate_trade_reasoning`
+        does.
 
         Args:
             setup: Same setup dict accepted by :meth:`generate_trade_reasoning`.
@@ -214,9 +223,21 @@ class LLMService:
             "htf_open_bias": setup.get("htf_open_bias"),
             "narrative": self._build_setup_narrative(setup),
         }
-        rag_result = await rag_client.retrieve_with_fallback(rag_request)
-        similar_setups = rag_result.get("similar_setups", [])
-        rag_metrics = rag_result.get("rag_metrics", {})
+        try:
+            rag_result = await rag_client.retrieve_with_fallback(rag_request)
+            if not isinstance(rag_result, dict):
+                raise TypeError(
+                    f"expected a dict from retrieve_with_fallback, got {type(rag_result).__name__}"
+                )
+        except Exception as exc:
+            logger.warning(
+                "AlgoRAG retrieval failed (%s) — generating reasoning without historical context",
+                exc,
+            )
+            return await self.generate_trade_reasoning(setup)
+
+        similar_setups = rag_result.get("similar_setups") or []
+        rag_metrics = rag_result.get("rag_metrics") or {}
 
         if self._client is not None:
             try:
@@ -397,13 +418,16 @@ class LLMService:
         """
         lines = ["SIMILAR HISTORICAL SETUPS:"]
         for item in similar_setups:
-            s = item.get("setup", {})
-            similarity_pct = round(item.get("similarity_score", 0.0) * 100)
-            r_multiple = s.get("outcome_r_multiple")
+            # Real AlgoRAG results are flat (services/algorag/models.py::
+            # SimilarSetup); normalize_similar_setup also accepts the older
+            # nested {"setup": {...}, "similarity_score": ...} shape.
+            s = normalize_similar_setup(item)
+            similarity_pct = round((to_float(s.get("similarity_score")) or 0.0) * 100)
+            r_multiple = to_float(s.get("outcome_r_multiple"))
             r_label = f"{r_multiple:.1f}R" if r_multiple is not None else "N/A"
             lines.append(
-                f'- {s.get("trade_id", "?")} ({s.get("timestamp", "")}): '
-                f'"{s.get("narrative", "")}" — {s.get("outcome_result", "?")}, '
+                f'- {s.get("trade_id") or "?"} ({s.get("timestamp") or ""}): '
+                f'"{s.get("narrative") or ""}" — {s.get("outcome_result") or "?"}, '
                 f"{r_label}, {similarity_pct}% similarity"
             )
         return "\n".join(lines)
@@ -609,21 +633,20 @@ class LLMService:
     def _reason_template_with_rag(
         self, setup: dict, similar_setups: list, rag_metrics: dict
     ) -> str:
-        """Template-based reasoning (no LLM required) with a historical-context
+        """Template-based reasoning (no LLM required) with a historical-precedent
         sentence appended, so AlgoRAG's effect is visible even when Claude is
-        unavailable — not just when it's up."""
+        unavailable — not just when it's up.
+
+        The sentence comes from
+        :func:`services.nlp.prompts.rag_reasoning.format_similar_setups_for_template`
+        (the rag-enhancement task 19.1 formatter) rather than an inline copy,
+        so the wording ("Historical precedent: N similar setups with X% win
+        rate and Y.YR average outcome.") has a single owner."""
         base = self._reason_template(setup)
         instrument = setup.get("instrument", "Unknown")
 
-        if similar_setups:
-            avg_r = rag_metrics.get("avg_r_multiple_similar", 0.0)
-            win_rate = rag_metrics.get("win_rate_similar", 0.0)
-            sample_size = rag_metrics.get("sample_size", len(similar_setups))
-            historical_note = (
-                f"Historical context for {instrument}: {sample_size} similar setups found, "
-                f"{win_rate:.0%} win rate, averaging {avg_r:.1f}R."
-            )
-        else:
+        historical_note = format_similar_setups_for_template(similar_setups, rag_metrics)
+        if not historical_note:
             historical_note = f"No similar historical setups found for {instrument}."
 
         return f"{base} {historical_note}"
