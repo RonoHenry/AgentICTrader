@@ -540,21 +540,21 @@
 
 ## Phase 5 — Platform
 
-- [ ] 40. Full web dashboard rebuild with analytics and backtesting visualiser
+- [~] 40. Full web dashboard rebuild with analytics and backtesting visualiser
   - Extend frontend/ with: full analytics pages, backtesting visualiser with trade replay, performance comparison charts
   - Add backtesting visualiser: replay detected setups on historical chart with entry/exit markers
 
-- [ ] 41. React Native mobile app
+- [~] 41. React Native mobile app
   - Create mobile/ directory with React Native 0.76+, TypeScript, Expo
   - iOS and Android push notifications via FCM
   - Screens: live setups feed, setup detail, agent status, trade journal
 
-- [ ] 42. Multi-user support and onboarding flow
+- [~] 42. Multi-user support and onboarding flow
   - User onboarding: connect broker API, set risk config, import trade journal
   - Multi-user RBAC fully enforced across all services
   - Subscription billing integration via Stripe (plans: Free, Pro, Enterprise)
 
-- [ ] 43. Security audit and public beta launch
+- [~] 43. Security audit and public beta launch
   - Third-party security audit of auth, broker key storage, and agent execution paths
   - Penetration testing on all public API endpoints
   - Fix all critical and high findings before launch
