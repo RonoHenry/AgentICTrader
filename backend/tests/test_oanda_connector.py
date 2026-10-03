@@ -55,10 +55,16 @@ SAMPLE_HEARTBEAT_MSG = {
 
 
 def make_connector(**kwargs) -> OANDAConnector:
-    """Return an OANDAConnector with test credentials."""
+    """Return an OANDAConnector with test credentials.
+
+    Defaults to reconnect_on_close=False so run() returns once the mocked
+    stream is exhausted; TestCleanCloseReconnect covers the production
+    default (True).
+    """
     defaults = dict(
         account_id=FAKE_ACCOUNT_ID,
         access_token=FAKE_ACCESS_TOKEN,
+        reconnect_on_close=False,
     )
     defaults.update(kwargs)
     return OANDAConnector(**defaults)
@@ -222,7 +228,7 @@ class TestAuthorizationHeader:
 
         connect_kwargs: dict = {}
 
-        async def fake_connect(url, **kwargs):
+        def fake_connect(url, **kwargs):
             connect_kwargs.update(kwargs)
             return async_ctx_obj(ws_mock)
 
@@ -319,7 +325,7 @@ class TestReconnection:
 
         call_count = 0
 
-        async def fake_connect(url, **kwargs):
+        def fake_connect(url, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -350,7 +356,7 @@ class TestReconnection:
 
         call_count = 0
 
-        async def fake_connect(url, **kwargs):
+        def fake_connect(url, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -384,7 +390,7 @@ class TestExponentialBackoff:
 
         connector = make_connector(max_retries=5)
 
-        async def always_fail(url, **kwargs):
+        def always_fail(url, **kwargs):
             raise websockets.exceptions.ConnectionClosed(None, None)
 
         sleep_calls: list[float] = []
@@ -409,7 +415,7 @@ class TestExponentialBackoff:
         # Use a connector with many retries to force delays past 30s
         connector = make_connector(max_retries=10)
 
-        async def always_fail(url, **kwargs):
+        def always_fail(url, **kwargs):
             raise websockets.exceptions.ConnectionClosed(None, None)
 
         sleep_calls: list[float] = []
@@ -435,7 +441,7 @@ class TestExponentialBackoff:
 
         connector = make_connector(max_retries=3)
 
-        async def always_fail(url, **kwargs):
+        def always_fail(url, **kwargs):
             raise websockets.exceptions.ConnectionClosed(None, None)
 
         sleep_mock = AsyncMock()
@@ -465,7 +471,7 @@ class TestMaxRetriesExhausted:
 
         connector = make_connector(max_retries=5)
 
-        async def always_fail(url, **kwargs):
+        def always_fail(url, **kwargs):
             raise websockets.exceptions.ConnectionClosed(None, None)
 
         with patch(
@@ -484,7 +490,7 @@ class TestMaxRetriesExhausted:
 
         connect_call_count = 0
 
-        async def always_fail(url, **kwargs):
+        def always_fail(url, **kwargs):
             nonlocal connect_call_count
             connect_call_count += 1
             raise websockets.exceptions.ConnectionClosed(None, None)
@@ -497,6 +503,72 @@ class TestMaxRetriesExhausted:
                 await connector.run()
 
         assert connect_call_count == 6  # 1 initial + 5 retries
+
+
+# ===========================================================================
+# 9. Clean server close → reconnect (production default)
+# ===========================================================================
+
+class TestCleanCloseReconnect:
+    """A stream the server closes cleanly must be reopened, not abandoned."""
+
+    @pytest.mark.asyncio
+    async def test_reconnects_after_clean_close_until_stopped(self):
+        received: list[TickEvent] = []
+        connector = make_connector(reconnect_on_close=True)
+
+        async def on_tick(tick: TickEvent) -> None:
+            received.append(tick)
+            if len(received) == 3:
+                await connector.stop()
+
+        connector._on_tick = on_tick
+        connect_calls = 0
+
+        def one_message_stream(url, **kwargs):
+            nonlocal connect_calls
+            connect_calls += 1
+            ws_mock = AsyncMock()
+            ws_mock.__aiter__ = MagicMock(
+                return_value=aiter_from_list([json.dumps(SAMPLE_PRICE_MSG)])
+            )
+            return async_ctx(ws_mock)
+
+        sleep_mock = AsyncMock()
+        with patch(
+            "services.market_data.connectors.oanda.websockets.connect",
+            side_effect=one_message_stream,
+        ), patch("asyncio.sleep", sleep_mock):
+            await connector.run()
+
+        assert connect_calls == 3
+        assert len(received) == 3
+        # Two reconnects, each after the fixed delay — never a busy loop.
+        assert sleep_mock.call_args_list == [call(2), call(2)]
+
+    @pytest.mark.asyncio
+    async def test_clean_close_resets_retry_budget(self):
+        """Failures separated by clean streams must not accumulate toward max_retries."""
+        import websockets.exceptions
+
+        connector = make_connector(reconnect_on_close=True, max_retries=1)
+        outcomes = iter(["fail", "ok", "fail", "ok", "stop"])
+
+        def flaky(url, **kwargs):
+            outcome = next(outcomes)
+            if outcome == "fail":
+                raise websockets.exceptions.ConnectionClosed(None, None)
+            ws_mock = AsyncMock()
+            ws_mock.__aiter__ = MagicMock(return_value=aiter_from_list([]))
+            if outcome == "stop":
+                connector._stop_requested = True
+            return async_ctx(ws_mock)
+
+        with patch(
+            "services.market_data.connectors.oanda.websockets.connect",
+            side_effect=flaky,
+        ), patch("asyncio.sleep", new_callable=AsyncMock):
+            await connector.run()  # must not raise OANDAConnectorError
 
 
 # ===========================================================================
