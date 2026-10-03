@@ -1,13 +1,23 @@
 import os
+import subprocess
 import sys
 import pytest
 import django
 from django.conf import settings
 from typing import Generator
+
+# Add the backend directory to the Python path (before importing the backend
+# `tests` package below, so it cannot resolve to the repo-root `tests/`).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from tests.infrastructure.mock_influxdb import MockInfluxDBClient
 
-# Add the backend directory to the Python path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Without an MLflow server, MLflow's REST client retries a refused connection
+# 7 times with exponential backoff (~5 minutes per call). Tests that reach
+# http://localhost:5000 unmocked should fail fast instead. Export these
+# variables to override (e.g. when running against a real MLflow server).
+os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "0")
+os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "10")
 
 def pytest_configure():
     # Set test environment variables

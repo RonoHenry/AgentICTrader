@@ -1,123 +1,80 @@
-# Parse command line arguments
+# Run every AgentICTrader test suite (root + backend) and exit nonzero if any
+# test fails. Thin wrapper around scripts/run_all_tests.py; see README "Testing".
+#
+#   .\run_tests.ps1                    # all suites; live-service tests deselected
+#   .\run_tests.ps1 -Live              # + tests marked infrastructure; starts
+#                                      #   docker/docker-compose.test.yml first
+#   .\run_tests.ps1 -Coverage          # + per-suite coverage report (pytest-cov)
+#   .\run_tests.ps1 -Suite backend     # one suite (root, backend); repeat with commas
+#   .\run_tests.ps1 -- -x -k risk      # arguments after -- are passed to pytest
+#   .\run_tests.ps1 -DryRun            # print the pytest commands, run nothing
+#
+# -UnitOnly is accepted for compatibility: skipping live-service tests is now
+# the default.
 param(
+    [switch]$Live,
+    [switch]$Coverage,
     [switch]$UnitOnly,
-    [Parameter(ValueFromRemainingArguments=$true)]
-    $RemainingArgs
+    [switch]$DryRun,
+    [ValidateSet("root", "backend")]
+    [string[]]$Suite,
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$PytestArgs
 )
 
-# Function to check if a command exists
-function Test-Command($command) {
-    try {
-        $null = Get-Command $command -ErrorAction Stop
-        return $true
-    } catch {
-        return $false
-    }
-}
+$repoRoot = $PSScriptRoot
+Set-Location $repoRoot
 
-# Function to check if Docker container is running
-function Test-DockerContainer($containerName) {
-    try {
-        $running = docker ps --filter "name=$containerName" --format '{{.Names}}'
-        return $running -eq $containerName
-    } catch {
-        return $false
-    }
-}
-
-# Check Docker requirement
-$dockerAvailable = $false
-if (-not $UnitOnly) {
-    Write-Host "Checking Docker availability..."
-    # Check if Docker is installed
-    if (-not (Test-Command docker)) {
-        Write-Warning "Docker is not installed. Running unit tests only. For full test suite, please install Docker Desktop."
-        $UnitOnly = $true
-    } else {
-        # Check if Docker is running
-        try {
-            $null = docker info 2>&1
-            $dockerAvailable = $true
-        } catch {
-            Write-Warning "Docker is not running. Running unit tests only. For full test suite, please start Docker Desktop."
-            $UnitOnly = $true
-        }
-    }
-}
-
-if (-not $UnitOnly) {
-    # Ensure test services are running
-    Write-Host "Ensuring test services are running..."
-    docker compose -f docker/docker-compose.test.yml up -d
-
-    # Wait for services to be ready
-    $maxWait = 30
-    $waited = 0
-    while ($waited -lt $maxWait) {
-        $influxHealth = $(docker ps --filter "name=agentictrader_influxdb" --format "{{.Status}}")
-        if ($influxHealth -match "Up") {
-            break
-        }
-        Write-Host "Waiting for services to be ready..."
-        Start-Sleep -Seconds 1
-        $waited++
-    }
-
-    if ($waited -eq $maxWait) {
-        Write-Error "Timeout waiting for services to be ready"
-        exit 1
-    }
-}
-
-# Set environment variables
-$backendPath = "$(Get-Location)\backend"
-if (-not $env:PYTHONPATH) {
-    $env:PYTHONPATH = $backendPath
+# Interpreter: the active virtualenv, else .\.venv, else python on PATH.
+# (VIRTUAL_ENV is checked directly: it can be inherited without its Scripts
+# directory being first on PATH.)
+if ($env:VIRTUAL_ENV -and (Test-Path "$env:VIRTUAL_ENV\Scripts\python.exe")) {
+    $python = "$env:VIRTUAL_ENV\Scripts\python.exe"
+} elseif (Test-Path "$repoRoot\.venv\Scripts\python.exe") {
+    $python = "$repoRoot\.venv\Scripts\python.exe"
 } else {
-    $paths = $env:PYTHONPATH -split ";"
-    if ($paths -notcontains $backendPath) {
-        $env:PYTHONPATH = "$backendPath;$env:PYTHONPATH"
-    }
-}
-$env:DJANGO_SETTINGS_MODULE = "agentictrader.settings_test"
-
-Write-Host "Activating virtual environment..."
-try {
-    & "$(Get-Location)\agentic.venv\Scripts\Activate.ps1"
-} catch {
-    Write-Error "Failed to activate virtual environment. Please ensure it exists and is properly set up."
-    exit 1
+    $python = "python"
 }
 
-# Run tests with coverage
-Write-Host "Running tests..."
-try {
-    # Check if pytest-cov is installed
-    if (-not (python -c "import pytest_cov" 2>$null)) {
-        Write-Host "Installing pytest-cov for coverage reporting..."
-        pip install pytest-cov
-    }
-    
-    # Build test command
-    $testCmd = "pytest --cov=backend --cov-report=term-missing"
-    if ($UnitOnly) {
-        Write-Host "Running unit tests only (no Docker required)..."
-        $testCmd += ' -k "not (client or bucket or connection or retention or influxdb)"'
-    }
-    if ($RemainingArgs) {
-        $testCmd += " $RemainingArgs"
-    }
-    
-    # Run tests
-    Invoke-Expression $testCmd
-    
+if ($UnitOnly -and $Live) {
+    Write-Error "-UnitOnly and -Live are mutually exclusive"
+    exit 4
+}
+
+$runnerArgs = @()
+foreach ($s in $Suite) { $runnerArgs += @("--suite", $s) }
+if ($DryRun) { $runnerArgs += "--dry-run" }
+if ($Live) { $runnerArgs += "--live" }
+
+$extra = @()
+if ($Coverage) {
+    & $python -c "import pytest_cov" 2>$null
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "Tests failed with exit code $LASTEXITCODE"
-        exit $LASTEXITCODE
+        Write-Error "-Coverage needs pytest-cov (pip install pytest-cov)"
+        exit 4
     }
-} catch {
-    Write-Error "Error running tests: $_"
-    exit 1
+    $extra += @("--cov", "--cov-report=term-missing")
+}
+if ($PytestArgs) { $extra += $PytestArgs }
+
+if ($Live -and -not $DryRun) {
+    # Live tests need the test services (InfluxDB) from docker-compose.test.yml.
+    # Qdrant / MLflow / Kafka-backed tests additionally need those services running.
+    $dockerUp = $false
+    if (Get-Command docker -ErrorAction SilentlyContinue) {
+        docker info *> $null
+        $dockerUp = ($LASTEXITCODE -eq 0)
+    }
+    if ($dockerUp) {
+        Write-Host "Starting test services (docker/docker-compose.test.yml)..."
+        docker compose -f docker/docker-compose.test.yml up -d --wait
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Test services failed to start; live tests will fail."
+        }
+    } else {
+        Write-Warning "Docker is not available; live tests that need it will fail."
+    }
 }
 
-Write-Host "Tests completed successfully!" -ForegroundColor Green
+& $python scripts/run_all_tests.py @runnerArgs -- @extra
+exit $LASTEXITCODE

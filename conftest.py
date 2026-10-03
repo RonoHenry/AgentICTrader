@@ -18,6 +18,13 @@ import os
 # without a real MLflow server. See memory: test_suite_isolation_bug.md.
 os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
 
+# Without an MLflow server, MLflow's REST client retries a refused connection
+# 7 times with exponential backoff (~5 minutes per call). Tests that reach
+# http://localhost:5000 unmocked should fail fast instead. Export these
+# variables to override (e.g. when running against a real MLflow server).
+os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "0")
+os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "10")
+
 import pytest
 import numpy as np
 from datetime import datetime, timezone

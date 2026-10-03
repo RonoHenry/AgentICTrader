@@ -86,16 +86,51 @@ its `manage.py` has never been implemented.
 
 ## 🧪 Testing
 
-Run the test suite:
+Run every test suite from the repo root with one command. It exits nonzero if
+any test fails or any test module fails to import:
 ```bash
-cd backend
-pytest
+python scripts/run_all_tests.py          # or ./run_tests.sh, or .\run_tests.ps1
 ```
 
-For test coverage:
+There are two pytest suites, each with its own config. The runner runs them as
+separate pytest processes, prints a per-suite summary, and returns one exit code:
+
+| Suite | Config | Covers | Run it alone |
+|---|---|---|---|
+| root | `pytest.ini` | `tests/ ml/ agent/ services/ nlp/ scripts/rag/tests/` | `pytest` (from the repo root) |
+| backend | `backend/pytest.ini` (Django) | `backend/tests/` | `cd backend && pytest` |
+
+They can't share one process. Both `tests/` and `backend/tests/` are packages
+named `tests`, the suites set up Django with different settings, and backend
+test modules rewrite `sys.path` at import time.
+
+**Live-service tests are deselected by default.** Tests that need Docker,
+InfluxDB, Qdrant, an MLflow server or a live broker/data feed are marked
+`infrastructure`, and both configs pass `-m "not infrastructure"`. Some backend
+files get the marker automatically from `backend/tests/conftest.py`. To include
+them:
 ```bash
-pytest --cov=.
+python scripts/run_all_tests.py --live   # passes -m "" to both suites
+./run_tests.sh --live                    # also starts docker/docker-compose.test.yml
+pytest -m ""                             # one suite, everything
 ```
+
+Other options:
+```bash
+python scripts/run_all_tests.py --suite backend      # one suite (repeatable)
+python scripts/run_all_tests.py -- -x -k risk        # args after -- go to every pytest run
+python scripts/run_all_tests.py --junit-dir reports  # keep root.xml / backend.xml
+./run_tests.sh --coverage                            # per-suite coverage report
+```
+Pytest paths passed after `--` are resolved relative to each suite's own
+directory (the repo root for `root`, `backend/` for `backend`). Use `--suite` to
+pick the matching suite.
+
+`backend/tests/test_live_validation.py` holds the red tests for task 39 (live
+validation). They fail until `scripts/live_validation_*.py` and
+`scripts/deploy_live_validation.py` exist, and they are deliberately left in the
+default run. To leave them out of a run, add
+`-- --deselect tests/test_live_validation.py`.
 
 ## 📊 Project Structure
 

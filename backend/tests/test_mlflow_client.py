@@ -16,8 +16,14 @@ from mlflow.exceptions import MlflowException
 
 @pytest.fixture
 def mock_mlflow_client():
-    """Mock MLflow client for testing."""
-    with patch('mlflow.tracking.MlflowClient') as mock_client:
+    """Mock MLflow client for testing.
+
+    Patched where it is looked up: ml/tracking/mlflow_client.py does
+    ``from mlflow.tracking import MlflowClient`` at import time, so patching
+    ``mlflow.tracking.MlflowClient`` misses it whenever an earlier test has
+    already imported that module (the test then hit a real localhost:5000).
+    """
+    with patch('ml.tracking.mlflow_client.MlflowClient') as mock_client:
         yield mock_client
 
 
