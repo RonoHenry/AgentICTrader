@@ -232,6 +232,25 @@ class RiskEngine:
         except Exception as exc:
             logger.error("increment_open_trades: failed for user_id=%s: %s", user_id, exc)
 
+    def decrement_open_trades(self, user_id: str) -> None:
+        """Decrement open_trades by 1 (floored at 0) when a trade this engine
+        approved closes or a pending order is cancelled/expires.
+
+        The counterpart to increment_open_trades — without it the concurrent
+        trades gate only ever counts up, and after MAX_CONCURRENT_TRADES
+        fills every later trade is rejected forever. Never raises, for the
+        same reason as increment_open_trades.
+        """
+        if self._redis is None:
+            return
+        try:
+            exposure = self._get_exposure(user_id)
+            exposure["open_trades"] = max(0, int(exposure.get("open_trades", 0)) - 1)
+            key = _EXPOSURE_KEY.format(user_id=user_id)
+            self._redis.set(key, json.dumps(exposure))
+        except Exception as exc:
+            logger.error("decrement_open_trades: failed for user_id=%s: %s", user_id, exc)
+
     def compute_position_size(self, equity: float, sl_distance_pips: float) -> float:
         """Compute position size so that risk == equity * RISK_PER_TRADE.
 

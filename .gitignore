@@ -76,6 +76,10 @@ data/*.csv
 data/*.json
 *.dat
 
+# Paper-trader runtime state (docker/paper-trader writes these to data/)
+data/heartbeat
+data/*.err
+
 # Test coverage
 .coverage
 coverage.xml

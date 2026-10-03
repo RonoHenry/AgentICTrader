@@ -14,6 +14,7 @@ from typing import Any
 from agent.brokers.base import BrokerClient
 from agent.brokers.mt5 import MT5BrokerAdapter
 from agent.brokers.oanda import OANDABrokerAdapter
+from agent.brokers.paper import PaperBrokerAdapter
 from agent.brokers.pepperstone import PepperstoneBrokerClient
 
 __all__ = ["BROKER_REGISTRY", "UnsupportedBrokerError", "create_broker_client"]
@@ -29,6 +30,7 @@ BROKER_REGISTRY: dict[str, type[BrokerClient]] = {
     "oanda": OANDABrokerAdapter,
     "pepperstone": PepperstoneBrokerClient,
     "mt5": MT5BrokerAdapter,
+    "paper": PaperBrokerAdapter,
 }
 
 

@@ -664,6 +664,54 @@ class TestIncrementOpenTrades:
         engine.increment_open_trades("user1")  # must not raise
 
 
+class TestDecrementOpenTrades:
+    """decrement_open_trades frees a concurrent-trades slot when a trade closes;
+    without it the MAX_CONCURRENT_TRADES gate only ever counts up.
+
+    **Validates: Requirements FR-7**
+    """
+
+    def test_decrements_open_trades_by_one(self, fake_redis):
+        seed_exposure(fake_redis, "user1", open_trades=2, equity=10000.0)
+        engine = RiskEngine(redis_client=fake_redis)
+
+        engine.decrement_open_trades("user1")
+
+        assert engine.get_exposure("user1").open_trades == 1
+
+    def test_floors_at_zero(self, fake_redis):
+        seed_exposure(fake_redis, "user1", open_trades=0, equity=10000.0)
+        engine = RiskEngine(redis_client=fake_redis)
+
+        engine.decrement_open_trades("user1")
+
+        assert engine.get_exposure("user1").open_trades == 0
+
+    def test_frees_the_concurrent_trades_gate(self, client_with_clean_exposure):
+        client, redis_client = client_with_clean_exposure
+        seed_exposure(redis_client, "user1", open_trades=0, equity=10000.0)
+        engine = RiskEngine(redis_client=redis_client)
+
+        for _ in range(MAX_CONCURRENT_TRADES):
+            engine.increment_open_trades("user1")
+        engine.decrement_open_trades("user1")
+
+        response = client.post("/validate", json={
+            "user_id": "user1",
+            "instrument": "EURUSD",
+            "confidence": 0.80,
+            "sl_distance_pips": 20.0,
+        })
+
+        assert response.status_code == 200
+        assert response.json()["approved"] is True
+
+    def test_does_not_raise_when_redis_is_none(self):
+        engine = RiskEngine(redis_client=None)
+
+        engine.decrement_open_trades("user1")  # must not raise
+
+
 # ---------------------------------------------------------------------------
 # Unit Tests — GET /status endpoint
 # ---------------------------------------------------------------------------

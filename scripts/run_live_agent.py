@@ -49,9 +49,29 @@ qdrant) running via docker-compose and a real ANTHROPIC_API_KEY in .env;
 both clients degrade to a neutral result rather than failing the run if
 those aren't up.
 
+--feed binance swaps the candle source for Binance spot klines
+(services/market_data/binance.py) so the loop can run on 24/7 crypto when
+FX is closed — the MT5 demo server lists no crypto CFDs, and MT5 isn't
+touched at all with that feed.
+
+--broker picks what an approved setup turns into: mt5 (real demo orders,
+the default for --feed mt5), paper (agent/brokers/paper.py simulates
+fills against live M1 candles and scores each trade in R — the default
+for --feed binance), or none (HUMAN_IN_LOOP: the alert is printed, no
+order). --loop re-evaluates at every entry-timeframe bar close until
+--duration minutes pass or Ctrl+C, then prints the paper-trade report;
+paper trades persist to --paper-state so a forward test survives restarts.
+
+For unattended runs (docker/paper-trader): --store-candles upserts every
+fetched candle into TimescaleDB so the candles table stays current,
+--heartbeat touches a file after each pass with fresh data (the container
+health check), a feed outage ends the pass early instead of retrying
+every request, and paper trades catch up across downtime from their
+last processed M1 bar.
+
 Usage:
     OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python scripts/run_live_agent.py \\
-        [--timeframe M15] [--instruments EURUSD,GBPUSD,USDJPY] [--min-rr 3.0]
+        [--feed mt5|binance] [--timeframe M15] [--instruments EURUSD,GBPUSD,USDJPY] [--min-rr 3.0]
 """
 from __future__ import annotations
 
@@ -65,37 +85,53 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 import argparse
 import json
 import logging
+import signal
 import sys
+import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Callable
 
 import fakeredis
-from decouple import Config, RepositoryEnv
+from decouple import AutoConfig
 
 sys.stdout.reconfigure(encoding="utf-8")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:  # Linux/Docker: only --feed binance is available
+    mt5 = None
 
 from agent.algorag_client import AlgoRAGSyncClient
 from agent.brokers.factory import create_broker_client
+from agent.brokers.paper import PaperBrokerAdapter
 from agent.graph import AgentGraph
 from agent.visual_model_client import VisualModelClient
 from liquidity_engine import LiquidityMappingEngine
 from liquidity_engine.models import BiasDirection, Candle, SetupGrade, Timeframe
 from ml.features.session_features import TimeWindowClassifier
+from services.market_data.binance import BinanceKlineClient, BinanceUnavailable
+from services.market_data.candle_store import CandleStore
+from services.market_data.mt5_clock import MT5ServerClock, NY_CLOSE
 from services.risk_engine.main import RiskEngine
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("run_live_agent")
 
-config = Config(RepositoryEnv(str(REPO_ROOT / ".env")))
+# Environment variables win; the repo .env is the fallback (absent in Docker).
+config = AutoConfig(search_path=str(REPO_ROOT))
+# MT5 bar times are broker server time, not UTC — see services/market_data/mt5_clock.py.
+_SERVER_CLOCK = MT5ServerClock(config("MT5_SERVER_TIMEZONE", default=NY_CLOSE))
 
-DEFAULT_INSTRUMENTS = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD"]
+DEFAULT_INSTRUMENTS = {
+    "mt5": ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD"],
+    "binance": ["BTCUSDT", "ETHUSDT"],
+}
 # D1/W1 are always pulled (LiquidityMappingEngine hard-requires them). The
 # full intraday HTF stack (H12/H8/H6/H4/H3) is pulled too as bias/CRT-phase
 # context — HTFBiasClassifier computes a bias for every timeframe it's
@@ -109,7 +145,7 @@ DEFAULT_INSTRUMENTS = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD"]
 CONTEXT_TIMEFRAMES = (Timeframe.H12, Timeframe.H8, Timeframe.H6, Timeframe.H4, Timeframe.H3)
 ENTRY_TIMEFRAME = Timeframe.M15
 _ENTRY_TIMEFRAME_CHOICES = (Timeframe.M1, Timeframe.M3, Timeframe.M5, Timeframe.M15)
-_MT5_TIMEFRAME = {
+_MT5_TIMEFRAME = {} if mt5 is None else {
     Timeframe.M1: mt5.TIMEFRAME_M1,
     Timeframe.M3: mt5.TIMEFRAME_M3,
     Timeframe.M5: mt5.TIMEFRAME_M5,
@@ -147,16 +183,20 @@ _GRADE_TO_CONFIDENCE = {
 # smoke test, instead of the several-standard-lots a real account equity
 # would compute to given the current unit mismatch.
 _DEMO_EQUITY = 200.0
+_USER_ID = "demo-runner"
+_ENTRY_TF_SECONDS = {Timeframe.M1: 60, Timeframe.M3: 180, Timeframe.M5: 300, Timeframe.M15: 900}
+_PAPER_STATE = REPO_ROOT / "data" / "paper_trades.json"
 
-# services/visual_model and services/algorag are read from the host machine
-# here (this script isn't itself containerized) — docker-compose publishes
-# both to localhost, not the compose-network hostnames VisualModelClient/
-# AlgoRAGSyncClient default to ("visual-model"/"algorag"), which only
-# resolve from inside the compose network. Both clients degrade gracefully
-# to a neutral result if these aren't running, so it's always safe to wire
-# them in — no "is docker up" check needed.
-_VISUAL_MODEL_URL = "http://localhost:8005"
-_ALGORAG_URL = "http://localhost:8003"
+# services/visual_model and services/algorag: docker-compose publishes both
+# to localhost for a host-run script; inside the compose network (the
+# paper-trader container) the env vars point at the service names instead.
+# Both clients degrade gracefully to a neutral result if these aren't
+# running, so it's always safe to wire them in.
+_VISUAL_MODEL_URL = config("VISUAL_MODEL_URL", default="http://localhost:8005")
+_ALGORAG_URL = config("ALGORAG_URL", default="http://localhost:8003")
+# Feed errors that mean "the feed is down", not "this symbol failed" — the
+# rest of the pass is skipped rather than retried instrument by instrument.
+_FEED_DOWN = (BinanceUnavailable,)
 
 
 class _InMemoryJournal:
@@ -181,7 +221,7 @@ def _fetch_candles(symbol: str, tf: Timeframe, instrument: str) -> list[Candle]:
         raise RuntimeError(f"No {tf.value} candles returned for {symbol}: {mt5.last_error()}")
     return [
         Candle(
-            timestamp=datetime.fromtimestamp(int(r["time"]), tz=timezone.utc),
+            timestamp=_SERVER_CLOCK.to_utc(r["time"]),
             open=float(r["open"]),
             high=float(r["high"]),
             low=float(r["low"]),
@@ -192,6 +232,49 @@ def _fetch_candles(symbol: str, tf: Timeframe, instrument: str) -> list[Candle]:
         )
         for r in rates
     ]
+
+
+def _fetch_binance_candles(client: BinanceKlineClient, instrument: str, tf: Timeframe) -> list[Candle]:
+    klines = client.latest(instrument, tf.value, _CANDLE_COUNT[tf])
+    if not klines:
+        raise RuntimeError(f"No {tf.value} candles returned for {instrument} from Binance")
+    return [
+        Candle(
+            timestamp=k.open_time,
+            open=float(k.open),
+            high=float(k.high),
+            low=float(k.low),
+            close=float(k.close),
+            volume=k.trades,
+            timeframe=tf,
+            instrument=instrument,
+        )
+        for k in klines
+    ]
+
+
+def _binance_m1_range(client: BinanceKlineClient, instrument: str, start: datetime, end: datetime) -> list[Candle]:
+    return [
+        Candle(
+            timestamp=k.open_time,
+            open=float(k.open),
+            high=float(k.high),
+            low=float(k.low),
+            close=float(k.close),
+            volume=k.trades,
+            timeframe=Timeframe.M1,
+            instrument=instrument,
+        )
+        for page in client.iter_range(instrument, "M1", start, end)
+        for k in page
+    ]
+
+
+def _console_alert(payload: dict, _token) -> bool:
+    """fcm_sender stand-in for --feed binance: print the alert notify_node
+    would push, so the HUMAN_IN_LOOP path is visible end to end."""
+    print("\n[ALERT] " + json.dumps(payload, indent=2, default=str))
+    return True
 
 
 # Standard Deviation projection levels used for targets (see
@@ -275,9 +358,56 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--feed",
+        default="mt5",
+        choices=sorted(DEFAULT_INSTRUMENTS),
+        help="Candle source: the local MT5 terminal, or Binance spot crypto (24/7). Default: %(default)s.",
+    )
+    parser.add_argument(
+        "--broker",
+        choices=("mt5", "paper", "none"),
+        default=None,
+        help="What an approved setup becomes: mt5 demo orders, paper-simulated fills, or none "
+        "(HUMAN_IN_LOOP console alert). Default: mt5 for --feed mt5, paper for --feed binance.",
+    )
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="Re-evaluate at every entry-timeframe bar close instead of a single pass.",
+    )
+    parser.add_argument(
+        "--duration",
+        type=float,
+        default=None,
+        help="With --loop: stop after this many minutes (default: run until Ctrl+C).",
+    )
+    parser.add_argument(
+        "--paper-state",
+        default=str(_PAPER_STATE),
+        help="JSON file paper trades persist to (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--store-candles",
+        action="store_true",
+        help="Upsert every fetched candle into TimescaleDB (TIMESCALE_URL) so the candles table stays current.",
+    )
+    parser.add_argument(
+        "--heartbeat",
+        default=None,
+        help="File to touch after each pass that fetched fresh data (container health check).",
+    )
+    parser.add_argument(
+        "--paper-fee",
+        type=float,
+        default=None,
+        help="Paper fee rate per side, for net R (default: 0.001 = Binance spot for --feed binance, else 0).",
+    )
+    parser.add_argument(
         "--instruments",
-        default=",".join(DEFAULT_INSTRUMENTS),
-        help="Comma-separated instrument list to evaluate in one pass (default: %(default)s).",
+        default=None,
+        help="Comma-separated instrument list to evaluate in one pass (default per feed: "
+        + "; ".join(f"{feed}: {','.join(syms)}" for feed, syms in DEFAULT_INSTRUMENTS.items())
+        + ").",
     )
     parser.add_argument(
         "--min-rr",
@@ -291,33 +421,34 @@ def _parse_args() -> argparse.Namespace:
 def _process_instrument(
     instrument: str,
     entry_tf: Timeframe,
-    symbol_suffix: str,
+    fetch: Callable[[Timeframe], list[Candle]],
     graph: AgentGraph,
     min_rr: float,
+    mode: str,
+    verbose: bool = True,
 ) -> dict:
     """Fetch, grade, and (if warranted) trade one instrument. Returns a
     summary dict for the end-of-run table — never raises for a NO_TRADE
     outcome, only for real fetch/connectivity failures."""
-    mt5_symbol = f"{instrument}{symbol_suffix}"
-    mt5.symbol_select(mt5_symbol, True)
-
     context_tf_labels = "/".join(tf.value for tf in CONTEXT_TIMEFRAMES)
-    logger.info("Fetching D1/W1/%s/%s candles for %s...", context_tf_labels, entry_tf.value, mt5_symbol)
+    logger.info("Fetching D1/W1/%s/%s candles for %s...", context_tf_labels, entry_tf.value, instrument)
     candles_by_tf = {
-        Timeframe.D1: _fetch_candles(mt5_symbol, Timeframe.D1, instrument),
-        Timeframe.W1: _fetch_candles(mt5_symbol, Timeframe.W1, instrument),
-        **{tf: _fetch_candles(mt5_symbol, tf, instrument) for tf in CONTEXT_TIMEFRAMES},
-        entry_tf: _fetch_candles(mt5_symbol, entry_tf, instrument),
+        Timeframe.D1: fetch(Timeframe.D1),
+        Timeframe.W1: fetch(Timeframe.W1),
+        **{tf: fetch(tf) for tf in CONTEXT_TIMEFRAMES},
+        entry_tf: fetch(entry_tf),
     }
 
     now = datetime.now(tz=timezone.utc)
     liquidity_map = LiquidityMappingEngine().analyze(candles_by_tf, instrument, now)
-    print("\n" + liquidity_map.to_agent_context() + "\n")
+    if verbose:
+        print("\n" + liquidity_map.to_agent_context() + "\n")
 
     setup_grade = liquidity_map.setup_grade
     if setup_grade is None or setup_grade.grade == SetupGrade.NO_TRADE:
         reason = setup_grade.grade_reason if setup_grade else "no grade computed"
-        print(f"[{instrument}] No valid setup right now — {reason}")
+        if verbose:
+            print(f"[{instrument}] No valid setup right now — {reason}")
         return {"instrument": instrument, "grade": "NO_TRADE", "decision": None, "trade_id": None}
 
     d1_bias = liquidity_map.htf_bias[Timeframe.D1.value]
@@ -359,7 +490,7 @@ def _process_instrument(
         "detected_at": now.isoformat(),
         "regime": f"TRENDING_{d1_bias.direction.value}",
         "patterns": _build_patterns(liquidity_map),
-        "mode": "AUTONOMOUS",
+        "mode": mode,
         "trade_plan": {
             "entry": entry,
             "stop_loss": stop_loss,
@@ -383,7 +514,7 @@ def _process_instrument(
         f"  take_profit_2={take_profit_2}  r_ratio={r_ratio:.2f}"
     )
     print(f"  time_window={time_features.time_window} (killzone={time_features.is_killzone})")
-    print(f"[{instrument}] Handing off to AgentGraph (mode=AUTONOMOUS)...\n")
+    print(f"[{instrument}] Handing off to AgentGraph (mode={mode})...\n")
 
     final_state = graph.run(message)
 
@@ -399,73 +530,247 @@ def _process_instrument(
     }
 
 
+def _stop_on_sigterm(_signum, _frame) -> None:
+    # `docker stop` sends SIGTERM, which Python ignores as a container's PID 1:
+    # end the loop the same way Ctrl+C does, so the paper report still prints.
+    raise KeyboardInterrupt
+
+
 def main() -> None:
     args = _parse_args()
+    signal.signal(signal.SIGTERM, _stop_on_sigterm)
     entry_tf = Timeframe(args.timeframe)
-    instruments = [s.strip().upper() for s in args.instruments.split(",") if s.strip()]
+    instruments = (
+        [s.strip().upper() for s in args.instruments.split(",") if s.strip()]
+        if args.instruments
+        else DEFAULT_INSTRUMENTS[args.feed]
+    )
+    broker = args.broker or ("mt5" if args.feed == "mt5" else "paper")
+    if args.feed == "binance" and broker == "mt5":
+        raise SystemExit("--broker mt5 can't trade Binance symbols — use --broker paper or none")
 
-    symbol_suffix = config("MT5_SYMBOL_SUFFIX", default="")
-    mt5_path = config("MT5_PATH", default="") or None
-    init_kwargs = {
-        "login": config("MT5_LOGIN", cast=int),
-        "password": config("MT5_PASSWORD"),
-        "server": config("MT5_SERVER"),
-    }
-    if mt5_path:
-        init_kwargs["path"] = mt5_path
+    if args.feed == "mt5" and mt5 is None:
+        raise SystemExit("MetaTrader5 isn't installed here (Windows only) — use --feed binance")
 
-    logger.info("Connecting to MT5...")
-    if not mt5.initialize(**init_kwargs):
-        code, desc = mt5.last_error()
-        raise RuntimeError(f"MT5 initialize failed ({code}): {desc}")
+    if args.feed == "binance":
+        client = BinanceKlineClient()
+        fetcher = lambda instrument: (lambda tf: _fetch_binance_candles(client, instrument, tf))
+        fetch_m1_range = lambda instrument, start, end: _binance_m1_range(client, instrument, start, end)
+    else:
+        fetcher, fetch_m1_range = _connect_mt5(instruments)
+
+    store = None
+    if args.store_candles:
+        timescale_url = config("TIMESCALE_URL", default="")
+        if not timescale_url:
+            raise SystemExit("--store-candles needs TIMESCALE_URL")
+        store = CandleStore(timescale_url, source=args.feed)
 
     redis_client = fakeredis.FakeRedis(decode_responses=True)
-    redis_client.set(
-        "risk:exposure:demo-runner",
-        json.dumps({"daily_dd_pct": 0.0, "weekly_dd_pct": 0.0, "open_trades": 0, "equity": _DEMO_EQUITY}),
-    )
+    risk_engine = RiskEngine(redis_client)
 
-    broker_client = create_broker_client(
-        "mt5",
-        login=init_kwargs["login"],
-        password=init_kwargs["password"],
-        server=init_kwargs["server"],
-        path=mt5_path,
-        symbol_suffix=symbol_suffix,
+    paper = None
+    fcm_sender, mode = None, "AUTONOMOUS"
+    if broker == "mt5":
+        broker_client = _mt5_broker_client()
+    elif broker == "paper":
+        fee = args.paper_fee if args.paper_fee is not None else (0.001 if args.feed == "binance" else 0.0)
+        # Free the risk engine's concurrent-trades slot whenever a paper
+        # trade closes or a pending order expires.
+        paper = PaperBrokerAdapter(
+            args.paper_state, fee_rate=fee, on_close=lambda _trade: risk_engine.decrement_open_trades(_USER_ID)
+        )
+        broker_client = paper
+    else:
+        broker_client, fcm_sender, mode = None, _console_alert, "HUMAN_IN_LOOP"
+
+    # Paper trades still active from an earlier run count against the limit.
+    open_trades = sum(1 for t in paper.trades() if t["status"] in ("PENDING", "OPEN")) if paper else 0
+    redis_client.set(
+        f"risk:exposure:{_USER_ID}",
+        json.dumps({"daily_dd_pct": 0.0, "weekly_dd_pct": 0.0, "open_trades": open_trades, "equity": _DEMO_EQUITY}),
     )
 
     graph = AgentGraph(
         redis_client=redis_client,
-        risk_engine=RiskEngine(redis_client),
-        fcm_sender=None,
+        risk_engine=risk_engine,
+        fcm_sender=fcm_sender,
         broker_client=broker_client,
         trade_journal_collection=_InMemoryJournal(),
-        user_id="demo-runner",
+        user_id=_USER_ID,
         visual_model_client=VisualModelClient(base_url=_VISUAL_MODEL_URL),
         algorag_client=AlgoRAGSyncClient(base_url=_ALGORAG_URL),
     )
 
     print(
-        f"Evaluating {len(instruments)} instrument(s) on {entry_tf.value} "
-        f"(min R:R {args.min_rr}): {', '.join(instruments)}\n"
+        f"Evaluating {len(instruments)} instrument(s) from {args.feed} on {entry_tf.value} "
+        f"(broker {broker}, mode {mode}, min R:R {args.min_rr}): {', '.join(instruments)}\n"
     )
 
-    results = []
-    for instrument in instruments:
-        try:
-            results.append(
-                _process_instrument(instrument, entry_tf, symbol_suffix, graph, args.min_rr)
-            )
-        except Exception as exc:
-            logger.error("[%s] failed: %s", instrument, exc)
-            results.append({"instrument": instrument, "grade": "ERROR", "decision": str(exc), "trade_id": None})
+    # Last M1 bar each instrument's paper trades were advanced through.
+    paper_synced: dict[str, datetime] = {}
 
-    mt5.shutdown()
+    def run_pass() -> list[dict]:
+        results = []
+        fetched: list[Candle] = []
+        for n, instrument in enumerate(instruments):
+            try:
+                base_fetch = fetcher(instrument)
 
+                def fetch(tf: Timeframe) -> list[Candle]:
+                    candles = base_fetch(tf)
+                    fetched.extend(candles)
+                    return candles
+
+                if paper is not None:
+                    m1 = fetch(Timeframe.M1)
+                    active = paper.active_trade(instrument)
+                    if active is not None and m1:
+                        # After downtime longer than the M1 window, replay the
+                        # missed bars so no fill/stop/target is skipped.
+                        synced = paper_synced.get(instrument) or datetime.fromisoformat(active["placed_at"])
+                        if synced < m1[0].timestamp:
+                            logger.info("[%s] catching paper trade up from %s", instrument, synced)
+                            missed = fetch_m1_range(instrument, synced, m1[0].timestamp)
+                            fetched.extend(missed)
+                            m1 = missed + m1
+                    for event in paper.update(instrument, m1):
+                        _print_paper_event(event)
+                    if m1:
+                        paper_synced[instrument] = m1[-1].timestamp
+                    active = paper.active_trade(instrument)
+                    if active is not None:
+                        results.append({"instrument": instrument, "grade": "-",
+                                        "decision": f"IN TRADE ({active['status']})", "trade_id": active["trade_id"]})
+                        continue
+                results.append(
+                    _process_instrument(instrument, entry_tf, fetch, graph, args.min_rr, mode, verbose=not args.loop)
+                )
+            except _FEED_DOWN as exc:
+                logger.error("Feed unavailable (%s) — skipping the rest of this pass", exc)
+                results.extend(
+                    {"instrument": i, "grade": "ERROR", "decision": "feed unavailable", "trade_id": None}
+                    for i in instruments[n:]
+                )
+                break
+            except Exception as exc:
+                logger.error("[%s] failed: %s", instrument, exc)
+                results.append({"instrument": instrument, "grade": "ERROR", "decision": str(exc), "trade_id": None})
+
+        if store is not None:
+            store.write(fetched)
+        if args.heartbeat and any(r["grade"] != "ERROR" for r in results):
+            Path(args.heartbeat).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.heartbeat).write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+        return results
+
+    try:
+        if not args.loop:
+            _print_summary(run_pass())
+        else:
+            deadline = time.monotonic() + args.duration * 60 if args.duration else None
+            period = _ENTRY_TF_SECONDS[entry_tf]
+            while True:
+                results = run_pass()
+                print(
+                    f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S} UTC  "
+                    + "  ".join(f"{r['instrument']}={r['grade']}/{r['decision']}" for r in results),
+                    flush=True,
+                )
+                # Next pass just after the next entry-timeframe bar closes.
+                wait = period - time.time() % period + 5
+                if deadline is not None and time.monotonic() + wait > deadline:
+                    break
+                time.sleep(wait)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    finally:
+        if args.feed == "mt5" and mt5 is not None:
+            mt5.shutdown()
+        if paper is not None:
+            print("\n=== Paper trades =============================================")
+            print(paper.report())
+            print(f"(saved to {args.paper_state})")
+
+
+def _print_summary(results: list[dict]) -> None:
     print("\n=== Summary ==================================================")
     print(f"{'instrument':<10} {'grade':<10} {'decision':<25} trade_id")
     for r in results:
         print(f"{r['instrument']:<10} {r['grade']:<10} {str(r['decision']):<25} {r['trade_id'] or ''}")
+
+
+def _print_paper_event(event: dict) -> None:
+    line = (
+        f"[{event['instrument']}] PAPER {event['event']}: {event['direction']} entry {event['entry']} "
+        f"stop {event['stop_loss']} target {event['take_profit']}"
+    )
+    if event["status"] == "CLOSED" and event["gross_r"] is not None:
+        line += f" -> {event['gross_r']:+.2f}R gross / {event['net_r']:+.2f}R net"
+    print(line, flush=True)
+
+
+def _mt5_credentials() -> dict:
+    credentials = {
+        "login": config("MT5_LOGIN", cast=int),
+        "password": config("MT5_PASSWORD"),
+        "server": config("MT5_SERVER"),
+    }
+    mt5_path = config("MT5_PATH", default="") or None
+    if mt5_path:
+        credentials["path"] = mt5_path
+    return credentials
+
+
+def _mt5_broker_client():
+    return create_broker_client(
+        "mt5",
+        **{"path": None, **_mt5_credentials()},
+        symbol_suffix=config("MT5_SYMBOL_SUFFIX", default=""),
+    )
+
+
+def _connect_mt5(instruments: list[str]):
+    """Attach to the local MT5 terminal; return (per-instrument candle
+    fetcher factory, M1 range fetcher for paper catch-up)."""
+    symbol_suffix = config("MT5_SYMBOL_SUFFIX", default="")
+
+    logger.info("Connecting to MT5...")
+    if not mt5.initialize(**_mt5_credentials()):
+        code, desc = mt5.last_error()
+        raise RuntimeError(f"MT5 initialize failed ({code}): {desc}")
+
+    # Fail fast on a wrong MT5_SERVER_TIMEZONE rather than grade setups off
+    # candles shifted by hours (sessions/killzones/daily open all depend on it).
+    ticks = [mt5.symbol_info_tick(f"{i}{symbol_suffix}") for i in instruments if mt5.symbol_select(f"{i}{symbol_suffix}", True)]
+    _SERVER_CLOCK.check([t.time for t in ticks if t is not None and t.time], datetime.now(timezone.utc))
+
+    def fetcher(instrument: str) -> Callable[[Timeframe], list[Candle]]:
+        symbol = f"{instrument}{symbol_suffix}"
+        mt5.symbol_select(symbol, True)
+        return lambda tf: _fetch_candles(symbol, tf, instrument)
+
+    def m1_range(instrument: str, start: datetime, end: datetime) -> list[Candle]:
+        symbol = f"{instrument}{symbol_suffix}"
+        candles: list[Candle] = []
+        cursor = start
+        while cursor < end:
+            chunk_end = min(cursor + timedelta(days=20), end)
+            rates = mt5.copy_rates_range(
+                symbol, mt5.TIMEFRAME_M1, _SERVER_CLOCK.to_server(cursor), _SERVER_CLOCK.to_server(chunk_end)
+            )
+            for r in rates if rates is not None else []:
+                ts = _SERVER_CLOCK.to_utc(r["time"])
+                if cursor <= ts < chunk_end:
+                    candles.append(Candle(
+                        timestamp=ts, open=float(r["open"]), high=float(r["high"]), low=float(r["low"]),
+                        close=float(r["close"]), volume=int(r["tick_volume"]), timeframe=Timeframe.M1,
+                        instrument=instrument,
+                    ))
+            cursor = chunk_end
+        return candles
+
+    return fetcher, m1_range
 
 
 if __name__ == "__main__":
