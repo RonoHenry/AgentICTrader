@@ -357,8 +357,12 @@ class TestMLflowIntegration:
         
         trainer = PatternDetectorTrainer(training_config)
         
-        # Mock MLflow tracker
-        with patch.object(trainer.tracker, 'start_run') as mock_start_run:
+        # Mock MLflow tracker. register_model must be mocked too: accuracy
+        # 0.85 / FPR 0.15 meets the exit criterion, so train() registers the
+        # model, and an unmocked call writes a real MLflow registry.
+        with patch.object(trainer.tracker, 'start_run') as mock_start_run, \
+             patch.object(trainer.tracker, 'register_model') as mock_register_model:
+            mock_start_run.return_value.__enter__.return_value.info.run_id = "run-123"
             with patch.object(trainer.tracker, 'log_params') as mock_log_params:
                 with patch.object(trainer.tracker, 'log_metrics') as mock_log_metrics:
                     # Mock training to avoid actual DB calls
@@ -374,6 +378,13 @@ class TestMLflowIntegration:
                         mock_start_run.assert_called_once()
                         mock_log_params.assert_called()
                         mock_log_metrics.assert_called()
+                        
+                        # Exit criterion met (accuracy >= 0.80 and FPR < 0.20), so
+                        # the run's model is registered as 'pattern-detector'.
+                        assert result["status"] == "success"
+                        mock_register_model.assert_called_once_with(
+                            "runs:/run-123/model", "pattern-detector"
+                        )
     
     def test_model_registry_name(self):
         """Test model is registered as 'pattern-detector'."""

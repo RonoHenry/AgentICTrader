@@ -18,6 +18,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from ml.inference.ab_testing import TrafficSplitter, ABTestingFramework, ModelVersion
 
 
+# Feature-flag environments for the A/B test. These used to be simulated by
+# patching ``ml.inference.ab_testing.os.getenv``, but that attribute is the
+# global ``os.getenv``: every env lookup in the process (including
+# MLFLOW_TRACKING_URI) returned "true"/"false", so MLflow was pointed at a
+# ``./true`` or ``./false`` file store in the repo root.
+AB_TEST_ON = {
+    "CONFLUENCE_SCORER_AB_TEST": "true",
+    "CONFLUENCE_SCORER_AB_TEST_ROLLOUT": "100.0",
+}
+AB_TEST_OFF = {"CONFLUENCE_SCORER_AB_TEST": "false"}
+
+
 class TestTrafficSplitting:
     """Test cases for traffic splitting implementation."""
     
@@ -161,12 +173,9 @@ class TestTrafficSplitting:
 class TestIntegratedTrafficSplitting:
     """Test integrated traffic splitting with A/B testing framework."""
     
-    @patch('ml.inference.ab_testing.os.getenv')
-    def test_framework_traffic_distribution(self, mock_getenv):
+    @patch.dict(os.environ, AB_TEST_ON)
+    def test_framework_traffic_distribution(self):
         """RED: Test traffic distribution through complete A/B framework."""
-        # Enable feature flag
-        mock_getenv.return_value = "true"
-        
         framework = ABTestingFramework(split_ratio=0.4)  # 40% v2, 60% v1
         
         # Mock model loading
@@ -193,12 +202,9 @@ class TestIntegratedTrafficSplitting:
             assert expected_v2 - tolerance <= v2_assignments <= expected_v2 + tolerance
             assert v1_assignments + v2_assignments == sample_size
     
-    @patch('ml.inference.ab_testing.os.getenv')
-    def test_framework_sticky_sessions(self, mock_getenv):
+    @patch.dict(os.environ, AB_TEST_ON)
+    def test_framework_sticky_sessions(self):
         """RED: Test sticky sessions through A/B testing framework."""
-        # Enable feature flag
-        mock_getenv.return_value = "true"
-        
         framework = ABTestingFramework(split_ratio=0.5)
         
         with patch.object(framework.model_registry, 'load_model') as mock_load:
@@ -216,12 +222,9 @@ class TestIntegratedTrafficSplitting:
             # All should be the same
             assert all(v == assignments[0] for v in assignments), "Framework should maintain sticky sessions"
     
-    @patch('ml.inference.ab_testing.os.getenv')
-    def test_feature_flag_overrides_splitting(self, mock_getenv):
+    @patch.dict(os.environ, AB_TEST_OFF)
+    def test_feature_flag_overrides_splitting(self):
         """RED: Test that disabled feature flag overrides traffic splitting."""
-        # Disable feature flag
-        mock_getenv.return_value = "false"
-        
         # Even with 100% v2 split, should get v1 when flag disabled
         framework = ABTestingFramework(split_ratio=1.0)
         

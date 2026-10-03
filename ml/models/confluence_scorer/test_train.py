@@ -439,7 +439,11 @@ class TestMLflowIntegration:
             "bullish_array_distance": np.random.uniform(0.01, 0.1, n),
         })
 
-        with patch.object(trainer.tracker, "start_run") as mock_run:
+        # register_model is mocked as well: whether train() promotes the model
+        # depends on the random features, and an unmocked call writes a real
+        # MLflow registry.
+        with patch.object(trainer.tracker, "start_run") as mock_run, \
+             patch.object(trainer.tracker, "register_model"):
             with patch.object(trainer.tracker, "log_params") as mock_params:
                 with patch.object(trainer.tracker, "log_metrics") as mock_metrics:
                     with patch.object(

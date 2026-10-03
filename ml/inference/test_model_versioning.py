@@ -19,6 +19,18 @@ from ml.inference.model_versioning import ModelVersionRegistry, ModelVersion
 from ml.inference.ab_testing import ABTestingFramework, TrafficSplitter
 
 
+# Feature-flag environments for the A/B test. These used to be simulated by
+# patching ``ml.inference.ab_testing.os.getenv``, but that attribute is the
+# global ``os.getenv``: every env lookup in the process (including
+# MLFLOW_TRACKING_URI) returned "true"/"false", so MLflow was pointed at a
+# ``./true`` or ``./false`` file store in the repo root.
+AB_TEST_ON = {
+    "CONFLUENCE_SCORER_AB_TEST": "true",
+    "CONFLUENCE_SCORER_AB_TEST_ROLLOUT": "100.0",
+}
+AB_TEST_OFF = {"CONFLUENCE_SCORER_AB_TEST": "false"}
+
+
 class TestModelVersionRegistry:
     """Test cases for model version registry."""
     
@@ -189,12 +201,9 @@ class TestABTestingFramework:
         assert framework.model_registry is not None
         assert framework.traffic_splitter is not None
     
-    @patch('ml.inference.ab_testing.os.getenv')
-    def test_model_selection_with_feature_flag_on(self, mock_getenv):
+    @patch.dict(os.environ, AB_TEST_ON)
+    def test_model_selection_with_feature_flag_on(self):
         """RED: Test model selection when A/B test feature flag is enabled."""
-        # Mock feature flag as enabled
-        mock_getenv.return_value = "true"
-        
         framework = ABTestingFramework(split_ratio=0.5)
         
         with patch.object(framework.model_registry, 'load_model') as mock_load:
@@ -207,12 +216,9 @@ class TestABTestingFramework:
             assert model_version in [ModelVersion.V1_BASELINE, ModelVersion.V2_RAG]
             assert model is not None
     
-    @patch('ml.inference.ab_testing.os.getenv')
-    def test_model_selection_with_feature_flag_off(self, mock_getenv):
+    @patch.dict(os.environ, AB_TEST_OFF)
+    def test_model_selection_with_feature_flag_off(self):
         """RED: Test model selection when A/B test feature flag is disabled."""
-        # Mock feature flag as disabled
-        mock_getenv.return_value = "false"
-        
         framework = ABTestingFramework(split_ratio=0.5)
         
         with patch.object(framework.model_registry, 'load_model') as mock_load:
@@ -247,9 +253,17 @@ class TestABTestingFramework:
         assert v2_metrics["win_rate"] == 0.0  # 0/1 wins
     
     @pytest.mark.integration 
-    def test_integration_with_inference_engine(self):
+    @pytest.mark.parametrize(
+        "split_ratio, expected_version",
+        [
+            (0.0, ModelVersion.V1_BASELINE),  # 0% to v2: every user gets v1
+            (1.0, ModelVersion.V2_RAG),       # 100% to v2: every user gets v2
+        ],
+    )
+    @patch.dict(os.environ, AB_TEST_ON)
+    def test_integration_with_inference_engine(self, split_ratio, expected_version):
         """RED: Test integration with ML inference engine."""
-        framework = ABTestingFramework(split_ratio=0.5)
+        framework = ABTestingFramework(split_ratio=split_ratio)
         
         # Mock candles data
         candles = [
@@ -257,17 +271,44 @@ class TestABTestingFramework:
             {"time": "2024-01-01T09:05:00Z", "open": 1.1020, "high": 1.1080, "low": 1.1000, "close": 1.1060, "volume": 1200},
         ]
         
+        # Each variant returns a different P(high confidence), so the result
+        # shows which Confluence Scorer produced the score.
+        variant_models = {
+            ModelVersion.V1_BASELINE: Mock(predict_proba=Mock(return_value=np.array([[0.7, 0.3]]))),
+            ModelVersion.V2_RAG: Mock(predict_proba=Mock(return_value=np.array([[0.2, 0.8]]))),
+        }
+        variant_confidence = {ModelVersion.V1_BASELINE: 0.3, ModelVersion.V2_RAG: 0.8}
+        
         # Should be able to run prediction with selected model
         user_id = "integration_test_user"
-        result = framework.predict_with_ab_testing(
-            user_id=user_id,
-            instrument="EURUSD",
-            timeframe="M5",
-            candles=candles
-        )
+        with patch.object(
+            framework.model_registry,
+            "load_model",
+            side_effect=lambda name, version: variant_models[version],
+        ):
+            result = framework.predict_with_ab_testing(
+                user_id=user_id,
+                instrument="EURUSD",
+                timeframe="M5",
+                candles=candles
+            )
         
         # Should have prediction result with model version info
         assert "confidence_score" in result
         assert "model_version" in result
         assert "prediction_time" in result
-        assert result["model_version"] in ["v1", "v2-rag"]
+        # ModelVersion values are "v1-baseline" / "v2-rag"; plain "v1" is not one.
+        assert result["model_version"] == expected_version.value
+        assert result["ab_test_active"] is True
+        
+        # The confidence score must come from the variant the user was assigned to.
+        assert result["confidence_score"] == variant_confidence[expected_version]
+        variant_models[expected_version].predict_proba.assert_called_once()
+        
+        # Regime/pattern models are not registered in the per-test MLflow store,
+        # so the inference registry falls back to its stub predictions.
+        assert result["regime"] == "RANGING"
+        assert result["patterns"] == []
+        
+        # The prediction is recorded against the variant that served it.
+        assert framework.get_variant_metrics(expected_version)["prediction_count"] == 1

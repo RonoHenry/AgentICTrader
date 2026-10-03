@@ -132,13 +132,19 @@ class TestModelVersioningSystemRED:
             v1_model = registry.load_model("confluence-scorer", ModelVersion.V1_BASELINE)
             assert v1_model is not None, "Should still load v1 as fallback"
     
-    def test_feature_flags_ab_test_control(self):
+    def test_feature_flags_ab_test_control(self, monkeypatch):
         """RED: Test feature flags control A/B testing."""
+        # FeatureFlagManager registers this flag itself from the
+        # CONFLUENCE_SCORER_AB_TEST variable (_load_from_environment), so the
+        # test does not register it. With the variable unset, the flag is off.
+        monkeypatch.delenv("CONFLUENCE_SCORER_AB_TEST", raising=False)
         feature_flags = get_feature_flags()
         
         # Should have confluence scorer A/B test flag
-        assert feature_flags.is_enabled("confluence_scorer_ab_test", "test_user") in [True, False], \
-            "Should have boolean result for A/B test flag"
+        assert feature_flags.get_flag_info("confluence_scorer_ab_test") is not None, \
+            "FeatureFlagManager should register the confluence scorer A/B test flag"
+        assert feature_flags.is_enabled("confluence_scorer_ab_test", "test_user") is False, \
+            "A/B test flag should default to off when CONFLUENCE_SCORER_AB_TEST is unset"
         
         # Should be able to enable/disable A/B testing
         feature_flags.update_flag("confluence_scorer_ab_test", enabled=True)
@@ -172,10 +178,16 @@ class TestModelVersioningSystemRED:
 class TestABTestingIntegrationRED:
     """RED phase: Tests for A/B testing integration with versioning."""
     
+    @patch.dict(os.environ, {
+        "CONFLUENCE_SCORER_AB_TEST": "true",
+        "CONFLUENCE_SCORER_AB_TEST_ROLLOUT": "100.0",
+    })
     def test_version_based_traffic_splitting(self):
         """RED: Test traffic splitting between v1 and v2 models."""
         from ml.inference.ab_testing import ABTestingFramework
         
+        # Traffic is split only while the A/B test flag is on. The flag is
+        # off by default, and then every user is pinned to v1.
         framework = ABTestingFramework(split_ratio=0.5)
         
         # Should distribute users between v1 and v2
