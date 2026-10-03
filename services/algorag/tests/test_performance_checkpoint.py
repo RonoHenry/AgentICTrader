@@ -18,6 +18,8 @@ import time
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
+from httpx import ASGITransport, AsyncClient
+
 from services.algorag.models import (
     HealthResponse,
     RetrievalRequest,
@@ -27,14 +29,39 @@ from services.algorag.models import (
 )
 
 
+def _asgi_client(app) -> AsyncClient:
+    """In-process HTTP client for the FastAPI app.
+
+    httpx 0.28 removed ``AsyncClient(app=...)``; the app is now mounted
+    through an explicit ``ASGITransport``. ASGITransport does not send ASGI
+    lifespan events, so the app's startup hook (which dials Qdrant) is not
+    run. Every test here patches ``get_qdrant`` with a mock, so no live
+    service is involved.
+    """
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver")
+
+
+async def _warm_up_retrieval(client: AsyncClient, request_data: dict) -> None:
+    """Send one untimed /rag/retrieve request before measuring latency.
+
+    The first retrieval in a process lazily loads the SBERT narrative model
+    (services.algorag.embedding_models). That one-time cold start takes
+    seconds and depends on which test ran first. NFR-RAG-1 targets
+    steady-state per-request latency, so the timed requests must run on a
+    warm model. The model is cached for the rest of the process.
+    """
+    response = await client.post("/rag/retrieve", json=request_data)
+    assert response.status_code == 200
+
+
 @pytest.mark.integration
 class TestPerformanceCheckpoint:
     """Performance validation tests for Task 14 checkpoint."""
 
+    @pytest.mark.performance  # wall-clock latency assertion; sensitive to host CPU load
     async def test_health_endpoint_response_time(self):
         """RED: Test health endpoint responds quickly (< 50ms)."""
         from services.algorag.main import app
-        from httpx import AsyncClient
         from unittest.mock import patch, AsyncMock
         
         # Mock Qdrant for health check
@@ -47,7 +74,7 @@ class TestPerformanceCheckpoint:
             with patch('services.algorag.main._check_qdrant_health', return_value=True), \
                  patch('services.algorag.main._get_setup_count', return_value=500):
                 
-                async with AsyncClient(app=app, base_url="http://testserver") as client:
+                async with _asgi_client(app) as client:
                     # Measure response time
                     start = time.perf_counter()
                     response = await client.get("/health")
@@ -63,10 +90,10 @@ class TestPerformanceCheckpoint:
                     assert "status" in health_data
                     assert "setup_count" in health_data
 
+    @pytest.mark.performance  # wall-clock latency assertion; sensitive to host CPU load
     async def test_retrieval_endpoint_latency_target(self):
         """RED: Test retrieval endpoint meets < 100ms requirement (with mocked Qdrant)."""
         from services.algorag.main import app
-        from httpx import AsyncClient
         from unittest.mock import patch, AsyncMock
         
         # Mock search results
@@ -116,7 +143,7 @@ class TestPerformanceCheckpoint:
             mock_wrapper.search = mock_search
             mock_get_qdrant.return_value = mock_wrapper
             
-            async with AsyncClient(app=app, base_url="http://testserver") as client:
+            async with _asgi_client(app) as client:
                 request_data = {
                     "instrument": "EURUSD",
                     "timestamp": "2024-05-06T09:15:00Z",
@@ -129,6 +156,8 @@ class TestPerformanceCheckpoint:
                     "top_k": 10
                 }
                 
+                await _warm_up_retrieval(client, request_data)
+
                 # Measure response time
                 start = time.perf_counter()
                 response = await client.post("/rag/retrieve", json=request_data)
@@ -145,10 +174,10 @@ class TestPerformanceCheckpoint:
                 assert "query_time_ms" in result
                 assert len(result["similar_setups"]) >= 0
 
+    @pytest.mark.performance  # wall-clock latency assertion; sensitive to host CPU load
     async def test_retrieval_latency_multiple_requests(self):
         """RED: Test retrieval latency across multiple requests (p95 check)."""
         from services.algorag.main import app
-        from httpx import AsyncClient
         from unittest.mock import patch, AsyncMock
         
         # Mock fast search results
@@ -181,7 +210,7 @@ class TestPerformanceCheckpoint:
             mock_wrapper.search = mock_search  
             mock_get_qdrant.return_value = mock_wrapper
             
-            async with AsyncClient(app=app, base_url="http://testserver") as client:
+            async with _asgi_client(app) as client:
                 request_data = {
                     "instrument": "EURUSD",
                     "timestamp": "2024-05-06T09:15:00Z",
@@ -192,6 +221,8 @@ class TestPerformanceCheckpoint:
                     "top_k": 5
                 }
                 
+                await _warm_up_retrieval(client, request_data)
+
                 # Run multiple requests and collect latencies
                 latencies = []
                 for i in range(20):
@@ -325,7 +356,6 @@ class TestPerformanceCheckpoint:
     async def test_embedding_dimension_validation(self, embed_size):
         """RED: Test service accepts correct embedding dimensions."""
         from services.algorag.main import app
-        from httpx import AsyncClient
         from unittest.mock import patch, AsyncMock
         
         with patch('services.algorag.main.get_qdrant') as mock_get_qdrant:
@@ -333,7 +363,7 @@ class TestPerformanceCheckpoint:
             mock_wrapper.upsert = AsyncMock()
             mock_get_qdrant.return_value = mock_wrapper
             
-            async with AsyncClient(app=app, base_url="http://testserver") as client:
+            async with _asgi_client(app) as client:
                 request_data = {
                     "setup": {
                         "trade_id": "TRD-TEST",
@@ -357,7 +387,6 @@ class TestPerformanceCheckpoint:
     async def test_service_graceful_degradation(self):
         """RED: Test service handles failures gracefully."""
         from services.algorag.main import app
-        from httpx import AsyncClient
         from unittest.mock import patch, AsyncMock
         
         # Mock Qdrant failure
@@ -366,7 +395,7 @@ class TestPerformanceCheckpoint:
             mock_wrapper.search.side_effect = Exception("Connection timeout")
             mock_get_qdrant.return_value = mock_wrapper
             
-            async with AsyncClient(app=app, base_url="http://testserver") as client:
+            async with _asgi_client(app) as client:
                 request_data = {
                     "instrument": "EURUSD",
                     "timestamp": "2024-05-06T09:15:00Z",

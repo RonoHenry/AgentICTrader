@@ -136,7 +136,8 @@ def build_point_from_setup(
     payload: Dict[str, Any] = {
         "trade_id": trade_id,
         "timestamp": setup.get("timestamp"),
-        "instrument": str(setup.get("instrument", "")).upper(),
+        # `or ""`: an explicit None must not become the literal "NONE".
+        "instrument": str(setup.get("instrument") or "").upper(),
         "time_window": setup.get("time_window", ""),
         "htf_open_bias": setup.get("htf_open_bias", ""),
         "confluence_count": setup.get("confluence_count", 0),

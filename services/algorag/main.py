@@ -62,6 +62,7 @@ Environment Variables:
 import logging
 import logging.config
 import os
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -84,6 +85,7 @@ from services.algorag.models import (
     RAGMetrics,
     SimilarSetup,
 )
+from services.algorag.ingestion_service import build_point_from_setup
 from services.algorag.qdrant_client import QdrantClientWrapper
 from services.algorag.reranking import ReRankingConfig
 from services.algorag.diversity import apply_diversity_filter
@@ -147,22 +149,32 @@ class StructuredFormatter(logging.Formatter):
         
         return json.dumps(log_entry, default=str)
 
+def _running_under_pytest() -> bool:
+    """Return True when this module is imported inside a pytest process.
+
+    PYTEST_CURRENT_TEST is only set while a test is *executing*; it is not set
+    while pytest *collects* test modules. A test file that imports this module
+    at top level is therefore imported with PYTEST_CURRENT_TEST unset, so the
+    env var alone cannot detect the test environment reliably.
+    """
+    return os.getenv("PYTEST_CURRENT_TEST") is not None or "pytest" in sys.modules
+
+
 # Configure structured logging
-structured_logs_enabled = settings.service.structured_logs and os.getenv("PYTEST_CURRENT_TEST") is None
+structured_logs_enabled = settings.service.structured_logs and not _running_under_pytest()
 
 if structured_logs_enabled:
-    # Use structured JSON formatter for production
+    # Use structured JSON formatter for production. The handler lives on the
+    # root logger only: this module's logger propagates to it, so every record
+    # is still emitted exactly once as JSON. The service logger must keep
+    # propagate=True; disabling propagation would hide its records from any
+    # root-level consumer (log shippers, APM agents, pytest's caplog).
     formatter = StructuredFormatter()
     handler = logging.StreamHandler()
     handler.setFormatter(formatter)
-    
-    # Configure root logger
+
     root_logger = logging.getLogger()
     root_logger.handlers = [handler]
-    
-    # Configure service logger
-    logger.handlers = [handler]
-    logger.propagate = False
 
 # ---------------------------------------------------------------------------
 # Centralized Log Aggregation (REFACTOR Phase - Task 13.2)
@@ -687,8 +699,14 @@ async def ingest_setup(request: IngestionRequest, http_request: Request) -> Inge
     """
     wrapper = get_qdrant()
     setup = request.setup
-    trade_id: str = setup.get("trade_id", str(uuid.uuid4()))
     correlation_id = get_correlation_id_from_request(http_request)
+
+    # Same point/payload construction as the batch IngestionService, so a setup
+    # ingested through either path gets the same point ID and payload. It also
+    # assigns a UUID when trade_id is missing, null or empty (uuid5 of None
+    # would otherwise raise TypeError and surface as an HTTP 500).
+    point = build_point_from_setup(setup, request.embedding)
+    trade_id: str = point.payload["trade_id"]
 
     # Build request context for error logging
     request_context = {
@@ -697,25 +715,6 @@ async def ingest_setup(request: IngestionRequest, http_request: Request) -> Inge
         "embedding_size": len(request.embedding) if request.embedding else 0,
         "setup_keys": list(setup.keys()) if setup else [],
     }
-
-    from qdrant_client.http import models as qmodels
-
-    point = qmodels.PointStruct(
-        id=str(uuid.uuid5(uuid.NAMESPACE_DNS, trade_id)),
-        vector=request.embedding,
-        payload={
-            "trade_id": trade_id,
-            "timestamp": setup.get("timestamp"),
-            "instrument": str(setup.get("instrument", "")).upper(),
-            "time_window": setup.get("time_window", ""),
-            "htf_open_bias": setup.get("htf_open_bias", ""),
-            "confluence_count": setup.get("confluence_count", 0),
-            "outcome_result": setup.get("outcome_result", ""),
-            "outcome_r_multiple": setup.get("outcome_r_multiple", 0.0),
-            "narrative": setup.get("narrative", ""),
-            "full_setup": setup,
-        },
-    )
 
     try:
         await wrapper.upsert([point])

@@ -10,6 +10,7 @@ Requirements: FR-RAG-7 (Real-Time Ingestion)
 
 from __future__ import annotations
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -284,6 +285,38 @@ class TestIngestionErrorHandling:
         assert resp.status_code == 201
         # Verify a setup_id was still generated
         assert len(resp.json()["setup_id"]) > 0
+
+    def test_setup_with_null_trade_id_gets_uuid_assigned(self, app_client, mock_qdrant_client):
+        """An explicit null trade_id is treated like a missing one.
+
+        Regression: the endpoint passed None to uuid5(), which raised
+        TypeError and surfaced as HTTP 500.
+        """
+        payload = make_valid_ingestion_request()
+        payload["setup"]["trade_id"] = None
+
+        resp = app_client.post("/rag/ingest", json=payload)
+
+        assert resp.status_code == 201
+        call_args = mock_qdrant_client.upsert.call_args
+        points = call_args.kwargs.get("points") or call_args.args[0]
+        generated_trade_id = points[0].payload["trade_id"]
+        assert uuid.UUID(generated_trade_id).version == 4
+        assert resp.json()["setup_id"] == str(
+            uuid.uuid5(uuid.NAMESPACE_DNS, generated_trade_id)
+        )
+
+    def test_setup_with_null_instrument_stores_empty_instrument(self, app_client, mock_qdrant_client):
+        """A null instrument is stored as "", not the literal string "NONE"."""
+        payload = make_valid_ingestion_request()
+        payload["setup"]["instrument"] = None
+
+        resp = app_client.post("/rag/ingest", json=payload)
+
+        assert resp.status_code == 201
+        call_args = mock_qdrant_client.upsert.call_args
+        points = call_args.kwargs.get("points") or call_args.args[0]
+        assert points[0].payload["instrument"] == ""
 
 
 class TestIngestionUpsertSemantics:

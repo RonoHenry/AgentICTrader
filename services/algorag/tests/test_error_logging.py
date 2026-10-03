@@ -13,8 +13,8 @@ REFACTOR: Add centralized log aggregation capability
 
 from __future__ import annotations
 
-import json
 import logging
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -42,51 +42,44 @@ def mock_qdrant_with_upsert_error():
     return client_mock
 
 
+@contextmanager
+def _client_with_qdrant(qdrant_mock):
+    """TestClient whose endpoints see ``qdrant_mock`` as the Qdrant wrapper.
+
+    These tests assert on caplog records, which go through the root logger.
+    They rely on the ``services.algorag.main`` logger propagating to root.
+    main.py configures logging once, at import time, and leaves propagation
+    on, so mutating ``settings.service.structured_logs`` here would have no
+    effect. Earlier versions of these fixtures did that and leaked the change
+    into os.environ and the shared settings singleton for later tests.
+    """
+    import services.algorag.main as svc_main
+
+    with patch.object(svc_main, "_qdrant_client", qdrant_mock):
+        with patch.object(svc_main, "get_qdrant", return_value=qdrant_mock):
+            with TestClient(svc_main.app, raise_server_exceptions=False) as c:
+                yield c
+
+
 @pytest.fixture()
 def app_client_with_search_error(mock_qdrant_with_search_error):
     """TestClient with Qdrant search error injected."""
-    import services.algorag.main as svc_main
-    import os
-
-    # Disable structured logging for tests
-    os.environ["STRUCTURED_LOGS"] = "false"
-    
-    # Reload settings to pick up the environment change
-    from services.algorag.config import settings
-    settings.service.structured_logs = False
-    
-    with patch.object(svc_main, "_qdrant_client", mock_qdrant_with_search_error):
-        with patch.object(svc_main, "get_qdrant", return_value=mock_qdrant_with_search_error):
-            with TestClient(svc_main.app, raise_server_exceptions=False) as c:
-                yield c
+    with _client_with_qdrant(mock_qdrant_with_search_error) as c:
+        yield c
 
 
 @pytest.fixture()
 def app_client_with_upsert_error(mock_qdrant_with_upsert_error):
     """TestClient with Qdrant upsert error injected."""
-    import services.algorag.main as svc_main
-    import os
-
-    # Disable structured logging for tests
-    os.environ["STRUCTURED_LOGS"] = "false"
-    
-    # Reload settings to pick up the environment change
-    from services.algorag.config import settings
-    settings.service.structured_logs = False
-
-    with patch.object(svc_main, "_qdrant_client", mock_qdrant_with_upsert_error):
-        with patch.object(svc_main, "get_qdrant", return_value=mock_qdrant_with_upsert_error):
-            with TestClient(svc_main.app, raise_server_exceptions=False) as c:
-                yield c
+    with _client_with_qdrant(mock_qdrant_with_upsert_error) as c:
+        yield c
 
 
 @pytest.fixture()
 def capture_logs(caplog):
-    """Capture logs at ERROR level for assertions."""
-    # Capture logs at all levels to ensure we get everything
+    """Capture every log record, including DEBUG, for assertions."""
     caplog.set_level(logging.DEBUG)
-    # Also set up the specific logger we're testing
-    caplog.set_level(logging.DEBUG, logger='services.algorag.main')
+    caplog.set_level(logging.DEBUG, logger="services.algorag.main")
     return caplog
 
 
@@ -101,34 +94,13 @@ def mock_qdrant_with_both_errors():
         side_effect=Exception("Upsert failed: quota exceeded")
     )
     return client_mock
-    """Simulate both Qdrant search and upsert failures."""
-    client_mock = AsyncMock()
-    client_mock.search = AsyncMock(
-        side_effect=Exception("Vector search failed: connection timeout")
-    )
-    client_mock.upsert = AsyncMock(
-        side_effect=Exception("Upsert failed: quota exceeded")
-    )
-    return client_mock
 
 
 @pytest.fixture()
 def app_client_with_both_errors(mock_qdrant_with_both_errors):
     """TestClient with both Qdrant search and upsert errors injected."""
-    import services.algorag.main as svc_main
-    import os
-
-    # Disable structured logging for tests
-    os.environ["STRUCTURED_LOGS"] = "false"
-    
-    # Reload settings to pick up the environment change
-    from services.algorag.config import settings
-    settings.service.structured_logs = False
-
-    with patch.object(svc_main, "_qdrant_client", mock_qdrant_with_both_errors):
-        with patch.object(svc_main, "get_qdrant", return_value=mock_qdrant_with_both_errors):
-            with TestClient(svc_main.app, raise_server_exceptions=False) as c:
-                yield c
+    with _client_with_qdrant(mock_qdrant_with_both_errors) as c:
+        yield c
 
 
 class TestErrorLoggingStructure:
@@ -378,6 +350,36 @@ class TestErrorMetrics:
         log_messages = [r.message for r in capture_logs.records]
         assert any("search" in msg.lower() or "vector" in msg.lower() for msg in log_messages)
         assert any("upsert" in msg.lower() or "ingest" in msg.lower() for msg in log_messages)
+
+
+class TestLoggerConfiguration:
+    """Regression: main.py's import-time logging setup must not hide records.
+
+    When a test module imported services.algorag.main at top level, the import
+    ran during pytest collection, when PYTEST_CURRENT_TEST is unset. main.py
+    then enabled JSON logging and set ``logger.propagate = False``, so every
+    caplog-based test in this file failed in combined runs but passed alone.
+    """
+
+    def test_service_logger_propagates_to_root(self):
+        import services.algorag.main as svc_main
+
+        assert svc_main.logger.propagate is True
+
+    def test_pytest_detected_during_collection(self, monkeypatch):
+        """Detection must not depend on PYTEST_CURRENT_TEST, which is unset
+        while modules are imported at collection time."""
+        import services.algorag.main as svc_main
+
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+        assert svc_main._running_under_pytest() is True
+
+    def test_structured_logging_disabled_under_pytest(self):
+        """The module was imported by this pytest process (possibly at
+        collection time), so JSON logging must be off."""
+        import services.algorag.main as svc_main
+
+        assert svc_main.structured_logs_enabled is False
 
 
 # Test will fail (RED phase) until we implement structured logging with correlation IDs
