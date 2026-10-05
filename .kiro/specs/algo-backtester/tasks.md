@@ -48,7 +48,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **214c. REFACTOR** — rerun the task 181 benchmark and add the new numbers to `design.md` → Measured performance. The full liquidity-engine test suite is still GREEN.
   - **Validates: Requirements 1.1, 7.5**
 
-- [ ] 182. `InstrumentSpec` and spec loading (`agent/instruments.py`, `config/instruments/*.toml`)
+- [x] 182. `InstrumentSpec` and spec loading (`agent/instruments.py`, `config/instruments/*.toml`)
   - **182a. RED** (`backend/tests/test_backtest_instruments.py`)
     - `test_money_per_price_unit_usd_quote` — EURUSD: equals `contract_size`
     - `test_money_per_price_unit_usd_base` — USDJPY: equals `contract_size / price`
