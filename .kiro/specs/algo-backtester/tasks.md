@@ -61,14 +61,28 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **182c. REFACTOR** — confirm GREEN.
   - **Validates: Requirements 5.2, 6.1**
 
-- [ ] 183. `scripts/export_instrument_specs.py`: MT5 specs and commission (D2)
-  - **183a. RED** (`backend/tests/test_backtest_export_specs.py`; mock `MetaTrader5` the same way `test_mt5_broker_adapter.py` does)
-    - `test_maps_symbol_info_fields` — point, tick size, contract size, volume min/step/max, currencies
-    - `test_commission_per_lot_per_side_from_deal_history` — `abs(deal.commission) / deal.volume`, median over recent deals
-    - `test_no_deals_for_symbol_requires_manual_value` — writes a placeholder and exits non-zero naming the symbol
-    - `test_default_spread_from_recent_bars_median`
-  - **183b. GREEN** — the script writes `config/instruments/mt5.toml`. Hand-write `config/instruments/binance.toml`: fee 0.001 per side, a default spread per symbol, stop slippage 0.0005 (D3).
-  - **183c. (user action)** — run the script against your terminal; review and commit `mt5.toml`.
+- [ ] 183. `scripts/export_instrument_specs.py`: venue specs and commission (D2)
+  - **183a. RED** (`backend/tests/test_backtest_export_specs.py`; a fake MT5 module and a canned Binance exchangeInfo payload)
+    - `test_maps_symbol_info_fields` — point, tick size, contract size, volume min/step/max, currencies, account currency
+    - Commission is total `|commission| + |fee|` divided by total traded volume:
+      - `test_commission_per_side_when_split_across_deals`
+      - `test_commission_per_side_when_charged_at_entry_only` — a median would get this case wrong
+      - `test_commission_counts_fee_field_and_ignores_other_symbols_and_non_trade_deals`
+      - `test_commission_none_without_deals_for_symbol`
+    - No deals: `test_no_deals_for_symbol_is_a_problem_unless_overridden` — no placeholder is written, since a placeholder 0 would load later as free trading; `--commission SYMBOL=value` supplies it
+    - Spread: `test_default_spread_from_recent_ticks_median` (median ask − bid over 72 h of ticks; bar spreads read 0 on some servers), `test_zero_spread_is_a_problem_unless_overridden` (`--spread SYMBOL=points`)
+    - `test_stop_slippage_defaults_to_two_points`
+    - Provenance: the file header records the source broker/server (`test_main_writes_loadable_file`, `test_dumps_specs_records_source_as_comment`)
+    - `test_symbol_suffix_resolved_but_key_is_instrument`, `test_unknown_symbol_is_a_problem`
+    - Broker cross-check: `test_tick_value_cross_check_flags_mismatch`, `test_tick_value_cross_check_passes_for_usd_base_pair` — our money-per-tick must match MT5's `trade_tick_value`
+    - Binance: `test_binance_specs_from_exchange_info`, `test_binance_unknown_symbol_is_a_problem`
+    - CLI: `test_main_writes_loadable_file`, `test_main_refuses_to_write_when_problems`
+  - **183b. GREEN**
+    - `--venue mt5` writes `config/instruments/mt5.toml` from the terminal.
+    - `--venue binance` writes `config/instruments/binance.toml` from public exchangeInfo, replacing the planned hand-written file: fee 0.001 per side, one-tick default spread, stop slippage 0.05% of the export-time price in price units (D3).
+  - **183c. (user action)** — run both exports; review and commit the two files.
+    - **Status 2026-10-05:** `binance.toml` exported and committed.
+    - `mt5.toml` is **blocked on a decision**. The connected account is `MetaQuotes-Demo`, MetaQuotes' own demo server, not a live broker. Its EURUSD/GBPUSD median spread is 0, there is no commission, and XAUUSD has no deals in 180 days. Costs must come from the broker you will trade live: either export from a demo account at that broker, or pass that broker's typical values with `--spread` / `--commission`.
   - **Validates: Requirements 5.1, 5.2**
 
 - [ ] 184. `VenueCalendar` (`services/market_data/venue_calendar.py`)

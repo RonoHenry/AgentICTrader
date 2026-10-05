@@ -156,3 +156,12 @@ def test_load_specs_names_missing_field(tmp_path):
 def test_specs_must_match_collection_venue():
     with pytest.raises(ValueError, match="venue"):
         InstrumentSpecs(venue="mt5", account_ccy="USD", specs={"BTCUSDT": BTCUSDT})
+
+
+def test_dumps_specs_records_source_as_comment(tmp_path):
+    specs = InstrumentSpecs(venue="mt5", account_ccy="USD", specs={"EURUSD": EURUSD})
+    text = dumps_specs(specs, source="Some Broker / Some-Server, exported 2026-10-05")
+    assert "# Source: Some Broker / Some-Server, exported 2026-10-05" in text
+    path = tmp_path / "mt5.toml"
+    path.write_text(text, encoding="utf-8")
+    assert load_specs(path) == specs  # a comment, so loading is unaffected

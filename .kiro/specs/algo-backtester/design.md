@@ -217,7 +217,7 @@ class InstrumentSpec:
     base_ccy: str; quote_ccy: str
     default_spread: float                  # price units, used when a bar has no recorded spread
     commission: CommissionSpec             # PER_LOT_PER_SIDE (MT5) | RATE_PER_SIDE (Binance, 0.001)
-    stop_slippage: float                   # D3: price units (FX 0.2 pip) or rate (crypto 0.0005)
+    stop_slippage: float                   # D3, price units: FX 2 points (0.2 pip); crypto 0.05% of the export-time price
 
 def money_per_price_unit(spec, price: float, conversion: float | None, account_ccy="USD") -> float:
 ```
@@ -250,7 +250,7 @@ class SimOrder:
     mae_price: float | None; mfe_price: float | None
 
 class FillModel:
-    def __init__(self, stop_slippage: float, slippage_is_rate: bool): ...
+    def __init__(self, stop_slippage: float): ...   # price units, from InstrumentSpec.stop_slippage
     def step(self, order: SimOrder, bar: Bar) -> list[FillEvent]:   # mutates order; returns FILLED/SL/TP/EXPIRED events
 ```
 

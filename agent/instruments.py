@@ -230,10 +230,15 @@ def load_specs(path: str | Path) -> InstrumentSpecs:
     return InstrumentSpecs(venue=venue, account_ccy=account_ccy, specs=specs)
 
 
-def dumps_specs(specs: InstrumentSpecs) -> str:
-    """Serialise to the spec-file format. Floats use repr(), so they round-trip exactly."""
+def dumps_specs(specs: InstrumentSpecs, source: Optional[str] = None) -> str:
+    """Serialise to the spec-file format. Floats use repr(), so they round-trip exactly.
+
+    ``source`` (e.g. "Broker Ltd / Broker-Demo, exported 2026-10-05") is
+    written as a comment, recording where the costs came from.
+    """
     lines = [
         f"# Instrument specs for venue {specs.venue!r}. Prices, spreads and slippage are in price units.",
+        *([f"# Source: {source}"] if source else []),
         f"venue = {_toml_str(specs.venue)}",
         f"account_ccy = {_toml_str(specs.account_ccy)}",
     ]
