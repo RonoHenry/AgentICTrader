@@ -104,14 +104,18 @@ They can't share one process. Both `tests/` and `backend/tests/` are packages
 named `tests`, the suites set up Django with different settings, and backend
 test modules rewrite `sys.path` at import time.
 
-**Live-service tests are deselected by default.** Tests that need Docker,
-InfluxDB, Qdrant, an MLflow server or a live broker/data feed are marked
-`infrastructure`, and both configs pass `-m "not infrastructure"`. Some backend
-files get the marker automatically from `backend/tests/conftest.py`. To include
-them:
+**Some test groups are deselected by default.** Each group is excluded for a different reason:
+- `infrastructure` (both suites): needs Docker, InfluxDB, Qdrant, an MLflow server or a live broker/data feed. Some backend files get the marker automatically from `backend/tests/conftest.py`.
+- `performance` (root suite): wall-clock latency benchmarks. They fail on a busy machine rather than on wrong code, so run them deliberately on a quiet one.
+- `legacy` (backend suite): quarantined tests whose code drifted. The reasons are in `backend/tests/conftest.py`.
+
+Hypothesis property tests run without a per-example deadline. It measures speed, not correctness, and flakes under load.
+
+To include the excluded groups:
 ```bash
-python scripts/run_all_tests.py --live   # passes -m "" to both suites
+python scripts/run_all_tests.py --live   # passes -m "" to both suites: everything
 ./run_tests.sh --live                    # also starts docker/docker-compose.test.yml
+pytest -m performance                    # just the latency benchmarks (root suite)
 pytest -m ""                             # one suite, everything
 ```
 

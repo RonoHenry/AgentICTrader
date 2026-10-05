@@ -30,6 +30,15 @@ import numpy as np
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
+from hypothesis import settings as hypothesis_settings
+
+# Hypothesis fails any example that runs longer than 200 ms by default. That
+# is a slowness detector, not a correctness check, and under machine load it
+# flakes (seen 2026-10-05: 369 ms on the first run, 187 ms on the retry, so
+# reported as "unreliable"). No property test here asserts speed; disable it.
+hypothesis_settings.register_profile("agentictrader", deadline=None)
+hypothesis_settings.load_profile("agentictrader")
+
 
 # ── MARKET DATA FIXTURES ──────────────────────────────────────────────────────
 

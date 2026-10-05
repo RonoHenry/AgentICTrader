@@ -75,6 +75,17 @@ async def db_writer(db_config):
     await writer.close()
 
 
+@pytest.fixture
+def offline_writer(db_config):
+    """A writer that never connects, for tests that mock the pool anyway.
+
+    db_writer opens a real connection to localhost:5432, so tests using it
+    errored whenever Docker was down, even though they replace the pool with
+    a mock before doing anything.
+    """
+    return TimescaleDBWriter(**db_config)
+
+
 # ===========================================================================
 # 1. Integration test: candle upsert uses ON CONFLICT DO UPDATE
 # ===========================================================================
@@ -492,7 +503,8 @@ class TestErrorHandling:
     """The writer must handle database errors gracefully."""
 
     @pytest.mark.asyncio
-    async def test_write_candle_raises_on_db_error(self, db_writer):
+    async def test_write_candle_raises_on_db_error(self, offline_writer):
+        db_writer = offline_writer
         """write_candle should raise an exception if database write fails."""
         import asyncpg
         
@@ -505,7 +517,8 @@ class TestErrorHandling:
                 await db_writer.write_candle(SAMPLE_CANDLE)
 
     @pytest.mark.asyncio
-    async def test_flush_raises_on_db_error(self, db_writer):
+    async def test_flush_raises_on_db_error(self, offline_writer):
+        db_writer = offline_writer
         """flush should raise an exception if database write fails."""
         import asyncpg
         
@@ -520,6 +533,7 @@ class TestErrorHandling:
             with pytest.raises(Exception):  # Should propagate the error
                 await db_writer.flush()
 
+    @pytest.mark.skip(reason="placeholder: retry logic not implemented yet ('6b'); it only did `assert True`")
     @pytest.mark.asyncio
     async def test_connection_retry_on_transient_error(self, db_writer):
         """The writer should handle transient connection errors gracefully."""

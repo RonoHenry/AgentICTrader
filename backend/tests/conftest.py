@@ -8,6 +8,14 @@ from pathlib import PurePath
 import django
 import pytest
 from django.conf import settings
+from hypothesis import settings as hypothesis_settings
+
+# Hypothesis fails any example that runs longer than 200 ms by default. That
+# is a slowness detector, not a correctness check, and under machine load it
+# flakes (test_risk_engine.py, 2026-10-05: 369 ms on the first run, 187 ms on
+# the retry). No property test here asserts speed; disable it suite-wide.
+hypothesis_settings.register_profile("agentictrader", deadline=None)
+hypothesis_settings.load_profile("agentictrader")
 
 # Get the absolute path to the project root
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
