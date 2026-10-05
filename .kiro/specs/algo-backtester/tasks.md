@@ -129,11 +129,13 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **184c. REFACTOR** — confirm GREEN.
   - **Validates: Requirements 3.3**
 
-- [ ] 185. `aggregate()` (`services/market_data/as_of_view.py`)
+- [x] 185. `aggregate()` (`services/market_data/as_of_view.py`)
   - **185a. RED** (`backend/tests/test_backtest_aggregation.py`)
     - `test_aggregate_ohlcv_values` — open = first, high = max, low = min, close = last, volume = sum
     - `test_aggregate_skips_empty_periods` — weekend: no synthetic bars
-    - `test_partial_trailing_period_not_emitted` — only closed periods
+    - `test_partial_trailing_period_not_emitted` — only closed periods; `test_as_of_controls_which_periods_count_as_closed` (default: the close of the last input bar)
+    - `test_d1_follows_new_york_close_not_utc_midnight`, `test_volume_none_when_all_inputs_none`
+    - `test_unsorted_input_rejected`, `test_input_coarser_than_target_rejected`, `test_empty_input`
     - **PBT — Property 3: Aggregation Consistency** (`@given` random-walk M1)
       - **Validates: Requirements 3.3**
   - **185b. GREEN** / **185c. REFACTOR**
