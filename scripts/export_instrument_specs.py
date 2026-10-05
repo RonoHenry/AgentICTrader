@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
@@ -148,8 +149,8 @@ def mt5_specs(
             # Profit currency is what a price move is paid in, i.e. the quote
             # currency for FX, metals and indices alike.
             quote_ccy=info.currency_profit,
-            default_spread=spread_points * point,
-            stop_slippage=STOP_SLIPPAGE_POINTS * point,
+            default_spread=_price_units(spread_points, point),
+            stop_slippage=_price_units(STOP_SLIPPAGE_POINTS, point),
             commission=CommissionSpec(kind="PER_LOT_PER_SIDE", value=float(commission)),
         )
         mismatch = _tick_value_mismatch(spec, info, mt5.symbol_info_tick(symbol), account_ccy)
@@ -158,6 +159,13 @@ def mt5_specs(
             continue
         specs[instrument] = spec
     return InstrumentSpecs(venue="mt5", account_ccy=account_ccy, specs=specs), problems
+
+
+def _price_units(points: float, point: float) -> float:
+    """``points`` × ``point`` rounded to a tenth of a point, so ask - bid
+    float noise (8.000000000008e-05) doesn't reach the human-read spec file."""
+    decimals = max(0, -Decimal(repr(point)).as_tuple().exponent) + 1
+    return round(points * point, decimals)
 
 
 def _tick_value_mismatch(spec: InstrumentSpec, info: Any, tick: Any, account_ccy: str) -> Optional[str]:

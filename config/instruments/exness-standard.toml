@@ -1,0 +1,56 @@
+# Instrument specs for venue 'mt5'. Prices, spreads and slippage are in price units.
+# Source: Exness (KE) Limited / ExnessKE-MT5Trial9, exported 2026-10-05
+venue = "mt5"
+account_ccy = "USD"
+
+["EURUSD"]
+point = 1e-05
+tick_size = 1e-05
+contract_size = 100000.0
+volume_min = 0.01
+volume_step = 0.01
+volume_max = 200.0
+base_ccy = "EUR"
+quote_ccy = "USD"
+default_spread = 8e-05
+stop_slippage = 2e-05
+commission = { kind = "PER_LOT_PER_SIDE", value = 0.0 }
+
+["GBPUSD"]
+point = 1e-05
+tick_size = 1e-05
+contract_size = 100000.0
+volume_min = 0.01
+volume_step = 0.01
+volume_max = 200.0
+base_ccy = "GBP"
+quote_ccy = "USD"
+default_spread = 0.0001
+stop_slippage = 2e-05
+commission = { kind = "PER_LOT_PER_SIDE", value = 0.0 }
+
+["USDJPY"]
+point = 0.001
+tick_size = 0.001
+contract_size = 100000.0
+volume_min = 0.01
+volume_step = 0.01
+volume_max = 300.0
+base_ccy = "USD"
+quote_ccy = "JPY"
+default_spread = 0.01
+stop_slippage = 0.002
+commission = { kind = "PER_LOT_PER_SIDE", value = 0.0 }
+
+["XAUUSD"]
+point = 0.001
+tick_size = 0.001
+contract_size = 100.0
+volume_min = 0.01
+volume_step = 0.01
+volume_max = 200.0
+base_ccy = "XAU"
+quote_ccy = "USD"
+default_spread = 0.24
+stop_slippage = 0.002
+commission = { kind = "PER_LOT_PER_SIDE", value = 0.0 }

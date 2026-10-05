@@ -135,7 +135,9 @@ def test_maps_symbol_info_fields():
 
 def test_default_spread_from_recent_ticks_median():
     specs, _ = mt5_specs(_fake_eurusd(), ["EURUSD"])
-    assert specs["EURUSD"].default_spread == pytest.approx(12 * 0.00001)
+    # Exact, not approx: ask - bid arithmetic leaves float noise (8.000000000008e-05),
+    # and the spec file is read by people. Rounded to a tenth of a point.
+    assert specs["EURUSD"].default_spread == 0.00012
 
 
 def test_zero_spread_is_a_problem_unless_overridden():

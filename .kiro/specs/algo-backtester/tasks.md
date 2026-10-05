@@ -61,7 +61,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **182c. REFACTOR** — confirm GREEN.
   - **Validates: Requirements 5.2, 6.1**
 
-- [ ] 183. `scripts/export_instrument_specs.py`: venue specs and commission (D2)
+- [x] 183. `scripts/export_instrument_specs.py`: venue specs and commission (D2)
   - **183a. RED** (`backend/tests/test_backtest_export_specs.py`; a fake MT5 module and a canned Binance exchangeInfo payload)
     - `test_maps_symbol_info_fields` — point, tick size, contract size, volume min/step/max, currencies, account currency
     - Commission is total `|commission| + |fee|` divided by total traded volume:
@@ -81,8 +81,13 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - `--venue mt5` writes `config/instruments/mt5.toml` from the terminal.
     - `--venue binance` writes `config/instruments/binance.toml` from public exchangeInfo, replacing the planned hand-written file: fee 0.001 per side, one-tick default spread, stop slippage 0.05% of the export-time price in price units (D3).
   - **183c. (user action)** — run both exports; review and commit the two files.
-    - **Status 2026-10-05:** `binance.toml` exported and committed.
-    - `mt5.toml` is **blocked on a decision**. The connected account is `MetaQuotes-Demo`, MetaQuotes' own demo server, not a live broker. Its EURUSD/GBPUSD median spread is 0, there is no commission, and XAUUSD has no deals in 180 days. Costs must come from the broker you will trade live: either export from a demo account at that broker, or pass that broker's typical values with `--spread` / `--commission`.
+    - **Status 2026-10-05: done.**
+      - `binance.toml` exported from public exchangeInfo.
+      - The first MT5 export ran against `MetaQuotes-Demo`, which is not a live broker. Its median EURUSD/GBPUSD spread is 0 and it charges no commission, so its numbers were rejected and not committed.
+      - `config/instruments/exness-standard.toml` was then exported from an Exness Standard MT5 demo (`ExnessKE-MT5Trial9`, hedging, USD, server clock UTC+0 verified from live ticks). Median spreads: EURUSD 0.8 pip, GBPUSD 1.0, USDJPY 1.0, XAUUSD $0.24. The tick-value cross-check passed for all four.
+      - Commission is passed as 0 (`--commission`). That is the Standard account's real pricing, costed through the spread, so no deals were needed to measure it.
+      - Spread and slippage values are rounded to a tenth of a point (`_price_units`).
+      - **Open:** stop slippage defaults to 2 points, which is 0.2 pip on 5-digit FX but only $0.002 on XAUUSD (point 0.001). Revisit before task 211.
   - **Validates: Requirements 5.1, 5.2**
 
 - [ ] 184. `VenueCalendar` (`services/market_data/venue_calendar.py`)
