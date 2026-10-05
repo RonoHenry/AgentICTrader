@@ -1,0 +1,4 @@
+# Broker profile: Binance spot (public market data, paper execution).
+# No credentials: klines and exchangeInfo are public endpoints.
+venue = "binance"
+spec_file = "config/instruments/binance.toml"

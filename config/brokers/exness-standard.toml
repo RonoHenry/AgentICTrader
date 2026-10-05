@@ -1,0 +1,17 @@
+# Broker profile: Exness Standard MT5 demo (Exness (KE) Limited).
+# Credentials are environment-variable NAMES; the values live in the git-ignored .env.
+venue = "mt5"
+spec_file = "config/instruments/exness-standard.toml"
+server_clock = "+0"   # UTC; verified against live ticks on every connect
+
+[credentials]
+login = "MT5_LOGIN"
+password = "MT5_PASSWORD"
+server = "MT5_SERVER"
+path = "MT5_PATH"
+
+[symbols]
+EURUSD = "EURUSDm"
+GBPUSD = "GBPUSDm"
+USDJPY = "USDJPYm"
+XAUUSD = "XAUUSDm"

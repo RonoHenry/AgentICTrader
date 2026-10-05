@@ -90,7 +90,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
       - **Open:** stop slippage defaults to 2 points, which is 0.2 pip on 5-digit FX but only $0.002 on XAUUSD (point 0.001). Revisit before task 211.
   - **Validates: Requirements 5.1, 5.2**
 
-- [ ] 215. Broker profiles (L8, `agent/broker_profiles.py`, `config/brokers/*.toml`)
+- [x] 215. Broker profiles (L8, `agent/broker_profiles.py`, `config/brokers/*.toml`)
   - Numbered 215 so earlier task numbers stay stable. Added 2026-10-05 with Requirement 10.
   - **215a. RED** (`backend/tests/test_backtest_broker_profiles.py`)
     - `test_load_profile_resolves_credentials_from_named_env_vars`

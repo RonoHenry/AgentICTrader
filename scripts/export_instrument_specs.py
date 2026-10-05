@@ -31,7 +31,11 @@ Nothing is written while any problem remains. Problems go to stderr and the
 exit code is 1. The file header records which broker/server the costs came
 from: a demo server's pricing (e.g. MetaQuotes-Demo) is not a live broker's.
 
-Usage:
+Usage (a broker profile supplies venue, credentials, clock, symbols and output file):
+    python scripts/export_instrument_specs.py --profile exness-standard \\
+        [--instruments EURUSD,GBPUSD] [--commission XAUUSD=0] [--spread EURUSD=8]
+    python scripts/export_instrument_specs.py --profile binance
+or without a profile (legacy .env MT5_* settings):
     python scripts/export_instrument_specs.py --venue mt5 \\
         [--instruments EURUSD,GBPUSD,USDJPY,XAUUSD] [--commission XAUUSD=3.5] [--spread EURUSD=8] \\
         [--deals-days 180] [--out config/instruments/mt5.toml]
@@ -54,6 +58,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from agent import broker_profiles  # noqa: E402
 from agent.instruments import (  # noqa: E402
     CommissionSpec,
     InstrumentSpec,
@@ -96,7 +101,10 @@ def mt5_specs(
     commission_overrides: Optional[Mapping[str, float]] = None,
     spread_overrides: Optional[Mapping[str, float]] = None,
     deals_days: int = 180,
+    symbols: Optional[Mapping[str, str]] = None,
 ) -> tuple[InstrumentSpecs, list[str]]:
+    """``symbols`` (a broker profile's map, e.g. EURUSD -> EURUSDm) takes
+    precedence over ``symbol_suffix``; specs are always keyed by instrument."""
     overrides = dict(commission_overrides or {})
     spread_points_overrides = dict(spread_overrides or {})
     account_ccy = mt5.account_info().currency
@@ -106,7 +114,7 @@ def mt5_specs(
     specs: dict[str, InstrumentSpec] = {}
     problems: list[str] = []
     for instrument in instruments:
-        symbol = f"{instrument}{symbol_suffix}"
+        symbol = symbols[instrument] if symbols and instrument in symbols else f"{instrument}{symbol_suffix}"
         info = mt5.symbol_info(symbol) if mt5.symbol_select(symbol, True) else None
         if info is None:
             problems.append(f"{instrument}: symbol {symbol!r} not found on this MT5 server")
@@ -274,23 +282,37 @@ def _parse_overrides(text: str) -> dict[str, float]:
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--venue", choices=sorted(DEFAULT_INSTRUMENTS), required=True)
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--profile", help="broker profile name (config/brokers/<name>.toml) or path")
+    target.add_argument("--venue", choices=sorted(DEFAULT_INSTRUMENTS), help="legacy: use .env MT5_* settings")
     parser.add_argument("--instruments", help="comma-separated; default depends on --venue")
-    parser.add_argument("--out", help="output file (default: config/instruments/<venue>.toml)")
+    parser.add_argument("--out", help="output file (default: the profile's spec_file, or config/instruments/<venue>.toml)")
     parser.add_argument("--commission", default="", help="MT5 overrides, e.g. XAUUSD=3.5 (per lot per side)")
     parser.add_argument("--spread", default="", help="MT5 overrides in points, e.g. EURUSD=8,GBPUSD=10")
     parser.add_argument("--deals-days", type=int, default=180, help="MT5 deal history window for commission")
     args = parser.parse_args(argv)
 
-    instruments = (
-        [s.strip().upper() for s in args.instruments.split(",") if s.strip()]
-        if args.instruments
-        else DEFAULT_INSTRUMENTS[args.venue]
-    )
-    out = Path(args.out) if args.out else REPO_ROOT / "config" / "instruments" / f"{args.venue}.toml"
+    profile = broker_profiles.load_profile(args.profile) if args.profile else None
+    venue = profile.venue if profile else args.venue
+    if args.instruments:
+        instruments = [s.strip().upper() for s in args.instruments.split(",") if s.strip()]
+    elif profile and profile.symbols:
+        instruments = list(profile.symbols)
+    else:
+        instruments = DEFAULT_INSTRUMENTS[venue]
+    if args.out:
+        out = Path(args.out)
+    elif profile:
+        out = profile.spec_file
+    else:
+        out = REPO_ROOT / "config" / "instruments" / f"{venue}.toml"
 
-    if args.venue == "mt5":
-        mt5, suffix = _connect_mt5()
+    if venue == "mt5":
+        if profile:
+            # Credentials, symbol map and a verified server clock all come from the profile.
+            mt5, suffix, symbols = broker_profiles.connect_mt5(profile), "", profile.symbols
+        else:
+            (mt5, suffix), symbols = _connect_mt5(), None
         try:
             account = mt5.account_info()
             source = f"{account.company} / {account.server}"
@@ -299,6 +321,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 commission_overrides=_parse_overrides(args.commission),
                 spread_overrides=_parse_overrides(args.spread),
                 deals_days=args.deals_days,
+                symbols=symbols,
             )
         finally:
             shutdown = getattr(mt5, "shutdown", None)
@@ -318,7 +341,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     source = f"{source}, exported {datetime.now(timezone.utc):%Y-%m-%d}"
     out.write_text(dumps_specs(specs, source=source), encoding="utf-8")
-    print(f"Wrote {len(specs)} {args.venue} spec(s) to {out} (source {source}; account currency {specs.account_ccy}):")
+    print(f"Wrote {len(specs)} {venue} spec(s) to {out} (source {source}; account currency {specs.account_ccy}):")
     for symbol, spec in specs.items():
         print(
             f"  {symbol:<9} tick {spec.tick_size:g}  contract {spec.contract_size:g}  "

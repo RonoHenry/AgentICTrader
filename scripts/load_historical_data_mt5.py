@@ -64,6 +64,7 @@ from load_historical_data import (
     detect_gaps,
     print_summary_report,
 )
+from agent import broker_profiles  # noqa: E402
 from services.market_data.mt5_clock import MT5ServerClock, NY_CLOSE
 
 logger = logging.getLogger("load_historical_data_mt5")
@@ -161,7 +162,7 @@ def fetch_mt5_candles(
 async def load_instrument_timeframe(
     db_loader: Optional[TimescaleDBLoader],
     clock: MT5ServerClock,
-    symbol_suffix: str,
+    symbol: str,
     instrument: str,
     timeframe: str,
     years: float,
@@ -178,7 +179,6 @@ async def load_instrument_timeframe(
             from_time = last_time
             logger.info(f"Resuming {instrument} {timeframe} from {from_time}")
 
-    symbol = f"{instrument}{symbol_suffix}"
     if not mt5.symbol_select(symbol, True):
         raise RuntimeError(f"Symbol {symbol} not available in this terminal: {mt5.last_error()}")
 
@@ -223,12 +223,11 @@ def connect_mt5() -> None:
         raise RuntimeError(f"MT5 initialize failed ({code}): {desc}")
 
 
-def verify_server_clock(clock: MT5ServerClock, instruments: List[str], symbol_suffix: str) -> None:
+def verify_server_clock(clock: MT5ServerClock, symbols: List[str]) -> None:
     """Fail fast if MT5_SERVER_TIMEZONE doesn't match the terminal's clock —
     otherwise every row written would be shifted by the difference."""
     tick_times = []
-    for instrument in instruments:
-        symbol = f"{instrument}{symbol_suffix}"
+    for symbol in symbols:
         mt5.symbol_select(symbol, True)
         tick = mt5.symbol_info_tick(symbol)
         if tick is not None and tick.time:
@@ -251,9 +250,18 @@ async def load_all_data(
     years: float,
     resume: bool,
     dry_run: bool,
+    profile: Optional["broker_profiles.BrokerProfile"] = None,
 ) -> List[LoadSummary]:
-    symbol_suffix = config("MT5_SYMBOL_SUFFIX", default="")
-    clock = MT5ServerClock(config("MT5_SERVER_TIMEZONE", default=NY_CLOSE))
+    """With a broker ``profile``, its credentials, symbol map and server clock
+    are used (the clock is verified on connect). Without one, the legacy
+    .env MT5_* settings apply."""
+    if profile is not None:
+        clock = profile.clock()
+        symbol_for = profile.symbol
+    else:
+        symbol_suffix = config("MT5_SYMBOL_SUFFIX", default="")
+        clock = MT5ServerClock(config("MT5_SERVER_TIMEZONE", default=NY_CLOSE))
+        symbol_for = lambda instrument: f"{instrument}{symbol_suffix}"  # noqa: E731
 
     logger.info("=" * 80)
     logger.info("AgentICTrader Historical Data Loader — MetaTrader 5")
@@ -262,15 +270,20 @@ async def load_all_data(
     logger.info(f"Timeframes: {', '.join(timeframes)}")
     logger.info(f"Historical period: {years} years")
     logger.info(f"Resume mode: {resume}   Dry run: {dry_run}")
+    logger.info(f"Broker profile: {profile.name if profile else '(none: .env MT5_* settings)'}")
     logger.info("=" * 80)
 
-    connect_mt5()
+    if profile is not None:
+        broker_profiles.connect_mt5(profile)
+    else:
+        connect_mt5()
     db_loader: Optional[TimescaleDBLoader] = None
     summaries: List[LoadSummary] = []
     try:
         account = mt5.account_info()
         logger.info(f"Connected to MT5 server {account.server if account else '?'}")
-        verify_server_clock(clock, instruments, symbol_suffix)
+        if profile is None:  # a profile's clock was already verified on connect
+            verify_server_clock(clock, [symbol_for(i) for i in instruments])
 
         if not dry_run:
             connection_string = config("TIMESCALE_URL", default="")
@@ -284,7 +297,7 @@ async def load_all_data(
                 try:
                     summaries.append(
                         await load_instrument_timeframe(
-                            db_loader, clock, symbol_suffix, instrument, timeframe, years, resume
+                            db_loader, clock, symbol_for(instrument), instrument, timeframe, years, resume
                         )
                     )
                 except Exception as e:
@@ -314,6 +327,7 @@ def main() -> None:
                         help=f"Years of history to load (default: {HISTORICAL_YEARS})")
     parser.add_argument("--resume", action="store_true", help="Resume from the last loaded MT5 timestamp")
     parser.add_argument("--dry-run", action="store_true", help="Fetch and validate without writing to TimescaleDB")
+    parser.add_argument("--profile", help="broker profile (config/brokers/<name>.toml); default: .env MT5_* settings")
     args = parser.parse_args()
 
     invalid = [t for t in args.timeframes if t not in TIMEFRAMES]
@@ -323,7 +337,10 @@ def main() -> None:
 
     try:
         summaries = asyncio.run(
-            load_all_data(args.instruments, args.timeframes, args.years, args.resume, args.dry_run)
+            load_all_data(
+                args.instruments, args.timeframes, args.years, args.resume, args.dry_run,
+                profile=broker_profiles.load_profile(args.profile) if args.profile else None,
+            )
         )
         print_summary_report(summaries)
     except KeyboardInterrupt:
