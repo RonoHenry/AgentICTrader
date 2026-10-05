@@ -52,7 +52,7 @@ Recorded so they are not silently forgotten, and not bolted on mid-implementatio
 - **AI modifiers in the loop.** Visual model, AlgoRAG and sentiment are disabled in backtests, and the run manifest records that. Replaying them historically is either leaky (AlgoRAG could retrieve trades from the future) or costly (paid VLM calls per bar). The deterministic baseline comes first; AI influence gets its own ablation spec later.
 - **News blackout.** No historical economic-calendar source exists yet (`calendar_ingestion` is a placeholder). Runs report that the news filter was not applied.
 - **Swap / financing, tick-level simulation, partial fills, order-book depth.** Reports include holding time per trade, so financing impact can be estimated afterwards.
-- **UI.** Outputs are files (CSV/JSON/Markdown). A chart or journal UI is the testing-frontend work, specified separately.
+- **A web application.** The run report (Requirement 11) is a static HTML file. A served testing frontend, with live data or multi-user access, is specified separately.
 
 ---
 
@@ -204,9 +204,10 @@ Recorded so they are not silently forgotten, and not bolted on mid-implementatio
 
 1. THE fill model SHALL have unit tests on hand-built M1 bars covering every rule in Requirement 4, including the gap, same-bar and weekend cases.
 2. THE truncation test (Requirement 2.6) SHALL run in the default test suite.
-3. A parity test SHALL replay a period the paper forward test has traded, with the same instruments, configuration and fill model, and SHALL produce the same trades: the same setup_ids, fills and exit reasons, with R within rounding.
+3. A parity test SHALL replay a period the paper forward test has traded, with the same instruments, configuration and fill model, and SHALL produce the same trades: the same setup_ids, fills and exit reasons, with R within rounding. The primary parity target is the forward test on the first real broker profile's market (9.6).
 4. A golden-run test SHALL run a small committed dataset end to end and compare the journal against a committed expected result. Any intended change to that result SHALL require updating the golden file in the same commit.
 5. WHEN two runs have identical manifests, THEY SHALL produce byte-identical journals.
+6. A paper forward test SHALL run on the first real broker profile's market: Exness FX and gold, through the `exness-standard` profile, with paper fills on the shared fill model. That way, forward evidence and parity (9.3) come from the market the strategy would trade. The existing Binance crypto forward test continues as a 24/7 plumbing check; its results are not evidence for the Exness strategy.
 
 ---
 
@@ -227,6 +228,32 @@ Recorded so they are not silently forgotten, and not bolted on mid-implementatio
 4. A variant MAY swap only the cost profile while keeping the same price data. This compares brokers' costs on identical trades, and runs differing only that way SHALL be comparable under Requirement 8.5.
 5. THE spec export script and the MT5 history loader SHALL accept `--profile` and connect through it. Instruments SHALL be resolved through the profile's symbol map, and bar times converted with its server clock.
 6. WHEN connecting to an MT5 profile, THE system SHALL verify the profile's server clock against live ticks (`MT5ServerClock.check`) and SHALL refuse to continue on a mismatch.
+
+---
+
+### Requirement 11: Run Report
+
+**User Story:** As a strategy researcher, I want to see every trade and every skipped setup on a chart, with what the engine saw at the time, so that I can judge with my own eyes whether its setups are the ones I would take.
+
+#### Acceptance Criteria
+
+1. EVERY run SHALL write `report.html`: one self-contained file that opens in a browser offline. Chart libraries are embedded; no server and no network access are needed.
+2. THE report header SHALL show the run manifest's essentials: broker profile and spec source, variant, data range, code commit and dirty flag, and the AI-modifier and news-filter flags.
+3. A summary section SHALL show:
+   - the equity curve and drawdown in R;
+   - the distribution of net R;
+   - the Requirement 8.3 breakdowns;
+   - the cost share of gross R.
+
+   Buckets with insufficient evidence SHALL be marked as such (Requirement 8.4).
+4. A trade explorer SHALL list every journal row, both trades and skipped intents, filterable by outcome, decision or skip reason, instrument, grade and killzone.
+5. FOR each row, THE report SHALL draw a candlestick chart of the entry timeframe around the setup. The window runs from a configured number of bars before the decision to a configured number after the trade closes (defaults 60 and 20). The chart SHALL mark:
+   - the decision time, entry, stop and target;
+   - fill and exit, where they occurred;
+   - the engine's context at decision time: the selected entry PD array, the draw on liquidity, and the swept level, where present;
+   - the killzone shading.
+6. Charts SHALL be drawn only from the run's own recorded data: its journal, its signal records and its fingerprinted candles. A report never re-analyses with different code.
+7. THE same report generator SHALL accept a paper forward test's trade file and candles, so forward-test trades are reviewed the same way as backtested ones.
 
 ---
 
@@ -253,3 +280,5 @@ Decided 2026-10-05, after the first spec export (task 183) showed the connected 
 | D9 | Candle calendar | One strategy calendar, New York close (17:00 New York), for every broker and venue (Requirements 2.7, 3.3). |
 | D10 | Spread per bar | The larger of the bar's recorded spread and the typical spread (Requirement 5.1). |
 | D11 | First real broker profile | `exness-standard`: an Exness Standard MT5 demo. Server clock UTC+0, hedging, costs costed through the spread. MetaQuotes-Demo data is test data only and never used for results. |
+| D12 | Visual review | A self-contained HTML run report per run (Requirement 11), built before the first baseline. A served frontend stays deferred. |
+| D13 | Forward test on the real market | An Exness FX and gold paper forward test on the Windows host (Requirement 9.6). The `exness-standard` account offers no crypto, so the Binance forward test is a plumbing check only. |

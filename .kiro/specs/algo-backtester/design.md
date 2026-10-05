@@ -107,10 +107,12 @@ algo_backtester/           # NEW package (backtest-only; not shipped in the pape
   metrics.py               # summary statistics, bootstrap CI, breakdowns
   report.py                # manifest / journal / summary writers
   compare.py               # side-by-side comparison of runs
+  report_html.py           # self-contained HTML run report (Req 11)
   __main__.py              # CLI: run | compare | check-data
 scripts/
   export_instrument_specs.py    # NEW: venue specs + measured costs → config/instruments/<profile>.toml
   export_forward_test_fixture.py # NEW: forward-test period → parity fixture
+  run_fx_forward_test.ps1        # NEW: Exness FX/gold paper forward test on the Windows host (Req 9.6)
 ```
 
 Tests follow the existing convention for engine and agent code: `backend/tests/test_backtest_*.py`, with fixtures under `backend/tests/fixtures/backtester/`. `data/backtests/` is added to `.gitignore`.
@@ -332,6 +334,14 @@ A `BrokerClient` that `execute_node` calls through `AgentGraph`, exactly as live
 class SignalRecord:
     t: datetime; instrument: str
     result: OrderIntent | NoTrade | EngineError      # EngineError: analyze() raised (kept, counted)
+    context: TradeContext | None = None              # set for OrderIntents; drawn by the run report (Req 11.5)
+
+@dataclass(frozen=True)
+class TradeContext:   # compact extract of the LiquidityMap at t — not the whole map
+    entry_array: dict | None        # type, direction, timeframe, high, low, formed_at
+    draw_on_liquidity: dict | None  # source, price, liquidity type
+    swept_level: dict | None        # price and time of the opposite-side raid, once the grader records it
+    killzone: str | None
 
 def generate_signals(instrument, source, calendar, cfg, start, end) -> Iterator[SignalRecord]:
 ```
@@ -419,6 +429,30 @@ The event loop runs over the merged, time-ordered stream of M1 bars (all instrum
 **Hold-out (Req 7.2):** `StudyConfig` in `config/backtests/<study>.toml` sets `holdout_start` once. Its default is D7: the most recent 3 months at study creation. A run whose `[start, end)` overlaps the hold-out is refused unless `--final` is passed, and the manifest records `final_validation: true`.
 
 ---
+
+### Run report (`algo_backtester/report_html.py`, Req 11)
+
+```python
+def write_report(run_dir: Path, candles: CandleSource, bars_before: int = 60, bars_after: int = 20) -> Path:
+def write_forward_test_report(trades_file: Path, candles: CandleSource, out: Path) -> Path:
+```
+
+- **One file:** `report.html` embeds plotly.js once, plus a JSON data block. Charts are drawn in the browser when a row is selected, so a run with hundreds of trades stays a modest file. There are no `http(s)` script or link references, so it works offline (Req 11.1).
+- **Data:** the journal, SignalRecords (with `TradeContext`), the manifest, and per-row candle windows cut from the run's own fingerprinted data (Req 11.6).
+- **Chart:**
+  - entry-timeframe candles;
+  - horizontal lines for entry, stop and target, from the decision until the exit or expiry;
+  - markers for decision, fill and exit;
+  - the entry PD array as a shaded box, the draw on liquidity as a dashed line, the swept level when present;
+  - the killzone as a background band.
+- **Forward test:** `write_forward_test_report` reads the paper broker's trade file and the candle store, and renders the same explorer (Req 11.7).
+
+### FX paper forward test (`scripts/run_fx_forward_test.ps1`, Req 9.6)
+
+Runs `scripts/run_live_agent.py --profile exness-standard --feed mt5 --broker paper --loop` on the Windows host, because MetaTrader5's Python API is Windows-only and can't run in the Linux paper-trader container.
+- Paper state goes to `data/paper_trades_fx.json` and logs to `data/fx_forward_test.log`.
+- A Task Scheduler entry (documented, created by the user) restarts it at logon.
+- It needs the live runner to support `--profile` (task 192) and the paper broker on the shared fill model (task 195), so its trades are valid parity data from day one.
 
 ## Data Models
 
@@ -617,6 +651,7 @@ The tests follow the TDD steering doc: each task is written RED first. They live
 | `test_backtest_sim_broker.py` | Sizing per instrument class (USD quote, USD base, cross), rounding down, `MIN_VOLUME_OVER_RISK`, R and cost accounting | Unit (Req 5, 6.1–6.2) |
 | `test_backtest_account.py` | Drawdown anchors at 17:00 New York (including DST), exposure dict consumed by `RiskEngine.validate()` | Unit (Req 6.3, 1.4) |
 | `test_backtest_metrics.py` | Statistics on known trade lists, seeded bootstrap determinism, insufficient-evidence flag, compare refusal | Unit (Req 8) |
+| `test_backtest_report_html.py` | Report is offline (no external references), contains every journal row, chart windows and markers are correct, context drawn only from recorded data, forward-test input accepted | Unit (Req 11) |
 | `test_backtest_golden.py` | End-to-end run on `fixtures/backtester/golden/`: two weeks of EURUSD M1 plus a native-HTF warm-up, journal equal to the committed expected file; a second run is byte-identical | Golden (Req 9.4, 9.5) |
 | `test_backtest_parity.py` | Replays the forward-test fixture and matches its trades | Fixture (Req 9.3) |
 | `test_paper_broker.py` (existing, updated) | PaperBroker behaviour on the shared FillModel, plus the clock injection | Unit (L4) |
@@ -639,3 +674,5 @@ The tests follow the TDD steering doc: each task is written RED first. They live
 | 8 Reporting | `report.py`, `metrics.py`, `compare.py` |
 | 9 Self-validation | Testing Strategy table |
 | 10 Broker profiles | `BrokerProfile`, `config/brokers/*.toml`, L8, manifest `broker_profile` |
+| 11 Run report | `report_html.py`, `TradeContext` on `SignalRecord` |
+| 9.6 FX forward test | `scripts/run_fx_forward_test.ps1`, runner `--profile` (task 192), paper broker on `FillModel` (L4) |

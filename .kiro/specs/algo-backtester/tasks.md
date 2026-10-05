@@ -293,6 +293,15 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **199b. GREEN** / **199c. REFACTOR**
   - **Validates: Requirements 1.1, 9.2**
 
+- [ ] 217. `TradeContext` on SignalRecords (Req 11.5)
+  - Numbered 217 to keep earlier numbers stable. Added 2026-10-05 with Requirement 11.
+  - **217a. RED** (`backend/tests/test_backtest_signals.py`)
+    - `test_order_intent_records_carry_trade_context` — entry array, draw on liquidity and killzone, taken from the LiquidityMap at `t`
+    - `test_no_trade_records_carry_no_context` — keeps the cache small
+    - `test_trade_context_round_trips_through_cache`
+  - **217b. GREEN** / **217c. REFACTOR**
+  - **Validates: Requirements 11.5, 11.6**
+
 - [ ] 200. Phase A cache (`algo_backtester/cache.py`)
   - **200a. RED** (`backend/tests/test_backtest_cache.py`)
     - `test_key_changes_with_each_input`
@@ -393,6 +402,21 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
 
 ### D. Validation and first results
 
+- [ ] 218. HTML run report (`algo_backtester/report_html.py`, Req 11)
+  - Numbered 218 to keep earlier numbers stable. Added 2026-10-05.
+  - **218a. RED** (`backend/tests/test_backtest_report_html.py`, synthetic run directory)
+    - `test_report_is_single_offline_file` — no `http://` or `https://` script, link or img references
+    - `test_report_header_shows_manifest_essentials`
+    - `test_every_journal_row_present_including_skipped`
+    - `test_chart_window_spans_bars_before_decision_to_bars_after_close`
+    - `test_markers_for_decision_entry_stop_target_fill_exit`
+    - `test_context_drawn_only_from_recorded_signal_records` — no `analyze()` call during report generation
+    - `test_insufficient_evidence_buckets_marked`
+    - `test_forward_test_trades_file_renders_same_explorer`
+  - **218b. GREEN** — CLI: `python -m algo_backtester report <run_dir>` and `report --forward-test <trades.json>`. `run` writes the report automatically.
+  - **218c. REFACTOR** — open a generated report by hand to check it reads well. **(user action:** review one report.)
+  - **Validates: Requirements 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7**
+
 - [ ] 209. Golden run
   - **209a.** Build `backend/tests/fixtures/backtester/golden/`: two weeks of EURUSD M1 plus native HTF warm-up, exported by `scripts/export_aggregation_fixture.py`. **(user action** for the export.)
   - **209b. RED** (`backend/tests/test_backtest_golden.py`)
@@ -414,8 +438,17 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - Write `docs/backtests/BASELINE.md`: the summary, cost share, insufficient-evidence buckets, and observations.
   - No strategy changes in this task. Grader changes are measured against this baseline in the `liquidity-engine` spec update.
 
+- [ ] 219. Exness FX/gold paper forward test on the Windows host (Req 9.6)
+  - Numbered 219 to keep earlier numbers stable. Added 2026-10-05: the `exness-standard` account offers no crypto, so the Binance forward test cannot be evidence for the Exness strategy.
+  - **219a. RED** (`backend/tests/test_backtest_runner_view.py`)
+    - `test_runner_accepts_profile` — symbols resolved through the profile (EURUSD → EURUSDm), clock from the profile, verified on connect
+    - `test_runner_paper_state_and_log_paths_configurable`
+  - **219b. GREEN** — `--profile` in `scripts/run_live_agent.py`; `scripts/run_fx_forward_test.ps1` with `data/paper_trades_fx.json` and `data/fx_forward_test.log`.
+  - **219c. (user action)** — create the documented Task Scheduler entry and start it during FX market hours. Record the start date here: it is the earliest date for FX parity data.
+  - **Validates: Requirements 9.6**
+
 - [ ] 212. Parity with the paper forward test
-  - **Blocked until** the forward test has at least 20 closed trades placed after the task 196 restart date.
+  - **Blocked until** the forward test has at least 20 closed trades placed after the task 196 restart date. Primary target: the Exness FX forward test (task 219); Binance optional.
   - **212a. RED** (`backend/tests/test_backtest_export_forward_fixture.py`)
     - `test_export_includes_m1_window_and_trades_after_restart_date`
   - **212b. GREEN** — `scripts/export_forward_test_fixture.py`; export to `backend/tests/fixtures/backtester/parity/`.
@@ -490,7 +523,7 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
     },
     {
       "name": "Signals",
-      "tasks": ["199", "200"],
+      "tasks": ["199", "217", "200"],
       "description": "Phase A signal generation with the truncation property, and its cache",
       "dependencies": ["As-of View", "Backtester Config and Data"]
     },
@@ -502,7 +535,7 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
     },
     {
       "name": "Reporting and CLI",
-      "tasks": ["205", "206", "207", "208"],
+      "tasks": ["205", "206", "207", "208", "218"],
       "description": "Metrics, manifest/journal/summary writers, run comparison, CLI",
       "dependencies": ["Account Simulation"]
     },
@@ -519,10 +552,16 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
       "dependencies": ["Golden Run and Checkpoint"]
     },
     {
+      "name": "FX Forward Test",
+      "tasks": ["219"],
+      "description": "Exness FX/gold paper forward test on the Windows host; its trades are the primary parity data",
+      "dependencies": ["Checkpoint: Shared Foundations Live", "Broker Profiles"]
+    },
+    {
       "name": "Parity",
       "tasks": ["212"],
       "description": "Backtest reproduces the paper forward test's trades. Also blocked on at least 20 forward-test trades placed after the task 196 restart.",
-      "dependencies": ["Checkpoint: Shared Foundations Live", "Golden Run and Checkpoint"]
+      "dependencies": ["Checkpoint: Shared Foundations Live", "Golden Run and Checkpoint", "FX Forward Test"]
     },
     {
       "name": "Cleanup",
