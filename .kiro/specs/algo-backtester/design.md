@@ -132,7 +132,8 @@ class StrategyCalendar:
 
 - Floor the instant in **New York wall time shifted by +7 h**, then convert back to UTC. This is the same rule as an MT5 `ny_close` server clock, so DST is handled by `zoneinfo`.
   - D1 starts at 17:00 New York.
-  - W1 starts Sunday 17:00 New York.
+  - W1 starts at Saturday 17:00 New York: the `ny_close` server's Sunday 00:00, the label MT5 gives weekly bars. The FX week (Sunday 17:00 open to Friday 17:00 close) falls inside it.
+  - On US DST-change days, boundaries map to their first real occurrence. A period running into New York's repeated hour absorbs it, so periods tile time with no gaps or overlaps, which matters for crypto.
   - H1–H12 floor to multiples of their length from the 17:00 day start. H3, H4, H6, H8 and H12 all divide 24 hours, so they nest inside D1. H4 starts at 17:00, 21:00, 01:00, 05:00, 09:00 and 13:00 New York.
 - `matches_native` reports where a venue's native bars can be used directly:
   - every TF for an MT5 `ny_close` server;

@@ -110,13 +110,14 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **216c. REFACTOR** — confirm GREEN.
   - **Validates: Requirements 4.7, 5.3**
 
-- [ ] 184. `StrategyCalendar` (`services/market_data/strategy_calendar.py`, D9)
+- [x] 184. `StrategyCalendar` (`services/market_data/strategy_calendar.py`, D9)
   - **184a. RED** (`backend/tests/test_backtest_strategy_calendar.py`)
     - `test_d1_starts_17_00_new_york_in_winter_and_summer`
-    - `test_h4_starts_17_21_01_05_09_13_new_york` — and H1/H3/H6/H8/H12 nest inside D1
-    - `test_w1_starts_sunday_17_00_new_york`
-    - `test_boundaries_across_dst_change_days` — US spring-forward and fall-back weeks
-    - `test_period_end_equals_next_period_start`
+    - `test_h4_starts_17_21_01_05_09_13_new_york`, `test_intraday_bars_nest_inside_d1`
+    - `test_w1_period_matches_mt5_weekly_bar_labels` — boundary at Saturday 17:00 New York (the `ny_close` server's Sunday 00:00); the Sunday 17:00 open and Friday close share one period
+    - `test_d1_stays_at_17_00_new_york_across_dst_change`
+    - `test_periods_tile_time_without_gaps_or_overlaps_across_dst_change` — both US change days; this test found the fall-back repeated hour, now absorbed by the preceding period
+    - `test_period_end_equals_next_period_start`, `test_naive_datetime_rejected`
     - `test_matches_native` — every TF for an MT5 `ny_close` clock; H1 and below for a UTC+0 MT5 clock (Exness) and for Binance
   - **184b. GREEN** — one `StrategyCalendar` for every broker and venue.
   - **184c. REFACTOR** — confirm GREEN.
