@@ -25,11 +25,12 @@ These are deliberate, small, and each is covered by its own task:
 |---|---|---|---|
 | L1 | Extract setup-to-order logic from `scripts/run_live_agent.py` into `agent/order_intent.py`, and its constants into `agent/strategy_config.py` | One implementation for live and backtest | 1.2, 1.6 |
 | L2 | `setup_id` becomes deterministic, derived from the entry PD array's id (new `SetupGradeDetail.entry_array_id`) instead of `uuid4()` | Re-grading the same array yields the same id: needed for D6 (one attempt per setup) and for duplicate-order protection | 1.3, D6 |
-| L3 | Live runner builds its candle window with `compose_as_of_view()` (closed entry-TF bars) | Live evaluates exactly what the backtest replays | 2.7, D5 |
+| L3 | Live runner builds its candle window with `compose_as_of_view()`: closed entry-TF bars, and HTF bars on the strategy calendar (aggregated from H1 where the broker's native bars follow a different clock) | Live evaluates exactly what the backtest replays, at any broker | 2.7, D5, D9 |
 | L4 | `PaperBrokerAdapter` delegates fills to `agent/brokers/fill_model.py` and takes an injectable clock | One fill model; parity with backtests | 4.1, 4.2, D4 |
 | L5 | `AgentGraph`, `observe_node`, `learn_node` and `log_agent_decision` accept a clock (default: wall clock) | `observe_node`'s 60-second staleness check reads `datetime.now()` and would reject every replayed setup | 2.5 |
 | L6 | `scripts/load_historical_data_mt5.py` stores each bar's spread, in price units | Cost model | 3.5, 5.1 |
 | L7 | Delete `ml/backtesting/engine.py` and `backend/tests/test_backtesting_engine.py` | Superseded | — |
+| L8 | Broker profiles: `agent/broker_profiles.py` + `config/brokers/<profile>.toml`. The spec export script and MT5 history loader take `--profile` | Any broker without code changes; credentials stay in `.env` | 10 |
 
 ---
 
@@ -40,7 +41,7 @@ flowchart TB
     subgraph Data["Data (per instrument)"]
         DB[(TimescaleDB candles<br/>M1 + native HTF warm-up)]
         SRC[CandleSource]
-        AGG[HTF aggregation<br/>VenueCalendar]
+        AGG[HTF aggregation<br/>StrategyCalendar]
         DB --> SRC --> AGG
     end
 
@@ -84,15 +85,16 @@ agent/
   order_intent.py          # NEW (L1): build_order_intent(), OrderIntent, NoTrade
   strategy_config.py       # NEW (L1): StrategyConfig (windows, min R:R, grade→confidence, expiry rule)
   instruments.py           # NEW: InstrumentSpec, tick value conversion, spec loading
+  broker_profiles.py       # NEW (L8): BrokerProfile, credential resolution from .env, symbol map
   brokers/fill_model.py    # NEW (L4): FillModel, Bar, SimOrder, FillEvent
   brokers/paper.py         # CHANGED (L4): delegates to FillModel, injectable clock
   graph.py, nodes/*.py     # CHANGED (L5): clock injection
 services/market_data/
-  venue_calendar.py        # NEW: Mt5Calendar, BinanceCalendar — period boundaries per TF
+  strategy_calendar.py     # NEW: StrategyCalendar — New York-close period boundaries per TF (D9)
   as_of_view.py            # NEW (L3): aggregate(), compose_as_of_view()
 config/
-  instruments/mt5.toml     # NEW: per-instrument specs + commission (exported from MT5, D2)
-  instruments/binance.toml
+  brokers/<profile>.toml   # NEW (L8): venue, credential env-var names, server clock, symbol map, spec file
+  instruments/<profile>.toml  # per-broker specs + costs, exported (e.g. exness-standard.toml, binance.toml)
   backtests/base.toml      # NEW: base run configuration + named variants
 algo_backtester/           # NEW package (backtest-only; not shipped in the paper-trader image)
   config.py                # RunConfig, StudyConfig, variant resolution
@@ -107,7 +109,7 @@ algo_backtester/           # NEW package (backtest-only; not shipped in the pape
   compare.py               # side-by-side comparison of runs
   __main__.py              # CLI: run | compare | check-data
 scripts/
-  export_instrument_specs.py    # NEW: MT5 symbol_info + deal-history commission → config/instruments/mt5.toml
+  export_instrument_specs.py    # NEW: venue specs + measured costs → config/instruments/<profile>.toml
   export_forward_test_fixture.py # NEW: forward-test period → parity fixture
 ```
 
@@ -117,31 +119,29 @@ Tests follow the existing convention for engine and agent code: `backend/tests/t
 
 ## Components and Interfaces
 
-### VenueCalendar (`services/market_data/venue_calendar.py`)
+### StrategyCalendar (`services/market_data/strategy_calendar.py`)
 
-Defines where each timeframe's bars start, so aggregated bars match the venue's native bars (Req 3.3, 3.4).
+Defines where every strategy candle starts, the same for all brokers and venues (D9, Req 3.3). The engine therefore sees identical candles whether the data came from a UTC server, a New York-close server or Binance.
 
 ```python
-class VenueCalendar(Protocol):
+class StrategyCalendar:
     def period_start(self, t: datetime, tf: Timeframe) -> datetime: ...   # UTC in, UTC out
     def period_end(self, t: datetime, tf: Timeframe) -> datetime: ...
-
-class Mt5Calendar(VenueCalendar):
-    def __init__(self, clock: MT5ServerClock): ...
-class BinanceCalendar(VenueCalendar): ...
+    def matches_native(self, clock: MT5ServerClock | None, tf: Timeframe) -> bool: ...
 ```
 
-- **MT5:** floor the instant in **server wall time**, using `MT5ServerClock`, then convert back to UTC.
-  - Intraday bars floor to multiples of their length from server midnight. H3, H4, H6, H8 and H12 all divide 24 hours, so they nest inside D1.
-  - D1 starts at server midnight, which is 17:00 New York on `ny_close`.
-  - W1 starts at the server's Sunday 00:00.
-  - DST is handled because the server clock follows New York.
-- **Binance:** floor in UTC. D1 starts at 00:00 UTC; W1 starts Monday 00:00 UTC.
+- Floor the instant in **New York wall time shifted by +7 h**, then convert back to UTC. This is the same rule as an MT5 `ny_close` server clock, so DST is handled by `zoneinfo`.
+  - D1 starts at 17:00 New York.
+  - W1 starts Sunday 17:00 New York.
+  - H1–H12 floor to multiples of their length from the 17:00 day start. H3, H4, H6, H8 and H12 all divide 24 hours, so they nest inside D1. H4 starts at 17:00, 21:00, 01:00, 05:00, 09:00 and 13:00 New York.
+- `matches_native` reports where a venue's native bars can be used directly:
+  - every TF for an MT5 `ny_close` server;
+  - H1 and below for a whole-hour UTC offset (e.g. Exness, UTC+0) and for Binance.
 
 ### As-of view (`services/market_data/as_of_view.py`)
 
 ```python
-def aggregate(bars: Sequence[Candle], tf: Timeframe, calendar: VenueCalendar) -> list[Candle]:
+def aggregate(bars: Sequence[Candle], tf: Timeframe, calendar: StrategyCalendar) -> list[Candle]:
     """Closed-period OHLCV bars of `tf` built from finer bars (M1 in backtests)."""
 
 def compose_as_of_view(
@@ -150,7 +150,7 @@ def compose_as_of_view(
     t: datetime,
     entry_tf: Timeframe,
     windows: Mapping[Timeframe, int],              # StrategyConfig.candle_counts
-    calendar: VenueCalendar,
+    calendar: StrategyCalendar,
 ) -> dict[Timeframe, list[Candle]]:
 ```
 
@@ -162,8 +162,8 @@ Rules, matching Req 2.1–2.4:
 
 **How each side supplies its inputs:**
 - **Backtest:** `closed` comes from `aggregate()` over stored M1. Where M1 history starts after the warm-up a window needs (W1 × 30 is about 30 weeks), it falls back to the stored native HTF bars, and the manifest records the warm-up source per TF.
-- **Live (L3):** `closed` is the venue's native bars with the forming bar dropped. `recent_m1` is fetched to cover the current W1 period (about 7,200 M1 bars at most: one MT5 call, or 8 Binance requests).
-- **Equivalence:** the aggregation-parity test (Req 3.4) is what makes "native closed bars" and "aggregated closed bars" interchangeable.
+- **Live (L3):** for each TF where `calendar.matches_native(...)`, `closed` is the venue's native bars with the forming bar dropped. Other TFs are aggregated from native H1 bars (D1 × 90 needs about 2,200 H1 bars; W1 × 30 about 5,000). `recent_m1` is fetched to cover the current W1 period (about 7,200 M1 bars at most: one MT5 call, or 8 Binance requests).
+- **Equivalence:** the aggregation-parity test (Req 3.4) is what makes native and aggregated closed bars interchangeable wherever `matches_native` is true.
 
 ### StrategyConfig (`agent/strategy_config.py`)
 
@@ -215,9 +215,9 @@ class InstrumentSpec:
     point: float; tick_size: float; contract_size: float
     volume_min: float; volume_step: float; volume_max: float
     base_ccy: str; quote_ccy: str
-    default_spread: float                  # price units, used when a bar has no recorded spread
+    default_spread: float                  # price units: typical spread, floors each bar's recorded spread (Req 5.1, D10)
     commission: CommissionSpec             # PER_LOT_PER_SIDE (MT5) | RATE_PER_SIDE (Binance, 0.001)
-    stop_slippage: float                   # D3, price units: FX 2 points (0.2 pip); crypto 0.05% of the export-time price
+    stop_slippage: float                   # D3 amended, price units: 25% of default_spread, min 2 points; crypto 0.05% of export-time price
 
 def money_per_price_unit(spec, price: float, conversion: float | None, account_ccy="USD") -> float:
 ```
@@ -226,7 +226,28 @@ def money_per_price_unit(spec, price: float, conversion: float | None, account_c
   - quote = USD: `contract_size`
   - base = USD (USDJPY, USDCAD): `contract_size / price`
   - crosses: multiply by `conversion`, the quote→USD rate at that time, taken from the conversion pair's M1 series. That pair must be present in the store, or the run refuses the instrument (Req 3.6 coverage check).
-- `scripts/export_instrument_specs.py` reads `mt5.symbol_info()` for each instrument. It takes commission per lot per side from the account's recent deal history (`history_deals_get`, deal `commission` field ÷ volume), which settles D2.
+- `scripts/export_instrument_specs.py` writes one spec file per broker profile. Three rules:
+  - **Commission (D2):** total `|commission| + |fee|` over recent deals ÷ total traded volume. This is correct whether the broker splits commission across entry and exit or charges the round trip on entry.
+  - **Typical spread:** median ask − bid over 72 h of ticks.
+  - **Refusal:** it writes nothing while a value is missing or zero, or while our money-per-tick disagrees with the broker's `trade_tick_value`.
+
+### BrokerProfile (`agent/broker_profiles.py`, `config/brokers/<profile>.toml`)
+
+```toml
+# config/brokers/exness-standard.toml
+venue = "mt5"
+spec_file = "config/instruments/exness-standard.toml"
+server_clock = "+0"                 # verified against live ticks on connect (Req 10.6)
+[credentials]                        # names of .env variables, never values (Req 10.2)
+login = "MT5_LOGIN"
+password = "MT5_PASSWORD"
+server = "MT5_SERVER"
+[symbols]                            # instrument -> broker symbol
+EURUSD = "EURUSDm"
+XAUUSD = "XAUUSDm"
+```
+
+`load_profile(name)` returns the venue, the resolved credentials (read from the environment at call time), an `MT5ServerClock`, the symbol map and the `InstrumentSpecs`. Instruments missing from `[symbols]` map to themselves. The export script and MT5 history loader take `--profile` (Req 10.5).
 
 ### FillModel (`agent/brokers/fill_model.py`)
 
@@ -236,7 +257,7 @@ A pure state machine shared by `PaperBrokerAdapter` and `SimBroker` (Req 4.1).
 @dataclass(frozen=True)
 class Bar:            # one M1 bar; prices are BID (MT5 convention)
     timestamp: datetime; open: float; high: float; low: float; close: float
-    spread: float     # price units; ask = bid + spread
+    spread: float     # price units, max(recorded, spec.default_spread) (Req 5.1); ask = bid + spread
 
 @dataclass
 class SimOrder:
@@ -382,7 +403,7 @@ The event loop runs over the merged, time-ordered stream of M1 bars (all instrum
 
 ```toml
 [run]
-venue = "mt5"
+profile = "exness-standard"                              # D11: venue, specs, costs, symbols
 instruments = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]   # D1
 start = "2025-01-01"
 end = "2026-07-01"
@@ -422,6 +443,7 @@ A variant is a dotted-key override of the base. The CLI takes `--variant min_rr_
   - `engine_code_fingerprint`, `strategy_config` (full), `run_config` (resolved, variant applied)
   - `variant`, `study`, `final_validation`
   - `data`: per instrument `{start, end, m1_rows, sha256, warmup_source_by_tf, default_spread_bars}`
+  - `broker_profile` and `instrument_spec_source` (the spec file's `# Source:` line, Req 10.3)
   - `instrument_specs` (resolved)
   - `ai_modifiers: "disabled"`, `news_filter: "not_applied"` (Non-Goals)
   - `bootstrap_seed`, derived from `run_id`
@@ -563,8 +585,9 @@ The tests follow the TDD steering doc: each task is written RED first. They live
 | Test | Covers | Kind |
 |---|---|---|
 | `test_backtest_fill_model.py` | Every row of the FillModel table, using hand-built bars: gap, same-bar, fill-bar, weekend expiry, spread side conventions, MAE/MFE | Unit (Req 4, 9.1) |
-| `test_backtest_venue_calendar.py` | Period boundaries across DST changes, for MT5 `ny_close` and Binance | Unit (Req 3.3) |
-| `test_backtest_aggregation_parity.py` | Aggregated M1 equals native HTF bars within one tick, on a committed fixture exported from MT5 and Binance | Fixture (Req 3.4) |
+| `test_backtest_strategy_calendar.py` | New York-close boundaries for every TF across DST changes; `matches_native` for `ny_close`, UTC+0 and Binance | Unit (Req 3.3) |
+| `test_backtest_broker_profiles.py` | Profile loading, credentials resolved from env vars (never stored), symbol map, clock mismatch refused | Unit (Req 10) |
+| `test_backtest_aggregation_parity.py` | Aggregated M1 equals native bars within one tick: H1 and below vs Exness and Binance; H4/D1/W1 vs a `ny_close` server (MetaQuotes-Demo, as test data) | Fixture (Req 3.4) |
 | `test_backtest_as_of_view.py` | Closed-bar rules, in-progress HTF bar, window sizes | Unit (Req 2.1–2.4) |
 | `test_backtest_truncation.py` | Hypothesis picks `t` in a fixture series. `generate_signals` on data cut at `t` equals the record at `t` from the full series. Capped at `max_examples=25` because `analyze()` is slow. | Property (Req 2.6, 9.2) |
 | `test_backtest_order_intent_parity.py` | Refactored runner path and Phase A give the same `OrderIntent` for the same view; `setup_id` is stable across consecutive bars for the same entry array | Unit (Req 1.3, L2) |
@@ -585,10 +608,11 @@ The tests follow the TDD steering doc: each task is written RED first. They live
 |---|---|
 | 1 Same decision code | L1, L2, `build_order_intent`, Phase B through `AgentGraph` + `RiskEngine`, `StrategyConfig` |
 | 2 No look-ahead | `compose_as_of_view`, closed-bar rule, clock injection (L5), truncation test, L3 |
-| 3 Data and aggregation | `VenueCalendar`, `aggregate`, `CandleSource`, coverage check, fingerprint, L6 |
+| 3 Data and aggregation | `StrategyCalendar`, `aggregate`, `CandleSource`, coverage check, fingerprint, L6 |
 | 4 Fill model | `FillModel`, `KILLZONE_END` expiry, L4 |
-| 5 Costs | `InstrumentSpec`, `CommissionSpec`, R accounting, `cost_flag` |
+| 5 Costs | `InstrumentSpec`, `CommissionSpec`, spread floor on `Bar`, R accounting, `cost_flag` |
 | 6 Sizing and account | `SimBroker` sizing, `SimAccount` |
 | 7 Run modes | `RunConfig` variants, `StudyConfig` hold-out, walk-forward, Phase A cache, two-phase parallelism |
 | 8 Reporting | `report.py`, `metrics.py`, `compare.py` |
 | 9 Self-validation | Testing Strategy table |
+| 10 Broker profiles | `BrokerProfile`, `config/brokers/*.toml`, L8, manifest `broker_profile` |

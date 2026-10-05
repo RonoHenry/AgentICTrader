@@ -23,11 +23,13 @@ The backtester is only trustworthy if it is provably free of look-ahead, prices 
 ## Glossary
 
 - **As-of time (t)**: The instant a decision is evaluated. Only data that was fully known at t may influence that decision.
-- **As-of view**: The multi-timeframe candle window passed to `LiquidityMappingEngine.analyze()` at time t: closed bars only for the entry timeframe and below, and for each higher timeframe its closed bars plus the in-progress bar aggregated from M1 bars that closed at or before t.
+- **As-of view**: The multi-timeframe candle window passed to `LiquidityMappingEngine.analyze()` at time t: closed bars only for the entry timeframe and below, and for each higher timeframe its closed bars plus the in-progress bar aggregated from M1 bars that closed at or before t. All bars follow the strategy calendar.
 - **Entry timeframe**: The timeframe whose bar closes trigger evaluation (M1, M3, M5 or M15; see `setup_grader._ENTRY_ELIGIBLE_TIMEFRAMES`).
 - **Simulation resolution**: M1. Every fill, exit and expiry is decided bar by bar on M1, whatever the entry timeframe.
 - **Venue**: The data and execution source: an MT5 broker server, or Binance spot.
-- **Venue session boundaries**: Where the venue's own HTF bars begin and end. For example, MT5 servers on the `ny_close` clock close D1 at 17:00 New York; Binance closes D1 at 00:00 UTC.
+- **Strategy calendar**: The one fixed calendar every strategy candle follows, whatever the broker or venue. D1 runs 17:00 to 17:00 New York (DST-aware), the FX market's daily close. W1 starts Sunday 17:00 New York. Intraday higher timeframes (H1–H12) align to the 17:00 New York day start, so H4 bars start at 17:00, 21:00, 01:00, 05:00, 09:00 and 13:00 New York.
+- **Native bars**: The venue's own HTF bars. They follow the venue's server clock, which may differ from the strategy calendar. Example: an MT5 server on UTC closes D1 at 00:00 UTC; Binance does too. Native bars are used directly only where they coincide with the strategy calendar.
+- **Broker profile**: One broker account's configuration: venue (`mt5` or `binance`), the names of the environment variables holding its credentials, its server clock, its symbol map (instrument → broker symbol, e.g. `EURUSD` → `EURUSDm`), and its instrument spec file. Different profiles let the same strategy be priced at different brokers.
 - **Order intent**: The order the live runner derives from a graded setup: direction, entry, stop, targets, R:R, confidence and setup_id.
 - **Fill model**: The rules that turn an order intent plus M1 bars into fills, exits, expiries and costs.
 - **Gross R / Net R**: A trade's result in multiples of its initial risk, before and after costs.
@@ -83,7 +85,9 @@ Recorded so they are not silently forgotten, and not bolted on mid-implementatio
 4. THE as-of view SHALL contain the same number of bars per timeframe as the live runner requests (`_CANDLE_COUNT`, moved into the shared configuration per Requirement 1.6).
 5. THE `timestamp` passed to `analyze()` SHALL be t. Killzone and session logic therefore see the as-of time, never wall-clock time.
 6. THE Backtester SHALL include a property-based truncation test (Hypothesis). For randomly chosen t, removing all data after t SHALL leave the order intent (or NO_TRADE) at t unchanged.
-7. THE live runner SHALL build its candle window with the same as-of view builder, so the evaluation the backtest replays is the one live trading performs. This changes current live behaviour: the runner presently includes the forming entry-timeframe bar.
+7. THE live runner SHALL build its candle window with the same as-of view builder, so the evaluation the backtest replays is the one live trading performs. This changes current live behaviour in two ways:
+   - the runner presently includes the forming entry-timeframe bar;
+   - it uses the venue's native HTF bars even where they don't follow the strategy calendar. It SHALL instead aggregate those timeframes from finer bars.
 
 ---
 
@@ -95,8 +99,12 @@ Recorded so they are not silently forgotten, and not bolted on mid-implementatio
 
 1. THE Backtester SHALL read M1 bars from the project candle store (TimescaleDB `candles` table, populated by `scripts/load_historical_data_mt5.py` and `scripts/load_historical_data_binance.py`).
 2. ALL M1 timestamps SHALL be timezone-aware UTC. MT5 server times SHALL be converted with `MT5ServerClock` (`services/market_data/mt5_clock.py`).
-3. THE Backtester SHALL aggregate higher timeframes from M1 using the venue's session boundaries.
-4. A test SHALL compare aggregated HTF bars against the venue's natively downloaded HTF bars for the same period. Open, high, low and close SHALL agree to within one price increment. If they don't, the boundaries are wrong.
+3. THE Backtester SHALL aggregate higher timeframes from M1 on the strategy calendar, identically for every broker profile.
+4. A test SHALL compare aggregated bars against native bars for the same period, to within one price increment:
+   - H1 and lower against any venue's native bars;
+   - H4, D1 and W1 against native bars from a server whose clock follows the strategy calendar (an MT5 `ny_close` server).
+
+   A mismatch means the calendar is wrong.
 5. FOR MT5 venues, THE history loader SHALL also store each bar's recorded spread, because the cost model (Requirement 5) needs it.
 6. BEFORE a run starts, THE Backtester SHALL check data coverage per instrument. Weekends and venue holidays are allowed gaps. IF any other gap exceeds a configured limit, OR the history starts after the requested start date, THEN THE Backtester SHALL report it and SHALL refuse to run unless the user explicitly allows it.
 7. THE run manifest SHALL record a fingerprint of the M1 data used (row count plus a hash per instrument), so a rerun on changed data is detectable.
@@ -130,7 +138,7 @@ Recorded so they are not silently forgotten, and not bolted on mid-implementatio
 
 #### Acceptance Criteria
 
-1. FOR MT5 venues, spread SHALL be taken from each bar's recorded spread (Requirement 3.5). IF a bar has none, a configured default per instrument SHALL apply, and the report SHALL count how many bars used the default.
+1. THE spread applied to each bar SHALL be the larger of the bar's recorded spread (Requirement 3.5) and the instrument's typical spread from the broker profile's spec file. Some servers record 0 for almost every bar, and many record the bar's minimum, so the recorded value alone runs optimistic. The report SHALL count how many bars were priced at the typical spread.
 2. Commission SHALL be configurable per venue and instrument: per lot per side for MT5, or a rate on notional per side for Binance (default 0.001).
 3. Net R SHALL equal gross R minus spread, commission and slippage, each converted to R using the trade's initial risk.
 4. THE report SHALL show, for every result, what share of gross R went to costs.
@@ -202,6 +210,26 @@ Recorded so they are not silently forgotten, and not bolted on mid-implementatio
 
 ---
 
+### Requirement 10: Broker Profiles
+
+**User Story:** As a strategy researcher, I want each broker described by a profile, so that the same strategy can be priced and traded at any broker without code changes, and costs always come from the broker I would actually use.
+
+#### Acceptance Criteria
+
+1. A broker profile SHALL be a file in `config/brokers/<profile>.toml` naming:
+   - its venue (`mt5` or `binance`);
+   - the environment variables that hold its credentials;
+   - its server clock (`ny_close` or a fixed UTC offset);
+   - its symbol map;
+   - its instrument spec file.
+2. NO committed file SHALL contain a credential. Profiles SHALL name environment variables, and the variables' values live in the git-ignored `.env`.
+3. EVERY run SHALL name one broker profile. The run manifest SHALL record the profile and the source line of its instrument spec file (Requirement 5).
+4. A variant MAY swap only the cost profile while keeping the same price data. This compares brokers' costs on identical trades, and runs differing only that way SHALL be comparable under Requirement 8.5.
+5. THE spec export script and the MT5 history loader SHALL accept `--profile` and connect through it. Instruments SHALL be resolved through the profile's symbol map, and bar times converted with its server clock.
+6. WHEN connecting to an MT5 profile, THE system SHALL verify the profile's server clock against live ticks (`MT5ServerClock.check`) and SHALL refuse to continue on a mismatch.
+
+---
+
 ## Open Decisions
 
 To be settled by the user before `design.md`. Proposed defaults are shown; they apply if not changed.
@@ -216,3 +244,12 @@ To be settled by the user before `design.md`. Proposed defaults are shown; they 
 | D6 | Re-entry after a stop-out on the same setup | Not allowed. One attempt per setup_id; a new setup_id needs a new grade. |
 | D7 | Hold-out period | The most recent 3 months of available data. |
 | D8 | Minimum trades before a result counts | 30 per reported bucket. |
+
+Decided 2026-10-05, after the first spec export (task 183) showed the connected MT5 account was `MetaQuotes-Demo`, whose pricing is not a live broker's (zero EURUSD/GBPUSD spread, no commission):
+
+| # | Decision | Outcome |
+|---|---|---|
+| D3 (amended) | Stop-exit slippage | 25% of the instrument's typical spread, with a minimum of 2 points; crypto 0.05%. A fixed 2 points is 0.2 pip on 5-digit FX but only $0.002 on XAUUSD. |
+| D9 | Candle calendar | One strategy calendar, New York close (17:00 New York), for every broker and venue (Requirements 2.7, 3.3). |
+| D10 | Spread per bar | The larger of the bar's recorded spread and the typical spread (Requirement 5.1). |
+| D11 | First real broker profile | `exness-standard`: an Exness Standard MT5 demo. Server clock UTC+0, hedging, costs costed through the spread. MetaQuotes-Demo data is test data only and never used for results. |

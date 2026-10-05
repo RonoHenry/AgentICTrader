@@ -90,15 +90,35 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
       - **Open:** stop slippage defaults to 2 points, which is 0.2 pip on 5-digit FX but only $0.002 on XAUUSD (point 0.001). Revisit before task 211.
   - **Validates: Requirements 5.1, 5.2**
 
-- [ ] 184. `VenueCalendar` (`services/market_data/venue_calendar.py`)
-  - **184a. RED** (`backend/tests/test_backtest_venue_calendar.py`)
-    - `test_mt5_d1_starts_17_00_new_york_in_winter_and_summer`
-    - `test_mt5_intraday_bars_nest_in_d1` — H3/H4/H6/H8/H12 boundaries align to server midnight
-    - `test_mt5_w1_starts_server_sunday`
-    - `test_mt5_boundaries_across_dst_change_days` — US spring-forward and fall-back weeks
-    - `test_binance_d1_utc_midnight_w1_monday`
+- [ ] 215. Broker profiles (L8, `agent/broker_profiles.py`, `config/brokers/*.toml`)
+  - Numbered 215 so earlier task numbers stay stable. Added 2026-10-05 with Requirement 10.
+  - **215a. RED** (`backend/tests/test_backtest_broker_profiles.py`)
+    - `test_load_profile_resolves_credentials_from_named_env_vars`
+    - `test_profile_file_never_contains_credential_values` — loading fails if `[credentials]` holds anything but env-var names
+    - `test_symbol_map_resolves_and_defaults_to_instrument`
+    - `test_profile_loads_its_spec_file`
+    - `test_mt5_connect_refuses_on_server_clock_mismatch` (Req 10.6; fake MT5, no terminal)
+    - `test_export_script_accepts_profile` and `test_history_loader_accepts_profile` (Req 10.5)
+  - **215b. GREEN** — commit `config/brokers/exness-standard.toml` and `config/brokers/binance.toml`.
+  - **215c. REFACTOR** — confirm GREEN.
+  - **Validates: Requirements 10.1, 10.2, 10.3, 10.5, 10.6**
+
+- [ ] 216. Stop slippage as a share of the typical spread (D3 amended)
+  - **216a. RED** (`backend/tests/test_backtest_export_specs.py`)
+    - `test_stop_slippage_is_quarter_of_typical_spread_with_two_point_minimum` — EURUSD 0.8 pip spread → 0.2 pip; XAUUSD $0.24 → $0.06; a 1-point spread → 2 points
+  - **216b. GREEN** — `scripts/export_instrument_specs.py`; then re-export `config/instruments/exness-standard.toml`.
+  - **216c. REFACTOR** — confirm GREEN.
+  - **Validates: Requirements 4.7, 5.3**
+
+- [ ] 184. `StrategyCalendar` (`services/market_data/strategy_calendar.py`, D9)
+  - **184a. RED** (`backend/tests/test_backtest_strategy_calendar.py`)
+    - `test_d1_starts_17_00_new_york_in_winter_and_summer`
+    - `test_h4_starts_17_21_01_05_09_13_new_york` — and H1/H3/H6/H8/H12 nest inside D1
+    - `test_w1_starts_sunday_17_00_new_york`
+    - `test_boundaries_across_dst_change_days` — US spring-forward and fall-back weeks
     - `test_period_end_equals_next_period_start`
-  - **184b. GREEN** — `Mt5Calendar(MT5ServerClock)`, `BinanceCalendar`.
+    - `test_matches_native` — every TF for an MT5 `ny_close` clock; H1 and below for a UTC+0 MT5 clock (Exness) and for Binance
+  - **184b. GREEN** — one `StrategyCalendar` for every broker and venue.
   - **184c. REFACTOR** — confirm GREEN.
   - **Validates: Requirements 3.3**
 
@@ -112,9 +132,14 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **185b. GREEN** / **185c. REFACTOR**
 
 - [ ] 186. Aggregation parity against native venue bars
-  - **186a.** `scripts/export_aggregation_fixture.py` exports one week of M1 plus native H1/H4/D1/W1 for EURUSD and XAUUSD (MT5) and BTCUSDT (Binance) to `backend/tests/fixtures/backtester/aggregation/`. **(user action** for the MT5 part.)
+  - **186a.** `scripts/export_aggregation_fixture.py` (takes `--profile`) exports one week of M1 plus native H1/H4/D1/W1 to `backend/tests/fixtures/backtester/aggregation/`:
+    - EURUSD and XAUUSD from `exness-standard` (UTC+0);
+    - EURUSD from MetaQuotes-Demo (`ny_close`), used only as calendar test data;
+    - BTCUSDT from Binance.
+
+    **(user action** for the MT5 parts.)
   - **186b. RED** (`backend/tests/test_backtest_aggregation_parity.py`)
-    - `test_aggregated_bars_match_native_within_one_tick` — parametrised per venue, instrument and TF
+    - `test_aggregated_bars_match_native_within_one_tick` — parametrised over every (source, instrument, TF) where `StrategyCalendar.matches_native` is true: H1 and below everywhere; H4/D1/W1 only against the `ny_close` server
   - **186c. GREEN** — fix calendar boundaries until it passes. Never loosen the tolerance.
   - **Validates: Requirements 3.4**
 
@@ -171,11 +196,12 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **191b. GREEN** / **191c. REFACTOR**
   - **Validates: Requirements 2.4**
 
-- [ ] 192. Live runner builds its window with `compose_as_of_view()` (L3, D5)
+- [ ] 192. Live runner builds its window with `compose_as_of_view()` (L3, D5, D9)
   - **192a. RED** (`backend/tests/test_backtest_runner_view.py`; fake fetchers, no MT5/Binance)
     - `test_forming_entry_bar_dropped`
     - `test_m1_fetched_to_cover_current_w1_period`
     - `test_htf_in_progress_bar_composed_from_m1`
+    - `test_native_htf_bars_used_only_where_calendar_matches` — `ny_close` server: native H4/D1/W1; UTC+0 server or Binance: H4/D1/W1 aggregated from native H1
     - `test_evaluation_timestamp_is_last_entry_bar_close`
   - **192b. GREEN** — `scripts/run_live_agent.py` fetch path for MT5 and Binance.
   - **192c. REFACTOR** — confirm GREEN.
@@ -212,7 +238,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **195a. RED** (`backend/tests/test_paper_broker.py`)
     - `test_paper_broker_uses_fill_model` — touch-only limit no longer fills; market fills at the next bar's open at the ask
     - `test_injected_clock_sets_placed_at`
-    - `test_binance_bars_use_instrument_default_spread`
+    - `test_bar_spread_is_max_of_recorded_and_typical` (Req 5.1, D10) — including Binance klines, which record none
     - `test_fee_rate_maps_to_rate_per_side_commission`
     - `test_state_file_from_previous_version_still_loads`
     - Update only the existing assertions whose semantics change on purpose. Annotate each with "D4: stricter fill model".
@@ -244,6 +270,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - `test_allow_gaps_flag_permits_and_is_reported`
     - `test_fingerprint_changes_when_one_row_changes`
     - `test_warmup_falls_back_to_native_htf_and_reports_source`
+    - `test_bar_spread_floored_at_typical_and_floored_bars_counted` (Req 5.1, D10)
     - `test_timescale_source_reads_m1_utc` — marked `infrastructure`
   - **198b. GREEN** / **198c. REFACTOR**
   - **Validates: Requirements 3.1, 3.2, 3.6, 3.7**
@@ -374,9 +401,9 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - Add a "Backtesting" section to `README.md`: setup, `check-data`, `run`, `compare`, hold-out rules.
 
 - [ ] 211. First baseline of the current grader **(user action)**
-  - Set MT5 Tools → Options → Charts → "Max bars in chart" to Unlimited and restart the terminal.
-  - Load M1 (with spread) plus native D1/W1 for EURUSD, GBPUSD, USDJPY and XAUUSD (D1) with `scripts/load_historical_data_mt5.py`.
-  - Run `check-data`. Create the study, which locks the hold-out (D7). Run `config/backtests/base.toml`.
+  - Set the Exness terminal's Tools → Options → Charts → "Max bars in chart" to Unlimited and restart it.
+  - Load M1 (with spread) plus native H1/D1/W1 for EURUSD, GBPUSD, USDJPY and XAUUSD (D1) from the `exness-standard` profile, with `scripts/load_historical_data_mt5.py --profile exness-standard`.
+  - Run `check-data`. Create the study, which locks the hold-out (D7). Run `config/backtests/base.toml` (`profile = "exness-standard"`).
   - Write `docs/backtests/BASELINE.md`: the summary, cost share, insufficient-evidence buckets, and observations.
   - No strategy changes in this task. Grader changes are measured against this baseline in the `liquidity-engine` spec update.
 
@@ -415,6 +442,12 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
       "dependencies": ["Measurement and Instruments"]
     },
     {
+      "name": "Broker Profiles",
+      "tasks": ["215", "216"],
+      "description": "Broker profiles (credentials from .env, symbol map, server clock, spec file) and the amended stop slippage rule",
+      "dependencies": ["Measurement and Instruments"]
+    },
+    {
       "name": "Calendar and Aggregation",
       "tasks": ["184", "185", "186", "187"],
       "description": "Venue period boundaries, M1 aggregation, parity with native bars, spread in the MT5 loader"
@@ -446,7 +479,7 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
       "name": "Backtester Config and Data",
       "tasks": ["197", "198"],
       "description": "Run/study configuration, CandleSource, coverage check, data fingerprint",
-      "dependencies": ["Calendar and Aggregation", "Shared Decision Path"]
+      "dependencies": ["Calendar and Aggregation", "Shared Decision Path", "Broker Profiles"]
     },
     {
       "name": "Signals",
