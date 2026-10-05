@@ -24,11 +24,29 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
 
 ### A. Shared foundations
 
-- [ ] 181. Spike: measure `LiquidityMappingEngine.analyze()` cost
+- [x] 181. Spike: measure `LiquidityMappingEngine.analyze()` cost
   - Build realistic windows (`_CANDLE_COUNT`, entry M15 and M5) for EURUSD and BTCUSDT from the candle store.
   - Time 200 calls each; record p50/p95 per call and the projected Phase A time per instrument-year.
   - Record the numbers in `design.md` under a "Measured performance" note. If one instrument-year at M5 takes more than 30 minutes, profile `analyze()` before task 199 and add an optimisation task here.
   - No production code. This sizes Phase A and the cache.
+  - **Done 2026-10-05.** The candle store was offline (Docker not running), so the windows were fetched with the live runner's own helpers: Binance public klines and the local MT5 terminal.
+    - M15 runs at about 50 ms per call, practical as-is.
+    - M5 BTCUSDT runs at 225 ms per call, about 6.6 h per instrument-year, which is over the threshold. The profile found a quadratic ATR recomputation and pairwise BPR detection.
+    - Results are in `design.md` → Measured performance. Task 214 added.
+
+- [ ] 214. Remove `analyze()` hot spots without changing outputs (added by task 181)
+  - Numbered 214 so tasks 182–213 keep their numbers. Not blocking the M15 baseline (task 211). Required before M5 studies longer than a few weeks.
+  - **214a. RED**
+    - Add `scripts/export_engine_windows.py` and capture the benchmark windows (BTCUSDT M5, BTCUSDT M15, EURUSD M15, EURUSD M5), plus today's `analyze()` output for each, to `backend/tests/fixtures/backtester/engine_windows/`.
+    - `test_engine_output_unchanged_on_fixture_windows` (`backend/tests/test_liquidity_engine_perf.py`) — `LiquidityMap.model_dump_json()` is byte-identical to the captured output, including list order.
+    - `test_atr_series_matches_per_candle_calculate_atr` — the new precomputed series equals `calculate_atr()` at every index.
+    - `test_calculate_atr_called_at_most_once_per_timeframe` — a call-count spy. Call counts are a deterministic stand-in for timing assertions, which flake.
+  - **214b. GREEN**
+    - Precompute the ATR series once per timeframe in `PDArrayDetector`.
+    - Replace pairwise BPR overlap with a sort-and-sweep that emits the same arrays in the same order.
+    - Re-profile, and address `structure.py` only if it is still above 20%.
+  - **214c. REFACTOR** — rerun the task 181 benchmark and add the new numbers to `design.md` → Measured performance. The full liquidity-engine test suite is still GREEN.
+  - **Validates: Requirements 1.1, 7.5**
 
 - [ ] 182. `InstrumentSpec` and spec loading (`agent/instruments.py`, `config/instruments/*.toml`)
   - **182a. RED** (`backend/tests/test_backtest_instruments.py`)
@@ -370,6 +388,12 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
       "name": "Measurement and Instruments",
       "tasks": ["181", "182", "183"],
       "description": "Engine cost spike, InstrumentSpec, MT5 spec and commission export"
+    },
+    {
+      "name": "Engine Performance",
+      "tasks": ["214"],
+      "description": "Remove analyze() hot spots found by task 181 without changing outputs. Not blocking the M15 baseline; required before long M5 studies.",
+      "dependencies": ["Measurement and Instruments"]
     },
     {
       "name": "Calendar and Aggregation",

@@ -1,7 +1,7 @@
 # Design Document
 
 **Spec**: AlgoBacktester
-**Requirements**: `.kiro/specs/algo-backtester/requirements.md` (open decisions D1–D8 accepted at their proposed defaults)
+**Requirements**: `.kiro/specs/algo-backtester/requirements.md` 
 
 ## Overview
 
@@ -330,6 +330,24 @@ record build_order_intent(liquidity_map, view, instrument, t, cfg)
 - **Storage:** `data/backtests/cache/<key>.jsonl`, written to a temporary file and then renamed, so a crash never leaves a half-written cache entry.
 - **Engine code fingerprint:** a sha256 over the sorted contents of `liquidity_engine/**/*.py`, `agent/order_intent.py` and `agent/strategy_config.py`. Any edit to analysis or order logic therefore invalidates the cache automatically.
 - **Invariant:** a cache hit and a fresh run give identical Phase B input.
+
+**Measured performance (task 181, 2026-10-05).** `analyze()` was timed on the live runner's exact windows (`_CANDLE_COUNT`), 200 calls each:
+
+| Window | p50 | p95 | Phase A per instrument-year |
+|---|---|---|---|
+| EURUSD, entry M15 | 50 ms | 172 ms | ≈ 21 min |
+| EURUSD, entry M5 | 62 ms | 105 ms | ≈ 78 min |
+| BTCUSDT, entry M15 | 51 ms | 92 ms | ≈ 30 min |
+| BTCUSDT, entry M5 | 225 ms | 333 ms | ≈ 6.6 h |
+
+What this means:
+- **M15 studies are practical as-is,** with instruments running in parallel.
+- **M5 crypto is not.** Cost depends on the data, not only on window size: the BTCUSDT M5 window produced 1,835 PD arrays per call.
+- **Profile (cProfile, BTCUSDT M5):**
+  - `candle_utils.calculate_atr` is called about 1,038 times per `analyze()` from `PDArrayDetector._detect_order_blocks`. It recomputes ATR per candle, which is quadratic in window length, and accounts for about 40% of the time.
+  - `_detect_bpr` compares fair value gaps pairwise: about 15%.
+  - Swing-structure classification: about 18%.
+- Task 214 removes these hot spots without changing outputs.
 
 ### Phase B: account simulation (`algo_backtester/simulation.py`)
 
