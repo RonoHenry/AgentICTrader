@@ -16,7 +16,9 @@ MT5 (reads only, places nothing):
   traded volume over recent deal history. That is correct whether the broker
   splits commission across entry and exit deals or charges the round trip
   on entry (decision D2, .kiro/specs/algo-backtester/requirements.md).
-- Stop slippage defaults to 2 points: 0.2 pip on 5-digit FX (decision D3).
+- Stop slippage is 25% of the typical spread, minimum 2 points (decision D3,
+  amended): 0.2 pip on EURUSD at 0.8 pip spread, $0.06 on XAUUSD at $0.24.
+  A fixed 2 points would be only $0.002 on gold's 0.001 point.
 - Cross-check: our money-per-tick must match the broker's trade_tick_value
   for pairs quoted or based in the account currency. A mismatch means the
   currency conversion would be wrong, so the file is not written.
@@ -64,7 +66,8 @@ DEFAULT_INSTRUMENTS = {
     "mt5": ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"],                              # D1
     "binance": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT"],  # forward test
 }
-STOP_SLIPPAGE_POINTS = 2          # D3: 0.2 pip on 5-digit FX
+STOP_SLIPPAGE_SPREAD_SHARE = 0.25  # D3 (amended): stop slippage = 25% of typical spread...
+STOP_SLIPPAGE_MIN_POINTS = 2       # ...but never below 2 points
 SPREAD_LOOKBACK = timedelta(hours=72)  # reaches back past a weekend
 TICK_VALUE_TOLERANCE = 0.02       # 2% — tick values move with price between snapshots
 BINANCE_ACCOUNT_CCY = "USDT"
@@ -150,7 +153,9 @@ def mt5_specs(
             # currency for FX, metals and indices alike.
             quote_ccy=info.currency_profit,
             default_spread=_price_units(spread_points, point),
-            stop_slippage=_price_units(STOP_SLIPPAGE_POINTS, point),
+            stop_slippage=_price_units(
+                max(STOP_SLIPPAGE_MIN_POINTS, STOP_SLIPPAGE_SPREAD_SHARE * spread_points), point
+            ),
             commission=CommissionSpec(kind="PER_LOT_PER_SIDE", value=float(commission)),
         )
         mismatch = _tick_value_mismatch(spec, info, mt5.symbol_info_tick(symbol), account_ccy)

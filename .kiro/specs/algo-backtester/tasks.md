@@ -103,7 +103,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **215c. REFACTOR** — confirm GREEN.
   - **Validates: Requirements 10.1, 10.2, 10.3, 10.5, 10.6**
 
-- [ ] 216. Stop slippage as a share of the typical spread (D3 amended)
+- [x] 216. Stop slippage as a share of the typical spread (D3 amended)
   - **216a. RED** (`backend/tests/test_backtest_export_specs.py`)
     - `test_stop_slippage_is_quarter_of_typical_spread_with_two_point_minimum` — EURUSD 0.8 pip spread → 0.2 pip; XAUUSD $0.24 → $0.06; a 1-point spread → 2 points
   - **216b. GREEN** — `scripts/export_instrument_specs.py`; then re-export `config/instruments/exness-standard.toml`.

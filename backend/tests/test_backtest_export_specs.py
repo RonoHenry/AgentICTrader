@@ -155,10 +155,30 @@ def test_zero_spread_is_a_problem_unless_overridden():
     assert specs["EURUSD"].default_spread == pytest.approx(8 * 0.00001)
 
 
-def test_stop_slippage_defaults_to_two_points():
-    # D3: 0.2 pip on a 5-digit FX symbol = 2 points.
-    specs, _ = mt5_specs(_fake_eurusd(), ["EURUSD"])
-    assert specs["EURUSD"].stop_slippage == pytest.approx(2 * 0.00001)
+@pytest.mark.parametrize(
+    "symbol, info_overrides, spread_points, expected",
+    [
+        # EURUSD at 0.8 pip typical spread: 25% = 0.2 pip.
+        ("EURUSD", {}, 8, 0.00002),
+        # XAUUSD at $0.24 (240 points of 0.001): 25% = $0.06. A fixed 2 points would be $0.002.
+        ("XAUUSD", dict(point=0.001, trade_tick_size=0.001, trade_tick_value=0.1, trade_contract_size=100.0,
+                        currency_base="XAU", currency_profit="USD", bid=2400.0), 240, 0.06),
+        # A 1-point spread: 25% is 0.25 point, so the 2-point minimum applies.
+        ("EURUSD", {}, 1, 0.00002),
+    ],
+)
+def test_stop_slippage_is_quarter_of_typical_spread_with_two_point_minimum(
+    symbol, info_overrides, spread_points, expected
+):
+    # D3 (amended): stop slippage scales with the instrument's typical spread.
+    fake = FakeMT5(
+        infos={symbol: _symbol_info(**info_overrides)},
+        deals=[_deal(symbol, 1.0, -3.5), _deal(symbol, 1.0, -3.5, type_=DEAL_SELL)],
+        spreads_points={symbol: [spread_points]},
+    )
+    specs, problems = mt5_specs(fake, [symbol])
+    assert problems == []
+    assert specs[symbol].stop_slippage == expected
 
 
 def test_symbol_suffix_resolved_but_key_is_instrument():

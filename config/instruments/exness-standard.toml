@@ -26,7 +26,7 @@ volume_max = 200.0
 base_ccy = "GBP"
 quote_ccy = "USD"
 default_spread = 0.0001
-stop_slippage = 2e-05
+stop_slippage = 2.5e-05
 commission = { kind = "PER_LOT_PER_SIDE", value = 0.0 }
 
 ["USDJPY"]
@@ -39,7 +39,7 @@ volume_max = 300.0
 base_ccy = "USD"
 quote_ccy = "JPY"
 default_spread = 0.01
-stop_slippage = 0.002
+stop_slippage = 0.0025
 commission = { kind = "PER_LOT_PER_SIDE", value = 0.0 }
 
 ["XAUUSD"]
@@ -52,5 +52,5 @@ volume_max = 200.0
 base_ccy = "XAU"
 quote_ccy = "USD"
 default_spread = 0.24
-stop_slippage = 0.002
+stop_slippage = 0.06
 commission = { kind = "PER_LOT_PER_SIDE", value = 0.0 }
