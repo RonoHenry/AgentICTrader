@@ -41,7 +41,15 @@ class SwingStructureClassifier:
     def classify(
         self, candles_by_tf: Dict[Timeframe, List[Candle]]
     ) -> Dict[Timeframe, SwingStructureResult]:
-        return {tf: self._classify_single(tf, candles) for tf, candles in candles_by_tf.items()}
+        # _break_confirmed is asked about the same swing three or four times
+        # (marking, tier promotion, event classification), each a full scan.
+        # Its answer depends only on (candles, side, price, time), so it is
+        # memoised for the duration of this call only; outputs are unchanged.
+        self._break_cache: Optional[dict] = {}
+        try:
+            return {tf: self._classify_single(tf, candles) for tf, candles in candles_by_tf.items()}
+        finally:
+            self._break_cache = None
 
     def _classify_single(self, tf: Timeframe, candles: List[Candle]) -> SwingStructureResult:
         short_term = self._seed_short_term(candles)
@@ -95,6 +103,16 @@ class SwingStructureClassifier:
         """Return the first candle after `swing.formed_at` whose close breaks the swing level."""
         if swing is None:
             return None
+        cache = getattr(self, "_break_cache", None)
+        if cache is None:
+            return self._scan_for_break(swing, candles)
+        key = (id(candles), swing.is_high, swing.price, swing.formed_at)
+        if key not in cache:
+            cache[key] = self._scan_for_break(swing, candles)
+        return cache[key]
+
+    @staticmethod
+    def _scan_for_break(swing: SwingPoint, candles: List[Candle]) -> Optional[Candle]:
         for candle in candles:
             if candle.timestamp <= swing.formed_at:
                 continue

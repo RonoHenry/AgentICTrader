@@ -371,6 +371,28 @@ What this means:
   - Swing-structure classification: about 18%.
 - Task 214 removes these hot spots without changing outputs.
 
+**After task 214 (2026-10-05).** Measured on the frozen fixture windows (`backend/tests/fixtures/backtester/engine_windows/`), best p50 of three interleaved rounds against the pre-change engine, with output asserted byte-identical on every run:
+
+| Window | Before | After | Speed-up | Phase A per instrument-year (after) |
+|---|---|---|---|---|
+| BTCUSDT, entry M5 | 132.7 ms | 77.7 ms | 1.7× | ≈ 2.3 h |
+| BTCUSDT, entry M15 | 90.2 ms | 56.4 ms | 1.6× | ≈ 33 min |
+| EURUSD, entry M15 | 89.7 ms | 51.1 ms | 1.8× | ≈ 21 min |
+| EURUSD, entry M5 | 112.3 ms | 61.0 ms | 1.8× | ≈ 76 min |
+
+What changed:
+- **ATR:** `PDArrayDetector._detect_order_blocks` now uses `atr_series()`: the same true ranges summed in the same order, so values are exactly equal, once per timeframe.
+- **Swing structure:** `SwingStructureClassifier` memoises `_break_confirmed` for the duration of one `classify()` call.
+
+What did not change:
+- **BPR detection.** The planned sort-and-sweep was not applied. Its pairing loop is cheap; its cost is building BPR outputs that must remain.
+- **`deterministic_id` (uuid5), about 26%.** IDs are content hashes, so a different hash would change outputs.
+
+Remaining options for long M5 studies:
+- the Phase A cache;
+- per-instrument parallelism;
+- memoising `deterministic_id` across consecutive bars, whose windows overlap about 99%. Evaluate in task 199. A same-window benchmark would overstate that gain.
+
 ### Phase B: account simulation (`algo_backtester/simulation.py`)
 
 One `AgentGraph` per run:

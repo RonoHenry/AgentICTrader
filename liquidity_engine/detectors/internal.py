@@ -19,7 +19,7 @@ from liquidity_engine.models import (
     SwingStructureResult,
     Timeframe,
 )
-from liquidity_engine.utils.candle_utils import calculate_atr
+from liquidity_engine.utils.candle_utils import atr_series
 from liquidity_engine.utils.id_utils import deterministic_id
 
 # Minimum multiple of ATR a candle's range must reach to count as a
@@ -98,9 +98,10 @@ class PDArrayDetector:
 
     def _detect_order_blocks(self, candles: List[Candle], tf: Timeframe) -> List[PDArray]:
         arrays: List[PDArray] = []
+        atrs = atr_series(candles)  # once per timeframe; was recomputed for every candle
         for i in range(2, len(candles)):
             candle = candles[i]
-            atr = calculate_atr(candles[:i], period=min(14, i))
+            atr = atrs[i]
             if atr <= 0:
                 continue
             if candle.total_range < OB_EXPANSION_ATR_MULTIPLE * atr:

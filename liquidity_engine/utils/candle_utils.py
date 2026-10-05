@@ -60,6 +60,31 @@ def calculate_atr(candles: List[Candle], period: int = 14) -> float:
     return sum(window) / len(window)
 
 
+def atr_series(candles: List[Candle], period: int = 14) -> List[float]:
+    """ATR as seen at each index, in one pass instead of one pass per candle.
+
+    ``series[i] == calculate_atr(candles[:i], period=min(period, i))`` exactly
+    for every i >= 2: the same true ranges summed in the same order, so
+    downstream threshold decisions are byte-for-byte unchanged. Indices 0 and
+    1 have no prior true range and are 0.0. Building a prefix-sum shortcut
+    instead would drift by float error and could flip a borderline decision.
+    """
+    n = len(candles)
+    true_ranges = [0.0] * n
+    for i in range(1, n):
+        candle, prev_close = candles[i], candles[i - 1].close
+        true_ranges[i] = max(
+            candle.high - candle.low,
+            abs(candle.high - prev_close),
+            abs(candle.low - prev_close),
+        )
+    series = [0.0] * n
+    for i in range(2, n):
+        window = true_ranges[max(1, i - min(period, i)):i]
+        series[i] = sum(window) / len(window)
+    return series
+
+
 def classify_candle_type(candle: Candle) -> CandleType:
     """Classify a candle as EXPANSION, REVERSAL, or REVERSAL_EXPANSION by wick ratio."""
     total_range = candle.total_range
