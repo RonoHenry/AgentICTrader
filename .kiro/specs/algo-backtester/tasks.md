@@ -367,7 +367,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - A trailer (key, record count, sha256) catches truncated, edited or unreadable entries; they are deleted and recomputed.
   - **Validates: Requirements 7.4**
 
-- [ ] 201. `SimBroker` (`algo_backtester/sim_broker.py`)
+- [x] 201. `SimBroker` (`algo_backtester/sim_broker.py`)
   - **201a. RED** (`backend/tests/test_backtest_sim_broker.py`)
     - `test_limit_vs_market_selection_like_mt5_adapter`
     - `test_sizing_rounds_down_per_instrument_class` — USD quote, USD base, cross
@@ -381,6 +381,10 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - **PBT — Property 8: Sizing Never Over-Risks**
       - **Validates: Requirements 6.1, 6.2**
   - **201b. GREEN** / **201c. REFACTOR**
+  - **Done 2026-10-06.** `SimBroker` (a `BrokerClient`), `SimTrade` (the fill model's order plus its sizing), `ClosedTrade` (R, cost split, MAE/MFE, P&L, cost flag; R fields None for orders that never filled). `advance()` returns the orders that closed; Phase B books them (task 203). The tests were mutation-checked: rounding to nearest, the wrong spread side, no tolerance, no stop check and the old R definition each fail them.
+    - **R is measured on the distance the order was sized on**, `|entry - stop|`, not `|ideal_fill - stop|` as designed. The old definition reaches zero or goes negative when the spread is as wide as the stop, which real EURUSD setups do (task 217: a 0.6-pip stop against a 0.8-pip spread). It also inflated LONG losses and differed between a LONG and its mirror SHORT. Recorded in `design.md` → SimBroker.
+    - **Also refused at placement:** `INVALID_STOPS` (a stop or target on the wrong side, as MT5 refuses it), `INVALID_ORDER`, `NO_PRICE`. `build_order_intent`'s draw-on-liquidity fallback target can land behind the entry and still pass `min_rr`, because the R:R check uses `abs()`.
+    - **Seen in a test:** a 0.6-pip stop at $3.50/lot/side commission and a 0.8-pip spread loses 2.5R on a plain stop-out (1.33R spread, 0.33R slippage, 1.17R commission).
   - **Validates: Requirements 5.1, 5.5**
 
 - [ ] 202. `SimAccount` (`algo_backtester/account.py`)
@@ -504,6 +508,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
 
 - [ ] 212. Parity with the paper forward test
   - **Blocked until** the forward test has at least 20 closed trades placed after the task 196 restart date. Primary target: the Exness FX forward test (task 219); Binance optional.
+  - **First:** move `PaperBrokerAdapter._r_multiples` to the SimBroker R definition (1R = `|entry - stop|`, task 201), ideally one shared function, so both sides measure R alike.
   - **212a. RED** (`backend/tests/test_backtest_export_forward_fixture.py`)
     - `test_export_includes_m1_window_and_trades_after_restart_date`
   - **212b. GREEN** — `scripts/export_forward_test_fixture.py`; export to `backend/tests/fixtures/backtester/parity/`.

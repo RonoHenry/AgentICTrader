@@ -322,17 +322,26 @@ A `BrokerClient` that `execute_node` calls through `AgentGraph`, exactly as live
   - **Order type:** LIMIT if the entry is on the discount/premium side of the current price, else MARKET.
   - **Sizing:** `lots = risk_amount / (|entry - stop| × money_per_price_unit)`, rounded **down** to `volume_step`.
   - **Minimum volume:** if `volume_min × |entry - stop| × money_per_price_unit > risk_amount × (1 + 0.10)`, it raises `SimBrokerError("MIN_VOLUME_OVER_RISK")`. `execute_node` already turns broker exceptions into `decision=SKIP`, and the journal records the reason (Req 6.2).
-  - **Missing fields:** a missing `direction` or `stop_loss` raises, rather than defaulting.
+  - **Missing fields:** a missing `direction`, `stop_loss` or `risk_amount` raises (`INVALID_ORDER`), rather than defaulting.
+  - **Invalid stops:** a stop or target on the wrong side of the limit price (or of the market fill, for a market order) raises `SimBrokerError("INVALID_STOPS")`, as MT5's `order_send` refuses it. `build_order_intent`'s draw-on-liquidity fallback target can land behind the entry, and its R:R check uses `abs()`, so this happens.
   - **Order ids:** sequential (`sim-000001`), not random (Req 9.5).
-- `advance(instrument, bar)` steps every active order for that instrument through `FillModel` and books closed trades into `SimAccount`.
+- `advance(instrument, bar)` steps every active order for that instrument through `FillModel` and returns the orders that closed, as `ClosedTrade`s; Phase B books them into `SimAccount`. The bar is also the market price for orders placed at its close.
 - `active_trade(instrument)` supports the one-trade-per-instrument rule, as `PaperBrokerAdapter.active_trade` does live.
 
 **R accounting for a closed trade** (Req 4.12, 5.3):
-- `initial_risk = |ideal_fill - stop|` (planned risk)
+- `initial_risk = |entry - stop|`: the distance the order was sized on (the limit price, or a market order's requested entry). R is therefore money in units of the risk budget.
 - `gross_r = direction × (ideal_exit - ideal_fill) / initial_risk`
 - `net_r = direction × (exit - fill) / initial_risk - commission_r`
 - `commission_r = commission_money / (lots × initial_risk × money_per_price_unit)`
-- `cost_r = gross_r - net_r`, reported split into its spread, slippage and commission components.
+- `cost_r = gross_r - net_r`, reported split into its spread (the buy side's bar spread), slippage (`stop_slippage` on SL exits) and commission components, each `>= 0`.
+- `mae_r` / `mfe_r = direction × (excursion_price - fill) / initial_risk`, on the closing side.
+
+*Changed in task 201* from `initial_risk = |ideal_fill - stop|`, which the paper broker also uses. For a LONG limit `ideal_fill = entry - spread`, so with this strategy's stops that definition breaks:
+- it reaches zero or goes negative when the spread is as wide as the stop. The first real EURUSD intent (task 217) had a 0.6-pip stop against Exness's 0.8-pip spread;
+- it inflates LONG results (a 2.6-pip stop with a 0.8-pip spread loses about -1.44 "R" for about 1× the risk budget in money);
+- it differs between a LONG and its mirror-image SHORT.
+
+`PaperBrokerAdapter._r_multiples` still uses the old definition. It must move to this one before the parity check (task 212).
 
 ### SimAccount (`algo_backtester/account.py`)
 
