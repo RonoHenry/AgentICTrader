@@ -419,13 +419,17 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - The account is marked again before each `graph.run()`, so orders placed earlier at the same `t` count towards the concurrent-trade limit.
   - **Validates: Requirements 1.1, 7.5**
 
-- [ ] 204. Hold-out and walk-forward
+- [x] 204. Hold-out and walk-forward
   - **204a. RED** (`backend/tests/test_backtest_run_modes.py`)
     - `test_holdout_overlap_refused_without_final`
     - `test_final_flag_recorded_in_manifest`
     - `test_walk_forward_windows_and_warmup_before_window`
     - `test_walk_forward_combined_equals_concatenation`
   - **204b. GREEN** / **204c. REFACTOR**
+  - **Done 2026-10-06.** `algo_backtester/run.py` (not in the design's layout; the CLI, task 208, calls it). `run_backtest()` checks the hold-out and refuses crosses before any work. It runs Phase A once (through the cache), then Phase B per window. `RunResult.manifest` holds the run-mode fields (study, hold-out start, final flag, variant, windows) for task 206 to extend.
+    - Walk-forward windows step by `D`, `W` or `M` from the run start (`"3M"`); month steps clamp to month ends.
+    - Each window is a fresh account and broker; the bar closing at its start prices its first decision.
+    - Tested end to end on the real MetaQuotes week with the real engine and the `exness-standard` spec file.
   - **Validates: Requirements 7.2, 7.3**
 
 ### C. Reporting and CLI

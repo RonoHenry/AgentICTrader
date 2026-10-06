@@ -462,6 +462,9 @@ Settled while building it (task 203):
 - **Output:** `SimulationResult(journal, trades, open_orders, account)`. Each `JournalRow` carries its intent, `TradeContext`, `time_window` and, once it closed, its `ClosedTrade`. An order still open at the end is reported in `open_orders`, not closed artificially.
 
 **Walk-forward (Req 7.3):** `run --walk-forward 3M` splits `[start, end)` into consecutive windows. Each window is a full Phase B run, with warm-up data taken from before the window start (Phase A records are shared through the cache). The combined result concatenates the windows' trades.
+- *As built (task 204, `algo_backtester/run.py`):* Phase A runs once over the whole range. A signal at `t` depends only on data up to `t`, so each window's decisions equal a per-window Phase A with warm-up from before its start. Each window then gets its own account and broker. Windows step by `D`, `W` or `M`, counted from the run start; month steps clamp to month ends.
+- The bar closing at a window's start is passed with it, to price the first decision. An order open at a window's end stays in that window's `open_orders`.
+- `run_backtest()` refuses a cross before any work: its quote currency needs a conversion rate over time, which isn't supported yet.
 
 **Hold-out (Req 7.2):** `StudyConfig` in `config/backtests/studies/<study>.toml` sets `holdout_start` once (a subdirectory, so a study can't overwrite a run config such as `base.toml`). Its default is D7: the most recent 3 months at study creation. A run whose `[start, end)` overlaps the hold-out is refused unless `--final` is passed, and the manifest records `final_validation: true`.
 
