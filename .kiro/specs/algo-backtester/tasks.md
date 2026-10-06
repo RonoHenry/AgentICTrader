@@ -197,7 +197,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **190c. REFACTOR** — remove the moved constants from the runner; confirm GREEN.
   - **Validates: Requirements 1.2, 1.3**
 
-- [ ] 191. `compose_as_of_view()`
+- [x] 191. `compose_as_of_view()`
   - **191a. RED** (`backend/tests/test_backtest_as_of_view.py`)
     - `test_entry_tf_and_below_closed_bars_only`
     - `test_htf_window_has_one_in_progress_bar_from_m1`
@@ -207,6 +207,9 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - **PBT — Property 2: As-of View Contains Only Known Data**
       - **Validates: Requirements 2.1, 2.2, 2.3**
   - **191b. GREEN** / **191c. REFACTOR**
+  - **Done 2026-10-06.**
+    - `closed` may run past t; bars count as closed when their calendar period has ended. A closed bar off the strategy calendar (e.g. a UTC server's native H4) is rejected, since it could count as closed while still forming.
+    - Property 2 is tested in its strong form: dropping every M1 bar that closes after t leaves the view unchanged. Two planted look-ahead bugs fail it: one minute of M1 in the forming bar, and a forming bar counted as closed.
   - **Validates: Requirements 2.4**
 
 - [ ] 192. Live runner builds its window with `compose_as_of_view()` (L3, D5, D9)

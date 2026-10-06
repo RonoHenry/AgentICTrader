@@ -1,21 +1,30 @@
-"""Strategy-calendar candles for the engine: aggregation, and (task 191) the as-of view.
+"""Strategy-calendar candles for the engine: aggregation and the as-of view.
 
 ``aggregate()`` builds bars of any timeframe from finer bars on the
 StrategyCalendar (decision D9), so a UTC-server broker, a New York-close
 broker and Binance all yield identical H4/D1/W1 candles from the same
-prices. Pure: no I/O, no clock.
+prices.
 
-Validates: Requirements 3.3 (.kiro/specs/algo-backtester/requirements.md)
+``compose_as_of_view()`` (task 191) is the candle window the engine sees at
+an as-of time t, built only from what was known at t. The backtester and the
+live runner both use it, so a backtest replays the evaluation live trading
+performs.
+
+Both are pure: no I/O, no clock.
+
+Validates: Requirements 2.1-2.4, 3.3 (.kiro/specs/algo-backtester/requirements.md)
 """
 from __future__ import annotations
 
-from datetime import datetime
+from bisect import bisect_left, bisect_right
+from collections.abc import Mapping
+from datetime import datetime, timedelta
 from typing import Optional, Sequence
 
 from liquidity_engine.models import Candle, Timeframe
 from services.market_data.strategy_calendar import StrategyCalendar
 
-__all__ = ["aggregate"]
+__all__ = ["aggregate", "compose_as_of_view"]
 
 # Nominal lengths, used only to check that input bars nest inside the target
 # bars. Actual boundaries always come from the calendar.
@@ -24,6 +33,9 @@ _NOMINAL_MINUTES = {
     Timeframe.H1: 60, Timeframe.H3: 180, Timeframe.H4: 240, Timeframe.H6: 360, Timeframe.H8: 480,
     Timeframe.H12: 720, Timeframe.D1: 1440,
 }
+# For ordering only: which timeframes are above the entry timeframe.
+_RANK_MINUTES = {**_NOMINAL_MINUTES, Timeframe.W1: 7 * 1440, Timeframe.MN1: 31 * 1440}
+_M1 = timedelta(minutes=1)
 
 
 def aggregate(
@@ -58,6 +70,64 @@ def aggregate(
     if group and end <= cutoff:
         out.append(_combine(group, start, tf))
     return out
+
+
+def compose_as_of_view(
+    closed: Mapping[Timeframe, Sequence[Candle]],
+    recent_m1: Sequence[Candle],
+    t: datetime,
+    entry_tf: Timeframe,
+    windows: Mapping[Timeframe, int],
+    calendar: StrategyCalendar,
+) -> dict[Timeframe, list[Candle]]:
+    """The engine's candle window at ``t``, with nothing from t's future.
+
+    ``closed`` holds strategy-calendar bars per timeframe, oldest first; it
+    may run past ``t`` (bars that haven't closed by ``t`` are ignored).
+    ``recent_m1`` must cover the in-progress period of every higher timeframe
+    (the current W1 period at most), oldest first.
+
+    - The entry timeframe and below: the last ``windows[tf]`` bars closed by ``t``.
+    - Higher timeframes: the last ``windows[tf] - 1`` closed bars plus one
+      in-progress bar, aggregated from the M1 bars of the current period that
+      closed by ``t``. Before the first of them closes there is no
+      in-progress bar, and the window holds ``windows[tf]`` closed bars.
+
+    A bar counts as closed when its calendar period has ended by ``t``.
+    """
+    missing = [tf.value for tf in closed if tf not in windows]
+    if missing:
+        raise ValueError(f"compose_as_of_view: no window size for {', '.join(missing)}")
+    if entry_tf not in closed:
+        raise ValueError(f"compose_as_of_view: no {entry_tf.value} bars for the entry timeframe")
+    if recent_m1 and recent_m1[0].timeframe != Timeframe.M1:
+        raise ValueError(f"compose_as_of_view: recent_m1 holds {recent_m1[0].timeframe.value} bars, not M1")
+
+    view: dict[Timeframe, list[Candle]] = {}
+    for tf, bars in closed.items():
+        period_start = calendar.period_start(t, tf)
+        # Calendar bars that start before the period containing t have ended by t.
+        done = bars[: bisect_left(bars, period_start, key=_timestamp)]
+        if done and calendar.period_start(done[-1].timestamp, tf) != done[-1].timestamp:
+            # Off-calendar bars (e.g. a UTC server's native H4) could pass the
+            # test above while still forming: that would leak t's future.
+            raise ValueError(
+                f"compose_as_of_view: {tf.value} bar at {done[-1].timestamp} is not on the strategy calendar"
+            )
+        forming = None
+        if _RANK_MINUTES[tf] > _RANK_MINUTES[entry_tf]:
+            known = recent_m1[
+                bisect_left(recent_m1, period_start, key=_timestamp): bisect_right(recent_m1, t - _M1, key=_timestamp)
+            ]
+            if known:
+                forming = _combine(list(known), period_start, tf)
+        keep = windows[tf] - (forming is not None)
+        view[tf] = list(done[max(0, len(done) - keep):]) + ([forming] if forming is not None else [])
+    return view
+
+
+def _timestamp(bar: Candle) -> datetime:
+    return bar.timestamp
 
 
 def _combine(group: list[Candle], start: datetime, tf: Timeframe) -> Candle:
