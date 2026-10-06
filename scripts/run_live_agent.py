@@ -106,6 +106,7 @@ try:
 except ImportError:  # Linux/Docker: only --feed binance is available
     mt5 = None
 
+from agent import broker_profiles
 from agent.algorag_client import AlgoRAGSyncClient
 from agent.brokers.factory import create_broker_client
 from agent.brokers.paper import PaperBrokerAdapter
@@ -541,8 +542,17 @@ def main() -> None:
         fee = args.paper_fee if args.paper_fee is not None else (0.001 if args.feed == "binance" else 0.0)
         # Free the risk engine's concurrent-trades slot whenever a paper
         # trade closes or a pending order expires.
+        # Spreads and stop slippage per instrument come from the venue's spec file
+        # (the shared fill model, task 195). The MT5 feed has no broker profile
+        # here yet (the Exness forward test, task 219, adds one): zero costs.
+        specs = broker_profiles.load_profile("binance").specs() if args.feed == "binance" else None
         paper = PaperBrokerAdapter(
-            args.paper_state, fee_rate=fee, on_close=lambda _trade: risk_engine.decrement_open_trades(_USER_ID)
+            args.paper_state,
+            pending_ttl=cfg.fallback_ttl,
+            fee_rate=fee,
+            on_close=lambda _trade: risk_engine.decrement_open_trades(_USER_ID),
+            specs=specs,
+            expiry_rule=cfg.pending_expiry,
         )
         broker_client = paper
     else:
@@ -601,7 +611,9 @@ def main() -> None:
                             missed = fetch_m1_range(instrument, synced, m1[0].timestamp)
                             fetched.extend(missed)
                             m1 = missed + m1
-                    for event in paper.update(instrument, m1):
+                    # Closed bars only: the paper broker processes each bar once.
+                    closed_m1 = [b for b in m1 if b.timestamp + timedelta(minutes=1) <= datetime.now(timezone.utc)]
+                    for event in paper.update(instrument, closed_m1):
                         _print_paper_event(event)
                     if m1:
                         paper_synced[instrument] = m1[-1].timestamp

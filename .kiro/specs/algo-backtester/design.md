@@ -311,6 +311,8 @@ Settled while building it (task 194):
 - Gets its clock from the constructor.
 - Keeps its public API, report and JSON state, and adds the new fields.
 - Its old `fee_rate` maps onto `CommissionSpec.RATE_PER_SIDE`.
+- `update()` takes closed bars only and processes each bar once (`processed_through` per trade); the runner drops the forming M1 bar.
+- Its placement time is the clock at hand-off, a few seconds after t, so a paper MARKET order fills at the open of the M1 bar after that, one minute later than a backtest placing at t. The forward-test parity check (task 212) should expect that for market entries.
 
 ### SimBroker (`algo_backtester/sim_broker.py`)
 

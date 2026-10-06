@@ -259,7 +259,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - The property tests were checked by planting bugs: target before stop, slippage in the trader's favour, and bars before placement accepted are each caught. The first was missed until the bar generator included wide outside bars: before that, no generated bar reached both stop and target after a fill.
   - **Validates: Requirements 4.2, 4.9, 4.11, 4.12**
 
-- [ ] 195. `PaperBrokerAdapter` on the shared `FillModel` (L4, D4)
+- [x] 195. `PaperBrokerAdapter` on the shared `FillModel` (L4, D4)
   - **195a. RED** (`backend/tests/test_paper_broker.py`)
     - `test_paper_broker_uses_fill_model` — touch-only limit no longer fills; market fills at the next bar's open at the ask
     - `test_injected_clock_sets_placed_at`
@@ -269,6 +269,11 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - Update only the existing assertions whose semantics change on purpose. Annotate each with "D4: stricter fill model".
   - **195b. GREEN** — `PaperBrokerAdapter` keeps its public API and report.
   - **195c. REFACTOR** — confirm GREEN.
+  - **Done 2026-10-06.** Fills, stops, targets and expiry go through `FillModel`; spreads and slippage come from the venue's spec file (`binance` for the Binance feed; the MT5 feed has zero costs until task 219 gives it a profile). The expiry rule comes from `StrategyConfig` (the runner passes `KILLZONE_END`; the constructor default stays the old fixed TTL).
+    - **Each bar is processed once.** `update()` takes closed bars and records `processed_through`, replacing the old re-scan workaround; the runner drops the forming M1 bar.
+    - **Market orders** rest as PENDING until the next bar's open (the one D4-annotated assertion change). `place_order`'s `pending` flag still means "a resting limit".
+    - **R:** gross on chart (bid) prices, net on executed prices less `fee_rate` per side, 1R = ideal fill to stop.
+    - The live forward test's state file (one expired BNBUSDT order) loads and reports. Its stop was 0.38 on a 775 price: round-trip fees were about 4R, the Req 5.5 problem.
   - **Validates: Requirements 4.1, 4.2**
 
 - [ ] 196. Checkpoint: shared foundations live
