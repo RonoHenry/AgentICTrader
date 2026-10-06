@@ -152,7 +152,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **186c. GREEN** — fix calendar boundaries until it passes. Never loosen the tolerance.
   - **Validates: Requirements 3.4**
 
-- [ ] 187. MT5 history loader stores spread (L6)
+- [x] 187. MT5 history loader stores spread (L6)
   - **187a. RED** (extend the existing loader tests)
     - `test_spread_points_converted_to_price_units` — `rates["spread"] × symbol point`
     - `test_spread_written_to_candles_spread_column`

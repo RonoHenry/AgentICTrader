@@ -119,6 +119,8 @@ class Candle:
     volume: int
     complete: bool
     source: str = "oanda"
+    # Recorded spread in price units (MT5 bars carry one; OANDA's don't).
+    spread: Optional[Decimal] = None
 
     def validate_ohlc(self) -> bool:
         """Validate OHLC integrity: high >= open/close/low, low <= open/close/high."""
@@ -467,6 +469,7 @@ class TimescaleDBLoader:
                 low = EXCLUDED.low,
                 close = EXCLUDED.close,
                 volume = EXCLUDED.volume,
+                spread = EXCLUDED.spread,
                 complete = EXCLUDED.complete,
                 source = EXCLUDED.source
         """
@@ -499,7 +502,7 @@ class TimescaleDBLoader:
                         candle.low,
                         candle.close,
                         candle.volume,
-                        None,  # spread (not available in historical data)
+                        candle.spread,
                         candle.complete,
                         candle.source,
                     ))

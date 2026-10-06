@@ -216,3 +216,103 @@ class TestConfiguration:
         assert TIMEFRAME_MAPPING["H4"] == "H4"
         assert TIMEFRAME_MAPPING["D1"] == "D"
         assert TIMEFRAME_MAPPING["W1"] == "W"
+
+
+# ── MT5 loader: per-bar spread (AlgoBacktester task 187, Requirement 3.5) ──
+
+class _FakeMT5Rates:
+    """The slice of the MetaTrader5 module fetch_mt5_candles() uses."""
+
+    def __init__(self, point: float, rates):
+        self._point = point
+        self._rates = rates
+
+    def symbol_info(self, symbol):
+        from types import SimpleNamespace
+        return SimpleNamespace(name=symbol, point=self._point)
+
+    def copy_rates_range(self, symbol, timeframe, date_from, date_to):
+        return self._rates
+
+    def last_error(self):
+        return (0, "")
+
+
+def _mt5_rates(start: datetime, spreads: list[int]):
+    """M1 rates shaped like copy_rates_range()'s numpy record array."""
+    np = pytest.importorskip("numpy")
+    dtype = [("time", "<i8"), ("open", "<f8"), ("high", "<f8"), ("low", "<f8"), ("close", "<f8"),
+             ("tick_volume", "<u8"), ("spread", "<i4"), ("real_volume", "<u8")]
+    t0 = int(start.timestamp())
+    return np.array(
+        [(t0 + 60 * i, 1.1, 1.2, 1.0, 1.15, 10, spread, 0) for i, spread in enumerate(spreads)],
+        dtype=dtype,
+    )
+
+
+class TestMT5Spread:
+    """The MT5 history loader stores each bar's recorded spread in price units."""
+
+    @pytest.fixture
+    def mt5_loader(self):
+        pytest.importorskip("MetaTrader5")  # Windows-only package
+        import load_historical_data_mt5
+        return load_historical_data_mt5
+
+    @pytest.mark.parametrize("point, spread_points, expected", [
+        (0.00001, 8, Decimal("0.00008")),  # EURUSD: 0.8 pip
+        (0.001, 10, Decimal("0.01")),      # USDJPY: 1.0 pip
+        (0.001, 240, Decimal("0.24")),     # XAUUSD: $0.24
+        (0.00001, 0, Decimal("0")),        # a recorded 0 is stored as 0, not missing
+    ])
+    def test_spread_points_converted_to_price_units(self, mt5_loader, monkeypatch, point, spread_points, expected):
+        from services.market_data.mt5_clock import MT5ServerClock
+
+        start = datetime(2026, 1, 14, 10, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr(mt5_loader, "mt5", _FakeMT5Rates(point, _mt5_rates(start, [spread_points] * 3)))
+
+        candles = mt5_loader.fetch_mt5_candles(
+            "EURUSDm", "EURUSD", "M1", start, start.replace(minute=3), MT5ServerClock("+0"),
+        )
+
+        assert [c.time.minute for c in candles] == [0, 1, 2]
+        assert all(c.spread == expected for c in candles)
+
+    def test_spread_written_to_candles_spread_column(self):
+        import asyncio
+        from contextlib import asynccontextmanager
+        from load_historical_data import TimescaleDBLoader
+
+        class FakeConn:
+            def __init__(self):
+                self.calls = []
+
+            async def executemany(self, query, rows):
+                self.calls.append((query, list(rows)))
+
+        class FakePool:
+            def __init__(self):
+                self.conn = FakeConn()
+
+            @asynccontextmanager
+            async def acquire(self):
+                yield self.conn
+
+        def candle(minute: int, spread):
+            return Candle(
+                time=datetime(2026, 1, 14, 10, minute, tzinfo=timezone.utc), instrument="EURUSD",
+                timeframe="M1", open=Decimal("1.1"), high=Decimal("1.2"), low=Decimal("1.0"),
+                close=Decimal("1.15"), volume=10, complete=True, source="mt5", spread=spread,
+            )
+
+        db = TimescaleDBLoader("postgresql://unused")
+        db.pool = FakePool()
+        inserted, errors = asyncio.run(db.load_candles([candle(0, Decimal("0.00008")), candle(1, None)]))
+
+        assert (inserted, errors) == (2, 0)
+        [(query, rows)] = db.pool.conn.calls
+        columns = [c.strip() for c in query.split("(", 2)[1].split(")")[0].split(",")]
+        spreads = [row[columns.index("spread")] for row in rows]
+        assert spreads == [Decimal("0.00008"), None]
+        # A reload replaces the stored spread along with the prices.
+        assert "spread = EXCLUDED.spread" in query

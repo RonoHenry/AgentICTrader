@@ -15,6 +15,9 @@ MT5 specifics:
   "Max bars in chart" (default 100000, ~69 days of M1). Set it to Unlimited
   and restart the terminal to get years of M1; the loader warns whenever a
   series starts later than requested.
+- Each bar's recorded spread is stored in price units (MT5 records it in
+  points). The backtester's cost model floors it with the instrument's
+  typical spread, since many servers record 0 or the bar's minimum.
 - Rows are written with source='mt5'. The candles primary key is
   (time, instrument, timeframe), so they replace OANDA/Deriv rows that share
   a timestamp.
@@ -118,6 +121,10 @@ def fetch_mt5_candles(
     tf_seconds = TIMEFRAME_DURATIONS[timeframe]
     chunk = timedelta(days=min(MAX_CHUNK_DAYS, max(1, BARS_PER_CHUNK * tf_seconds // 86400)))
     now = datetime.now(timezone.utc)
+    info = mt5.symbol_info(symbol)
+    if info is None:
+        raise RuntimeError(f"symbol_info failed for {symbol}: {mt5.last_error()}")
+    point = Decimal(str(info.point))
 
     by_time: dict[datetime, Candle] = {}
     cursor = from_time
@@ -144,6 +151,7 @@ def fetch_mt5_candles(
                 volume=int(r["tick_volume"]),
                 complete=bar_time + timedelta(seconds=tf_seconds) <= now,
                 source="mt5",
+                spread=int(r["spread"]) * point,
             )
         cursor = chunk_end
 
