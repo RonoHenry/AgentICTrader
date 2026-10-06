@@ -276,10 +276,14 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - The live forward test's state file (one expired BNBUSDT order) loads and reports. Its stop was 0.38 on a 775 price: round-trip fees were about 4R, the Req 5.5 problem.
   - **Validates: Requirements 4.1, 4.2**
 
-- [ ] 196. Checkpoint: shared foundations live
+- [x] 196. Checkpoint: shared foundations live
   - `python scripts/run_all_tests.py` is green (apart from the task-39 RED file).
   - Rebuild and restart `docker/paper-trader`. **(user action** to confirm the restart.)
   - Record the restart date in this file. Only forward-test trades placed after it are valid parity data (task 212).
+  - **Done 2026-10-06. Restarted 2026-10-06 09:28:20 UTC** (user confirmed). Only Binance forward-test trades placed after this are valid parity data.
+    - The suites were green at task 195 (root 845, backend 1680; only the task-39 RED file fails).
+    - **Fixed before the restart:** the image didn't copy `config/`, which the runner now reads (Binance profile and spec file). The rebuilt container would have crash-looped. `config/brokers/` and `config/instruments/` are now copied.
+    - Checked inside the new image first, with throwaway containers (alert-only and paper on a temp state file). After the restart: backfill done, first pass at 09:29:59 UTC on all six pairs, container healthy, heartbeat current.
 
 ### B. Backtester core
 

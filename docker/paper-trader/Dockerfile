@@ -21,6 +21,9 @@ COPY services/visual_model/__init__.py /app/services/visual_model/__init__.py
 COPY services/visual_model/api/ /app/services/visual_model/api/
 COPY services/visual_model/schemas/ /app/services/visual_model/schemas/
 COPY scripts/run_live_agent.py scripts/load_historical_data.py scripts/load_historical_data_binance.py /app/scripts/
+# Broker profile and instrument specs: spreads and slippage for paper fills.
+COPY config/brokers/ /app/config/brokers/
+COPY config/instruments/ /app/config/instruments/
 COPY docker/paper-trader/entrypoint.sh /app/entrypoint.sh
 
 # Strip CRLF in case the repo was checked out on Windows.
