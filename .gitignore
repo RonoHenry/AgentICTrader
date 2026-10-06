@@ -76,6 +76,9 @@ data/*.csv
 data/*.json
 *.dat
 
+# AlgoBacktester run outputs (manifest, journal, summary, report per run)
+data/backtests/
+
 # Paper-trader runtime state (docker/paper-trader writes these to data/)
 data/heartbeat
 data/*.err

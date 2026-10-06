@@ -287,7 +287,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
 
 ### B. Backtester core
 
-- [ ] 197. `algo_backtester` scaffold and configuration
+- [x] 197. `algo_backtester` scaffold and configuration
   - **197a. RED** (`backend/tests/test_backtest_config.py`)
     - `test_variant_dotted_key_override`
     - `test_unknown_config_key_rejected`
@@ -295,6 +295,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - `test_run_config_resolves_strategy_config`
   - **197b. GREEN** — `algo_backtester/config.py`, `config/backtests/base.toml`, and `data/backtests/` added to `.gitignore`.
   - **197c. REFACTOR** — confirm GREEN.
+  - **Done 2026-10-06.** `RunConfig` is frozen and rejects unknown keys in every section and in variants; its `[strategy]` table is the live `StrategyConfig`. Studies live in `config/backtests/studies/<study>.toml` (not beside `base.toml`, which a study named "base" would overwrite); the hold-out is written on first use and never moves. `check_holdout()` refuses a run reaching the hold-out unless final. The acceptance-criteria proposal (handoff brief) was deferred by the user until the backtester runs.
   - **Validates: Requirements 7.1, 7.2**
 
 - [ ] 198. `CandleSource`, coverage check, data fingerprint (`algo_backtester/data.py`)

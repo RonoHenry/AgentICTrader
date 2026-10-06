@@ -440,7 +440,7 @@ The event loop runs over the merged, time-ordered stream of M1 bars (all instrum
 
 **Walk-forward (Req 7.3):** `run --walk-forward 3M` splits `[start, end)` into consecutive windows. Each window is a full Phase B run, with warm-up data taken from before the window start (Phase A records are shared through the cache). The combined result concatenates the windows' trades.
 
-**Hold-out (Req 7.2):** `StudyConfig` in `config/backtests/<study>.toml` sets `holdout_start` once. Its default is D7: the most recent 3 months at study creation. A run whose `[start, end)` overlaps the hold-out is refused unless `--final` is passed, and the manifest records `final_validation: true`.
+**Hold-out (Req 7.2):** `StudyConfig` in `config/backtests/studies/<study>.toml` sets `holdout_start` once (a subdirectory, so a study can't overwrite a run config such as `base.toml`). Its default is D7: the most recent 3 months at study creation. A run whose `[start, end)` overlaps the hold-out is refused unless `--final` is passed, and the manifest records `final_validation: true`.
 
 ---
 

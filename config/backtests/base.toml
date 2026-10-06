@@ -1,0 +1,34 @@
+# AlgoBacktester base run configuration (.kiro/specs/algo-backtester, task 197).
+#   python -m algo_backtester run config/backtests/base.toml [--variant NAME]
+# A variant is a named set of dotted-key overrides on top of this file.
+# Unknown keys are rejected, so a typo fails instead of running the default.
+
+[run]
+profile = "exness-standard"                              # D11: venue, specs, costs, symbols
+instruments = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]   # D1
+start = 2025-01-01                                       # [start, end), UTC
+end = 2026-07-01
+study = "baseline-2026q3"                                # hold-out: config/backtests/studies/<study>.toml
+
+[account]
+initial_equity = 10000.0
+risk_per_trade = 0.01
+compounding = false
+
+[strategy]            # → agent.strategy_config.StrategyConfig, the live settings
+entry_tf = "M15"
+min_rr = 3.0
+pending_expiry = "KILLZONE_END"
+fallback_ttl_minutes = 180
+
+[data]
+max_gap_minutes = 30          # outside weekends/holidays (Req 3.6)
+allow_gaps = false
+
+[report]
+min_trades = 30               # D8
+cost_flag_fraction = 0.25     # Req 5.5
+bootstrap_resamples = 10000
+
+[variants.min_rr_5]
+strategy.min_rr = 5.0
