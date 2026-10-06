@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import pytest
 from hypothesis import given, settings
@@ -26,7 +27,7 @@ MINUTE = timedelta(minutes=1)
 T = datetime(2026, 1, 14, 15, 40, tzinfo=UTC)
 
 
-def bar(tf: TF, ts: datetime, price: float = 1.1, high: float | None = None) -> Candle:
+def bar(tf: TF, ts: datetime, price: float = 1.1, high: Optional[float] = None) -> Candle:
     return Candle(timestamp=ts, open=price, high=high if high is not None else price, low=price, close=price,
                   volume=1, timeframe=tf, instrument="EURUSD")
 

@@ -18,6 +18,7 @@ import json
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -47,7 +48,7 @@ def _load(path: Path):
     return record, bars
 
 
-def _clock(record) -> MT5ServerClock | None:
+def _clock(record) -> Optional[MT5ServerClock]:
     return MT5ServerClock(record["server_clock"]) if record["venue"] == "mt5" else None
 
 

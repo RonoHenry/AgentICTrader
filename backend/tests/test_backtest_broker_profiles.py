@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Optional
 
 import pytest
 
@@ -33,7 +34,7 @@ def _spec_file(tmp_path, venue="mt5"):
     return path
 
 
-def _profile_file(tmp_path, body: str | None = None, name="test-broker"):
+def _profile_file(tmp_path, body: Optional[str] = None, name="test-broker"):
     spec_path = _spec_file(tmp_path)
     if body is None:
         body = f'''

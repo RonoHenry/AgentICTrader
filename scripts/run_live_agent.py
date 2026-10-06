@@ -91,7 +91,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable
+from typing import Callable, Optional
 
 import fakeredis
 from decouple import AutoConfig
@@ -367,7 +367,7 @@ def _parse_args() -> argparse.Namespace:
 def _as_of_window(
     fetch: Callable[[Timeframe, int], list[Candle]],
     fetch_m1: Callable[[datetime, datetime], list[Candle]],
-    venue_clock: MT5ServerClock | None,
+    venue_clock: Optional[MT5ServerClock],
     cfg: StrategyConfig,
     now: datetime,
 ) -> tuple[dict[Timeframe, list[Candle]], datetime]:
@@ -435,7 +435,7 @@ def _process_instrument(
     cfg: StrategyConfig,
     mode: str,
     verbose: bool = True,
-    evaluated: dict[str, datetime] | None = None,
+    evaluated: Optional[dict[str, datetime]] = None,
 ) -> dict:
     """Grade the window as of ``t`` and, if warranted, trade it. Returns a
     summary dict for the end-of-run table — never raises for a NO_TRADE

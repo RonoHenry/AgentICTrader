@@ -12,6 +12,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Optional
 
 import pytest
 
@@ -86,7 +87,7 @@ def _grade(grade=SetupGrade.A, entry=1.1000, stop=1.0990, array_id="m5-fvg") -> 
     )
 
 
-def _map(grade: SetupGradeDetail | None, draw: float = 1.1050, sd: SDProjection | None = None):
+def _map(grade: Optional[SetupGradeDetail], draw: float = 1.1050, sd: Optional[SDProjection] = None):
     return full_liquidity_map(
         instrument="EURUSD", setup_grade=grade, draw_on_liquidity=make_level(price=draw), sd_projection=sd,
     )
