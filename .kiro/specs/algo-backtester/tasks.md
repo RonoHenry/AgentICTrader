@@ -384,7 +384,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **Done 2026-10-06.** `SimBroker` (a `BrokerClient`), `SimTrade` (the fill model's order plus its sizing), `ClosedTrade` (R, cost split, MAE/MFE, P&L, cost flag; R fields None for orders that never filled). `advance()` returns the orders that closed; Phase B books them (task 203). The tests were mutation-checked: rounding to nearest, the wrong spread side, no tolerance, no stop check and the old R definition each fail them.
     - **R is measured on the distance the order was sized on**, `|entry - stop|`, not `|ideal_fill - stop|` as designed. The old definition reaches zero or goes negative when the spread is as wide as the stop, which real EURUSD setups do (task 217: a 0.6-pip stop against a 0.8-pip spread). It also inflated LONG losses and differed between a LONG and its mirror SHORT. Recorded in `design.md` → SimBroker.
     - **Also refused at placement:** `INVALID_STOPS` (a stop or target on the wrong side, as MT5 refuses it), `INVALID_ORDER`, `NO_PRICE`. `build_order_intent`'s draw-on-liquidity fallback target can land behind the entry and still pass `min_rr`, because the R:R check uses `abs()`.
-    - **Seen in a test:** a 0.6-pip stop at $3.50/lot/side commission and a 0.8-pip spread loses 2.5R on a plain stop-out (1.33R spread, 0.33R slippage, 1.17R commission).
+    - **Seen in a test:** a 0.6-pip stop at $3.50/lot/side commission and a 0.8-pip spread loses 2.5R on a plain stop-out (1.33R spread, 0.33R slippage, 1.17R commission). The test's commission is hypothetical: `exness-standard` charges none (spread-only), so there the same stop-out costs about 1.67R (spread 0.8 pip and slippage 0.2 pip over a 0.6-pip stop).
   - **Validates: Requirements 5.1, 5.5**
 
 - [x] 202. `SimAccount` (`algo_backtester/account.py`)
@@ -400,7 +400,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - `RiskEngine` sizes at a fixed 1% of the equity it reads, so `exposure()["equity"]` is `risk_amount / 1%`. Without that, the run's `risk_per_trade` would never reach `execute_node`, and the budget would compound (`test_risk_per_trade_reaches_risk_engine`).
   - **Validates: Requirements 1.4, 6.3, 6.4**
 
-- [ ] 203. Phase B event loop (`algo_backtester/simulation.py`)
+- [x] 203. Phase B event loop (`algo_backtester/simulation.py`)
   - **203a. RED** (`backend/tests/test_backtest_simulation.py`; a two-instrument synthetic fixture with scripted SignalRecords)
     - `test_fills_processed_before_decisions_at_same_t`
     - `test_in_trade_signal_journaled_not_evaluated`
@@ -413,6 +413,10 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - **PBT — Property 9: Account State Matches Positions**
       - **Validates: Requirements 1.4, 1.5, 6.3**
   - **203b. GREEN** / **203c. REFACTOR**
+  - **Done 2026-10-06.** `simulate()` returns `SimulationResult(journal, trades, open_orders, account)`. Each `JournalRow` carries its intent, `TradeContext`, ICT time window and, once closed, its `ClosedTrade`. Mutation-checked: no D6 check, a stale open-trade count, the wall clock, and no re-mark after placements each fail the tests. Bars-before-signals ordering is structural, so that mutant was equivalent.
+    - **No Mongo journal or audit collection** (the design had list-backed ones): `learn_node` queues MLflow retraining every 50 documents. Phase B's journal records every decision instead.
+    - **Attempted (D6)** = the broker accepted an order for the `setup_id`. Refusals by risk rules or the broker are re-evaluated on the next close, as live.
+    - The account is marked again before each `graph.run()`, so orders placed earlier at the same `t` count towards the concurrent-trade limit.
   - **Validates: Requirements 1.1, 7.5**
 
 - [ ] 204. Hold-out and walk-forward

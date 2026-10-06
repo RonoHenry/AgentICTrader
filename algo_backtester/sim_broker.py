@@ -259,6 +259,10 @@ class SimBroker(BrokerClient):
         """Pending and open orders, across instruments."""
         return len(self._active)
 
+    def active_trades(self) -> list[SimTrade]:
+        """Pending and open orders, in placement order."""
+        return list(self._active.values())
+
     def open_pnl(self) -> float:
         """Open positions marked at each instrument's last close, on the closing
         side (bid for LONG, ask for SHORT), before commission."""

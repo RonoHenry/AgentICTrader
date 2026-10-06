@@ -439,7 +439,8 @@ Remaining options for long M5 studies:
 One `AgentGraph` per run:
 - `risk_engine = RiskEngine(fakeredis)`, `broker_client = SimBroker`, `mode = AUTONOMOUS`
 - `visual_model_client = None`, `algorag_client = None`
-- `clock = lambda: sim_now`, an in-memory journal, and `agent_decisions_collection` set to a list-backed collection
+- `clock = lambda: sim_now`
+- `trade_journal_collection = None` and `agent_decisions_collection = None` (*changed in task 203* from list-backed collections). `learn_node` queues an MLflow retraining run every 50 journal documents, which a year of decisions would trigger dozens of times. Phase B's own journal records every decision instead.
 
 The event loop runs over the merged, time-ordered stream of M1 bars (all instruments) and SignalRecords. For each minute boundary `t`:
 
@@ -454,6 +455,11 @@ The event loop runs over the merged, time-ordered stream of M1 bars (all instrum
 **Ordering and look-ahead:**
 - Ordering matches live: fills and exits first, then evaluation.
 - An order placed at `t` is only eligible for bars with `timestamp >= t`, i.e. bars that open after the decision, so there is no same-bar look-ahead.
+
+Settled while building it (task 203):
+- **Attempted (D6)** means the broker accepted an order for the `setup_id`, whatever became of it (filled, stopped, expired). A setup refused by the risk rules or the broker (e.g. `MIN_VOLUME_OVER_RISK`) is evaluated again on the next close, as live.
+- **Exposure is current at every decision:** the account is marked again before each `graph.run()`, so orders placed earlier at the same `t` count towards the concurrent-trade limit. `RiskEngine.increment_open_trades` writes to the same key, but Phase B overwrites it from the account each time.
+- **Output:** `SimulationResult(journal, trades, open_orders, account)`. Each `JournalRow` carries its intent, `TradeContext`, `time_window` and, once it closed, its `ClosedTrade`. An order still open at the end is reported in `open_orders`, not closed artificially.
 
 **Walk-forward (Req 7.3):** `run --walk-forward 3M` splits `[start, end)` into consecutive windows. Each window is a full Phase B run, with warm-up data taken from before the window start (Phase A records are shared through the cache). The combined result concatenates the windows' trades.
 
