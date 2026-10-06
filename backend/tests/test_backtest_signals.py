@@ -2,10 +2,11 @@
 Tests for algo_backtester/signals.py — Phase A: the engine's decision at
 every entry-timeframe close.
 
-Task 199 (.kiro/specs/algo-backtester/tasks.md). Real data: the task 186
-MetaQuotes-Demo fixtures (New York-close server), one week of M1 plus a year
-of native H1/H4/D1/W1 for the warm-up. Small windows keep the engine quick.
-Validates: Requirements 1.1, 9.2 (.kiro/specs/algo-backtester/requirements.md)
+Tasks 199 and 217 (.kiro/specs/algo-backtester/tasks.md). Real data: the
+task 186 MetaQuotes-Demo fixtures (New York-close server), one week of M1
+plus a year of native H1/H4/D1/W1 for the warm-up. Small windows keep the
+engine quick.
+Validates: Requirements 1.1, 9.2, 11.5, 11.6 (.kiro/specs/algo-backtester/requirements.md)
 """
 from __future__ import annotations
 
@@ -22,8 +23,19 @@ import pytest
 from agent.order_intent import NoTrade, OrderIntent
 from agent.strategy_config import StrategyConfig
 from algo_backtester.data import InstrumentData, StoredBar, load_instrument
-from algo_backtester.signals import EngineError, SignalRecord, generate_all, generate_signals, signal_at
+from algo_backtester.signals import (
+    EngineError,
+    SignalRecord,
+    TradeContext,
+    generate_all,
+    generate_signals,
+    signal_at,
+    trade_context,
+)
+from liquidity_engine import LiquidityMappingEngine
 from liquidity_engine.models import Timeframe as TF
+from liquidity_engine.utils.time_utils import get_killzone
+from services.market_data.as_of_view import compose_as_of_view
 from services.market_data.mt5_clock import MT5ServerClock
 from services.market_data.strategy_calendar import StrategyCalendar
 
@@ -131,3 +143,64 @@ def test_parallel_per_instrument_equals_sequential():
     parallel = generate_all(datas, CFG, start, end, workers=2)
     assert parallel == sequential
     assert set(parallel) == {"EURUSD", "XAUUSD"} and all(parallel.values())
+
+
+# ── TradeContext (task 217, Req 11.5) ──────────────────────────────────────
+# 12:00-14:00 UTC on 2026-09-30 holds both order intents and no-trades.
+CONTEXT_START, CONTEXT_END = datetime(2026, 9, 30, 12, 0, tzinfo=UTC), datetime(2026, 9, 30, 14, 0, tzinfo=UTC)
+
+
+@lru_cache(maxsize=None)
+def context_records() -> tuple[SignalRecord, ...]:
+    records = tuple(generate_signals(data_for(), CFG, CONTEXT_START, CONTEXT_END))
+    assert {type(r.result) for r in records} == {OrderIntent, NoTrade}
+    return records
+
+
+def liquidity_map_at(t: datetime):
+    data = data_for()
+    view = compose_as_of_view(data.closed, data.m1, t, CFG.entry_tf, CFG.candle_counts, CAL)
+    return LiquidityMappingEngine().analyze(view, data.instrument, t)
+
+
+def test_order_intent_records_carry_trade_context():
+    intents = [r for r in context_records() if isinstance(r.result, OrderIntent)]
+    for record in intents:
+        liquidity_map = liquidity_map_at(record.t)
+        context, grade, draw = record.context, liquidity_map.setup_grade, liquidity_map.draw_on_liquidity
+        # the array the grader chose, as the grader itself describes it
+        assert (context.entry_array["high"], context.entry_array["low"]) == (grade.entry_array_high,
+                                                                             grade.entry_array_low)
+        assert context.entry_array["direction"] == grade.entry_array_direction.value
+        assert context.entry_array["timeframe"] == "M15"           # entries come from the entry timeframe
+        assert context.entry_array["type"] and datetime.fromisoformat(context.entry_array["formed_at"]) < record.t
+        assert context.draw_on_liquidity == {"type": draw.liquidity_type.value, "source": draw.source.value,
+                                             "price": draw.price, "formed_at": draw.formed_at.isoformat()}
+        assert context.swept_level is None                          # until the grader records the raid
+        assert context.killzone == get_killzone(record.t).value != "NONE"
+        json.dumps(vars(context))                                   # ready for the report as it is
+
+
+def test_no_trade_records_carry_no_context():
+    no_trades = [r for r in context_records() if isinstance(r.result, NoTrade)]
+    fail_at = datetime(2026, 9, 30, 13, 30, tzinfo=UTC)
+    failed = signal_at(data_for(), CFG, fail_at, engine=FakeEngine(fail_at=fail_at))
+    for record in [*no_trades, failed]:
+        assert record.context is None
+        assert "context" not in record.to_json()                    # keeps the cache small
+
+
+def test_killzone_none_outside_killzones():
+    t = datetime(2026, 9, 30, 13, 0, tzinfo=UTC)
+    noon_new_york = datetime(2026, 9, 30, 16, 0, tzinfo=UTC)        # between NY AM and NY PM
+    assert trade_context(liquidity_map_at(t), noon_new_york).killzone is None
+
+
+def test_trade_context_round_trips_through_cache(tmp_path):
+    from algo_backtester.cache import SignalCache
+
+    cache = SignalCache(tmp_path, "e" * 64)
+    stored = cache.store("k" * 64, context_records())
+    loaded = cache.load("k" * 64)
+    assert loaded == stored == list(context_records())
+    assert all(type(r.context) is TradeContext for r in loaded if isinstance(r.result, OrderIntent))

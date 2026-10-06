@@ -341,13 +341,15 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
       - EURUSD stops have a median of 2.6 pips (min 0.8; 7 of 20 are 2 pips or less). Exness's 0.8-pip spread is about 0.3R per trade at the median: costs are likely to decide FX results (Req 5.5).
   - **Validates: Requirements 1.1, 9.2**
 
-- [ ] 217. `TradeContext` on SignalRecords (Req 11.5)
+- [x] 217. `TradeContext` on SignalRecords (Req 11.5)
   - Numbered 217 to keep earlier numbers stable. Added 2026-10-05 with Requirement 11.
   - **217a. RED** (`backend/tests/test_backtest_signals.py`)
     - `test_order_intent_records_carry_trade_context` — entry array, draw on liquidity and killzone, taken from the LiquidityMap at `t`
     - `test_no_trade_records_carry_no_context` — keeps the cache small
     - `test_trade_context_round_trips_through_cache`
   - **217b. GREEN** / **217c. REFACTOR**
+  - **Done 2026-10-06** (after task 200, whose cache the round-trip test needs). `trade_context()` extracts the chosen entry array (by `entry_array_id`), the draw on liquidity and the killzone at `t`. The killzone uses the same windows as `KILLZONE_END` expiry. Values are JSON-ready for the report. `swept_level` stays None until the grader records the opposite-side raid (`liquidity-engine` spec update). Records without context omit the key in the cache.
+    - **Seen on real data** (first intent of the 2026-09-30 test window, MetaQuotes EURUSD): a SHORT whose draw on liquidity is buy-side liquidity above price (PDH), with a 0.6-pip stop off a 1-pip M15 breaker, below Exness's 0.8-pip spread. This is for the baseline (task 211), not a change here.
   - **Validates: Requirements 11.5, 11.6**
 
 - [x] 200. Phase A cache (`algo_backtester/cache.py`)

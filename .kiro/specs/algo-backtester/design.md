@@ -351,11 +351,11 @@ class SignalRecord:
     context: TradeContext | None = None              # set for OrderIntents; drawn by the run report (Req 11.5)
 
 @dataclass(frozen=True)
-class TradeContext:   # compact extract of the LiquidityMap at t — not the whole map
+class TradeContext:   # compact extract of the LiquidityMap at t — not the whole map; JSON-ready values
     entry_array: dict | None        # type, direction, timeframe, high, low, formed_at
-    draw_on_liquidity: dict | None  # source, price, liquidity type
+    draw_on_liquidity: dict | None  # type (BSL/SSL), source, price, formed_at
     swept_level: dict | None        # price and time of the opposite-side raid, once the grader records it
-    killzone: str | None
+    killzone: str | None            # liquidity_engine time_utils windows (as KILLZONE_END expiry); None outside
 
 def generate_signals(instrument, source, calendar, cfg, start, end) -> Iterator[SignalRecord]:
 ```
