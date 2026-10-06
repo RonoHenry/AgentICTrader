@@ -107,12 +107,13 @@ def compose_as_of_view(
     for tf, bars in closed.items():
         period_start = calendar.period_start(t, tf)
         # Calendar bars that start before the period containing t have ended by t.
-        done = bars[: bisect_left(bars, period_start, key=_timestamp)]
-        if done and calendar.period_start(done[-1].timestamp, tf) != done[-1].timestamp:
+        # Only the window is sliced: Phase A calls this at every entry close.
+        n_done = bisect_left(bars, period_start, key=_timestamp)
+        if n_done and calendar.period_start(bars[n_done - 1].timestamp, tf) != bars[n_done - 1].timestamp:
             # Off-calendar bars (e.g. a UTC server's native H4) could pass the
             # test above while still forming: that would leak t's future.
             raise ValueError(
-                f"compose_as_of_view: {tf.value} bar at {done[-1].timestamp} is not on the strategy calendar"
+                f"compose_as_of_view: {tf.value} bar at {bars[n_done - 1].timestamp} is not on the strategy calendar"
             )
         forming = None
         if _RANK_MINUTES[tf] > _RANK_MINUTES[entry_tf]:
@@ -120,9 +121,9 @@ def compose_as_of_view(
                 bisect_left(recent_m1, period_start, key=_timestamp): bisect_right(recent_m1, t - _M1, key=_timestamp)
             ]
             if known:
-                forming = _combine(list(known), period_start, tf)
+                forming = _combine(known, period_start, tf)
         keep = windows[tf] - (forming is not None)
-        view[tf] = list(done[max(0, len(done) - keep):]) + ([forming] if forming is not None else [])
+        view[tf] = list(bars[max(0, n_done - keep): n_done]) + ([forming] if forming is not None else [])
     return view
 
 

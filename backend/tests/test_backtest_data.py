@@ -199,3 +199,27 @@ def test_timescale_source_reads_m1_utc():
     assert all(b.timestamp.tzinfo is not None and b.timestamp.utcoffset() == timedelta(0) for b in bars)
     assert [b.timestamp for b in bars] == sorted({b.timestamp for b in bars})
     assert all(b.timeframe == TF.M1 and b.instrument == "BTCUSDT" for b in bars)
+
+
+def test_warmup_builds_from_native_h1_when_native_tf_missing(tmp_path):
+    # A New York-close server whose store holds native H1 but no D1/W1 rows.
+    cfg = StrategyConfig(entry_tf="M15", context_tfs=("H4",), candle_counts={"M15": 40, "H4": 30, "D1": 20, "W1": 8})
+    start, end = ny(2026, 1, 19, 0), ny(2026, 1, 23, 17)
+    _write_csv(tmp_path / "EURUSD_M1.csv", m1(ny(2026, 1, 9, 0), end))
+    _write_csv(tmp_path / "EURUSD_H1.csv", _native(TF.H1, ny(2025, 1, 1), end))
+    data = load_instrument(CsvSource(tmp_path), "EURUSD", start, end, cfg, MT5ServerClock("ny_close"),
+                           venue="mt5", max_gap_minutes=30)
+    assert data.warmup_source == {"M15": "m1", "H4": "m1", "D1": "native_h1", "W1": "native_h1"}
+    assert data.coverage.ok
+
+
+def test_missing_warmup_source_is_a_coverage_problem_not_a_crash(tmp_path):
+    # The entry timeframe's window reaches before the M1 history, and the store
+    # holds no native M15 to fall back on (H1 can't build M15).
+    cfg = StrategyConfig(entry_tf="M15", context_tfs=("H4",), candle_counts={"M15": 400, "H4": 30, "D1": 20, "W1": 8})
+    start, end = ny(2026, 1, 19, 0), ny(2026, 1, 23, 17)
+    _write_csv(tmp_path / "EURUSD_M1.csv", m1(ny(2026, 1, 16, 0), end))
+    data = load_instrument(CsvSource(tmp_path), "EURUSD", start, end, cfg, MT5ServerClock("ny_close"),
+                           venue="mt5", max_gap_minutes=30)
+    assert data.warmup_source["M15"] == "none"
+    assert any("M15" in p and "warm-up" in p for p in data.coverage.problems)

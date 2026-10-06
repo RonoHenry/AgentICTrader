@@ -99,6 +99,11 @@ class StrategyConfig(BaseModel):
         """Every timeframe handed to the engine, in the order the runner fetches them."""
         return (Timeframe.D1, Timeframe.W1, *self.context_tfs, self.entry_tf)
 
+    def __reduce__(self):
+        # Read-only mappings don't pickle; rebuild from plain values instead
+        # (AlgoBacktester sends the config to one process per instrument).
+        return type(self).model_validate, (self.model_dump(),)
+
     def fingerprint(self) -> str:
         """sha256 of the canonical JSON: equal settings, equal fingerprint."""
         canonical = json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))

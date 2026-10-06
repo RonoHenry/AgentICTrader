@@ -117,3 +117,14 @@ def test_frozen():
         cfg.candle_counts[TF.M15] = 500
     with pytest.raises(TypeError):
         cfg.grade_confidence[SetupGrade.B] = 0.5
+
+
+def test_pickles_for_worker_processes():
+    # Phase A sends the config to one process per instrument (task 199).
+    import pickle
+
+    cfg = StrategyConfig(entry_tf="M5", min_rr=4.0)
+    clone = pickle.loads(pickle.dumps(cfg))
+    assert clone == cfg and clone.fingerprint() == cfg.fingerprint()
+    with pytest.raises(TypeError):
+        clone.candle_counts[TF.M5] = 1  # still read-only

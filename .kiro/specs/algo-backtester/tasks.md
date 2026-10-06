@@ -319,7 +319,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - The `infrastructure` test passes against the live candle store (Binance M1 from the paper trader).
   - **Validates: Requirements 3.1, 3.2, 3.6, 3.7**
 
-- [ ] 199. Phase A: `generate_signals()` (`algo_backtester/signals.py`)
+- [x] 199. Phase A: `generate_signals()` (`algo_backtester/signals.py`)
   - **199a. RED** (`backend/tests/test_backtest_signals.py`, `test_backtest_truncation.py`)
     - `test_one_record_per_entry_tf_close`
     - `test_analyze_called_with_as_of_time`
@@ -328,6 +328,17 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - **PBT — Property 1: No Look-Ahead (Truncation Invariance)** — fixture data, `max_examples=25`
       - **Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5, 2.6**
   - **199b. GREEN** / **199c. REFACTOR**
+  - **Done 2026-10-06.** `signal_at()` / `generate_signals()` / `generate_all()` (one process per instrument). A failure in `analyze()` or `build_order_intent()` becomes an `EngineError` record, so one bad bar can't end a run. `TradeContext` is still task 217.
+    - **Property 1** runs the real engine on the task 186 MetaQuotes data. A planted 15-minute look-ahead fails it.
+    - **Fixed on the way:**
+      - `compose_as_of_view()` copied each timeframe's whole history per call (quadratic over a run); it now slices just the window, with identical output.
+      - `StrategyConfig` didn't pickle (read-only mappings), which worker processes need.
+      - Warm-up falls back to native H1 when the store lacks a timeframe's native bars.
+      - A warm-up with no source is a coverage problem, not a crash.
+    - **Speed:** about 33 ms per entry close with the live defaults (M15, full windows), roughly 14 min per instrument-year.
+    - **Findings on real data** (MetaQuotes week, test data only, D11):
+      - R:R is exactly 5.0 on all 20 EURUSD setups (5.0-5.4 on gold): SD targets are a fixed multiple of the entry array's range, so `min_rr` 3.0 never filters.
+      - EURUSD stops have a median of 2.6 pips (min 0.8; 7 of 20 are 2 pips or less). Exness's 0.8-pip spread is about 0.3R per trade at the median: costs are likely to decide FX results (Req 5.5).
   - **Validates: Requirements 1.1, 9.2**
 
 - [ ] 217. `TradeContext` on SignalRecords (Req 11.5)

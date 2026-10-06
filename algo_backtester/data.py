@@ -280,7 +280,7 @@ class InstrumentData:
     instrument: str
     m1: list[StoredBar]                          # from the warm-up through the run end
     closed: dict[Timeframe, list[Candle]]        # strategy-calendar bars per timeframe
-    warmup_source: dict[str, str]                # timeframe -> "m1" | "native" | "native_h1"
+    warmup_source: dict[str, str]                # timeframe -> "m1" | "native" | "native_h1" | "none"
     fingerprint: DataFingerprint                 # every row used, M1 and native
     coverage: Coverage                           # including an incomplete warm-up
 
@@ -339,12 +339,15 @@ def _closed_before(bars: Sequence[Candle], tf: Timeframe, start: datetime) -> in
 def _native_warmup(source: CandleSource, instrument: str, tf: Timeframe, since: datetime, cut: datetime,
                    clock: Optional[MT5ServerClock]) -> tuple[list[Candle], str, list[StoredBar]]:
     """Calendar bars of ``tf`` for [since, cut), from native bars: the venue's
-    own ``tf`` where it follows the strategy calendar, else built from native H1."""
+    own ``tf`` where it follows the strategy calendar and the store holds it,
+    else built from native H1."""
     if _CALENDAR.matches_native(clock, tf):
         raw = source.bars(instrument, tf, since, cut)
-        return [b.candle() for b in raw], "native", raw
-    if not _CALENDAR.matches_native(clock, Timeframe.H1) or _NOMINAL_MINUTES[tf] <= 60:
-        raise ValueError(f"{instrument}: no native series on the strategy calendar to warm up {tf.value} from")
-    raw = source.bars(instrument, Timeframe.H1, since - timedelta(days=8), cut)
-    # The first period may be partial; periods must end by the cut.
-    return aggregate(raw, tf, _CALENDAR, as_of=cut)[1:] if raw else [], "native_h1", raw
+        if raw:
+            return [b.candle() for b in raw], "native", raw
+    if _NOMINAL_MINUTES[tf] > 60 and _CALENDAR.matches_native(clock, Timeframe.H1):
+        raw = source.bars(instrument, Timeframe.H1, since - timedelta(days=8), cut)
+        if raw:
+            # The first period may be partial; periods must end by the cut.
+            return aggregate(raw, tf, _CALENDAR, as_of=cut)[1:], "native_h1", raw
+    return [], "none", []  # load_instrument reports the incomplete warm-up

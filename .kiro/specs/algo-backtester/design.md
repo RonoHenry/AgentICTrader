@@ -417,6 +417,8 @@ Remaining options for long M5 studies:
 - per-instrument parallelism;
 - memoising `deterministic_id` across consecutive bars, whose windows overlap about 99%. Evaluate in task 199. A same-window benchmark would overstate that gain.
 
+**Phase A measured (task 199, 2026-10-06).** With the live defaults (M15 entries, full windows), real MetaQuotes EURUSD/XAUUSD data: about 33 ms per entry close including the as-of view, so about 14 min per instrument-year. Not worth memoising `deterministic_id` for M15 studies; revisit for long M5 studies.
+
 ### Phase B: account simulation (`algo_backtester/simulation.py`)
 
 One `AgentGraph` per run:
