@@ -347,8 +347,11 @@ A `BrokerClient` that `execute_node` calls through `AgentGraph`, exactly as live
 
 - **Equity:** with `compounding = false` (the default, Req 6.4), `risk_amount = initial_equity × risk_per_trade` and stays fixed. Equity still moves, for drawdown purposes.
 - **Drawdown anchors (Req 6.3):** at 17:00 New York, the start-of-day equity anchor is reset. The weekly anchor resets at the Sunday open.
-  - `daily_dd_pct = max(0, (day_anchor - equity_mark) / day_anchor × 100)`, where `equity_mark` includes open positions marked at the bar close. The weekly figure is computed the same way.
+  - The boundaries are the strategy calendar's D1 and W1 periods. W1 starts Saturday 17:00 New York, and the FX week opens inside it, so for FX the weekly anchor is the Sunday open.
+  - An anchor is the last mark of the period before. A mark at exactly 17:00 (the bar closing then) still belongs to the old day.
+  - `daily_dd_pct = max(0, (day_anchor - equity_mark) / day_anchor × 100)`, where `equity_mark` includes open positions marked at the bar close (`SimBroker.open_pnl()`, closing side, before commission). The weekly figure is computed the same way.
 - **Exposure:** `exposure()` returns the dict `RiskEngine` reads from `risk:exposure:{user_id}`. Phase B writes it to the run's fakeredis before every `AgentGraph.run()` (Req 1.4).
+  - `RiskEngine` sizes at a fixed 1% (`RISK_PER_TRADE`) of the `equity` it reads, so `exposure()["equity"] = risk_amount / RISK_PER_TRADE`. That way the run's `risk_per_trade` and non-compounding budget reach `execute_node`'s `risk_amount`. At the default 1%, without compounding, it is the starting equity.
 
 ### Phase A: signal generation (`algo_backtester/signals.py`)
 

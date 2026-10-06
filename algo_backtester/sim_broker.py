@@ -255,6 +255,15 @@ class SimBroker(BrokerClient):
         """The instrument's pending or open order, if any (one per instrument, Req 1.5)."""
         return next((t for t in self._active.values() if t.instrument == instrument), None)
 
+    def active_count(self) -> int:
+        """Pending and open orders, across instruments."""
+        return len(self._active)
+
+    def open_pnl(self) -> float:
+        """Open positions marked at each instrument's last close, on the closing
+        side (bid for LONG, ask for SHORT), before commission."""
+        return sum(self.get_position_status(t.order_id)["unrealised_pnl"] for t in self._active.values())
+
     def closed_trades(self) -> list[ClosedTrade]:
         return list(self._closed)
 

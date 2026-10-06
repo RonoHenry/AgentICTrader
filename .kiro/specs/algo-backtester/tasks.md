@@ -387,7 +387,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - **Seen in a test:** a 0.6-pip stop at $3.50/lot/side commission and a 0.8-pip spread loses 2.5R on a plain stop-out (1.33R spread, 0.33R slippage, 1.17R commission).
   - **Validates: Requirements 5.1, 5.5**
 
-- [ ] 202. `SimAccount` (`algo_backtester/account.py`)
+- [x] 202. `SimAccount` (`algo_backtester/account.py`)
   - **202a. RED** (`backend/tests/test_backtest_account.py`)
     - `test_daily_anchor_resets_17_00_new_york_winter_and_summer`
     - `test_weekly_anchor_resets_sunday_open`
@@ -395,6 +395,9 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - `test_exposure_dict_drives_risk_engine_daily_limit` — `RiskEngine.validate()` rejects at 3%
     - `test_non_compounding_risk_amount_fixed`
   - **202b. GREEN** / **202c. REFACTOR**
+  - **Done 2026-10-06.** `SimAccount` (`book()`, `mark()`, `exposure()`); `SimBroker.open_pnl()` and `active_count()` feed its marks.
+    - Anchors follow the strategy calendar's D1/W1 periods. An anchor is the last mark of the period before, and a mark at exactly 17:00 still belongs to the old day.
+    - `RiskEngine` sizes at a fixed 1% of the equity it reads, so `exposure()["equity"]` is `risk_amount / 1%`. Without that, the run's `risk_per_trade` would never reach `execute_node`, and the budget would compound (`test_risk_per_trade_reaches_risk_engine`).
   - **Validates: Requirements 1.4, 6.3, 6.4**
 
 - [ ] 203. Phase B event loop (`algo_backtester/simulation.py`)
