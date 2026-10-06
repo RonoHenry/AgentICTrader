@@ -49,11 +49,16 @@ class OrderIntent:
     patterns: tuple[dict, ...]
     regime: str
 
-    def to_message(self, mode: str) -> dict:
+    def to_message(self, mode: str, detected_at: Optional[datetime] = None) -> dict:
         """The AgentGraph message the runner sends, without candles_by_tf.
         The live runner adds the candle window itself, so observe_node can
         run the AI layers; the backtester leaves it out, which skips
-        observe_node's second engine run."""
+        observe_node's second engine run.
+
+        ``detected_at`` is when the setup was detected, which observe_node's
+        staleness check measures from. It defaults to as_of: a backtest
+        detects at t. Live detection happens after the bar closed, so the
+        runner passes the wall-clock time of the hand-off."""
         tf = self.time_features
         return {
             "setup_id": self.setup_id,
@@ -61,7 +66,7 @@ class OrderIntent:
             "timeframe": self.entry_tf.value,
             "direction": self.direction,
             "raw_confidence": self.confidence,
-            "detected_at": self.as_of.isoformat(),
+            "detected_at": (detected_at or self.as_of).isoformat(),
             "regime": self.regime,
             "patterns": [dict(p) for p in self.patterns],
             "mode": getattr(mode, "value", mode),

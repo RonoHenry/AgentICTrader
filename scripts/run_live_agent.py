@@ -115,9 +115,11 @@ from agent.strategy_config import ENTRY_TIMEFRAMES, StrategyConfig
 from agent.visual_model_client import VisualModelClient
 from liquidity_engine import LiquidityMappingEngine
 from liquidity_engine.models import Candle, Timeframe
-from services.market_data.binance import BinanceKlineClient, BinanceUnavailable
+from services.market_data.as_of_view import aggregate, compose_as_of_view
+from services.market_data.binance import MAX_LIMIT, BinanceKlineClient, BinanceUnavailable
 from services.market_data.candle_store import CandleStore
 from services.market_data.mt5_clock import MT5ServerClock, NY_CLOSE
+from services.market_data.strategy_calendar import StrategyCalendar
 from services.risk_engine.main import RiskEngine
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -135,11 +137,20 @@ DEFAULT_INSTRUMENTS = {
 # Which timeframes are analysed, how many bars of each, min R:R, targets and
 # grade confidence all live in agent.strategy_config.StrategyConfig, shared
 # with AlgoBacktester; --timeframe and --min-rr override its defaults.
+# Candles follow the New York-close strategy calendar at every venue (D9).
+_CALENDAR = StrategyCalendar()
+# Higher timeframes a venue's native bars don't follow are built from H1.
+_HOURS = {Timeframe.H3: 3, Timeframe.H4: 4, Timeframe.H6: 6, Timeframe.H8: 8, Timeframe.H12: 12,
+          Timeframe.D1: 24, Timeframe.W1: 168}
+# --store-candles keeps this many of the newest bars from each fetch: the
+# candles table stays current without re-writing thousands of H1/M1 bars.
+_STORE_TAIL = 300
 _MT5_TIMEFRAME = {} if mt5 is None else {
     Timeframe.M1: mt5.TIMEFRAME_M1,
     Timeframe.M3: mt5.TIMEFRAME_M3,
     Timeframe.M5: mt5.TIMEFRAME_M5,
     Timeframe.M15: mt5.TIMEFRAME_M15,
+    Timeframe.H1: mt5.TIMEFRAME_H1,
     Timeframe.H3: mt5.TIMEFRAME_H3,
     Timeframe.H4: mt5.TIMEFRAME_H4,
     Timeframe.H6: mt5.TIMEFRAME_H6,
@@ -205,7 +216,13 @@ def _fetch_candles(symbol: str, tf: Timeframe, instrument: str, count: int) -> l
 
 
 def _fetch_binance_candles(client: BinanceKlineClient, instrument: str, tf: Timeframe, count: int) -> list[Candle]:
-    klines = client.latest(instrument, tf.value, count)
+    klines = client.latest(instrument, tf.value, min(count, MAX_LIMIT))
+    if count > len(klines) > 1:
+        # More than one request's worth (H1 for the W1 window): page the older span.
+        step = klines[1].open_time - klines[0].open_time
+        older_start = klines[0].open_time - (count - len(klines)) * step
+        older = [k for page in client.iter_range(instrument, tf.value, older_start, klines[0].open_time) for k in page]
+        klines = older + klines
     if not klines:
         raise RuntimeError(f"No {tf.value} candles returned for {instrument} from Binance")
     return [
@@ -317,7 +334,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--store-candles",
         action="store_true",
-        help="Upsert every fetched candle into TimescaleDB (TIMESCALE_URL) so the candles table stays current.",
+        help="Upsert the newest fetched candles (up to 300 per timeframe per pass) into TimescaleDB "
+        "(TIMESCALE_URL) so the candles table stays current.",
     )
     parser.add_argument(
         "--heartbeat",
@@ -346,27 +364,97 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _as_of_window(
+    fetch: Callable[[Timeframe, int], list[Candle]],
+    fetch_m1: Callable[[datetime, datetime], list[Candle]],
+    venue_clock: MT5ServerClock | None,
+    cfg: StrategyConfig,
+    now: datetime,
+) -> tuple[dict[Timeframe, list[Candle]], datetime]:
+    """The engine's candle window and its as-of time t, built the way the
+    backtester builds it (compose_as_of_view, Req 2.7).
+
+    ``fetch(tf, count)`` returns the venue's newest ``count`` native bars,
+    the last possibly still forming; ``fetch_m1(start, end)`` the M1 bars
+    opening in [start, end). ``venue_clock`` is the MT5 server clock, or
+    None for Binance.
+
+    t is the close of the newest entry bar the venue has closed by ``now``,
+    so the forming bar is never analysed. Timeframes whose native bars follow
+    the strategy calendar are fetched natively; the others (H4/D1/W1 at a UTC
+    server or Binance) are aggregated from native H1. Each higher timeframe's
+    in-progress bar comes from M1 of the current week.
+    """
+    windows = cfg.candle_counts
+    for tf in (cfg.entry_tf, Timeframe.H1):
+        if not _CALENDAR.matches_native(venue_clock, tf):
+            raise ValueError(f"{tf.value} bars at this venue don't follow the strategy calendar")
+    context_tf_labels = "/".join(tf.value for tf in cfg.context_tfs)
+    logger.info("Fetching D1/W1/%s/%s candles...", context_tf_labels, cfg.entry_tf.value)
+
+    # One more than the window: the newest native bar may still be forming.
+    entry = fetch(cfg.entry_tf, windows[cfg.entry_tf] + 1)
+    closes = [_CALENDAR.period_end(bar.timestamp, cfg.entry_tf) for bar in entry]
+    if not any(close <= now for close in closes):
+        raise RuntimeError(f"No closed {cfg.entry_tf.value} bar yet")
+    t = max(close for close in closes if close <= now)
+
+    closed: dict[Timeframe, list[Candle]] = {}
+    from_h1 = []
+    for tf in cfg.timeframes:
+        if tf == cfg.entry_tf:
+            closed[tf] = entry
+        elif _CALENDAR.matches_native(venue_clock, tf):
+            closed[tf] = fetch(tf, windows[tf] + 1)
+        elif tf in _HOURS:
+            closed[tf] = []  # keeps cfg.timeframes order; filled below
+            from_h1.append(tf)
+        else:
+            raise ValueError(f"Can't build {tf.value} at this venue: its bars don't follow the strategy calendar")
+    if from_h1:
+        # Enough H1 for every window plus a spare period: the first may be cut short.
+        h1 = fetch(Timeframe.H1, max((windows[tf] + 2) * _HOURS[tf] for tf in from_h1))
+        for tf in from_h1:
+            closed[tf] = aggregate(h1, tf, _CALENDAR, as_of=t)[1:]
+
+    recent_m1 = fetch_m1(_CALENDAR.period_start(t, Timeframe.W1), t)
+    view = compose_as_of_view(closed, recent_m1, t, cfg.entry_tf, windows, _CALENDAR)
+    # The backtest never evaluates a partial window; neither does live (e.g.
+    # while the terminal is still downloading history). The next pass retries.
+    short = {tf.value: f"{len(bars)}/{windows[tf]}" for tf, bars in view.items() if len(bars) < windows[tf]}
+    if short:
+        raise RuntimeError(f"Short history, not evaluating: {short} bars")
+    return view, t
+
+
 def _process_instrument(
     instrument: str,
-    fetch: Callable[[Timeframe], list[Candle]],
+    candles_by_tf: dict[Timeframe, list[Candle]],
+    t: datetime,
     graph: AgentGraph,
     cfg: StrategyConfig,
     mode: str,
     verbose: bool = True,
+    evaluated: dict[str, datetime] | None = None,
 ) -> dict:
-    """Fetch, grade, and (if warranted) trade one instrument. Returns a
+    """Grade the window as of ``t`` and, if warranted, trade it. Returns a
     summary dict for the end-of-run table — never raises for a NO_TRADE
-    outcome, only for real fetch/connectivity failures."""
-    context_tf_labels = "/".join(tf.value for tf in cfg.context_tfs)
-    logger.info("Fetching D1/W1/%s/%s candles for %s...", context_tf_labels, cfg.entry_tf.value, instrument)
-    candles_by_tf = {tf: fetch(tf) for tf in cfg.timeframes}
+    outcome, only for real failures.
 
-    now = datetime.now(tz=timezone.utc)
-    liquidity_map = LiquidityMappingEngine().analyze(candles_by_tf, instrument, now)
+    ``evaluated`` remembers the last t per instrument, so the same closed bar
+    is evaluated once: over an FX weekend t stays at Friday's close, and every
+    pass would otherwise re-send the same setup.
+    """
+    if evaluated is not None and evaluated.get(instrument) == t:
+        return {"instrument": instrument, "grade": "-", "decision": "NO NEW BAR", "trade_id": None}
+
+    liquidity_map = LiquidityMappingEngine().analyze(candles_by_tf, instrument, t)
+    if evaluated is not None:
+        evaluated[instrument] = t  # before acting: a failed order isn't re-sent on the same bar
     if verbose:
         print("\n" + liquidity_map.to_agent_context() + "\n")
 
-    intent = build_order_intent(liquidity_map, candles_by_tf, instrument, now, cfg)
+    intent = build_order_intent(liquidity_map, candles_by_tf, instrument, t, cfg)
     if isinstance(intent, NoTrade):
         if intent.reason == "RR_BELOW_MIN":
             print(f"[{instrument}] Graded {intent.grade} but {intent.detail} — skipping.")
@@ -376,8 +464,13 @@ def _process_instrument(
             print(f"[{instrument}] No valid setup right now — {intent.detail}")
         return {"instrument": instrument, "grade": "NO_TRADE", "decision": None, "trade_id": None}
 
-    # The candle window rides along so observe_node can run the AI layers.
-    message = {**intent.to_message(mode), "candles_by_tf": _serialize_candles_by_tf(candles_by_tf)}
+    # Detected now, from data as of t (the last bar close): observe_node
+    # rejects setups detected more than 60 s before it sees them. The candle
+    # window rides along so observe_node can run the AI layers.
+    message = {
+        **intent.to_message(mode, detected_at=datetime.now(timezone.utc)),
+        "candles_by_tf": _serialize_candles_by_tf(candles_by_tf),
+    }
 
     print(f"[{instrument}] Setup graded {intent.grade.value} — {intent.direction}")
     print(
@@ -425,10 +518,10 @@ def main() -> None:
 
     if args.feed == "binance":
         client = BinanceKlineClient()
-        fetcher = lambda instrument: (lambda tf: _fetch_binance_candles(client, instrument, tf, cfg.candle_counts[tf]))
+        fetcher = lambda instrument: (lambda tf, count: _fetch_binance_candles(client, instrument, tf, count))
         fetch_m1_range = lambda instrument, start, end: _binance_m1_range(client, instrument, start, end)
     else:
-        fetcher, fetch_m1_range = _connect_mt5(instruments, cfg.candle_counts)
+        fetcher, fetch_m1_range = _connect_mt5(instruments)
 
     store = None
     if args.store_candles:
@@ -480,6 +573,9 @@ def main() -> None:
 
     # Last M1 bar each instrument's paper trades were advanced through.
     paper_synced: dict[str, datetime] = {}
+    # Last as-of time evaluated per instrument (one evaluation per closed entry bar).
+    evaluated: dict[str, datetime] = {}
+    venue_clock = _SERVER_CLOCK if args.feed == "mt5" else None
 
     def run_pass() -> list[dict]:
         results = []
@@ -488,13 +584,13 @@ def main() -> None:
             try:
                 base_fetch = fetcher(instrument)
 
-                def fetch(tf: Timeframe) -> list[Candle]:
-                    candles = base_fetch(tf)
-                    fetched.extend(candles)
+                def fetch(tf: Timeframe, count: int) -> list[Candle]:
+                    candles = base_fetch(tf, count)
+                    fetched.extend(candles[-_STORE_TAIL:])
                     return candles
 
                 if paper is not None:
-                    m1 = fetch(Timeframe.M1)
+                    m1 = fetch(Timeframe.M1, cfg.candle_counts[Timeframe.M1])
                     active = paper.active_trade(instrument)
                     if active is not None and m1:
                         # After downtime longer than the M1 window, replay the
@@ -514,8 +610,15 @@ def main() -> None:
                         results.append({"instrument": instrument, "grade": "-",
                                         "decision": f"IN TRADE ({active['status']})", "trade_id": active["trade_id"]})
                         continue
+                view, t = _as_of_window(
+                    fetch,
+                    lambda start, end, instrument=instrument: fetch_m1_range(instrument, start, end),
+                    venue_clock,
+                    cfg,
+                    datetime.now(timezone.utc),
+                )
                 results.append(
-                    _process_instrument(instrument, fetch, graph, cfg, mode, verbose=not args.loop)
+                    _process_instrument(instrument, view, t, graph, cfg, mode, verbose=not args.loop, evaluated=evaluated)
                 )
             except _FEED_DOWN as exc:
                 logger.error("Feed unavailable (%s) — skipping the rest of this pass", exc)
@@ -601,7 +704,7 @@ def _mt5_broker_client():
     )
 
 
-def _connect_mt5(instruments: list[str], candle_counts: dict[Timeframe, int]):
+def _connect_mt5(instruments: list[str]):
     """Attach to the local MT5 terminal; return (per-instrument candle
     fetcher factory, M1 range fetcher for paper catch-up)."""
     symbol_suffix = config("MT5_SYMBOL_SUFFIX", default="")
@@ -616,10 +719,10 @@ def _connect_mt5(instruments: list[str], candle_counts: dict[Timeframe, int]):
     ticks = [mt5.symbol_info_tick(f"{i}{symbol_suffix}") for i in instruments if mt5.symbol_select(f"{i}{symbol_suffix}", True)]
     _SERVER_CLOCK.check([t.time for t in ticks if t is not None and t.time], datetime.now(timezone.utc))
 
-    def fetcher(instrument: str) -> Callable[[Timeframe], list[Candle]]:
+    def fetcher(instrument: str) -> Callable[[Timeframe, int], list[Candle]]:
         symbol = f"{instrument}{symbol_suffix}"
         mt5.symbol_select(symbol, True)
-        return lambda tf: _fetch_candles(symbol, tf, instrument, candle_counts[tf])
+        return lambda tf, count: _fetch_candles(symbol, tf, instrument, count)
 
     def m1_range(instrument: str, start: datetime, end: datetime) -> list[Candle]:
         symbol = f"{instrument}{symbol_suffix}"

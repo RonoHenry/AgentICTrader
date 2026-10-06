@@ -210,6 +210,8 @@ Both the live runner and Phase A call this function, so Req 1.3 holds by constru
 
 `to_message()` omits `candles_by_tf`. Without it, `observe_node` doesn't run the engine a second time. That second run is redundant today (the runner already analysed), and the AI layers that consume its output are disabled in backtests anyway.
 
+`to_message(mode, detected_at=None)` stamps `detected_at`, which `observe_node`'s 60 s staleness check measures from. It defaults to `as_of`: a backtest detects at t. Live, data is as of the last bar close but detection happens when the runner evaluates, so the runner passes the hand-off time.
+
 ### InstrumentSpec (`agent/instruments.py`, `config/instruments/*.toml`)
 
 ```python

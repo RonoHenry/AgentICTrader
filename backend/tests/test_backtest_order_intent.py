@@ -178,15 +178,6 @@ def _fixture_intent():
     return lm, candles_by_tf, t, cfg, build_order_intent(lm, candles_by_tf, record["instrument"], t, cfg)
 
 
-def _freeze_runner_clock(monkeypatch, runner, t):
-    class FrozenDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return t
-
-    monkeypatch.setattr(runner, "datetime", FrozenDatetime)
-
-
 def test_to_message_matches_runner_message_minus_candles():
     # The golden is what the runner itself built on this window before the
     # move (see its "source"). Only setup_id differs, by design (task 189).
@@ -211,29 +202,31 @@ def test_runner_delegates_to_build_order_intent(monkeypatch):
         return build_order_intent(*args)
 
     monkeypatch.setattr(runner, "build_order_intent", spy)
-    _freeze_runner_clock(monkeypatch, runner, t)
     graph = SimpleNamespace(run=lambda message: messages.append(message) or SimpleNamespace(
         decision=None, decision_reason="", error=None, trade_id="t-1"))
 
-    summary = runner._process_instrument("EURUSD", lambda tf: candles_by_tf[tf], graph, cfg, "AUTONOMOUS", verbose=False)
+    summary = runner._process_instrument("EURUSD", candles_by_tf, t, graph, cfg, "AUTONOMOUS", verbose=False)
 
     [(_, view, instrument, as_of, used_cfg)] = calls
     assert (view, instrument, as_of, used_cfg) == (candles_by_tf, "EURUSD", t, cfg)
     [message] = messages
+    # Detected at hand-off, not at the bar close (see task 192's staleness test).
+    assert datetime.fromisoformat(message.pop("detected_at")) > t
+    expected_message = expected.to_message("AUTONOMOUS")
+    del expected_message["detected_at"]
     # The runner adds the candle window, so observe_node can run its AI layers.
-    assert message == {**expected.to_message("AUTONOMOUS"), "candles_by_tf": runner._serialize_candles_by_tf(candles_by_tf)}
+    assert message == {**expected_message, "candles_by_tf": runner._serialize_candles_by_tf(candles_by_tf)}
     assert summary == {"instrument": "EURUSD", "grade": "A", "decision": None, "trade_id": "t-1"}
 
 
 @pytest.mark.parametrize("min_rr, decision", [(3.0, None), (6.0, "SKIP (R:R 5.00 < 6.0)")])
-def test_runner_summary_unchanged(monkeypatch, min_rr, decision):
+def test_runner_summary_unchanged(min_rr, decision):
     import scripts.run_live_agent as runner
 
     _, candles_by_tf, t = _load(FIXTURES / "EURUSD_M5.json.gz")
-    _freeze_runner_clock(monkeypatch, runner, t)
     graph = SimpleNamespace(run=lambda message: SimpleNamespace(decision=None, decision_reason="", error=None, trade_id=None))
     cfg = StrategyConfig(entry_tf=Timeframe.M5, min_rr=min_rr)
 
-    summary = runner._process_instrument("EURUSD", lambda tf: candles_by_tf[tf], graph, cfg, "AUTONOMOUS", verbose=False)
+    summary = runner._process_instrument("EURUSD", candles_by_tf, t, graph, cfg, "AUTONOMOUS", verbose=False)
 
     assert summary == {"instrument": "EURUSD", "grade": "A", "decision": decision, "trade_id": None}

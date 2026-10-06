@@ -212,7 +212,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - Property 2 is tested in its strong form: dropping every M1 bar that closes after t leaves the view unchanged. Two planted look-ahead bugs fail it: one minute of M1 in the forming bar, and a forming bar counted as closed.
   - **Validates: Requirements 2.4**
 
-- [ ] 192. Live runner builds its window with `compose_as_of_view()` (L3, D5, D9)
+- [x] 192. Live runner builds its window with `compose_as_of_view()` (L3, D5, D9)
   - **192a. RED** (`backend/tests/test_backtest_runner_view.py`; fake fetchers, no MT5/Binance)
     - `test_forming_entry_bar_dropped`
     - `test_m1_fetched_to_cover_current_w1_period`
@@ -221,6 +221,12 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - `test_evaluation_timestamp_is_last_entry_bar_close`
   - **192b. GREEN** — `scripts/run_live_agent.py` fetch path for MT5 and Binance.
   - **192c. REFACTOR** — confirm GREEN.
+  - **Done 2026-10-06.** `_as_of_window()` in the runner; the same prices now give the engine identical candles from a `ny_close` server, a UTC server or Binance (tested). Found and fixed on the way:
+    - **Staleness:** `observe_node` rejects setups detected over 60 s before it sees them. With data as of the bar close, a setup evaluated a few minutes later was dropped as stale. `OrderIntent.to_message(detected_at=...)` now carries the hand-off time live; it defaults to t, which is right for the backtest.
+    - **One evaluation per closed bar:** t no longer moves with the wall clock, so over an FX weekend every pass would re-send Friday's last bar. `_process_instrument(evaluated=...)` skips a repeated (instrument, t) as `NO NEW BAR`.
+    - **Short history refused:** a venue returning less history than the windows need would give the engine shorter windows than the backtest ever uses. The runner raises instead, and the next pass retries.
+    - `--store-candles` stores the newest 300 bars of each fetch (the H1 and M1 fetches are now thousands of bars).
+    - **Smoke runs** (alert only): Binance and Exness passes complete in about 25 s; XAUUSD graded A and reached a NOTIFY decision. One earlier Exness pass graded differently at the same t; it didn't reproduce (two runs since give identical windows and grades), and fresh symbols return full H1 history on the first request, so the cause is unknown.
   - **Validates: Requirements 2.7**
 
 - [ ] 193. Clock injection (L5)
