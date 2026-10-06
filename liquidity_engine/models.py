@@ -431,6 +431,10 @@ class SetupGradeDetail(BaseModel):
     entry_array_high: Optional[float] = None
     entry_array_low: Optional[float] = None
     entry_array_direction: Optional[BiasDirection] = None
+    # The selected entry array's array_id. It is derived from the array's own
+    # content, so it stays the same while the same array stays selected and
+    # gives the setup a stable identity (agent.order_intent.setup_id_for).
+    entry_array_id: Optional[str] = None
 
 
 class FractalCandleStep(BaseModel):

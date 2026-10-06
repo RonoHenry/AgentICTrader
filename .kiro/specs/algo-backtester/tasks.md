@@ -169,7 +169,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **188b. GREEN** / **188c. REFACTOR**
   - **Validates: Requirements 1.6**
 
-- [ ] 189. `SetupGradeDetail.entry_array_id` and deterministic `setup_id` (L2)
+- [x] 189. `SetupGradeDetail.entry_array_id` and deterministic `setup_id` (L2)
   - **189a. RED** (`backend/tests/test_liquidity_grader.py`, `backend/tests/test_backtest_order_intent.py`)
     - `test_grade_detail_carries_selected_entry_array_id`
     - `test_entry_array_id_none_without_entry_array`

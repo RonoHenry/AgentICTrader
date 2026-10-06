@@ -94,6 +94,7 @@ class SetupGrader:
             entry_array_high=entry_array.high if entry_array is not None else None,
             entry_array_low=entry_array.low if entry_array is not None else None,
             entry_array_direction=entry_array.direction if entry_array is not None else None,
+            entry_array_id=entry_array.array_id if entry_array is not None else None,
         )
 
     def _check_htf_bias(self, lm: LiquidityMap) -> bool:

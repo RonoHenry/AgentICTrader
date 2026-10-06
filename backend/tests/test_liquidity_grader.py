@@ -300,6 +300,37 @@ class TestEntryArrayTimeframeRestriction:
         assert detail.grade == SetupGrade.B
 
 
+class TestEntryArrayId:
+    """The grade carries the selected entry array's id, so a setup keeps
+    one identity while the same array stays selected (AlgoBacktester task
+    189, Requirement 1.3)."""
+
+    def test_grade_detail_carries_selected_entry_array_id(self):
+        # The D1 Breaker out-scores both, but only M15-and-below can be the entry.
+        htf_breaker = make_pdarray(
+            PDArrayType.BREAKER, BiasDirection.BULLISH, 105.0, 95.0, strength_score=0.99,
+            tf=Timeframe.D1, array_id="d1-breaker",
+        )
+        ob = make_pdarray(PDArrayType.OB, BiasDirection.BULLISH, 100.5, 100.0, array_id="m5-ob")
+        fvg = make_pdarray(PDArrayType.FVG, BiasDirection.BULLISH, 101.0, 100.2, strength_score=0.9, array_id="m5-fvg")
+        lm = full_liquidity_map(pd_arrays=[htf_breaker, ob, fvg])
+
+        detail = SetupGrader().grade(lm, LONDON_TS)
+
+        assert detail.entry_array_id == "m5-fvg"
+        assert (detail.entry_array_high, detail.entry_array_low) == (101.0, 100.2)
+
+    def test_entry_array_id_none_without_entry_array(self):
+        filled = make_pdarray(PDArrayType.FVG, BiasDirection.BULLISH, 101.0, 100.2, is_filled=True)
+        htf_only = make_pdarray(PDArrayType.BREAKER, BiasDirection.BULLISH, 105.0, 95.0, tf=Timeframe.D1)
+        lm = full_liquidity_map(pd_arrays=[filled, htf_only])
+
+        detail = SetupGrader().grade(lm, LONDON_TS)
+
+        assert detail.entry_array_id is None
+        assert detail.suggested_entry is None
+
+
 class TestGradeReasonContent:
     def test_grade_reason_mentions_structure_confirmed_when_true(self):
         entry_array = make_pdarray(
