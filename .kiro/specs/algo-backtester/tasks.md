@@ -434,7 +434,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
 
 ### C. Reporting and CLI
 
-- [ ] 205. Metrics (`algo_backtester/metrics.py`)
+- [x] 205. Metrics (`algo_backtester/metrics.py`)
   - **205a. RED** (`backend/tests/test_backtest_metrics.py`, known trade lists)
     - `test_win_rate_expectancy_profit_factor`
     - `test_max_drawdown_r_and_pct_and_losing_streak`
@@ -443,6 +443,11 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - `test_insufficient_evidence_below_min_trades`
     - `test_breakdowns_by_instrument_grade_killzone_direction_month`
   - **205b. GREEN** / **205c. REFACTOR**
+  - **Done 2026-10-06.** `summarize(journal, ...)` → `Summary(overall, breakdowns, counts)`; `stats(trades, ...)` → `Stats`; `bootstrap_ci()` (numpy, seeded, chunked to bound memory). Definitions are in the module docstring:
+    - Only filled trades count. Unfilled orders and orders still open at the end are counted separately.
+    - Win/loss are net R > 0 / < 0. Profit factor is None without a loss. Cost share is None unless gross R is positive.
+    - Max drawdown % is on closed-trade equity.
+    - **Breakdowns:** instrument, grade, killzone (the engine's `TradeContext.killzone`: the same windows as `KILLZONE_END` expiry), direction, fill month (UTC). Also by ICT time window (`TimeWindowClassifier`, e.g. `LONDON_SILVER_BULLET`); the design had named it as the killzone source.
   - **Validates: Requirements 8.2, 8.3, 8.4**
 
 - [ ] 206. Report writers (`algo_backtester/report.py`)
