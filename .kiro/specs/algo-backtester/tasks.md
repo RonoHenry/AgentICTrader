@@ -240,7 +240,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **Done 2026-10-06.** `agent/clock.py` (`Clock`, `wall_clock`). `observe_node`, `learn_node`, `log_agent_decision` and `AgentGraph` take an optional `clock`; the graph passes its clock to every node. Nothing else on the decision path reads the wall clock (the risk engine and the other nodes don't). The paper broker's clock is task 195.
   - **Validates: Requirements 2.5**
 
-- [ ] 194. `FillModel` and `KILLZONE_END` expiry (`agent/brokers/fill_model.py`)
+- [x] 194. `FillModel` and `KILLZONE_END` expiry (`agent/brokers/fill_model.py`)
   - **194a. RED** (`backend/tests/test_backtest_fill_model.py`, hand-built bars)
     - Market: `test_market_long_fills_next_open_at_ask`, `test_market_short_fills_next_open_at_bid`
     - Limit: `test_limit_long_touch_does_not_fill`, `test_limit_long_trades_through_fills_at_entry`, `test_limit_short_mirror`
@@ -255,6 +255,8 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - **PBT — Property 7: Loss Is Bounded by the Stop Unless Price Gapped**
       - **Validates: Requirements 4.6**
   - **194b. GREEN** / **194c. REFACTOR**
+  - **Done 2026-10-06.** Single-target orders (D19 scale-out deferred). Edge cases settled and recorded in `design.md` → FillModel: ideal (bid, pre-slippage) vs actual prices; MARKET orders already beyond their stop or target are REJECTED; limit-fill-bar stops exit at the stop; MAE/MFE start at the fill on the closing side. Literal `KILLZONE_END`: an order placed at a killzone's last instant (t = 10:00, 05:00 or 16:00 New York) expires at once.
+    - The property tests were checked by planting bugs: target before stop, slippage in the trader's favour, and bars before placement accepted are each caught. The first was missed until the bar generator included wide outside bars: before that, no generated bar reached both stop and target after a fill.
   - **Validates: Requirements 4.2, 4.9, 4.11, 4.12**
 
 - [ ] 195. `PaperBrokerAdapter` on the shared `FillModel` (L4, D4)

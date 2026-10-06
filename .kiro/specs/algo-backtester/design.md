@@ -280,7 +280,7 @@ class SimOrder:
 
 class FillModel:
     def __init__(self, stop_slippage: float): ...   # price units, from InstrumentSpec.stop_slippage
-    def step(self, order: SimOrder, bar: Bar) -> list[FillEvent]:   # mutates order; returns FILLED/SL/TP/EXPIRED events
+    def step(self, order: SimOrder, bar: Bar) -> list[FillEvent]:   # mutates order; returns FILLED/SL/TP/EXPIRED/REJECTED events
 ```
 
 Rules, implementing Req 4. Throughout, `ask = bid + spread`.
@@ -296,6 +296,13 @@ Rules, implementing Req 4. Throughout, `ask = bid + spread`.
 | Same bar (4.8) | Stop and target both reachable: stop wins. |
 | Fill bar (4.9) | On the bar a limit fills, a stop-out may occur; a target exit may not. |
 | Excursions (4.12) | `mae_price` / `mfe_price` update on every bar while OPEN, using the side that would close the position: bid for LONG, ask for SHORT. |
+| Invalid stops | A MARKET order whose fill price is already beyond its stop or target is REJECTED (`INVALID_STOPS`), as a broker rejects invalid stops. |
+
+Settled while building it (task 194):
+- **Ideal vs actual prices.** `ideal_fill` / `ideal_exit` are the bid at that moment, before slippage; `fill` / `exit` are on the executing side (ask for buys) plus slippage. A trade pays the spread once, on its buy: a LONG limit fills at `entry` with `ideal_fill = entry - spread`; a SHORT stop exits at `stop` with `ideal_exit = stop - spread`. Gross R uses ideal prices, net R actual ones.
+- **Fill bar.** Req 4.9 applies to LIMIT fills. A MARKET fill happens at the open, before the rest of the bar, so a target on that bar counts (the same-bar rule still applies). A stop on a limit's fill bar exits at the stop, never at the open: the position didn't exist at the open.
+- **Excursions.** They start from the closing-side price at the fill. A limit's fill bar counts only its adverse extreme (the favourable one may predate the fill), and an exit caps the excursion at the exit's market price.
+- **Killzone end.** Killzones include their end, so an order placed at that instant (e.g. t = 10:00 New York, an M15 close) expires at once.
 
 **Expiry rule `KILLZONE_END`:** `expires_at` is the end of the killzone containing `placed_at`, using `liquidity_engine.utils.time_utils.KILLZONE_WINDOWS`. If `placed_at` falls outside every killzone, `expires_at = placed_at + fallback_ttl` (3h, today's paper default). The expiry time is computed when the order is placed, by the broker (paper or sim), from `StrategyConfig.pending_expiry`.
 
