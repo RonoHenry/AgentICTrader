@@ -160,7 +160,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **187c. REFACTOR** — confirm the existing loader tests are still GREEN.
   - **Validates: Requirements 3.5**
 
-- [ ] 188. `StrategyConfig` (`agent/strategy_config.py`, part of L1)
+- [x] 188. `StrategyConfig` (`agent/strategy_config.py`, part of L1)
   - **188a. RED** (`backend/tests/test_backtest_strategy_config.py`)
     - `test_defaults_equal_current_runner_constants` — pins today's `_CANDLE_COUNT`, `_GRADE_TO_CONFIDENCE`, min R:R 3.0, TP levels 2.5/4.0, context TFs
     - `test_pending_expiry_default_killzone_end_with_3h_fallback`

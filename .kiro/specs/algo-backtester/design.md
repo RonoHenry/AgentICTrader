@@ -176,7 +176,7 @@ A frozen Pydantic model that holds what is now scattered through `run_live_agent
 - `min_rr` (default 3.0)
 - `grade_confidence` (A+ 0.90, A 0.80, B 0.70)
 - `tp_levels` (2.5, 4.0)
-- `pending_expiry`: `KILLZONE_END` with `fallback_ttl` 3h, or `FIXED_TTL`
+- `pending_expiry`: `KILLZONE_END` or `FIXED_TTL`, with `fallback_ttl_minutes` 180 (the TTL under `FIXED_TTL`, and outside every killzone under `KILLZONE_END`)
 
 `fingerprint()` hashes the model's canonical JSON. Grader parameters stay in `liquidity_engine` and enter the manifest through the engine code fingerprint.
 
