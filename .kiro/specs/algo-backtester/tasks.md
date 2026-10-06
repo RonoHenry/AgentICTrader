@@ -229,7 +229,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - **Smoke runs** (alert only): Binance and Exness passes complete in about 25 s; XAUUSD graded A and reached a NOTIFY decision. One earlier Exness pass graded differently at the same t; it didn't reproduce (two runs since give identical windows and grades), and fresh symbols return full H1 history on the first request, so the cause is unknown.
   - **Validates: Requirements 2.7**
 
-- [ ] 193. Clock injection (L5)
+- [x] 193. Clock injection (L5)
   - **193a. RED** (`backend/tests/test_agent_graph.py`, `test_agent_nodes.py`, `test_agent_decisions_audit.py`)
     - `test_observe_node_staleness_uses_injected_now` — detected 30s before the clock is fresh; 61s is stale
     - `test_agent_graph_passes_clock_to_nodes`
@@ -237,6 +237,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - `test_default_clock_is_wall_clock` — existing behaviour unchanged
   - **193b. GREEN** — optional `clock` / `now` parameters with wall-clock defaults.
   - **193c. REFACTOR** — confirm GREEN.
+  - **Done 2026-10-06.** `agent/clock.py` (`Clock`, `wall_clock`). `observe_node`, `learn_node`, `log_agent_decision` and `AgentGraph` take an optional `clock`; the graph passes its clock to every node. Nothing else on the decision path reads the wall clock (the risk engine and the other nodes don't). The paper broker's clock is task 195.
   - **Validates: Requirements 2.5**
 
 - [ ] 194. `FillModel` and `KILLZONE_END` expiry (`agent/brokers/fill_model.py`)

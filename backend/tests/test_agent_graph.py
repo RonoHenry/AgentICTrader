@@ -755,3 +755,30 @@ class TestAgentGraphEdgeRouting:
         assert result.decision == DecisionAction.SKIP
         mock_fcm_sender.assert_not_called()
         mock_broker_client.place_order.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Clock injection (AlgoBacktester task 193, L5)
+# ---------------------------------------------------------------------------
+
+def test_agent_graph_passes_clock_to_nodes(fake_redis, mock_risk_engine_approved, mock_fcm_sender, mock_mongo_collection):
+    from agent.graph import AgentGraph
+
+    sim_now = datetime(2025, 3, 4, 14, 45, tzinfo=timezone.utc)
+    audit = MagicMock()
+    graph = AgentGraph(
+        redis_client=fake_redis,
+        risk_engine=mock_risk_engine_approved,
+        fcm_sender=mock_fcm_sender,
+        broker_client=None,
+        trade_journal_collection=mock_mongo_collection,
+        agent_decisions_collection=audit,
+        clock=lambda: sim_now,
+    )
+
+    # Detected 10 s before the simulated now: fresh, though months old by the wall clock.
+    result = graph.run(_make_kafka_message(mode="HUMAN_IN_LOOP", detected_at=sim_now - timedelta(seconds=10)))
+
+    assert result.error is None and result.decision == DecisionAction.NOTIFY
+    assert mock_mongo_collection.insert_one.call_args[0][0]["logged_at"] == sim_now.isoformat()
+    assert audit.insert_one.call_args[0][0]["timestamp"] == sim_now.isoformat()

@@ -371,3 +371,40 @@ class TestAgentGraphAuditTrailIntegration:
 
         assert isinstance(result, AgentState)
         assert result.error is None
+
+
+# ---------------------------------------------------------------------------
+# Clock injection (AlgoBacktester task 193, L5)
+# ---------------------------------------------------------------------------
+
+SIM_NOW = datetime(2025, 3, 4, 14, 45, tzinfo=timezone.utc)
+
+
+def test_learn_and_audit_timestamps_from_clock(mock_collection):
+    from agent.nodes.learn_node import learn_node
+
+    journal = MagicMock()
+    journal.insert_one.return_value = MagicMock(inserted_id="journal-001")
+    journal.count_documents.return_value = 1
+    state = _make_state(decision=DecisionAction.NOTIFY)
+
+    learn_node(state, trade_journal_collection=journal, clock=lambda: SIM_NOW)
+    log_agent_decision(state, agent_decisions_collection=mock_collection, clock=lambda: SIM_NOW)
+
+    assert journal.insert_one.call_args[0][0]["logged_at"] == SIM_NOW.isoformat()
+    assert mock_collection.insert_one.call_args[0][0]["timestamp"] == SIM_NOW.isoformat()
+
+
+def test_default_clock_is_wall_clock(mock_collection):
+    from agent.clock import wall_clock
+    from agent.nodes.observe_node import observe_node
+
+    before = datetime.now(tz=timezone.utc)
+    log_agent_decision(_make_state(decision=DecisionAction.NOTIFY), agent_decisions_collection=mock_collection)
+    after = datetime.now(tz=timezone.utc)
+
+    assert before <= datetime.fromisoformat(mock_collection.insert_one.call_args[0][0]["timestamp"]) <= after
+    assert before <= wall_clock() and wall_clock().tzinfo is not None
+    # Existing behaviour: a setup detected just now is fresh without any clock argument.
+    message = TestAgentGraphAuditTrailIntegration()._make_kafka_message()
+    assert observe_node(message).error is None

@@ -44,6 +44,7 @@ from typing import Any, Callable, Optional
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from agent.clock import Clock, wall_clock
 from agent.state import AgentState, AgentMode, DecisionAction
 from agent.nodes.observe_node import observe_node
 from agent.nodes.analyse_node import analyse_node
@@ -99,6 +100,9 @@ class AgentGraph:
         algorag_client:           Optional synchronous client exposing
                                   ``retrieve(...)`` (agent/algorag_client.py).
                                   When None, analyse_node's AlgoRAG layer is skipped.
+        clock:                    Source of "now" for the staleness check and the
+                                  journal/audit timestamps (agent/clock.py). Default:
+                                  the wall clock; a backtest passes its simulated time.
     """
 
     def __init__(
@@ -113,6 +117,7 @@ class AgentGraph:
         agent_decisions_collection: Optional[Any] = None,
         visual_model_client: Optional[Any] = None,
         algorag_client: Optional[Any] = None,
+        clock: Optional[Clock] = None,
     ) -> None:
         self._redis = redis_client
         self._risk_engine = risk_engine
@@ -124,6 +129,8 @@ class AgentGraph:
         self._visual_model_client = visual_model_client
         self._algorag_client = algorag_client
         self._agent_decisions = agent_decisions_collection
+        # Source of "now" for every node (a backtest passes its simulated time).
+        self._clock = clock or wall_clock
 
     # ------------------------------------------------------------------
     # Public API
@@ -139,7 +146,7 @@ class AgentGraph:
             Final AgentState after all applicable nodes have run.
         """
         # ── Node 1: observe ────────────────────────────────────────────
-        state = observe_node(message)
+        state = observe_node(message, clock=self._clock)
 
         # Parse mode from message (observe_node doesn't handle mode field)
         mode_raw = message.get("mode", "HUMAN_IN_LOOP")
@@ -231,12 +238,13 @@ class AgentGraph:
     def _run_learn(self, state: AgentState) -> AgentState:
         """Run learn_node, then the audit trail — both always terminal."""
         if self._journal is not None:
-            state = learn_node(state, trade_journal_collection=self._journal)
+            state = learn_node(state, trade_journal_collection=self._journal, clock=self._clock)
         if self._agent_decisions is not None:
             state = log_agent_decision(
                 state,
                 agent_decisions_collection=self._agent_decisions,
                 user_id=self._user_id,
+                clock=self._clock,
             )
         return state
 

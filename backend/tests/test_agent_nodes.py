@@ -1441,3 +1441,27 @@ class TestLearnNode:
 
         assert isinstance(result, AgentState)
         assert result.setup_id == state.setup_id
+
+
+# ---------------------------------------------------------------------------
+# Clock injection (AlgoBacktester task 193, L5): a backtest replays setups at
+# simulated times, so "now" must come from a clock, not the wall clock.
+# ---------------------------------------------------------------------------
+
+class TestObserveNodeClock:
+    SIM_NOW = datetime(2025, 3, 4, 14, 45, tzinfo=timezone.utc)  # long past: stale by the wall clock
+
+    def test_observe_node_staleness_uses_injected_now(self):
+        fresh = _make_kafka_message(detected_at=self.SIM_NOW - timedelta(seconds=30))
+        stale = _make_kafka_message(detected_at=self.SIM_NOW - timedelta(seconds=61))
+
+        assert observe_node(fresh, clock=lambda: self.SIM_NOW).error is None
+        result = observe_node(stale, clock=lambda: self.SIM_NOW)
+        assert result.decision == DecisionAction.SKIP and "stale" in result.error.lower()
+        # The same fresh message is stale by the wall clock: the clock is what decides.
+        assert observe_node(fresh).decision == DecisionAction.SKIP
+
+    def test_observe_node_missing_detected_at_defaults_to_clock(self):
+        msg = _make_kafka_message()
+        del msg["detected_at"]
+        assert observe_node(msg, clock=lambda: self.SIM_NOW).detected_at == self.SIM_NOW
