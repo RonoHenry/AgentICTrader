@@ -140,7 +140,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
       - **Validates: Requirements 3.3**
   - **185b. GREEN** / **185c. REFACTOR**
 
-- [ ] 186. Aggregation parity against native venue bars
+- [x] 186. Aggregation parity against native venue bars
   - **186a.** `scripts/export_aggregation_fixture.py` (takes `--profile`) exports one week of M1 plus native H1/H4/D1/W1 to `backend/tests/fixtures/backtester/aggregation/`:
     - EURUSD and XAUUSD from `exness-standard` (UTC+0);
     - EURUSD from MetaQuotes-Demo (`ny_close`), used only as calendar test data;
@@ -150,6 +150,10 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **186b. RED** (`backend/tests/test_backtest_aggregation_parity.py`)
     - `test_aggregated_bars_match_native_within_one_tick` — parametrised over every (source, instrument, TF) where `StrategyCalendar.matches_native` is true: H1 and below everywhere; H4/D1/W1 only against the `ny_close` server
   - **186c. GREEN** — fix calendar boundaries until it passes. Never loosen the tolerance.
+  - **Done 2026-10-06.**
+    - **Fixtures** (week of 2026-09-26, about 816 KiB): EURUSD and XAUUSD from `metaquotes-demo` (a new data-only profile, `ny_close`) and `exness-standard`; BTCUSDT from `binance`. MetaQuotes also has 52 weeks of H1 plus native H4/D1/W1 (from 2025-10-04), because the terminal keeps only about 69 days of M1. That range spans both US DST changes, and H1 is what the live runner aggregates from (L3).
+    - **Result:** GREEN on the first run with no calendar change: 17 cases, about 16,800 prices, every one exact (not just within a tick).
+    - **The test can fail:** a calendar starting the day at 18:00 New York matches 0 of the H4/D1/W1 periods. A calendar ignoring DST matches 0 of the 528 winter H4 periods. `test_parity_check_detects_a_different_calendar` keeps a negative control in the suite (Exness's UTC D1 never lines up).
   - **Validates: Requirements 3.4**
 
 - [x] 187. MT5 history loader stores spread (L6)

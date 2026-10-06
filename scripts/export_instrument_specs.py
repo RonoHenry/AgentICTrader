@@ -303,6 +303,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.out:
         out = Path(args.out)
     elif profile:
+        if profile.spec_file is None:
+            print(f"Profile {profile.name!r} is data-only (no spec_file); pass --out to export its specs anyway",
+                  file=sys.stderr)
+            return 1
         out = profile.spec_file
     else:
         out = REPO_ROOT / "config" / "instruments" / f"{venue}.toml"

@@ -1,0 +1,19 @@
+# Broker profile: MetaQuotes-Demo (MetaQuotes Ltd), data only.
+# Its server runs on New York close, so its native H4/D1/W1 bars are the
+# reference for the aggregation-parity test (AlgoBacktester task 186). It is
+# never priced or traded: the demo reports zero spreads and no commission,
+# so there is no spec file.
+# Credentials are environment-variable NAMES; the values live in the git-ignored .env.
+# Without them, scripts that take --attach use the account the terminal is logged into.
+venue = "mt5"
+server_clock = "ny_close"   # verified against live ticks on every connect
+
+[credentials]
+login = "MT5_MQ_LOGIN"
+password = "MT5_MQ_PASSWORD"
+server = "MT5_MQ_SERVER"
+path = "MT5_PATH"
+
+[symbols]   # no suffix; listed so the connect-time clock check has ticks to read
+EURUSD = "EURUSD"
+XAUUSD = "XAUUSD"

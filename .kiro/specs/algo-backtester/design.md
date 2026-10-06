@@ -253,6 +253,8 @@ XAUUSD = "XAUUSDm"
 
 `load_profile(name)` returns the venue, the resolved credentials (read from the environment at call time), an `MT5ServerClock`, the symbol map and the `InstrumentSpecs`. Instruments missing from `[symbols]` map to themselves. The export script and MT5 history loader take `--profile` (Req 10.5).
 
+A profile without `spec_file` is **data-only**: a candle source that is never priced or traded. `metaquotes-demo` is one, the New York-close reference server for the aggregation-parity test (task 186), since that demo reports zero spreads. `connect_mt5(profile, attach=True)` uses the account the terminal is already logged into instead of logging in; the clock check still runs, and it is what confirms the terminal is on that broker.
+
 ### FillModel (`agent/brokers/fill_model.py`)
 
 A pure state machine shared by `PaperBrokerAdapter` and `SimBroker` (Req 4.1).

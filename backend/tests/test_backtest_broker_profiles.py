@@ -121,6 +121,26 @@ def test_committed_profiles_load(name, venue):
     assert profile.specs().venue == venue
 
 
+def test_data_only_profile_has_no_spec_file(tmp_path):
+    # A source of candles only (calendar test data), never priced or traded.
+    body = "\n".join(
+        line for line in _profile_file(tmp_path).read_text(encoding="utf-8").splitlines()
+        if not line.startswith("spec_file")
+    )
+    profile = load_profile(_profile_file(tmp_path, body))
+    assert profile.spec_file is None
+    with pytest.raises(ValueError, match="data-only"):
+        profile.specs()
+
+
+def test_committed_metaquotes_profile_is_data_only_on_ny_close():
+    # Task 186: the New York-close reference server for the aggregation-parity test.
+    profile = load_profile("metaquotes-demo")
+    assert (profile.venue, profile.server_clock, profile.spec_file) == ("mt5", "ny_close", None)
+    # The connect-time clock check reads ticks from the listed symbols.
+    assert {"EURUSD", "XAUUSD"} <= set(profile.symbols)
+
+
 # ── connecting ─────────────────────────────────────────────────────────────
 
 class FakeMT5:
@@ -163,6 +183,30 @@ def test_mt5_connect_refuses_on_server_clock_mismatch(tmp_path):
     with pytest.raises(MT5ClockMismatchError):
         connect_mt5(profile, mt5=fake, getenv=ENV.get)
     assert fake.shutdown_called
+
+
+def test_mt5_attach_uses_logged_in_terminal_and_still_verifies_clock(tmp_path):
+    # attach=True: no login (no credentials needed), the terminal keeps the
+    # account it is logged into, and the clock check still guards against
+    # attaching to the wrong broker.
+    profile = load_profile(_profile_file(tmp_path))
+    fake = FakeMT5(tick_offset=timedelta(0))
+    assert connect_mt5(profile, mt5=fake, getenv={}.get, attach=True) is fake
+    assert fake.init_kwargs == {}
+
+    wrong_broker = FakeMT5(tick_offset=timedelta(hours=3))
+    with pytest.raises(MT5ClockMismatchError):
+        connect_mt5(profile, mt5=wrong_broker, getenv={}.get, attach=True)
+    assert wrong_broker.shutdown_called
+
+
+def test_mt5_attach_passes_terminal_path_when_set(tmp_path):
+    body = _profile_file(tmp_path).read_text(encoding="utf-8").replace(
+        'server = "MT5_SERVER"', 'server = "MT5_SERVER"\npath = "MT5_PATH"')
+    profile = load_profile(_profile_file(tmp_path, body))
+    fake = FakeMT5(tick_offset=timedelta(0))
+    connect_mt5(profile, mt5=fake, getenv={"MT5_PATH": "C:/MT5/terminal64.exe"}.get, attach=True)
+    assert fake.init_kwargs == {"path": "C:/MT5/terminal64.exe"}
 
 
 def test_mt5_connect_raises_on_failed_login(tmp_path):

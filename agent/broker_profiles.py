@@ -20,6 +20,10 @@ lives in config/brokers/<name>.toml:
 Profiles are committed; the credential values stay in the git-ignored .env.
 Loading rejects anything in [credentials] that isn't an environment variable
 name, so a pasted login or password fails loudly instead of being committed.
+
+A profile without spec_file is data-only: a source of candles (e.g. the
+New York-close reference server for the aggregation-parity test) that is
+never priced or traded.
 """
 from __future__ import annotations
 
@@ -51,7 +55,7 @@ GetEnv = Callable[[str], Optional[str]]
 class BrokerProfile:
     name: str
     venue: str
-    spec_file: Path
+    spec_file: Optional[Path]  # None: data-only profile
     server_clock: Optional[str]
     credential_vars: Mapping[str, str]
     symbols: Mapping[str, str]
@@ -66,6 +70,8 @@ class BrokerProfile:
         return MT5ServerClock(self.server_clock)
 
     def specs(self) -> InstrumentSpecs:
+        if self.spec_file is None:
+            raise ValueError(f"Profile {self.name!r} is data-only (no spec_file): it can't be priced or traded")
         specs = load_specs(self.spec_file)
         if specs.venue != self.venue:
             raise ValueError(
@@ -102,9 +108,6 @@ def load_profile(name_or_path: str | Path, root: Path = REPO_ROOT) -> BrokerProf
     venue = data.get("venue")
     if venue not in VENUES:
         raise ValueError(f"{path}: venue must be one of {VENUES}, got {venue!r}")
-    if "spec_file" not in data:
-        raise ValueError(f"{path}: spec_file is required")
-
     credential_vars = dict(data.get("credentials", {}))
     for key, var in credential_vars.items():
         if not isinstance(var, str) or not _ENV_NAME.match(var):
@@ -130,8 +133,8 @@ def load_profile(name_or_path: str | Path, root: Path = REPO_ROOT) -> BrokerProf
         if not isinstance(symbol, str) or not symbol:
             raise ValueError(f"{path}: symbols.{instrument} must be a non-empty string")
 
-    spec_file = Path(data["spec_file"])
-    if not spec_file.is_absolute():
+    spec_file = Path(data["spec_file"]) if "spec_file" in data else None
+    if spec_file is not None and not spec_file.is_absolute():
         spec_file = root / spec_file
     return BrokerProfile(
         name=name,
@@ -148,8 +151,13 @@ def connect_mt5(
     mt5: Any = None,
     getenv: Optional[GetEnv] = None,
     now: Optional[datetime] = None,
+    attach: bool = False,
 ) -> Any:
     """Log in to the profile's MT5 account and verify its server clock (Req 10.6).
+
+    With ``attach``, no login happens: the terminal keeps the account it is
+    already logged into (no credentials needed, e.g. a demo opened in the
+    terminal), and the clock check is what confirms it is this broker.
 
     Returns the connected MetaTrader5 module. Raises RuntimeError on a failed
     login and MT5ClockMismatchError (after shutting the connection down) when
@@ -161,17 +169,25 @@ def connect_mt5(
     if mt5 is None:
         import MetaTrader5 as mt5  # Windows-only; imported lazily
 
-    credentials = profile.credentials(getenv)
-    kwargs: dict[str, Any] = {
-        "login": int(credentials["login"]),
-        "password": credentials["password"],
-        "server": credentials["server"],
-    }
-    if credentials.get("path"):
-        kwargs["path"] = credentials["path"]
+    if attach:
+        getenv = getenv or _default_getenv()
+        path_var = profile.credential_vars.get("path")
+        terminal = getenv(path_var) if path_var else None
+        kwargs: dict[str, Any] = {"path": terminal} if terminal else {}
+        target = "the logged-in terminal"
+    else:
+        credentials = profile.credentials(getenv)
+        kwargs = {
+            "login": int(credentials["login"]),
+            "password": credentials["password"],
+            "server": credentials["server"],
+        }
+        if credentials.get("path"):
+            kwargs["path"] = credentials["path"]
+        target = credentials["server"]
     if not mt5.initialize(**kwargs):
         code, desc = mt5.last_error()
-        raise RuntimeError(f"MT5 login to {credentials['server']} failed ({code}): {desc}")
+        raise RuntimeError(f"MT5 login to {target} failed ({code}): {desc}")
 
     tick_times = []
     for symbol in profile.symbols.values():
