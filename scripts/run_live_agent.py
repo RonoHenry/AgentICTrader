@@ -88,7 +88,6 @@ import logging
 import signal
 import sys
 import time
-import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -111,10 +110,11 @@ from agent.algorag_client import AlgoRAGSyncClient
 from agent.brokers.factory import create_broker_client
 from agent.brokers.paper import PaperBrokerAdapter
 from agent.graph import AgentGraph
+from agent.order_intent import NoTrade, build_order_intent
+from agent.strategy_config import ENTRY_TIMEFRAMES, StrategyConfig
 from agent.visual_model_client import VisualModelClient
 from liquidity_engine import LiquidityMappingEngine
-from liquidity_engine.models import BiasDirection, Candle, SetupGrade, Timeframe
-from ml.features.session_features import TimeWindowClassifier
+from liquidity_engine.models import Candle, Timeframe
 from services.market_data.binance import BinanceKlineClient, BinanceUnavailable
 from services.market_data.candle_store import CandleStore
 from services.market_data.mt5_clock import MT5ServerClock, NY_CLOSE
@@ -132,19 +132,9 @@ DEFAULT_INSTRUMENTS = {
     "mt5": ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD"],
     "binance": ["BTCUSDT", "ETHUSDT"],
 }
-# D1/W1 are always pulled (LiquidityMappingEngine hard-requires them). The
-# full intraday HTF stack (H12/H8/H6/H4/H3) is pulled too as bias/CRT-phase
-# context — HTFBiasClassifier computes a bias for every timeframe it's
-# given, so this is what actually lets H4 (or H12/H8/H6/H3) inform intraday
-# directional bias distinctly from D1/W1's swing bias, rather than just
-# sitting there computed-but-unused. None of these drive entry-array
-# selection though — only the CLI-selectable entry timeframe (--timeframe,
-# M15-and-below) does, per liquidity_engine.grader.setup_grader.
-# _ENTRY_ELIGIBLE_TIMEFRAMES — HTF is bias/context only, trading entries
-# come from M15 and below.
-CONTEXT_TIMEFRAMES = (Timeframe.H12, Timeframe.H8, Timeframe.H6, Timeframe.H4, Timeframe.H3)
-ENTRY_TIMEFRAME = Timeframe.M15
-_ENTRY_TIMEFRAME_CHOICES = (Timeframe.M1, Timeframe.M3, Timeframe.M5, Timeframe.M15)
+# Which timeframes are analysed, how many bars of each, min R:R, targets and
+# grade confidence all live in agent.strategy_config.StrategyConfig, shared
+# with AlgoBacktester; --timeframe and --min-rr override its defaults.
 _MT5_TIMEFRAME = {} if mt5 is None else {
     Timeframe.M1: mt5.TIMEFRAME_M1,
     Timeframe.M3: mt5.TIMEFRAME_M3,
@@ -158,26 +148,6 @@ _MT5_TIMEFRAME = {} if mt5 is None else {
     Timeframe.D1: mt5.TIMEFRAME_D1,
     Timeframe.W1: mt5.TIMEFRAME_W1,
 }
-_CANDLE_COUNT = {
-    Timeframe.M1: 300,
-    Timeframe.M3: 300,
-    Timeframe.M5: 300,
-    Timeframe.M15: 200,
-    Timeframe.H3: 150,
-    Timeframe.H4: 150,
-    Timeframe.H6: 120,
-    Timeframe.H8: 100,
-    Timeframe.H12: 90,
-    Timeframe.D1: 90,
-    Timeframe.W1: 30,
-}
-
-_GRADE_TO_CONFIDENCE = {
-    SetupGrade.A_PLUS: 0.90,
-    SetupGrade.A: 0.80,
-    SetupGrade.B: 0.70,
-}
-
 # See module docstring — a deliberately small equity so RiskEngine's
 # equity/pip position-size formula lands near a sane MT5 micro-lot for a
 # smoke test, instead of the several-standard-lots a real account equity
@@ -215,8 +185,8 @@ class _InMemoryJournal:
         return len(self._docs)
 
 
-def _fetch_candles(symbol: str, tf: Timeframe, instrument: str) -> list[Candle]:
-    rates = mt5.copy_rates_from_pos(symbol, _MT5_TIMEFRAME[tf], 0, _CANDLE_COUNT[tf])
+def _fetch_candles(symbol: str, tf: Timeframe, instrument: str, count: int) -> list[Candle]:
+    rates = mt5.copy_rates_from_pos(symbol, _MT5_TIMEFRAME[tf], 0, count)
     if rates is None or len(rates) == 0:
         raise RuntimeError(f"No {tf.value} candles returned for {symbol}: {mt5.last_error()}")
     return [
@@ -234,8 +204,8 @@ def _fetch_candles(symbol: str, tf: Timeframe, instrument: str) -> list[Candle]:
     ]
 
 
-def _fetch_binance_candles(client: BinanceKlineClient, instrument: str, tf: Timeframe) -> list[Candle]:
-    klines = client.latest(instrument, tf.value, _CANDLE_COUNT[tf])
+def _fetch_binance_candles(client: BinanceKlineClient, instrument: str, tf: Timeframe, count: int) -> list[Candle]:
+    klines = client.latest(instrument, tf.value, count)
     if not klines:
         raise RuntimeError(f"No {tf.value} candles returned for {instrument} from Binance")
     return [
@@ -277,37 +247,6 @@ def _console_alert(payload: dict, _token) -> bool:
     return True
 
 
-# Standard Deviation projection levels used for targets (see
-# liquidity_engine.projections.standard_deviation) — TTrades' own
-# reference material explicitly labels the 2.5 level as "Target" on its
-# projection chart, with 4.0 as a further runner target.
-_TP1_SD_LEVEL = 2.5
-_TP2_SD_LEVEL = 4.0
-
-
-def _pick_sd_targets(liquidity_map, entry: float, direction: str) -> tuple[float, float | None]:
-    """Standard Deviation projection targets replace the earlier crude
-    draw_on_liquidity.price stand-in used for take_profit_1.
-
-    Falls back to draw_on_liquidity.price (TP2 left unset) when
-    sd_projection is unavailable (no displacement leg found), or when its
-    direction — derived from D1 bias inside the engine — disagrees with
-    this trade's actual direction (derived from the entry array itself,
-    which can differ from D1 bias, see the direction-inference comment
-    above) and would land the target on the wrong side of entry.
-    """
-    sd = liquidity_map.sd_projection
-    if sd is not None:
-        tp1 = sd.targets.get(_TP1_SD_LEVEL)
-        tp2 = sd.targets.get(_TP2_SD_LEVEL)
-        lands_correctly = tp1 is not None and (
-            (direction == "LONG" and tp1 > entry) or (direction == "SHORT" and tp1 < entry)
-        )
-        if lands_correctly:
-            return tp1, tp2
-    return liquidity_map.draw_on_liquidity.price, None
-
-
 def _serialize_candles_by_tf(candles_by_tf: dict[Timeframe, list[Candle]]) -> dict:
     """Serialise the already-fetched candle window onto the agent message.
 
@@ -333,26 +272,15 @@ def _serialize_candles_by_tf(candles_by_tf: dict[Timeframe, list[Candle]]) -> di
     }
 
 
-def _build_patterns(liquidity_map) -> list[dict]:
-    patterns = []
-    if liquidity_map.unicorn is not None:
-        patterns.append({"type": "UNICORN", "confidence": 0.85})
-    if liquidity_map.sweep_detected:
-        patterns.append({"type": "LIQUIDITY_SWEEP", "confidence": 0.75})
-    if liquidity_map.cisd_cascade is not None and liquidity_map.cisd_cascade.cascade_valid:
-        patterns.append({"type": "CISD_CASCADE", "confidence": 0.75})
-    return patterns
-
-
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--timeframe",
-        default=ENTRY_TIMEFRAME.value,
-        choices=sorted(tf.value for tf in _ENTRY_TIMEFRAME_CHOICES),
+        default=StrategyConfig().entry_tf.value,
+        choices=sorted(tf.value for tf in ENTRY_TIMEFRAMES),
         help=(
             "Entry timeframe to grade setups on — M15 and below only; "
-            f"D1/W1/{'/'.join(tf.value for tf in CONTEXT_TIMEFRAMES)} are always pulled too as "
+            f"D1/W1/{'/'.join(tf.value for tf in StrategyConfig().context_tfs)} are always pulled too as "
             "HTF bias/context but never drive entry-array selection "
             "(see setup_grader._ENTRY_ELIGIBLE_TIMEFRAMES)."
         ),
@@ -412,7 +340,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-rr",
         type=float,
-        default=3.0,
+        default=StrategyConfig().min_rr,
         help="Minimum reward:risk to act on a graded setup, regardless of letter grade (default: %(default)s).",
     )
     return parser.parse_args()
@@ -420,100 +348,43 @@ def _parse_args() -> argparse.Namespace:
 
 def _process_instrument(
     instrument: str,
-    entry_tf: Timeframe,
     fetch: Callable[[Timeframe], list[Candle]],
     graph: AgentGraph,
-    min_rr: float,
+    cfg: StrategyConfig,
     mode: str,
     verbose: bool = True,
 ) -> dict:
     """Fetch, grade, and (if warranted) trade one instrument. Returns a
     summary dict for the end-of-run table — never raises for a NO_TRADE
     outcome, only for real fetch/connectivity failures."""
-    context_tf_labels = "/".join(tf.value for tf in CONTEXT_TIMEFRAMES)
-    logger.info("Fetching D1/W1/%s/%s candles for %s...", context_tf_labels, entry_tf.value, instrument)
-    candles_by_tf = {
-        Timeframe.D1: fetch(Timeframe.D1),
-        Timeframe.W1: fetch(Timeframe.W1),
-        **{tf: fetch(tf) for tf in CONTEXT_TIMEFRAMES},
-        entry_tf: fetch(entry_tf),
-    }
+    context_tf_labels = "/".join(tf.value for tf in cfg.context_tfs)
+    logger.info("Fetching D1/W1/%s/%s candles for %s...", context_tf_labels, cfg.entry_tf.value, instrument)
+    candles_by_tf = {tf: fetch(tf) for tf in cfg.timeframes}
 
     now = datetime.now(tz=timezone.utc)
     liquidity_map = LiquidityMappingEngine().analyze(candles_by_tf, instrument, now)
     if verbose:
         print("\n" + liquidity_map.to_agent_context() + "\n")
 
-    setup_grade = liquidity_map.setup_grade
-    if setup_grade is None or setup_grade.grade == SetupGrade.NO_TRADE:
-        reason = setup_grade.grade_reason if setup_grade else "no grade computed"
+    intent = build_order_intent(liquidity_map, candles_by_tf, instrument, now, cfg)
+    if isinstance(intent, NoTrade):
+        if intent.reason == "RR_BELOW_MIN":
+            print(f"[{instrument}] Graded {intent.grade} but {intent.detail} — skipping.")
+            return {"instrument": instrument, "grade": intent.grade,
+                    "decision": f"SKIP (R:R {intent.r_ratio:.2f} < {cfg.min_rr})", "trade_id": None}
         if verbose:
-            print(f"[{instrument}] No valid setup right now — {reason}")
+            print(f"[{instrument}] No valid setup right now — {intent.detail}")
         return {"instrument": instrument, "grade": "NO_TRADE", "decision": None, "trade_id": None}
 
-    d1_bias = liquidity_map.htf_bias[Timeframe.D1.value]
+    # The candle window rides along so observe_node can run the AI layers.
+    message = {**intent.to_message(mode), "candles_by_tf": _serialize_candles_by_tf(candles_by_tf)}
 
-    entry = setup_grade.suggested_entry
-    stop_loss = setup_grade.suggested_stop
-
-    # Direction must come from the entry/stop relationship itself, not the
-    # overall D1 bias: SetupGrader picks whichever unfilled PD array has the
-    # highest strength_score for suggested_entry/suggested_stop, and that
-    # array's own polarity (which can be a countertrend micro-structure
-    # array) — not the D1 bias — is what _suggested_stop actually places the
-    # stop relative to (BEARISH array -> stop above entry; BULLISH -> stop
-    # below). Inferring from D1 bias instead caused a stop placed on the
-    # wrong side of entry, which MT5 correctly rejected.
-    direction = "LONG" if stop_loss < entry else "SHORT"
-    take_profit_1, take_profit_2 = _pick_sd_targets(liquidity_map, entry, direction)
-    r_ratio = abs(take_profit_1 - entry) / abs(entry - stop_loss)
-
-    if r_ratio < min_rr:
-        print(f"[{instrument}] Graded {setup_grade.grade.value} but R:R {r_ratio:.2f} is below the {min_rr} floor — skipping.")
-        return {"instrument": instrument, "grade": setup_grade.grade.value, "decision": f"SKIP (R:R {r_ratio:.2f} < {min_rr})", "trade_id": None}
-
-    current_price = candles_by_tf[entry_tf][-1].close
-    time_features = TimeWindowClassifier().classify(
-        now,
-        instrument,
-        current_price=current_price,
-        daily_open=candles_by_tf[Timeframe.D1][-1].open,
-        weekly_open=candles_by_tf[Timeframe.W1][-1].open,
-    )
-
-    message = {
-        "setup_id": str(uuid.uuid4()),
-        "instrument": instrument,
-        "timeframe": entry_tf.value,
-        "direction": direction,
-        "raw_confidence": _GRADE_TO_CONFIDENCE[setup_grade.grade],
-        "detected_at": now.isoformat(),
-        "regime": f"TRENDING_{d1_bias.direction.value}",
-        "patterns": _build_patterns(liquidity_map),
-        "mode": mode,
-        "trade_plan": {
-            "entry": entry,
-            "stop_loss": stop_loss,
-            "take_profit_1": take_profit_1,
-            "take_profit_2": take_profit_2,
-            "r_ratio": r_ratio,
-            "recommended_size": 0.01,
-        },
-        "time_window": time_features.time_window,
-        "narrative_phase": time_features.narrative_phase,
-        "time_window_weight": time_features.time_window_weight,
-        "is_killzone": time_features.is_killzone,
-        "price_vs_daily_open": time_features.price_vs_daily_open,
-        "price_vs_weekly_open": time_features.price_vs_weekly_open,
-        "candles_by_tf": _serialize_candles_by_tf(candles_by_tf),
-    }
-
-    print(f"[{instrument}] Setup graded {setup_grade.grade.value} — {direction}")
+    print(f"[{instrument}] Setup graded {intent.grade.value} — {intent.direction}")
     print(
-        f"  entry={entry}  stop_loss={stop_loss}  take_profit_1={take_profit_1}"
-        f"  take_profit_2={take_profit_2}  r_ratio={r_ratio:.2f}"
+        f"  entry={intent.entry}  stop_loss={intent.stop_loss}  take_profit_1={intent.take_profit_1}"
+        f"  take_profit_2={intent.take_profit_2}  r_ratio={intent.r_ratio:.2f}"
     )
-    print(f"  time_window={time_features.time_window} (killzone={time_features.is_killzone})")
+    print(f"  time_window={intent.time_features.time_window} (killzone={intent.time_features.is_killzone})")
     print(f"[{instrument}] Handing off to AgentGraph (mode={mode})...\n")
 
     final_state = graph.run(message)
@@ -524,7 +395,7 @@ def _process_instrument(
 
     return {
         "instrument": instrument,
-        "grade": setup_grade.grade.value,
+        "grade": intent.grade.value,
         "decision": final_state.decision.value if final_state.decision else None,
         "trade_id": final_state.trade_id,
     }
@@ -539,7 +410,7 @@ def _stop_on_sigterm(_signum, _frame) -> None:
 def main() -> None:
     args = _parse_args()
     signal.signal(signal.SIGTERM, _stop_on_sigterm)
-    entry_tf = Timeframe(args.timeframe)
+    cfg = StrategyConfig(entry_tf=args.timeframe, min_rr=args.min_rr)
     instruments = (
         [s.strip().upper() for s in args.instruments.split(",") if s.strip()]
         if args.instruments
@@ -554,10 +425,10 @@ def main() -> None:
 
     if args.feed == "binance":
         client = BinanceKlineClient()
-        fetcher = lambda instrument: (lambda tf: _fetch_binance_candles(client, instrument, tf))
+        fetcher = lambda instrument: (lambda tf: _fetch_binance_candles(client, instrument, tf, cfg.candle_counts[tf]))
         fetch_m1_range = lambda instrument, start, end: _binance_m1_range(client, instrument, start, end)
     else:
-        fetcher, fetch_m1_range = _connect_mt5(instruments)
+        fetcher, fetch_m1_range = _connect_mt5(instruments, cfg.candle_counts)
 
     store = None
     if args.store_candles:
@@ -603,8 +474,8 @@ def main() -> None:
     )
 
     print(
-        f"Evaluating {len(instruments)} instrument(s) from {args.feed} on {entry_tf.value} "
-        f"(broker {broker}, mode {mode}, min R:R {args.min_rr}): {', '.join(instruments)}\n"
+        f"Evaluating {len(instruments)} instrument(s) from {args.feed} on {cfg.entry_tf.value} "
+        f"(broker {broker}, mode {mode}, min R:R {cfg.min_rr}): {', '.join(instruments)}\n"
     )
 
     # Last M1 bar each instrument's paper trades were advanced through.
@@ -644,7 +515,7 @@ def main() -> None:
                                         "decision": f"IN TRADE ({active['status']})", "trade_id": active["trade_id"]})
                         continue
                 results.append(
-                    _process_instrument(instrument, entry_tf, fetch, graph, args.min_rr, mode, verbose=not args.loop)
+                    _process_instrument(instrument, fetch, graph, cfg, mode, verbose=not args.loop)
                 )
             except _FEED_DOWN as exc:
                 logger.error("Feed unavailable (%s) — skipping the rest of this pass", exc)
@@ -669,7 +540,7 @@ def main() -> None:
             _print_summary(run_pass())
         else:
             deadline = time.monotonic() + args.duration * 60 if args.duration else None
-            period = _ENTRY_TF_SECONDS[entry_tf]
+            period = _ENTRY_TF_SECONDS[cfg.entry_tf]
             while True:
                 results = run_pass()
                 print(
@@ -730,7 +601,7 @@ def _mt5_broker_client():
     )
 
 
-def _connect_mt5(instruments: list[str]):
+def _connect_mt5(instruments: list[str], candle_counts: dict[Timeframe, int]):
     """Attach to the local MT5 terminal; return (per-instrument candle
     fetcher factory, M1 range fetcher for paper catch-up)."""
     symbol_suffix = config("MT5_SYMBOL_SUFFIX", default="")
@@ -748,7 +619,7 @@ def _connect_mt5(instruments: list[str]):
     def fetcher(instrument: str) -> Callable[[Timeframe], list[Candle]]:
         symbol = f"{instrument}{symbol_suffix}"
         mt5.symbol_select(symbol, True)
-        return lambda tf: _fetch_candles(symbol, tf, instrument)
+        return lambda tf: _fetch_candles(symbol, tf, instrument, candle_counts[tf])
 
     def m1_range(instrument: str, start: datetime, end: datetime) -> list[Candle]:
         symbol = f"{instrument}{symbol_suffix}"

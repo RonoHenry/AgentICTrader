@@ -55,7 +55,7 @@ def test_entry_tf_and_window_sizes_accept_string_values():
 
 @pytest.mark.parametrize("overrides, message", [
     ({"entry_tf": "H1"}, "entry_tf"),                   # entries come from M15 and below
-    ({"min_rr": 0}, "min_rr"),
+    ({"min_rr": -1}, "min_rr"),
     ({"tp_levels": (4.0, 2.5)}, "tp_levels"),           # TP1 before TP2
     ({"tp_levels": ()}, "tp_levels"),
     ({"grade_confidence": {"A+": 1.5, "A": 0.8, "B": 0.7}}, "grade_confidence"),

@@ -1,0 +1,36 @@
+{
+  "source": "scripts/run_live_agent.py _process_instrument before task 190 (commit 24fc14a), on engine_windows/EURUSD_M5.json.gz at its timestamp, min_rr=0, mode AUTONOMOUS; setup_id (uuid4 then) and candles_by_tf left out",
+  "message": {
+    "instrument": "EURUSD",
+    "timeframe": "M5",
+    "direction": "SHORT",
+    "raw_confidence": 0.8,
+    "detected_at": "2026-10-05T13:25:00+00:00",
+    "regime": "TRENDING_BEARISH",
+    "patterns": [
+      {
+        "type": "UNICORN",
+        "confidence": 0.85
+      },
+      {
+        "type": "LIQUIDITY_SWEEP",
+        "confidence": 0.75
+      }
+    ],
+    "mode": "AUTONOMOUS",
+    "trade_plan": {
+      "entry": 1.1263999999999998,
+      "stop_loss": 1.126952,
+      "take_profit_1": 1.12364,
+      "take_profit_2": 1.1222599999999998,
+      "r_ratio": 4.999999999998793,
+      "recommended_size": 0.01
+    },
+    "time_window": "NY_AM_KILLZONE",
+    "narrative_phase": "EXPANSION",
+    "time_window_weight": 0.9,
+    "is_killzone": true,
+    "price_vs_daily_open": "BELOW",
+    "price_vs_weekly_open": "BELOW"
+  }
+}

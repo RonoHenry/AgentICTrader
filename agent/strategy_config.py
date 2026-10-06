@@ -58,7 +58,10 @@ class StrategyConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
 
     entry_tf: Timeframe = Timeframe.M15
-    # Analysed alongside D1 and W1 for bias and context; entries never come from these.
+    # Analysed alongside D1 and W1 (which the engine requires) for bias and
+    # CRT-phase context. HTFBiasClassifier computes a bias for every timeframe
+    # it is given, so these let H4 (or H12/H8/H6/H3) inform intraday bias
+    # distinctly from D1/W1's swing bias. Entries never come from them.
     context_tfs: tuple[Timeframe, ...] = (Timeframe.H12, Timeframe.H8, Timeframe.H6, Timeframe.H4, Timeframe.H3)
     # Bars per timeframe handed to the engine.
     candle_counts: ReadOnlyMapping[Timeframe, PositiveInt] = {
@@ -74,7 +77,7 @@ class StrategyConfig(BaseModel):
         Timeframe.D1: 90,
         Timeframe.W1: 30,
     }
-    min_rr: float = Field(default=3.0, gt=0)
+    min_rr: float = Field(default=3.0, ge=0)  # 0 acts on every graded setup (debugging)
     grade_confidence: ReadOnlyMapping[SetupGrade, float] = {
         SetupGrade.A_PLUS: 0.90,
         SetupGrade.A: 0.80,

@@ -179,7 +179,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **189c. REFACTOR** — the full liquidity-engine test suite is still GREEN.
   - **Validates: Requirements 1.3**
 
-- [ ] 190. `build_order_intent()` extraction and runner refactor (L1)
+- [x] 190. `build_order_intent()` extraction and runner refactor (L1)
   - **190a. RED** (`backend/tests/test_backtest_order_intent.py`)
     - `test_no_grade_returns_no_trade_no_grade`
     - `test_no_trade_grade_returns_no_trade`

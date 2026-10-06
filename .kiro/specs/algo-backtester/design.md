@@ -189,12 +189,13 @@ class OrderIntent:
     grade: SetupGrade; direction: Literal["LONG", "SHORT"]
     entry: float; stop_loss: float; take_profit_1: float; take_profit_2: float | None
     r_ratio: float; confidence: float
-    time_features: TimeFeatures; patterns: list[dict]; regime: str
+    time_features: TimeFeatures; patterns: tuple[dict, ...]; regime: str
     def to_message(self, mode: AgentMode) -> dict: ...   # the AgentGraph message the runner builds today
 
 @dataclass(frozen=True)
 class NoTrade:
     instrument: str; as_of: datetime; grade: str; reason: str   # NO_GRADE | NO_TRADE | RR_BELOW_MIN
+    detail: str = ""; r_ratio: float | None = None              # grader's reason / R:R shortfall, for logs and the journal
 
 def build_order_intent(liquidity_map, view, instrument, as_of, cfg: StrategyConfig) -> OrderIntent | NoTrade:
 ```
