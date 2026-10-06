@@ -298,7 +298,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **Done 2026-10-06.** `RunConfig` is frozen and rejects unknown keys in every section and in variants; its `[strategy]` table is the live `StrategyConfig`. Studies live in `config/backtests/studies/<study>.toml` (not beside `base.toml`, which a study named "base" would overwrite); the hold-out is written on first use and never moves. `check_holdout()` refuses a run reaching the hold-out unless final. The acceptance-criteria proposal (handoff brief) was deferred by the user until the backtester runs.
   - **Validates: Requirements 7.1, 7.2**
 
-- [ ] 198. `CandleSource`, coverage check, data fingerprint (`algo_backtester/data.py`)
+- [x] 198. `CandleSource`, coverage check, data fingerprint (`algo_backtester/data.py`)
   - **198a. RED** (`backend/tests/test_backtest_data.py`, using `CsvSource` fixtures)
     - `test_weekend_gap_allowed_midweek_gap_refused`
     - `test_late_history_start_refused`
@@ -308,6 +308,15 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - `test_bar_spread_floored_at_typical_and_floored_bars_counted` (Req 5.1, D10)
     - `test_timescale_source_reads_m1_utc` — marked `infrastructure`
   - **198b. GREEN** / **198c. REFACTOR**
+  - **Done 2026-10-06.** `CsvSource`, `TimescaleSource` (rows of one `source`, since the candles key holds one row per time and instrument), `check_coverage` / `ensure_coverage`, `fingerprint`, `fill_bars`, `load_instrument`.
+    - **Gap rules calibrated on real M1** (task 186 weeks), MT5 venues only:
+      - the daily break around 17:00 New York, up to 3 h: gold stops 62 min at Exness and 120 min at MetaQuotes, FX rollover a few minutes;
+      - the FX weekend, Friday 15:00 to Sunday 20:00 New York;
+      - Christmas and New Year.
+      Binance is 24/7, so none apply. All four real weeks pass. History ending before the run end is refused too.
+    - **Warm-up:** M1 is used where it yields the window's closed bars before the start (counted, not estimated). Otherwise the earlier part comes from native bars (`native`), or native H1 at a UTC server (`native_h1`). The source is reported per timeframe; an incomplete warm-up is a coverage problem.
+    - **Memory:** M1 stays as slim `StoredBar` rows, which `aggregate()` accepts. A year plus warm-up is about 700k rows per instrument; as Pydantic `Candle`s that would not fit four instruments in parallel.
+    - The `infrastructure` test passes against the live candle store (Binance M1 from the paper trader).
   - **Validates: Requirements 3.1, 3.2, 3.6, 3.7**
 
 - [ ] 199. Phase A: `generate_signals()` (`algo_backtester/signals.py`)
