@@ -15,22 +15,31 @@ through the account.
 A failure inside the engine or the order logic is recorded as an EngineError
 and counted, not raised: one bad bar mustn't end a year-long run.
 
+Records are cached between runs (algo_backtester/cache.py) as JSON lines:
+``record.to_json()`` and ``SignalRecord.from_json()`` restore a record
+exactly, types included.
+
 Validates: Requirements 1.1, 2.1-2.6, 9.2 (.kiro/specs/algo-backtester/requirements.md)
 """
 from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timedelta
-from typing import Any, Iterator, Mapping, Optional, Protocol, Sequence, Union
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Iterator, Mapping, Optional, Protocol, Sequence, Union
 
 from agent.order_intent import NoTrade, OrderIntent, build_order_intent
 from agent.strategy_config import StrategyConfig
 from algo_backtester.data import InstrumentData
 from liquidity_engine import LiquidityMappingEngine
-from liquidity_engine.models import Candle, Timeframe
+from liquidity_engine.models import Candle, SetupGrade, Timeframe
+from ml.features.session_features import TimeFeatures
 from services.market_data.as_of_view import compose_as_of_view
 from services.market_data.strategy_calendar import StrategyCalendar
+
+if TYPE_CHECKING:
+    from algo_backtester.cache import SignalCache
 
 __all__ = ["EngineError", "SignalRecord", "entry_closes", "generate_all", "generate_signals", "signal_at"]
 
@@ -54,6 +63,49 @@ class SignalRecord:
     t: datetime
     instrument: str
     result: Union[OrderIntent, NoTrade, EngineError]
+
+    def to_json(self) -> dict:
+        """Plain JSON values; from_json() gives back an equal record."""
+        return {"t": self.t.isoformat(), "instrument": self.instrument,
+                "result": {"kind": type(self.result).__name__, **_plain(self.result)}}
+
+    @classmethod
+    def from_json(cls, record: Mapping[str, Any]) -> SignalRecord:
+        return cls(t=datetime.fromisoformat(record["t"]), instrument=record["instrument"],
+                   result=_result_from_json(record["result"]))
+
+
+def _plain(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if is_dataclass(value):
+        return {f.name: _plain(getattr(value, f.name)) for f in fields(value)}
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    if isinstance(value, Mapping):
+        return {k: _plain(v) for k, v in value.items()}
+    return value
+
+
+def _result_from_json(result: Mapping[str, Any]) -> Union[OrderIntent, NoTrade, EngineError]:
+    values = {k: v for k, v in result.items() if k != "kind"}
+    kind = result["kind"]
+    if kind == "OrderIntent":
+        return OrderIntent(**{
+            **values,
+            "entry_tf": Timeframe(values["entry_tf"]),
+            "as_of": datetime.fromisoformat(values["as_of"]),
+            "grade": SetupGrade(values["grade"]),
+            "time_features": TimeFeatures(**values["time_features"]),
+            "patterns": tuple(values["patterns"]),
+        })
+    if kind == "NoTrade":
+        return NoTrade(**{**values, "as_of": datetime.fromisoformat(values["as_of"])})
+    if kind == "EngineError":
+        return EngineError(**values)
+    raise ValueError(f"unknown signal result kind {kind!r}")
 
 
 def entry_closes(data: InstrumentData, entry_tf: Timeframe, start: datetime, end: datetime) -> list[datetime]:
@@ -83,15 +135,24 @@ def generate_signals(data: InstrumentData, cfg: StrategyConfig, start: datetime,
 
 
 def generate_all(datas: Sequence[InstrumentData], cfg: StrategyConfig, start: datetime, end: datetime,
-                 workers: Optional[int] = None) -> dict[str, list[SignalRecord]]:
+                 workers: Optional[int] = None, cache: Optional[SignalCache] = None) -> dict[str, list[SignalRecord]]:
     """Phase A for every instrument, one process each (``workers=1``: in this
-    process). Results are identical either way."""
-    if workers == 1 or len(datas) <= 1:
-        return {d.instrument: list(generate_signals(d, cfg, start, end)) for d in datas}
-    with ProcessPoolExecutor(max_workers=min(workers or len(datas), len(datas))) as pool:
-        futures = {d.instrument: pool.submit(_generate_list, d, cfg, start, end) for d in datas}
-        return {instrument: future.result() for instrument, future in futures.items()}
+    process). Results are identical either way.
+
+    With a ``cache``, instruments it holds are served from it; the others are
+    computed and stored by their worker."""
+    hits = {d.instrument: cache.load(cache.key(d, cfg, start, end)) for d in datas} if cache else {}
+    todo = [d for d in datas if hits.get(d.instrument) is None]
+    if workers == 1 or len(todo) <= 1:
+        computed = {d.instrument: _generate_list(d, cfg, start, end, cache) for d in todo}
+    else:
+        with ProcessPoolExecutor(max_workers=min(workers or len(todo), len(todo))) as pool:
+            futures = {d.instrument: pool.submit(_generate_list, d, cfg, start, end, cache) for d in todo}
+            computed = {instrument: future.result() for instrument, future in futures.items()}
+    return {d.instrument: computed[d.instrument] if d.instrument in computed else hits[d.instrument] for d in datas}
 
 
-def _generate_list(data: InstrumentData, cfg: StrategyConfig, start: datetime, end: datetime) -> list[SignalRecord]:
-    return list(generate_signals(data, cfg, start, end))
+def _generate_list(data: InstrumentData, cfg: StrategyConfig, start: datetime, end: datetime,
+                   cache: Optional[SignalCache] = None) -> list[SignalRecord]:
+    records = generate_signals(data, cfg, start, end)
+    return cache.store(cache.key(data, cfg, start, end), records) if cache else list(records)

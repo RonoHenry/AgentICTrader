@@ -372,9 +372,12 @@ record build_order_intent(liquidity_map, view, instrument, t, cfg)
 - **Parallelism:** one process per instrument (`ProcessPoolExecutor`). Each worker writes its records to the cache.
 
 **Cache (`algo_backtester/cache.py`, Req 7.4)**
-- **Key:** `sha256(data_fingerprint[instrument], engine_code_fingerprint, StrategyConfig.fingerprint(), instrument, start, end)`.
-- **Storage:** `data/backtests/cache/<key>.jsonl`, written to a temporary file and then renamed, so a crash never leaves a half-written cache entry.
-- **Engine code fingerprint:** a sha256 over the sorted contents of `liquidity_engine/**/*.py`, `agent/order_intent.py` and `agent/strategy_config.py`. Any edit to analysis or order logic therefore invalidates the cache automatically.
+- **Key:** `sha256(data_fingerprint[instrument], engine_code_fingerprint, StrategyConfig minus execution-only fields, instrument, start, end)`.
+  - `pending_expiry` and `fallback_ttl_minutes` are left out: only the fill model reads them, so an expiry variant reuses Phase A (Req 7.4). Every other field counts, including any added later.
+- **Storage:** `data/backtests/cache/<key>.jsonl`, one JSON line per `SignalRecord`, then a trailer with the key, the record count and a sha256 of the record lines.
+  - Written to a temporary file and then renamed, so a crash never leaves a half-written cache entry.
+  - An entry that fails the trailer check is deleted and recomputed.
+- **Engine code fingerprint:** a sha256 over the paths and contents (line endings normalised) of `cache.ENGINE_SOURCES`. Any edit to analysis or order logic therefore invalidates the cache automatically. Besides `liquidity_engine/**/*.py`, `agent/order_intent.py` and `agent/strategy_config.py`, the list covers the code that shapes what the engine sees or what a record holds: `as_of_view.py`, `strategy_calendar.py`, `mt5_clock.py`, `algo_backtester/data.py` (warm-up), `algo_backtester/signals.py` (the record format) and `session_features.py` (an intent's time features). A listed file that goes missing raises, so a rename can't silently drop it.
 - **Invariant:** a cache hit and a fresh run give identical Phase B input.
 
 **Measured performance (task 181, 2026-10-05).** `analyze()` was timed on the live runner's exact windows (`_CANDLE_COUNT`), 200 calls each:

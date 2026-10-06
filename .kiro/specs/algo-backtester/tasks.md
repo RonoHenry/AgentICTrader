@@ -350,7 +350,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **217b. GREEN** / **217c. REFACTOR**
   - **Validates: Requirements 11.5, 11.6**
 
-- [ ] 200. Phase A cache (`algo_backtester/cache.py`)
+- [x] 200. Phase A cache (`algo_backtester/cache.py`)
   - **200a. RED** (`backend/tests/test_backtest_cache.py`)
     - `test_key_changes_with_each_input`
     - `test_hit_returns_identical_records`
@@ -358,6 +358,11 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - `test_write_is_atomic`
     - `test_engine_source_edit_invalidates` — the engine code fingerprint changes when a `liquidity_engine` file changes
   - **200b. GREEN** / **200c. REFACTOR**
+  - **Done 2026-10-06.** `SignalCache` (`signals()`, `load()`, `store()`), `cache_key()`, `engine_code_fingerprint()`; `generate_all(cache=...)` serves hits in the main process and sends only misses to workers, which store their own entries. Records are JSON lines (`SignalRecord.to_json()` / `from_json()`), restored with their types (an enum, not its string).
+    - **Two refinements to the design** (recorded there):
+      - The key leaves out `pending_expiry` and `fallback_ttl_minutes`, which only the fill model reads, so an expiry variant reuses Phase A as Req 7.4 intends.
+      - The engine code fingerprint also covers the code that shapes what the engine sees or what a record holds (as-of view, calendar, MT5 clock, warm-up, record format, time features). Line endings are normalised, so Windows and Linux checkouts agree.
+    - A trailer (key, record count, sha256) catches truncated, edited or unreadable entries; they are deleted and recomputed.
   - **Validates: Requirements 7.4**
 
 - [ ] 201. `SimBroker` (`algo_backtester/sim_broker.py`)
