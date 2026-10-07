@@ -450,7 +450,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - **Breakdowns:** instrument, grade, killzone (the engine's `TradeContext.killzone`: the same windows as `KILLZONE_END` expiry), direction, fill month (UTC). Also by ICT time window (`TimeWindowClassifier`, e.g. `LONDON_SILVER_BULLET`); the design had named it as the killzone source.
   - **Validates: Requirements 8.2, 8.3, 8.4**
 
-- [ ] 206. Report writers (`algo_backtester/report.py`)
+- [x] 206. Report writers (`algo_backtester/report.py`)
   - **206a. RED** (`backend/tests/test_backtest_report.py`)
     - `test_run_id_is_manifest_hash_excluding_created_at`
     - `test_manifest_records_git_engine_data_and_flags` — including `ai_modifiers` and `news_filter`
@@ -458,6 +458,12 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - `test_journal_columns_order_and_fixed_precision`
     - `test_summary_md_marks_insufficient_buckets`
   - **206b. GREEN** / **206c. REFACTOR**
+  - **Done 2026-10-07.** `build_manifest()`, `run_id()`, `journal_csv()`, `summary_json()` / `summary_md()`, `write_run()` → `data/backtests/<run_id>/`. A generated report was read by eye.
+    - `run_id` hashes everything except `created_at` and the bootstrap seed (derived from the id). A rewrite with the same inputs is byte-identical apart from `manifest.json`'s `created_at`.
+    - **Journal:** adds `killzone` and `time_window` after `reason`, for the report's filters (Req 11.4). An order still open at the end shows its known lifecycle with `exit_reason = OPEN_AT_END`.
+    - **Git:** `git_dirty` counts tracked changes only. Untracked notes (like the handoff brief) would otherwise mark every run dirty; the engine fingerprint covers the engine sources anyway.
+    - **Summaries:** `summary.md` italicises insufficient buckets and labels them; walk-forward runs add a per-window table.
+    - The SignalRecords file the HTML report needs (`TradeContext`) is left to task 218.
   - **Validates: Requirements 8.1, 8.6, 9.5**
 
 - [ ] 207. Run comparison (`algo_backtester/compare.py`)
