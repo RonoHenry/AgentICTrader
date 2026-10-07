@@ -114,6 +114,16 @@ def test_run_config_resolves_strategy_config(tmp_path):
     assert cfg.run.instruments == ("EURUSD", "XAUUSD")
 
 
+def test_config_without_optional_tables_uses_defaults(tmp_path):
+    # Only [run] is required; the live StrategyConfig defaults apply (found by the task 218 sample run).
+    path = tmp_path / "minimal.toml"
+    path.write_text('[run]\nprofile = "exness-standard"\ninstruments = ["EURUSD"]\nstart = 2026-09-30\n'
+                    'end = 2026-10-02\nstudy = "s"\n', encoding="utf-8")
+    cfg = load_run_config(path)
+    assert cfg.strategy == StrategyConfig() and cfg.account.risk_per_trade == 0.01
+    assert cfg.report.chart_bars_before == 60
+
+
 def test_study_holdout_defaults_to_last_3_months_and_persists(tmp_path):
     study = load_or_create_study("test-study", data_end=date(2026, 7, 1), root=tmp_path)
     assert study.holdout_start == date(2026, 4, 1)  # D7: the most recent 3 months of data

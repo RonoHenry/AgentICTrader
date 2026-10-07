@@ -474,19 +474,26 @@ Settled while building it (task 203):
 ### Run report (`algo_backtester/report_html.py`, Req 11)
 
 ```python
-def write_report(run_dir: Path, candles: CandleSource, bars_before: int = 60, bars_after: int = 20) -> Path:
-def write_forward_test_report(trades_file: Path, candles: CandleSource, out: Path) -> Path:
+def write_report_inputs(run_dir, journal, candles, entry_tf, bars_before=60, bars_after=20) -> None:  # context.json, candles.json
+def write_html_report(run_dir: Path) -> Path:                                                       # from the run dir alone
+def build_forward_test(trades, candles, entry_tf, source) -> dict;  render(model) -> str
 ```
 
-- **One file:** `report.html` embeds plotly.js once, plus a JSON data block. Charts are drawn in the browser when a row is selected, so a run with hundreds of trades stays a modest file. There are no `http(s)` script or link references, so it works offline (Req 11.1).
-- **Data:** the journal, SignalRecords (with `TradeContext`), the manifest, and per-row candle windows cut from the run's own fingerprinted data (Req 11.6).
+- **One file:** `report.html` holds a JSON data block and a small inline script that draws each chart as SVG when its row is selected. There are no `http(s)` references, so it works offline (Req 11.1).
+  - *As built (task 218):* the design embedded plotly.js. Its bundle is 4.8 MB per report, and the hand-drawn SVG covers Req 11.5; zoom and hover are what plotly would add.
+  - The data is compacted: empty fields are dropped, and repeated reasons and contexts are stored once. A two-day, one-instrument report is about 100 KB.
+- **Data:** the run directory's own files (Req 11.6):
+  - `journal.csv` and `manifest.json`;
+  - `context.json`: each order intent's `TradeContext`, written by `run`;
+  - `candles.json`: the entry-TF candles cut from the run's fingerprinted data around its decisions, with the window lengths (`[report] chart_bars_before` / `chart_bars_after`).
+  - `python -m algo_backtester report <run_dir>` regenerates the page byte-identically from these files.
 - **Chart:**
   - entry-timeframe candles;
   - horizontal lines for entry, stop and target, from the decision until the exit or expiry;
   - markers for decision, fill and exit;
   - the entry PD array as a shaded box, the draw on liquidity as a dashed line, the swept level when present;
   - the killzone as a background band.
-- **Forward test:** `write_forward_test_report` reads the paper broker's trade file and the candle store, and renders the same explorer (Req 11.7).
+- **Forward test:** `report --forward-test <trades.json> --profile <p>` reads the paper broker's trade file, aggregates entry-TF candles from the store's M1, and renders the same explorer (Req 11.7). Paper trades have no recorded context, and their R is as the paper broker computed it.
 
 ### FX paper forward test (`scripts/run_fx_forward_test.ps1`, Req 9.6)
 

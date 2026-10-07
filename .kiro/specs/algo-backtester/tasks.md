@@ -494,7 +494,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
 
 ### D. Validation and first results
 
-- [ ] 218. HTML run report (`algo_backtester/report_html.py`, Req 11)
+- [x] 218. HTML run report (`algo_backtester/report_html.py`, Req 11)
   - Numbered 218 to keep earlier numbers stable. Added 2026-10-05.
   - **218a. RED** (`backend/tests/test_backtest_report_html.py`, synthetic run directory)
     - `test_report_is_single_offline_file` — no `http://` or `https://` script, link or img references
@@ -507,6 +507,12 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - `test_forward_test_trades_file_renders_same_explorer`
   - **218b. GREEN** — CLI: `python -m algo_backtester report <run_dir>` and `report --forward-test <trades.json>`. `run` writes the report automatically.
   - **218c. REFACTOR** — open a generated report by hand to check it reads well. **(user action:** review one report.)
+  - **Done 2026-10-07** (218c's review is still the user's: a sample is in `data/backtests/samples/`, two days of real EURUSD with the live defaults).
+    - **Charts:** drawn as SVG by a small inline script; no plotly (4.8 MB per report). The run directory gains `context.json`, `candles.json` and `report.html`, and `run` writes them.
+    - **Window lengths:** `[report] chart_bars_before` / `chart_bars_after`.
+    - **The page script was smoke-run in Node** against a stub DOM: every row with a setup renders a valid chart (no NaN/undefined), with killzone bands, entry array, draw on liquidity, levels, fill, exit and decision.
+    - **Size:** empty fields dropped, reasons and contexts stored once: about 100 KB for two days of one instrument. By extrapolation a year of four instruments is ~30 MB, mostly IN_TRADE rows. Measure at task 211; if too heavy, chart IN_TRADE rows via their order's row, or split per instrument.
+    - **Fixed on the way:** a run config without `[strategy]` crashed (pydantic deep-copies a model default; `StrategyConfig`'s read-only mappings can't be). Defaults are now built by `default_factory`.
   - **Validates: Requirements 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7**
 
 - [ ] 209. Golden run

@@ -94,12 +94,45 @@ def test_run_writes_outputs_to_run_dir(setup, capsys):
     runs = root / "runs"
     assert cli(["run", str(config), "--runs-dir", str(runs), "--no-cache", "--workers", "1"], root) == 0
     [run_dir] = list(runs.iterdir())
-    assert sorted(p.name for p in run_dir.iterdir()) == ["journal.csv", "manifest.json", "summary.json", "summary.md"]
+    assert sorted(p.name for p in run_dir.iterdir()) == [
+        "candles.json", "context.json", "journal.csv", "manifest.json", "report.html", "summary.json", "summary.md"]
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["run_id"] == run_dir.name and manifest["final_validation"] is False
     assert manifest["instrument_spec_source"].startswith("Exness")
     assert len((run_dir / "journal.csv").read_text(encoding="utf-8").splitlines()) > 50   # a day of M15 closes
-    assert str(run_dir) in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert str(run_dir) in out and "report.html" in out
+
+
+def test_report_regenerates_from_run_dir(setup, capsys):
+    config, root = setup
+    study(root, "2026-10-01")
+    runs = root / "runs"
+    assert cli(["run", str(config), "--runs-dir", str(runs), "--no-cache", "--workers", "1"], root) == 0
+    [run_dir] = list(runs.iterdir())
+    first = (run_dir / "report.html").read_bytes()
+    (run_dir / "report.html").unlink()
+    assert cli(["report", str(run_dir)], root) == 0
+    assert (run_dir / "report.html").read_bytes() == first          # from the recorded files alone
+    assert cli(["report", str(root / "nowhere")], root) == 2
+
+
+def test_report_forward_test_trades_file(setup, capsys):
+    _, root = setup
+    t = datetime(2026, 9, 30, 13, 0, tzinfo=UTC)
+    trades = [{"trade_id": "paper-1", "setup_id": "s1", "instrument": "EURUSD", "direction": "LONG", "kind": "LIMIT",
+               "entry": 1.13, "stop_loss": 1.129, "take_profit": 1.135, "status": "CLOSED",
+               "placed_at": t.isoformat(), "filled_at": t.isoformat(), "fill_price": 1.13,
+               "closed_at": "2026-09-30T14:00:00+00:00", "exit_price": 1.129, "exit_reason": "SL",
+               "gross_r": -1.0, "net_r": -1.1}]
+    trades_file = root / "paper_trades.json"
+    trades_file.write_text(json.dumps(trades), encoding="utf-8")
+    out_file = root / "forward.html"
+    assert cli(["report", "--forward-test", str(trades_file), "--profile", "exness-standard",
+                "--out", str(out_file)], root) == 0
+    html = out_file.read_text(encoding="utf-8")
+    assert "paper forward test: paper_trades.json" in html and '"order_id":"paper-1"' in html
+    assert '"EURUSD":[[' in html                                    # candles from the store, aggregated to M15
 
 
 def test_run_refuses_holdout_and_coverage_problems(setup, capsys):

@@ -94,14 +94,17 @@ class ReportSection(_Section):
     min_trades: PositiveInt = 30         # D8
     cost_flag_fraction: float = Field(default=0.25, gt=0)   # Req 5.5
     bootstrap_resamples: int = Field(default=10_000, ge=100)
+    chart_bars_before: PositiveInt = 60  # report.html: entry-TF bars before the decision (Req 11.5)
+    chart_bars_after: PositiveInt = 20   # and after the trade closes
 
 
 class RunConfig(_Section):
     run: RunSection
-    account: AccountSection = AccountSection()
-    strategy: StrategyConfig = StrategyConfig()
-    data: DataSection = DataSection()
-    report: ReportSection = ReportSection()
+    # default_factory: a model default is deep-copied, and StrategyConfig's read-only mappings can't be.
+    account: AccountSection = Field(default_factory=AccountSection)
+    strategy: StrategyConfig = Field(default_factory=StrategyConfig)
+    data: DataSection = Field(default_factory=DataSection)
+    report: ReportSection = Field(default_factory=ReportSection)
     variant: Optional[str] = None        # the variant applied, if any
 
 

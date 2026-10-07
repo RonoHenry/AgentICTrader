@@ -1,8 +1,10 @@
-"""The command line: python -m algo_backtester check-data | run | compare.
+"""The command line: python -m algo_backtester check-data | run | compare | report.
 
     python -m algo_backtester check-data config/backtests/base.toml
     python -m algo_backtester run config/backtests/base.toml [--variant min_rr_5] [--final] [--walk-forward 3M]
     python -m algo_backtester compare data/backtests/<run_id> data/backtests/<run_id> [--by killzone]
+    python -m algo_backtester report data/backtests/<run_id>
+    python -m algo_backtester report --forward-test data/paper_trades.json --profile binance
 
 check-data loads every instrument's history for the run and reports coverage
 problems and warm-up sources (Req 3.6). On first use it also creates the
@@ -13,9 +15,12 @@ run refuses, before any work:
 - a run that reaches into its study's hold-out, unless ``--final`` (Req 7.2);
 - data with coverage problems, unless ``[data] allow_gaps``.
 It then runs Phase A (cached in data/backtests/cache/ unless ``--no-cache``)
-and Phase B, and writes data/backtests/<run_id>/.
+and Phase B, and writes data/backtests/<run_id>/, report.html included.
 
 compare puts finished runs side by side; runs on different data are refused.
+
+report rewrites a run's report.html from its recorded files, or renders a
+paper forward test's trades file with candles from the store (Req 11.7).
 
 Candles come from the TimescaleDB store (TIMESCALE_URL, from the environment
 or .env): the rows of the profile's venue, mt5 or binance.
@@ -28,8 +33,9 @@ Validates: Requirements 7.1 (.kiro/specs/algo-backtester/requirements.md)
 from __future__ import annotations
 
 import argparse
+import json
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
@@ -48,8 +54,11 @@ from algo_backtester.config import (
 )
 from algo_backtester.data import CandleSource, CoverageError, InstrumentData, TimescaleSource, ensure_coverage, load_instrument
 from algo_backtester.report import RUNS_DIR, build_manifest, git_state, spec_source, write_run
+from algo_backtester.report_html import build_forward_test, render, write_html_report, write_report_inputs
 from algo_backtester.run import run_backtest
 from liquidity_engine.models import Timeframe
+from services.market_data.as_of_view import aggregate
+from services.market_data.strategy_calendar import StrategyCalendar
 
 __all__ = ["main", "parse_args"]
 
@@ -81,6 +90,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     cmp = commands.add_parser("compare", help="put finished runs side by side")
     cmp.add_argument("run_dirs", nargs="+", type=Path, help="run directories, data/backtests/<run_id>")
     cmp.add_argument("--by", help="one breakdown instead of the overall figures, e.g. killzone")
+
+    rep = commands.add_parser("report", help="(re)write a run's report.html, or one for a paper forward test")
+    rep.add_argument("run_dir", nargs="?", type=Path, help="a run directory, data/backtests/<run_id>")
+    rep.add_argument("--forward-test", type=Path, metavar="TRADES_JSON", help="the paper broker's trades file")
+    rep.add_argument("--profile", help="the forward test's broker profile (its candles come from the store)")
+    rep.add_argument("--entry-tf", default="M15", help="chart timeframe for a forward test (default M15)")
+    rep.add_argument("--out", type=Path, help="where to write a forward test's report (default: beside the trades)")
     return parser.parse_args(argv)
 
 
@@ -96,6 +112,8 @@ def main(argv: Optional[Sequence[str]] = None, source_factory: Optional[SourceFa
             print(f"refused: {exc}")
             return 2
         return 0
+    if args.command == "report":
+        return _report(args, source_factory or _store)
 
     cfg = load_run_config(args.config, args.variant)
     profile = load_profile(cfg.run.profile)
@@ -185,7 +203,41 @@ def _run(args: argparse.Namespace, cfg: RunConfig, profile: BrokerProfile, sourc
         git=git_state(), created_at=datetime.now(timezone.utc),
     )
     run_dir = write_run(args.runs_dir, cfg, manifest, result)
+    entry_tf = cfg.strategy.entry_tf
+    write_report_inputs(run_dir, result.journal, {i: d.closed[entry_tf] for i, d in datas.items()}, entry_tf,
+                        cfg.report.chart_bars_before, cfg.report.chart_bars_after)
+    report = write_html_report(run_dir)
     counts = {"journal rows": len(result.journal), "closed": len(result.trades), "open": len(result.open_orders)}
     print(f"wrote {run_dir}  ({', '.join(f'{k} {v}' for k, v in counts.items())})")
     print(f"summary: {run_dir / 'summary.md'}")
+    print(f"report:  {report}")
+    return 0
+
+
+def _report(args: argparse.Namespace, source_factory: SourceFactory) -> int:
+    if args.forward_test is None:
+        if args.run_dir is None or not (args.run_dir / "candles.json").is_file():
+            print(f"refused: {args.run_dir} is not a run directory with report inputs (candles.json)")
+            return 2
+        print(f"report: {write_html_report(args.run_dir)}")
+        return 0
+
+    if args.profile is None:
+        print("refused: --forward-test needs --profile (its candles come from the store)")
+        return 2
+    trades = json.loads(args.forward_test.read_text(encoding="utf-8"))
+    entry_tf = Timeframe(args.entry_tf)
+    source = source_factory(load_profile(args.profile))
+    margin = timedelta(minutes=15) * 100
+    candles = {}
+    for instrument in sorted({t["instrument"] for t in trades}):
+        mine = [t for t in trades if t["instrument"] == instrument]
+        start = min(datetime.fromisoformat(t["placed_at"]) for t in mine) - margin
+        end = max(datetime.fromisoformat(t.get("closed_at") or t["placed_at"]) for t in mine) + margin
+        m1 = source.bars(instrument, Timeframe.M1, start.astimezone(timezone.utc), end.astimezone(timezone.utc))
+        candles[instrument] = aggregate(m1, entry_tf, StrategyCalendar()) if m1 else []
+    model = build_forward_test(trades, candles, entry_tf, source=args.forward_test.name)
+    out = args.out or args.forward_test.with_suffix(".report.html")
+    out.write_text(render(model), encoding="utf-8", newline="\n")
+    print(f"report: {out}")
     return 0
