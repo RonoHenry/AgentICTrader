@@ -478,12 +478,18 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - `report.stats_cells()` formats numbers the same way in `summary.md` and in comparisons.
   - **Validates: Requirements 8.5**
 
-- [ ] 208. CLI: `python -m algo_backtester run | compare | check-data`
+- [x] 208. CLI: `python -m algo_backtester run | compare | check-data`
   - **208a. RED** (`backend/tests/test_backtest_cli.py`)
     - `test_check_data_nonzero_exit_on_coverage_failure`
     - `test_run_writes_outputs_to_run_dir`
     - `test_variant_and_final_flags_parsed`
   - **208b. GREEN** / **208c. REFACTOR**
+  - **Done 2026-10-07.** `algo_backtester/cli.py` (`main()`, `parse_args()`) and `__main__.py`, with the main-module guard that Phase A's worker processes need on Windows.
+    - **Candles:** from the TimescaleDB store (`TIMESCALE_URL`, environment or `.env`), the rows of the profile's venue. The MT5 loader writes every MT5 broker as `source='mt5'`.
+    - **Exit codes:** 0 done; 1 data problems; 2 refused (hold-out, or runs that can't be compared).
+    - **check-data** prints coverage and warm-up sources per instrument. On first use it creates the study, with the hold-out counted back from the earliest instrument's latest stored M1 (`CandleSource.last_time()`, added to `data.py`). **Run it only once the full history is loaded (task 211):** the hold-out it sets never moves. Deleting the study file resets it.
+    - **run** checks the hold-out before loading anything, then coverage (unless `allow_gaps`). It runs Phase A through the cache (`--no-cache` to recompute) and writes `data/backtests/<run_id>/`. Agent node logging is silenced during the run, since the journal records every refusal with its reason.
+    - `compare` refuses a path that isn't a run directory instead of failing with a traceback.
   - **Validates: Requirements 7.1**
 
 ### D. Validation and first results

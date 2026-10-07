@@ -104,11 +104,12 @@ algo_backtester/           # NEW package (backtest-only; not shipped in the pape
   sim_broker.py            # SimBroker(BrokerClient): sizing, costs, FillModel
   account.py               # SimAccount: equity, drawdown anchors, exposure for RiskEngine
   simulation.py            # Phase B event loop
+  run.py                   # hold-out guard, Phase A once, Phase B per (walk-forward) window (task 204)
   metrics.py               # summary statistics, bootstrap CI, breakdowns
   report.py                # manifest / journal / summary writers
   compare.py               # side-by-side comparison of runs
   report_html.py           # self-contained HTML run report (Req 11)
-  __main__.py              # CLI: run | compare | check-data
+  cli.py, __main__.py      # CLI: run | compare | check-data (task 208)
 scripts/
   export_instrument_specs.py    # NEW: venue specs + measured costs → config/instruments/<profile>.toml
   export_forward_test_fixture.py # NEW: forward-test period → parity fixture

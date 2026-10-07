@@ -199,6 +199,16 @@ def test_timescale_source_reads_m1_utc():
     assert all(b.timestamp.tzinfo is not None and b.timestamp.utcoffset() == timedelta(0) for b in bars)
     assert [b.timestamp for b in bars] == sorted({b.timestamp for b in bars})
     assert all(b.timeframe == TF.M1 and b.instrument == "BTCUSDT" for b in bars)
+    assert TimescaleSource(url, source="binance").last_time("BTCUSDT", TF.M1) >= bars[-1].timestamp
+
+
+def test_csv_source_last_time(tmp_path):
+    # The latest stored bar sets a new study's hold-out (D7), even past a run's end.
+    start = datetime(2026, 1, 5, 0, 0, tzinfo=UTC)
+    _write_csv(tmp_path / "EURUSD_M1.csv", m1(start, start + timedelta(hours=2)))
+    source = CsvSource(tmp_path)
+    assert source.last_time("EURUSD", TF.M1) == start + timedelta(hours=2) - timedelta(minutes=1)
+    assert source.last_time("EURUSD", TF.H1) is None and source.last_time("GBPUSD", TF.M1) is None
 
 
 def test_warmup_builds_from_native_h1_when_native_tf_missing(tmp_path):

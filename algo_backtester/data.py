@@ -100,6 +100,10 @@ class CandleSource(Protocol):
     def bars(self, instrument: str, tf: Timeframe, start: datetime, end: datetime) -> list[StoredBar]:
         """Stored ``tf`` bars opening in [start, end), oldest first; [] if none."""
 
+    def last_time(self, instrument: str, tf: Timeframe) -> Optional[datetime]:
+        """The open time of the latest stored ``tf`` bar; None if none. A new
+        study's hold-out is set from it (D7)."""
+
 
 class CsvSource:
     """``<root>/<INSTRUMENT>_<TF>.csv`` with columns time,open,high,low,close,volume,spread
@@ -124,6 +128,15 @@ class CsvSource:
                     ))
         return sorted(out, key=lambda b: b.timestamp)
 
+    def last_time(self, instrument: str, tf: Timeframe) -> Optional[datetime]:
+        path = self.root / f"{instrument}_{tf.value}.csv"
+        if not path.exists():
+            return None
+        with path.open(encoding="utf-8", newline="") as fh:
+            times = [datetime.fromisoformat(row["time"].replace("Z", "+00:00")).astimezone(UTC)
+                     for row in csv.DictReader(fh)]
+        return max(times, default=None)
+
 
 class TimescaleSource:
     """The project candle store (TimescaleDB ``candles``), rows from one ``source``
@@ -136,6 +149,22 @@ class TimescaleSource:
 
     def bars(self, instrument: str, tf: Timeframe, start: datetime, end: datetime) -> list[StoredBar]:
         return asyncio.run(self._fetch(instrument, tf, start, end))
+
+    def last_time(self, instrument: str, tf: Timeframe) -> Optional[datetime]:
+        return asyncio.run(self._last_time(instrument, tf))
+
+    async def _last_time(self, instrument: str, tf: Timeframe) -> Optional[datetime]:
+        import asyncpg
+
+        conn = await asyncpg.connect(self.url)
+        try:
+            last = await conn.fetchval(
+                "SELECT max(time) FROM candles WHERE instrument = $1 AND timeframe = $2 AND source = $3",
+                instrument, tf.value, self.source,
+            )
+        finally:
+            await conn.close()
+        return None if last is None else last.astimezone(UTC)
 
     async def _fetch(self, instrument: str, tf: Timeframe, start: datetime, end: datetime) -> list[StoredBar]:
         import asyncpg

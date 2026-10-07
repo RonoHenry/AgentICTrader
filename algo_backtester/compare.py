@@ -62,7 +62,10 @@ def compare(run_dirs: Sequence[Path], by: Optional[str] = None) -> str:
 
 def _load(run_dir: Path) -> _Run:
     def read(name: str) -> dict:
-        return json.loads((run_dir / name).read_text(encoding="utf-8"))
+        path = run_dir / name
+        if not path.is_file():
+            raise ComparisonError(f"{run_dir} is not a run directory (no {name})")
+        return json.loads(path.read_text(encoding="utf-8"))
 
     return _Run(manifest=read("manifest.json"), summary=read("summary.json"))
 

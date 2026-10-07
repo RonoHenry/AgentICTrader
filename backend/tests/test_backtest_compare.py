@@ -67,6 +67,11 @@ def test_refuses_different_data_fingerprint_or_range(tmp_path, field, value):
         compare([base, other])
 
 
+def test_not_a_run_directory_refused(tmp_path):
+    with pytest.raises(ComparisonError, match="not a run directory"):
+        compare([_run(tmp_path / "a"), tmp_path / "missing"])
+
+
 def test_refuses_different_instruments_and_needs_two_runs(tmp_path):
     base = _run(tmp_path / "a")
     other = _edit_manifest(_run(tmp_path / "b", engine_fingerprint="f" * 64),
