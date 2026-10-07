@@ -610,6 +610,7 @@ Requirements 13.4, 13.5, 18 and 19; design section "Update 2026-10"; decisions L
   - The user decided the rules on 2026-10-02 and answered the open questions on 2026-10-07: the sweep is a gate; all pools can be raided; no fixed raid window; SD targets at 2–2.5 SD.
 
 - [ ] 228. Mark swept levels; draw on liquidity from untouched pools (Req 13.5, Property 34)
+  - **Lands together with task 230 (one commit).** On its own it leaves the old sweep check (the draw on liquidity already traded through) unable ever to fire. The golden week then has no orders at all until 230 replaces that check.
   - **228a. RED** (`backend/tests/test_liquidity_engine.py`)
     - `test_level_marked_swept_when_later_bar_trades_beyond`
     - `test_level_not_swept_by_bars_of_its_own_period`
@@ -621,7 +622,13 @@ Requirements 13.4, 13.5, 18 and 19; design section "Update 2026-10"; decisions L
     - `UPDATE_ENGINE_WINDOWS` added to `test_liquidity_engine_perf.py`. Re-baseline the fixtures and the golden journal.
   - **228c. REFACTOR**
 
-- [ ] 229. `SetupSequenceDetector` (`liquidity_engine/grader/sequence.py`; Req 18.1–18.8, Properties 32, 33)
+- [x] 229. `SetupSequenceDetector` (`liquidity_engine/grader/sequence.py`; Req 18.1–18.8, Properties 32, 33)
+  - **Done 2026-10-07.**
+    - The detector and models are in. The engine records `setup_sequence` between `UnicornDetector` and `SetupGrader`; grading doesn't use it yet, and the golden journal is unchanged.
+    - `TIMEFRAME_WEIGHT` in `detectors/external.py` is now public: it weights raids too.
+    - The engine-window fixtures were re-baselined for the new field (`UPDATE_ENGINE_WINDOWS`, added to `test_liquidity_engine_perf.py`).
+    - About 1 in 6 random walks yields a sequence, so properties 32 and 33 are exercised.
+    - **Cost:** +5 to 15 ms per `analyze()` on the four fixture windows (54–88 ms with the detector, against 49–73 ms without). Most of it is the CISD pass over each prefix.
   - **229a. RED** (`backend/tests/test_liquidity_sequence.py`, synthetic candles)
     - `test_raid_reclaim_cisd_then_array_forms_bullish_sequence`
     - `test_bearish_sequence_mirrors`

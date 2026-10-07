@@ -6,7 +6,10 @@ Wires every detector/analytics component into a single deterministic
 
     HTFBiasClassifier -> LiquidityLevelDetector -> SwingStructureClassifier ->
     PDArrayDetector -> FractalModelTracker -> IPDAClassifier -> OTECalculator ->
-    UnicornDetector -> SetupGrader
+    UnicornDetector -> SetupSequenceDetector -> SetupGrader
+
+SetupSequenceDetector (Requirement 18, update 2026-10) runs before grading:
+the grader reads the setup sequence it records.
 
 A few cross-component values (draw_on_liquidity, sweep_detected, the OTE
 displacement leg, the Fractal Model's key_level) are engine-level derivations,
@@ -24,6 +27,7 @@ from liquidity_engine.detectors.external import LiquidityLevelDetector
 from liquidity_engine.detectors.internal import PDArrayDetector
 from liquidity_engine.detectors.structure import SwingStructureClassifier
 from liquidity_engine.fractal.candle_model import FractalModelTracker
+from liquidity_engine.grader.sequence import SetupSequenceDetector
 from liquidity_engine.grader.setup_grader import SetupGrader
 from liquidity_engine.ipda.classifier import IPDAClassifier
 from liquidity_engine.models import (
@@ -109,6 +113,7 @@ class LiquidityMappingEngine:
 
         ote_zone = self._calculate_ote_zone(finest_candles, htf_bias, current_price)
         unicorn = UnicornDetector().detect(pd_arrays)
+        setup_sequence = SetupSequenceDetector().detect(candles_by_tf, pd_arrays)
 
         liquidity_map = LiquidityMap(
             analyzed_at=timestamp,
@@ -126,6 +131,7 @@ class LiquidityMappingEngine:
             swing_structure={tf.value: result for tf, result in swing_structure.items()},
             fractal_model=fractal_model,
             sd_projection=None,
+            setup_sequence=setup_sequence,
         )
         liquidity_map.setup_grade = SetupGrader().grade(liquidity_map, timestamp)
         # SD projection anchors on the entry array's own range — the local

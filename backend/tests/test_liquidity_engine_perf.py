@@ -5,12 +5,18 @@ Task 214 (.kiro/specs/algo-backtester/tasks.md). The fixtures were captured
 from the engine *before* optimisation by scripts/export_engine_windows.py:
 real live-runner windows (Binance BTCUSDT, MT5 EURUSD) plus the exact
 LiquidityMap JSON the engine produced for each.
+
+A change that alters the engine's output on purpose (a grading rule, not a
+speed-up) re-baselines the expected output in the same commit:
+
+    UPDATE_ENGINE_WINDOWS=1 pytest tests/test_liquidity_engine_perf.py      (from backend/)
 Validates: Requirements 1.1, 7.5
 """
 from __future__ import annotations
 
 import gzip
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -50,9 +56,13 @@ def test_fixture_windows_present():
 @pytest.mark.parametrize("path", WINDOW_FILES, ids=lambda p: p.name.split(".")[0])
 def test_engine_output_unchanged_on_fixture_windows(path):
     record, candles_by_tf, t = _load(path)
-    result = LiquidityMappingEngine().analyze(candles_by_tf, record["instrument"], t)
+    result = LiquidityMappingEngine().analyze(candles_by_tf, record["instrument"], t).model_dump_json()
+    if os.environ.get("UPDATE_ENGINE_WINDOWS"):
+        record = {**record, "expected_json": result}
+        with gzip.open(path, "wt", encoding="utf-8") as fh:          # as scripts/export_engine_windows.py writes it
+            json.dump(record, fh, separators=(",", ":"))
     # Byte-identical, including list order: not "close enough".
-    assert result.model_dump_json() == record["expected_json"]
+    assert result == record["expected_json"]
 
 
 @pytest.mark.parametrize("path", WINDOW_FILES, ids=lambda p: p.name.split(".")[0])

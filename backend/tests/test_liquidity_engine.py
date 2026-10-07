@@ -13,6 +13,7 @@ from liquidity_engine.detectors.internal import PDArrayDetector
 from liquidity_engine.detectors.structure import SwingStructureClassifier
 from liquidity_engine.engine import LiquidityMappingEngine
 from liquidity_engine.fractal.candle_model import FractalModelTracker
+from liquidity_engine.grader.sequence import SetupSequenceDetector
 from liquidity_engine.grader.setup_grader import SetupGrader
 from liquidity_engine.ipda.classifier import IPDAClassifier
 from liquidity_engine.models import (
@@ -194,6 +195,7 @@ class TestSubComponentOrder:
         monkeypatch.setattr(IPDAClassifier, "validate_cisd_cascade", record("IPDAClassifier", IPDAClassifier.validate_cisd_cascade))
         monkeypatch.setattr(OTECalculator, "calculate", record("OTECalculator", OTECalculator.calculate))
         monkeypatch.setattr(UnicornDetector, "detect", record("UnicornDetector", UnicornDetector.detect))
+        monkeypatch.setattr(SetupSequenceDetector, "detect", record("SetupSequenceDetector", SetupSequenceDetector.detect))
         monkeypatch.setattr(SetupGrader, "grade", record("SetupGrader", SetupGrader.grade))
 
         LiquidityMappingEngine().analyze(build_candles_by_tf(), "EURUSD", d1_ts(20))
@@ -206,9 +208,26 @@ class TestSubComponentOrder:
         expected = [
             "HTFBiasClassifier", "LiquidityLevelDetector", "SwingStructureClassifier",
             "PDArrayDetector", "FractalModelTracker", "IPDAClassifier", "OTECalculator",
-            "UnicornDetector", "SetupGrader",
+            "UnicornDetector", "SetupSequenceDetector", "SetupGrader",            # Requirement 1.5, amended 2026-10
         ]
         assert first_seen == expected
+
+
+class TestSetupSequenceOnMap:
+    def test_engine_records_the_setup_sequence(self):
+        # Requirement 18.8: the map carries the detector's sequence over the engine's own PD arrays.
+        from tests.test_liquidity_sequence import BULLISH_ROWS, series
+
+        candles_by_tf = {Timeframe.D1: bullish_d1(), Timeframe.W1: bullish_w1(), Timeframe.M15: series(BULLISH_ROWS)}
+        result = LiquidityMappingEngine().analyze(candles_by_tf, "EURUSD", d1_ts(20))
+        assert result.setup_sequence is not None
+        assert result.setup_sequence == SetupSequenceDetector().detect(candles_by_tf, result.pd_arrays)
+        assert result.setup_sequence.raid.raided_at == datetime(2024, 1, 2, 7, 45, tzinfo=timezone.utc)
+
+    def test_no_sequence_without_entry_arrays(self):
+        result = LiquidityMappingEngine().analyze(
+            {Timeframe.D1: bullish_d1(), Timeframe.W1: bullish_w1()}, "EURUSD", d1_ts(20))
+        assert result.setup_sequence is None
 
 
 class TestFractalModelSeeding:

@@ -69,6 +69,8 @@ class LiquiditySource(str, Enum):
     SESSION_HIGH = "SESSION_HIGH"
     SESSION_LOW = "SESSION_LOW"
     TRENDLINE = "TRENDLINE"
+    SWING_HIGH = "SWING_HIGH"      # a swing high on any timeframe: buy stops rest above it (Requirement 18.1)
+    SWING_LOW = "SWING_LOW"        # a swing low: sell stops rest below it
 
 
 class CRTPhase(str, Enum):
@@ -454,6 +456,45 @@ class FractalModelResult(BaseModel):
     price_above_equilibrium: bool
 
 
+class LiquidityPool(BaseModel):
+    """Resting liquidity a raid can take (Requirement 18.1-18.2): buy stops
+    above a swing high or previous-period high (BSL), sell stops below a low
+    (SSL)."""
+    side: LiquidityType
+    source: LiquiditySource      # SWING_HIGH / SWING_LOW, or PDH / PDL / PWH / PWL / PMH / PML
+    timeframe: Timeframe         # the pool's weight: a higher-timeframe swing holds more
+    price: float
+    formed_at: datetime          # the swing bar, or the previous period's bar
+    known_at: datetime           # the first moment it existed: the open of the bar after its confirming bar
+
+
+class LiquidityRaid(BaseModel):
+    """The first trade beyond an intact pool, on the entry array's timeframe (Requirement 18.3)."""
+    pool: LiquidityPool
+    raided_at: datetime          # open time of the bar that traded beyond the pool
+    reclaimed_at: datetime       # open time of the first bar, from the raid on, that closed back beyond it
+
+
+class ProtectedSwing(BaseModel):
+    """The swing the setup's displacement originated from (Requirement 18.5);
+    the stop goes behind it."""
+    candle_at: datetime
+    wick: float                  # its extreme: the low of a bullish setup's protected bar
+    body: float                  # its body extreme: min(open, close) for a bullish setup
+    candle_range: float          # high - low, the stop buffer's base
+
+
+class SetupSequence(BaseModel):
+    """Raid -> change in state of delivery -> PD array (Requirement 18.4): the
+    setup the grader trades."""
+    entry_array_id: str
+    direction: BiasDirection     # the entry array's: BULLISH after a sell-side raid
+    raid: LiquidityRaid
+    cisd_at: datetime            # violation candle of the first CISD in this direction after the raid
+    protected_swing: ProtectedSwing
+    leg_extreme: float           # far end of the setup leg from the protected wick (Requirement 18.6)
+
+
 class LiquidityMap(BaseModel):
     """Complete liquidity analysis output."""
     analyzed_at: datetime
@@ -471,6 +512,7 @@ class LiquidityMap(BaseModel):
     swing_structure: Dict[str, SwingStructureResult] = {}    # Keyed by Timeframe.value
     fractal_model: Optional[FractalModelResult] = None
     sd_projection: Optional[SDProjection] = None
+    setup_sequence: Optional[SetupSequence] = None          # Requirement 18.8
 
     def get_bias(self, timeframe: Timeframe) -> Optional[HTFBias]:
         """Get HTF bias for a specific timeframe."""
