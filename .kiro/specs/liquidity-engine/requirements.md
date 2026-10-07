@@ -78,7 +78,7 @@ The following concepts appear in the TTrades reference material (`docs/reference
 2. THE `LiquidityMappingEngine` SHALL be stateless — for any two identical `candles_by_tf` inputs, THE Engine SHALL produce identical `LiquidityMap` outputs.
 3. THE `LiquidityMappingEngine` SHALL never mutate the input `candles_by_tf` dictionary or any `Candle` objects within it.
 4. WHEN `candles_by_tf` is missing the D1 or W1 timeframe, THE Engine SHALL raise a `ValueError` with a descriptive message before executing any sub-component.
-5. THE `LiquidityMappingEngine` SHALL invoke sub-components in the following dependency order: `HTFBiasClassifier` → `LiquidityLevelDetector` → `SwingStructureClassifier` → `PDArrayDetector` → `FractalModelTracker` → `IPDAClassifier` → `OTECalculator` → `UnicornDetector` → `SetupGrader`. `SwingStructureClassifier` SHALL run before `PDArrayDetector` because Breaker `structure_confirmed` (Requirement 4.15) depends on `StructureEvent` output. `FractalModelTracker` SHALL run after `PDArrayDetector` because its `key_level` argument is typically sourced from a detected `LiquidityLevel` or `HTFBias.reference_open`.
+5. THE `LiquidityMappingEngine` SHALL invoke sub-components in the following dependency order: `HTFBiasClassifier` → `LiquidityLevelDetector` → `SwingStructureClassifier` → `PDArrayDetector` → `FractalModelTracker` → `IPDAClassifier` → `OTECalculator` → `UnicornDetector` → `SetupSequenceDetector` → `SetupGrader` (*amended 2026-10*: `SetupSequenceDetector`, Requirement 18, runs before grading because the grader reads its result). `SwingStructureClassifier` SHALL run before `PDArrayDetector` because Breaker `structure_confirmed` (Requirement 4.15) depends on `StructureEvent` output. `FractalModelTracker` SHALL run after `PDArrayDetector` because its `key_level` argument is typically sourced from a detected `LiquidityLevel` or `HTFBias.reference_open`.
 6. WHEN `analyze()` completes successfully, THE Engine SHALL return a `LiquidityMap` where `analyzed_at` is a timezone-aware `datetime` matching the `timestamp` argument.
 7. THE `LiquidityMappingEngine.analyze()` SHALL complete execution within 500ms for any standard multi-timeframe candle input covering up to 1,000 candles per timeframe.
 
@@ -225,14 +225,14 @@ The following concepts appear in the TTrades reference material (`docs/reference
 2. THE `SetupGradeDetail.conditions_met` SHALL equal the count of `True` values among the 8 boolean condition fields (`htf_bias_confirmed`, `draw_on_liquidity_identified`, `liquidity_sweep_confirmed`, `displacement_present`, `cisd_confirmed`, `entry_pd_array_present`, `stop_placement_valid`, `time_window_aligned`).
 3. THE `SetupGrader` SHALL assign grade `A` WHEN exactly 7 of the 8 conditions are `True`.
 4. THE `SetupGrader` SHALL assign grade `B` WHEN `liquidity_sweep_confirmed = True` AND `cisd_confirmed = True` AND `entry_pd_array_present = True` AND the entry array is `FVG` type only (no Breaker or UNICORN present), regardless of other conditions.
-5. THE `SetupGrader` SHALL assign grade `NO_TRADE` WHEN fewer than 6 of the 8 conditions are `True`, OR `htf_bias_confirmed = False`, OR `draw_on_liquidity_identified = False`.
+5. THE `SetupGrader` SHALL assign grade `NO_TRADE` WHEN fewer than 6 of the 8 conditions are `True`, OR `htf_bias_confirmed = False`, OR `draw_on_liquidity_identified = False`, OR `liquidity_sweep_confirmed = False` (*amended 2026-10*: the sweep gate, Requirement 18.9).
 6. THE `SetupGrader._check_htf_bias()` SHALL return `True` WHEN at least D1 and W1 bias entries are present in `LiquidityMap.htf_bias` AND neither is `NEUTRAL`.
 7. THE `SetupGrader._check_draw_on_liquidity()` SHALL return `True` WHEN `LiquidityMap.draw_on_liquidity` is not `None`.
-8. THE `SetupGrader._check_liquidity_sweep()` SHALL return `True` WHEN `LiquidityMap.sweep_detected = True`.
+8. THE `SetupGrader._check_liquidity_sweep()` SHALL return `True` WHEN `LiquidityMap.sweep_detected = True` (*amended 2026-10*: `sweep_detected` now means an opposite-side raid sequence exists, Requirement 13.4).
 9. THE `SetupGrader._check_time_window()` SHALL return `True` WHEN the `timestamp` falls within a London, NY AM, or NY PM killzone window.
 10. THE `SetupGradeDetail.grade_reason` SHALL be a non-empty string providing a human-readable explanation of the assigned grade for every grading output.
 11. THE `SetupGradeDetail.suggested_entry` SHALL be set to the `golden_level` of the OTE zone when `entry_array_is_ote = True`, otherwise to the midpoint of the entry PD array.
-12. THE `SetupGradeDetail.suggested_stop` SHALL be placed beyond the far boundary of the entry PD array (below `PDArray.low` for bullish entries, above `PDArray.high` for bearish entries).
+12. *Superseded 2026-10 by Requirement 18.10.* (Was: `suggested_stop` beyond the far boundary of the entry PD array. The task 211 baseline showed it gives stops of a few pips, some inside the spread.)
 13. WHEN the `entry_array` has `structure_confirmed = True` (see Requirement 4.15), THE `SetupGrader` SHALL record this in `grade_reason` as corroborating evidence; `structure_confirmed` SHALL NOT alter the 8-condition boolean gate or the `conditions_met` count — it is informational strength context only, not a 9th condition.
 
 ---
@@ -299,8 +299,8 @@ The following concepts appear in the TTrades reference material (`docs/reference
 1. THE `LiquidityMappingEngine._find_draw_on_liquidity()` SHALL select the nearest unswept `LiquidityLevel` in the direction consistent with the dominant HTF bias as the `draw_on_liquidity` target.
 2. WHEN `htf_bias` indicates `BULLISH` on D1 and W1, THE Engine SHALL prefer `BSL` (Buy-Side Liquidity) levels as the `draw_on_liquidity` target.
 3. WHEN `htf_bias` indicates `BEARISH` on D1 and W1, THE Engine SHALL prefer `SSL` (Sell-Side Liquidity) levels as the `draw_on_liquidity` target.
-4. THE `LiquidityMappingEngine._detect_sweep()` SHALL set `LiquidityMap.sweep_detected = True` WHEN price has traded through the `draw_on_liquidity` level's price in the current analysis window.
-5. WHEN a sweep is detected, THE `LiquidityLevel.swept` field on the swept level SHALL be set to `True` and `swept_at` SHALL be populated with the timestamp of the sweeping candle.
+4. *Superseded 2026-10:* `LiquidityMap.sweep_detected` SHALL be `True` IF AND ONLY IF `LiquidityMap.setup_sequence` is not `None` (Requirement 18). (Was: price traded through the `draw_on_liquidity` level, which is the target side. That counted a setup as swept once its own target had been taken.)
+5. *Amended 2026-10:* THE Engine SHALL set `swept = True` and `swept_at` (the open time of the earliest such bar) on every `LiquidityLevel` that a bar of any analysed timeframe, opening after the level's `formed_at`, traded beyond: `high > price` for BSL, `low < price` for SSL. This runs before `_find_draw_on_liquidity`, so the draw on liquidity is always an untouched pool (Requirement 13.1). (Was: set only on "the swept level", and never implemented.)
 6. WHEN no unswept `LiquidityLevel` exists in the bias direction, THE Engine SHALL set `draw_on_liquidity = None`.
 
 ---
@@ -606,3 +606,120 @@ The following concepts appear in the TTrades reference material (`docs/reference
 **Validates: Requirement 4.15**
 
 ---
+
+## Update 2026-10: Setup Sequence, Protected-Swing Stop, Counter-Trend Cap
+
+**Why.** The first AlgoBacktester baseline (algo-backtester task 211, `docs/backtests/BASELINE.md`) failed its pre-registered pass mark: −0.54R a trade net, no gross edge, and a 117R drawdown. Two findings come from this spec's own definitions:
+- The sweep check looked at the **target** side (Requirement 13.4).
+- The stop sat at the entry array's edge (Requirement 9.12), giving stops of a few pips, some inside the spread.
+
+The user's rules (decided 2026-10-02, before any result, and refined 2026-10-07) replace them. Each change is measured against the baseline with `algo_backtester compare`.
+
+### Requirement 18: Setup Sequence (raid → change in state of delivery → PD array)
+
+**User Story:** As the agent, I want to trade only PD arrays that formed after an opposite-side liquidity raid and a change in state of delivery, with the stop behind the swing that raid made, so that a setup has validated intent and its stop sits where the idea is actually wrong.
+
+#### Acceptance Criteria
+
+*Liquidity pools*
+
+1. `SetupSequenceDetector` SHALL treat as raidable pools:
+   - every swing high and swing low (`find_swing_highs` / `find_swing_lows`, lookback 2) on every analysed timeframe;
+   - the previous day, week and month high and low (Requirement 3).
+
+   A pool above a high is BSL and a pool below a low is SSL. Every pool gates alike, and each records its timeframe, the timeframe weight being its significance (LE-D2).
+2. A pool SHALL be known from `known_at`:
+   - for a swing, the open of the bar after the bar that confirmed it;
+   - for a previous-period level, the open of the current period's bar.
+
+   A swing confirmed by the last bar of its timeframe is not yet a pool. Nothing is known before it could be (no lookahead).
+
+*Raid*
+
+3. A raid of an SSL pool SHALL be the first bar of the entry array's timeframe opening at or after `known_at` whose low is below the pool price. It counts only if no bar of any analysed timeframe that opened at or after `known_at` and closed by the raid bar's open traded below the price first. BSL raids mirror this with the high above the price. A pool is raided at most once.
+
+*Sequence*
+
+4. For each unfilled entry-eligible PD array (Requirement 9: M15 and below), a **bullish sequence** SHALL exist WHEN an SSL raid at bar `r` satisfies all of the following:
+   1. the array formed at or after `r`;
+   2. some bar from `r` to `t` closes above the pool price (the reclaim);
+   3. a bullish CISD (`CISDDetector`, `confirmed = True`) has its violation candle after `r`, at or before `t`;
+   4. the protected swing (18.5) is intact: no later bar, up to `t`, trades below its low.
+
+   A bearish sequence mirrors this with a BSL raid and a bearish array. The raid is always on the side opposite the array's direction. No fixed time window applies: the sequence defines the setup (LE-D3).
+5. The **protected swing** SHALL be the bar of the array's timeframe with the lowest low (bullish) or highest high (bearish) from `r` to the array's `formed_at`, the earliest one if tied.
+   - Its **wick** is that extreme.
+   - Its **body** is `min(open, close)` (bullish) or `max(open, close)` (bearish).
+6. The **setup leg** SHALL run from the protected swing's wick to the highest high (bullish) or lowest low (bearish) of the array's timeframe bars from `r` to `t`.
+7. WHEN several raids qualify for one array, its sequence SHALL use the most recent one. On the same bar, it uses the pool with the higher timeframe weight, then the deeper pool (lower SSL or higher BSL price).
+8. `LiquidityMap.setup_sequence` SHALL be the sequence of the array chosen by, in order:
+   1. the most recent raid;
+   2. the higher pool timeframe weight;
+   3. the higher array `strength_score`;
+   4. the later array `formed_at`;
+   5. `array_id`.
+
+   It SHALL be `None` when no array has a sequence.
+
+*Grading*
+
+9. **Sweep gate:** THE grade SHALL be `NO_TRADE` WHEN `setup_sequence` is `None` (LE-D1).
+10. THE entry array SHALL be the sequence's array when a sequence exists. Otherwise it is chosen as before (Requirement 9) and appears only in the grade reason: the gate stops the trade.
+11. `suggested_stop` SHALL be the protected swing's wick less (bullish) or plus (bearish) a buffer of 10% of that bar's range. `SetupGradeDetail.protected_swing_body_stop` SHALL be its body extreme with the same buffer (LE-D5).
+12. `stop_placement_valid` SHALL be `True` WHEN a sequence exists AND `suggested_stop` lies beyond the entry array's far boundary.
+13. **Counter-trend cap:** WHEN the entry array's direction differs from the D1 bias direction, THE grade SHALL NOT exceed `B`: `A+` and `A` become `B`. `SetupGradeDetail.counter_trend` records it (LE-D6).
+14. `grade_reason` SHALL name:
+    - the raided pool (source, timeframe, price) and the protected swing, when a sequence exists;
+    - "no opposite-side raid before the entry array", when the gate applies;
+    - the counter-trend cap, when it applies.
+15. THE SD projection SHALL be anchored on the setup leg in the sequence's direction: `anchor_0` is the leg's far extreme and `anchor_1` the protected wick. Without a sequence it SHALL be `None` (LE-D4). (Was: anchored on the entry array's own range, which fixed R:R at 5.0 for every midpoint entry.)
+16. `suggested_entry` is unchanged: the OTE golden level, or the entry array's midpoint (LE-D7).
+
+### Requirement 19: Order Derivation from the Setup Sequence
+
+**User Story:** As the agent and the backtester, I want the order to follow the setup sequence's direction, stop mode and targets, so that live trading and backtests trade the setup as defined.
+
+#### Acceptance Criteria
+
+1. `StrategyConfig.stop_mode` SHALL be `WICK` (default) or `BODY`. `build_order_intent` SHALL use `suggested_stop` for `WICK` and `protected_swing_body_stop` for `BODY` (LE-D5).
+2. THE trade direction SHALL be the sequence's direction: `LONG` for a bullish array. (Was: inferred from `stop < entry`.)
+3. WHEN the chosen stop is not beyond the entry in the trade direction, `build_order_intent` SHALL return `NoTrade` with reason `INVALID_STOP`.
+4. `StrategyConfig.tp_levels` SHALL default to `(2.0, 2.5)`: TP1 is 2.0 SD of the setup leg, and the trade exits at TP1. Scale-out stays deferred (algo-backtester D19).
+5. `TradeContext` SHALL record:
+   - the raid as `swept_level`: pool side, source, timeframe, price and `raided_at`;
+   - the protected swing: wick, body and candle time.
+
+   The HTML run report SHALL draw both on the setup's chart.
+
+### Correctness Properties (2026-10)
+
+**Property 29: Sweep Gate.** *For any* `LiquidityMap` with `setup_sequence = None`, `setup_grade.grade` SHALL be `NO_TRADE`. **Validates: 18.9**
+
+**Property 30: Counter-Trend Cap.** *For any* graded setup whose entry array direction differs from the D1 bias direction, the grade SHALL be `B` or `NO_TRADE`. **Validates: 18.13**
+
+**Property 31: Protected Swing Ordering.** *For any* bullish sequence: `wick ≤ body`, `suggested_stop < wick`, `suggested_stop < protected_swing_body_stop`, and `suggested_stop` is below the entry array's low. Bearish sequences mirror this. **Validates: 18.5, 18.11, 18.12**
+
+**Property 32: Raid Integrity.** *For any* sequence, `raid.raided_at ≥ raid.pool.known_at`, no bar of the array's timeframe from `known_at` up to the raid traded beyond the pool, and the array formed at or after the raid. **Validates: 18.2–18.4**
+
+**Property 33: No Lookahead.** *For any* candle window and time `t`, `setup_sequence` SHALL be unchanged when every bar opening after `t` is removed. **Validates: 18.2, 18.4**
+
+**Property 34: Swept Levels.** *For any* `LiquidityLevel` returned, `swept` SHALL be `True` IF AND ONLY IF some bar opening after `formed_at` traded beyond its price. The draw on liquidity SHALL never be swept. **Validates: 13.5, 13.1**
+
+### Decisions (2026-10)
+
+| Id | Decision | Source |
+|---|---|---|
+| LE-D1 | The opposite-side sweep is a gate: no raid, displacement and change in state of delivery, no trade | User 2026-10-07: "without a sweep and displacement in the opposing direction it is hard to validate a change in the state of delivery" |
+| LE-D2 | Every liquidity pool can be raided alike: prior swing highs/lows on every analysed timeframe and previous day/week/month high/low. The pool's timeframe is its weight, recorded and used only to break ties | User 2026-10-07: "all liquidity pools can be raided the same; the higher the timeframe making up the swing, the more weight" |
+| LE-D3 | No fixed time window between raid and entry array: the sequence (raid → CISD → PD array, protected swing intact) defines it, within the analysed candle window | User 2026-10-07: depends on volatility, time of day, day of week; "PD arrays that form after a sweep of liquidity, ideally once we have a change in the state of delivery" |
+| LE-D4 | SD targets are projected from the setup leg. TP1 is 2.0 SD and TP2 2.5 SD; the trade exits at TP1 | User 2026-10-07: "most of my partials off at most at the ideal target of 2–2.5 SD, often around 3–5R" |
+| LE-D5 | Stop behind the protected swing. `WICK` (full invalidation, default) and `BODY` are compared as backtest variants, with a buffer of 10% of the protected bar's range | User 2026-10-02 (TTrades "Stop losses": decide by backtesting) |
+| LE-D6 | Counter-trend (entry array against D1 bias) is allowed, capped at grade B | User 2026-10-02 |
+| LE-D7 | Entry price unchanged (OTE golden level or array midpoint). Entering at the CISD / opposing-candle level is an open question | User 2026-10-02: not answered |
+| LE-D8 | The displacement condition (`displacement_present`) is unchanged | User 2026-10-02: no change chosen |
+
+### Deferred (2026-10)
+
+- **Premium and discount.** The user's premise: longs from discount, shorts from premium, within the dealing range. Not a rule yet; candidate for the next update, measured against this one.
+- **A minimum stop relative to costs.** The protected-swing stop is expected to remove most stops narrower than the spread. Revisit if the measured run still shows them.
+- **Scale-out at TP1 with a runner** (algo-backtester D19).

@@ -596,6 +596,109 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
 
 ---
 
+## Update 2026-10: Setup Sequence, Protected-Swing Stop, Counter-Trend Cap (tasks 227–233)
+
+Requirements 13.4, 13.5, 18 and 19; design section "Update 2026-10"; decisions LE-D1 to LE-D8.
+- Numbered after algo-backtester task 226.
+- Each task that changes engine output regenerates, in its own commit:
+  - the engine-window fixtures (`UPDATE_ENGINE_WINDOWS=1 pytest tests/test_liquidity_engine_perf.py`);
+  - the golden journal (`UPDATE_GOLDEN=1 pytest tests/test_backtest_golden.py`).
+
+- [x] 227. Spec update 2026-10
+  - requirements.md: 1.5, 9.5, 9.8, 9.12, 13.4 and 13.5 amended. New Requirements 18 and 19, Properties 29–34, decisions LE-D1 to LE-D8, and the deferred list.
+  - design.md: section "Update 2026-10".
+  - The user decided the rules on 2026-10-02 and answered the open questions on 2026-10-07: the sweep is a gate; all pools can be raided; no fixed raid window; SD targets at 2–2.5 SD.
+
+- [ ] 228. Mark swept levels; draw on liquidity from untouched pools (Req 13.5, Property 34)
+  - **228a. RED** (`backend/tests/test_liquidity_engine.py`)
+    - `test_level_marked_swept_when_later_bar_trades_beyond`
+    - `test_level_not_swept_by_bars_of_its_own_period`
+    - `test_swept_at_is_earliest_breaching_bar`
+    - `test_draw_on_liquidity_never_swept`
+    - `test_property_swept_iff_breached` (Property 34)
+  - **228b. GREEN**
+    - `LiquidityMappingEngine._mark_swept_levels`, run before `_find_draw_on_liquidity`.
+    - `UPDATE_ENGINE_WINDOWS` added to `test_liquidity_engine_perf.py`. Re-baseline the fixtures and the golden journal.
+  - **228c. REFACTOR**
+
+- [ ] 229. `SetupSequenceDetector` (`liquidity_engine/grader/sequence.py`; Req 18.1–18.8, Properties 32, 33)
+  - **229a. RED** (`backend/tests/test_liquidity_sequence.py`, synthetic candles)
+    - `test_raid_reclaim_cisd_then_array_forms_bullish_sequence`
+    - `test_bearish_sequence_mirrors`
+    - `test_no_sequence_without_reclaim`
+    - `test_no_sequence_without_cisd_after_raid`
+    - `test_no_sequence_when_array_formed_before_raid`
+    - `test_no_sequence_when_protected_swing_broken`
+    - `test_pool_taken_before_raid_bar_is_not_raided`
+    - `test_swing_is_not_a_pool_until_confirmed` (no lookahead)
+    - `test_htf_swing_and_previous_day_low_are_pools`
+    - `test_protected_swing_is_extreme_from_raid_to_array`
+    - `test_most_recent_raid_wins_then_pool_weight`
+    - `test_selection_order_across_arrays`
+    - `test_property_no_lookahead` (Property 33)
+    - `test_property_raid_integrity` (Property 32)
+  - **229b. GREEN**
+    - Models: `LiquiditySource.SWING_HIGH` / `SWING_LOW`, `LiquidityPool`, `LiquidityRaid`, `ProtectedSwing`, `SetupSequence`, `LiquidityMap.setup_sequence`.
+    - The detector.
+    - The engine sets `setup_sequence`; grading is unchanged in this task.
+    - Re-baseline the engine-window fixtures (new field). The golden journal is unchanged.
+  - **229c. REFACTOR**
+
+- [ ] 230. Grade from the setup sequence (Req 9.5, 9.8, 13.4, 18.9–18.16; Properties 29–31)
+  - **230a. RED** (`test_liquidity_grader.py`, `test_liquidity_engine.py`)
+    - `test_no_trade_without_setup_sequence`
+    - `test_entry_array_is_the_sequence_array`
+    - `test_sweep_condition_follows_setup_sequence`
+    - `test_stop_behind_protected_swing_wick_with_buffer`
+    - `test_body_stop_recorded`
+    - `test_stop_placement_valid_requires_stop_beyond_array`
+    - `test_counter_trend_capped_at_b`
+    - `test_aligned_setup_not_capped`
+    - `test_grade_reason_names_raid_and_protected_swing`
+    - `test_grade_reason_names_gate_and_cap`
+    - `test_sd_projection_anchored_on_setup_leg`
+    - `test_sd_projection_none_without_sequence`
+    - `test_property_sweep_gate` (Property 29)
+    - `test_property_counter_trend_cap` (Property 30)
+    - `test_property_protected_swing_ordering` (Property 31)
+    - Rewrite the tests built on superseded 9.12 and 13.4.
+  - **230b. GREEN** — grader and engine as designed. Re-baseline the fixtures and the golden journal.
+  - **230c. REFACTOR**
+
+- [ ] 231. Order derivation and report (Req 19)
+  - **231a. RED**
+    - In `test_backtest_order_intent.py`:
+      - `test_stop_mode_wick_uses_suggested_stop`
+      - `test_stop_mode_body_uses_body_stop`
+      - `test_direction_from_setup_sequence`
+      - `test_invalid_stop_is_no_trade`
+      - `test_default_tp_levels`
+    - Strategy config: `stop_mode` is validated and in the fingerprint; `--variant stop_body` loads from `base.toml`.
+    - `test_backtest_signals.py`: `test_trade_context_records_raid_and_protected_swing`.
+  - **231b. GREEN**
+    - `StrategyConfig.stop_mode` and the `tp_levels` default (2.0, 2.5).
+    - `build_order_intent`, and `NoTradeReason` `INVALID_STOP`.
+    - `TradeContext.swept_level` / `protected_swing`, and the report draws both.
+    - `[variants.stop_body]` in `config/backtests/base.toml`.
+    - Re-baseline the golden journal.
+  - **231c. REFACTOR** — check the chart in headless Chrome.
+
+- [ ] 232. Checkpoint
+  - Full suite green, apart from the task-39 RED tests.
+  - Measure `analyze()` per M15 close on the engine-window fixtures, against task 199's 33 ms.
+  - **Live impact:** the paper-trader container runs the new grader only after a restart, which needs the user's OK.
+
+- [ ] 233. Measure against the baseline **(user review)**
+  - Run `config/backtests/base.toml` (stop `WICK`) and `--variant stop_body` on study `baseline-2026q3`. Compare each with the baseline run `5d241691c701`.
+  - Write `docs/backtests/SETUP_SEQUENCE.md` with:
+    - the pass-mark table per run;
+    - counts: gated, `RR_BELOW_MIN`, `INVALID_STOP`, never filled;
+    - stops against the spread;
+    - observations.
+  - The user reviews trades in `report.html`.
+
+---
+
 ## Task Dependency Graph
 
 The Liquidity Engine tasks follow a strict dependency hierarchy from foundational models to advanced analytics. Dependencies are denoted as `prerequisite → dependent`.
@@ -654,6 +757,12 @@ The Liquidity Engine tasks follow a strict dependency hierarchy from foundationa
       "name": "Optional Service",
       "tasks": ["162"],
       "description": "Optional FastAPI microservice wrapper",
+      "dependencies": ["Final Integration"]
+    },
+    {
+      "name": "Setup Sequence Update (2026-10)",
+      "tasks": ["227", "228", "229", "230", "231", "232", "233"],
+      "description": "Opposite-side raid sequence, protected-swing stop, counter-trend cap; measured against the algo-backtester baseline",
       "dependencies": ["Final Integration"]
     }
   ]

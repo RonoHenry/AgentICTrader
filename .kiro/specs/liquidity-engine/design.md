@@ -1257,3 +1257,110 @@ class LiquidityMap(BaseModel):
 **Validates: Requirements 4.15**
 
 ---
+
+## Update 2026-10: Setup Sequence (Requirements 18–19)
+
+The 2026-10 update replaces three hollow parts of grading with the user's rules (decisions LE-D1 to LE-D8 in `requirements.md`):
+- the target-side "sweep";
+- the entry-array-edge stop;
+- strongest-type entry-array selection.
+
+The baseline these changes are measured against is `docs/backtests/BASELINE.md`.
+
+### Pipeline
+
+```
+LiquidityLevelDetector -> mark swept levels (13.5) -> _find_draw_on_liquidity (untouched pools only)
+... PDArrayDetector ... UnicornDetector
+SetupSequenceDetector(candles_by_tf, pd_arrays, previous-period levels) -> LiquidityMap.setup_sequence
+SetupGrader (reads setup_sequence) -> SD projection on the setup leg
+```
+
+`sweep_detected = setup_sequence is not None`. `_detect_sweep` is removed.
+
+### SetupSequenceDetector (`liquidity_engine/grader/sequence.py`)
+
+Pure and stateless; it reads only the candles passed in. For each timeframe that holds an entry-eligible array, per `analyze()` call:
+
+1. **Pools.**
+   - Swing highs and lows (lookback 2) on every timeframe. `known_at` is the open of the bar at index `i + 3`; swings without that bar are skipped.
+   - Previous day, week and month high and low. `known_at` is the open of the period's last bar.
+
+   Each pool records its side, source, timeframe, price, `formed_at` and `known_at`.
+2. **Raids**, per pool:
+   - On the entry timeframe: the first bar opening at or after `known_at` that trades beyond the price.
+   - On every other timeframe: the first breaching bar that opened at or after `known_at` and whose successor opened by the raid bar's open (it closed before the raid).
+   - If such a bar exists, the pool was taken earlier and has no raid in the window.
+
+   Each scan stops at its first breach.
+3. **Per-bar precomputation on the entry timeframe:**
+   - the bars where a confirmed bullish or bearish CISD has its violation candle (`CISDDetector.detect` on each prefix);
+   - the suffix minimum of lows and suffix maximum of highs;
+   - for each raid, the first close back beyond the pool.
+4. **Per entry-eligible array** (unfilled, M15 and below, on that timeframe):
+   - Take the raids on the opposite side with `raided_at ≤ formed_at`, most recent first.
+   - The first raid that has a reclaim, a CISD in its direction after the raid, and an intact protected swing forms the sequence.
+   - The protected swing is the minimum low (bullish) from the raid bar to the array's bar; intact means the suffix minimum after it is not below it.
+   - The leg's far extreme is the suffix maximum (bullish) from the raid bar.
+5. **Selection** (18.8): sort the candidate sequences by the tuple (raid time, pool weight, strength, formed_at, array_id); the largest wins.
+
+Cost: pools × bars per timeframe for the raid scans, with early exit, plus one CISD pass. Expected to stay within Requirement 1.7; measured at the checkpoint (task 232) against task 199's 33 ms per M15 close.
+
+### Models (`liquidity_engine/models.py`)
+
+```python
+class LiquiditySource:                    # + SWING_HIGH, SWING_LOW
+class LiquidityPool(BaseModel):  side: LiquidityType; source: LiquiditySource; timeframe: Timeframe
+                                 price: float; formed_at: datetime; known_at: datetime
+class LiquidityRaid(BaseModel):  pool: LiquidityPool; raided_at: datetime; reclaimed_at: datetime
+class ProtectedSwing(BaseModel): candle_at: datetime; wick: float; body: float; candle_range: float
+class SetupSequence(BaseModel):  entry_array_id: str; direction: BiasDirection; raid: LiquidityRaid
+                                 cisd_at: datetime; protected_swing: ProtectedSwing
+                                 leg_extreme: float          # far end of the leg from the protected wick
+LiquidityMap.setup_sequence: Optional[SetupSequence] = None
+SetupGradeDetail.protected_swing_body_stop: Optional[float] = None
+SetupGradeDetail.counter_trend: bool = False
+```
+
+### SetupGrader changes
+
+| Rule | Change |
+|---|---|
+| Entry array | `_select_entry_array` returns the sequence's array when present; else the old strongest-type choice, used only in the grade reason |
+| `liquidity_sweep_confirmed` | `setup_sequence is not None` |
+| `stop_placement_valid` | A sequence exists and the wick stop is beyond the entry array's far boundary |
+| Gate | `NO_TRADE` without a sequence (checked with the HTF bias and draw-on-liquidity gates) |
+| Counter-trend | After grading: if the array direction differs from the D1 bias and the grade is A+ or A, it becomes B and `counter_trend = True` |
+| Stops | Wick and body stops with the 10% buffer of the protected bar's range |
+| Grade reason | Names the raid (pool source, timeframe, price, time), the protected swing, and any gate or cap |
+
+### Engine changes
+
+- **Marking swept levels.** For each level, the earliest bar (any timeframe) opening after `formed_at` that trades beyond it sets `swept` and `swept_at`. `_find_draw_on_liquidity` already filters on `swept`.
+- **SD projection.** `StandardDeviationCalculator().project()` takes the setup leg: for a bullish sequence `swing_high = leg_extreme` and `swing_low = wick`; mirrored for bearish. It is `None` without a sequence.
+
+### Order derivation (`agent/order_intent.py`, `agent/strategy_config.py`)
+
+- `StrategyConfig.stop_mode: StopMode = StopMode.WICK` (`WICK` / `BODY`), and `tp_levels` defaults to `(2.0, 2.5)`. Both are in the strategy fingerprint, so each stop mode is its own Phase A cache entry and its own backtest variant (`[variants.stop_body] strategy.stop_mode = "BODY"`).
+- **Direction:** `LONG` when `setup_sequence.direction` is bullish.
+- **Stop:** `suggested_stop` (WICK) or `protected_swing_body_stop` (BODY). Not beyond the entry → `NoTrade(reason="INVALID_STOP")`.
+- `_pick_sd_targets` is unchanged: the SD projection now lands in the sequence's direction by construction, and the draw-on-liquidity fallback remains.
+
+### Report (`algo_backtester/signals.py`, `report_html.py`)
+
+- **`TradeContext`:**
+  - `swept_level` = `{side, source, timeframe, price, formed_at, raided_at}`;
+  - new `protected_swing` = `{wick, body, candle_at}`.
+- **The M15 chart draws:**
+  - the raided pool as a dotted line from `formed_at` to the raid, labelled with source and timeframe;
+  - the protected swing as a marker on its bar.
+
+### Measurement (task 233)
+
+1. Same study (`baseline-2026q3`), data and pass mark as the baseline.
+2. Run `base.toml` (stop `WICK`) and `--variant stop_body`. Phase A recomputes: the engine fingerprint changed.
+3. `compare` each run with the baseline run `5d241691c701`.
+4. Results, against the pass mark, go in `docs/backtests/SETUP_SEQUENCE.md`, including:
+   - the `RR_BELOW_MIN` and `INVALID_STOP` counts;
+   - the share of stops narrower than 2× the spread.
+5. The hold-out stays unused.
