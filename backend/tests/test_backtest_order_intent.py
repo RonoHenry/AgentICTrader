@@ -3,8 +3,11 @@ Tests for agent/order_intent.py — the order the live runner and the
 backtester derive from a graded setup.
 
 Tasks 189 (deterministic setup_id) and 190 (build_order_intent, moved out
-of scripts/run_live_agent.py) in .kiro/specs/algo-backtester/tasks.md.
-Validates: Requirements 1.2, 1.3 (.kiro/specs/algo-backtester/requirements.md)
+of scripts/run_live_agent.py) in .kiro/specs/algo-backtester/tasks.md, and
+task 231 in .kiro/specs/liquidity-engine/tasks.md (direction, stop mode and
+targets from the setup sequence).
+Validates: Requirements 1.2, 1.3 (.kiro/specs/algo-backtester/requirements.md);
+Requirement 19 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
 
@@ -18,23 +21,25 @@ from typing import Optional
 import pytest
 
 from agent.order_intent import NoTrade, OrderIntent, build_order_intent, setup_id_for
-from agent.strategy_config import StrategyConfig
+from agent.strategy_config import StopMode, StrategyConfig
 from liquidity_engine import LiquidityMappingEngine
 from liquidity_engine.models import (
     BiasDirection,
     Candle,
+    PDArrayType,
     SDProjection,
     SetupGrade,
     SetupGradeDetail,
+    SetupSequence,
     Timeframe,
 )
 from tests.test_liquidity_engine_perf import FIXTURES, _load
-from tests.test_liquidity_grader import full_liquidity_map, make_level
+from tests.test_liquidity_grader import full_liquidity_map, make_level, make_pdarray, make_sequence
 
 GOLDEN_MESSAGE = Path(__file__).parent / "fixtures" / "backtester" / "order_intent" / "EURUSD_M5_message.json"
 GOLDEN_SOURCE = ("build_order_intent(...).to_message('AUTONOMOUS') on engine_windows/EURUSD_M5.json.gz at its "
                  "timestamp, live default StrategyConfig with entry_tf M5; setup_id and candles_by_tf left out. "
-                 "Re-baselined by the setup-sequence grader (liquidity-engine tasks 228-230); first captured from "
+                 "Re-baselined by the setup-sequence grader and order derivation (liquidity-engine tasks 228-231); first captured from "
                  "scripts/run_live_agent.py before task 190 (commit 24fc14a)")
 AS_OF = datetime(2026, 1, 14, 14, 0, tzinfo=timezone.utc)  # 09:00 New York: NY AM killzone
 
@@ -79,7 +84,8 @@ def test_setup_id_requires_an_entry_array():
 
 # ── build_order_intent (task 190) ──────────────────────────────────────────
 
-def _grade(grade=SetupGrade.A, entry=1.1000, stop=1.0990, array_id="m5-fvg") -> SetupGradeDetail:
+def _grade(grade=SetupGrade.A, entry=1.1000, stop=1.0990, array_id="m5-fvg", body=None) -> SetupGradeDetail:
+    # The body stop sits between the wick stop and the entry, as the grader places it.
     return SetupGradeDetail(
         grade=grade, conditions_met=7,
         htf_bias_confirmed=True, draw_on_liquidity_identified=True, liquidity_sweep_confirmed=True,
@@ -89,13 +95,32 @@ def _grade(grade=SetupGrade.A, entry=1.1000, stop=1.0990, array_id="m5-fvg") -> 
         entry_array_high=max(entry, stop), entry_array_low=min(entry, stop),
         entry_array_direction=BiasDirection.BULLISH if stop < entry else BiasDirection.BEARISH,
         entry_array_id=array_id,
+        protected_swing_body_stop=stop + 0.4 * (entry - stop) if body is None else body,
     )
 
 
-def _map(grade: Optional[SetupGradeDetail], draw: float = 1.1050, sd: Optional[SDProjection] = None):
+_FROM_GRADE = object()
+
+
+def _sequence_for(grade: Optional[SetupGradeDetail]) -> Optional[SetupSequence]:
+    """The setup sequence the grader read: on the grade's entry array, in its direction."""
+    if grade is None:
+        return None
+    array = make_pdarray(PDArrayType.FVG, grade.entry_array_direction, grade.entry_array_high,
+                         grade.entry_array_low, array_id=grade.entry_array_id)
+    return make_sequence(array)
+
+
+def _map(grade: Optional[SetupGradeDetail], draw: float = 1.1050, sd: Optional[SDProjection] = None,
+         sequence=_FROM_GRADE):
     return full_liquidity_map(
         instrument="EURUSD", setup_grade=grade, draw_on_liquidity=make_level(price=draw), sd_projection=sd,
+        setup_sequence=_sequence_for(grade) if sequence is _FROM_GRADE else sequence,
     )
+
+
+def _bearish(grade: SetupGradeDetail) -> SetupSequence:
+    return _sequence_for(grade.model_copy(update={"entry_array_direction": BiasDirection.BEARISH}))
 
 
 def _view(price: float = 1.1000) -> dict[Timeframe, list[Candle]]:
@@ -139,21 +164,77 @@ def test_rr_below_min_returns_rr_below_min():
     assert isinstance(build_order_intent(lm, _view(), "EURUSD", AS_OF, lower), OrderIntent)
 
 
-def test_direction_from_stop_vs_entry():
-    # D1 bias is BULLISH in full_liquidity_map; the stop's side decides anyway.
+def test_direction_from_setup_sequence():
+    # Requirement 19.2: the sequence's direction, not the stop's side or the D1
+    # bias (BULLISH in full_liquidity_map) decides.
     long = build_order_intent(_map(_grade(entry=1.1000, stop=1.0990), draw=1.1050), _view(), "EURUSD", AS_OF, CFG)
     short = build_order_intent(_map(_grade(entry=1.1000, stop=1.1010), draw=1.0950), _view(), "EURUSD", AS_OF, CFG)
     assert (long.direction, short.direction) == ("LONG", "SHORT")
     assert long.regime == short.regime == "TRENDING_BULLISH"
 
+    # A stop below the entry no longer makes it a LONG: the bearish sequence decides, so it's INVALID_STOP.
+    flipped = build_order_intent(_map(_grade(entry=1.1000, stop=1.0990), sequence=_bearish(_grade())),
+                                 _view(), "EURUSD", AS_OF, CFG)
+    assert isinstance(flipped, NoTrade) and flipped.reason == "INVALID_STOP"
+
+
+def test_tradeable_grade_needs_a_setup_sequence():
+    # The grader never grades a setup without one (Requirement 18.9); a map that does is malformed.
+    with pytest.raises(ValueError, match="setup sequence"):
+        build_order_intent(_map(_grade(), sequence=None), _view(), "EURUSD", AS_OF, CFG)
+
+
+def test_stop_mode_wick_uses_suggested_stop():
+    grade = _grade(entry=1.1000, stop=1.0990, body=1.0994)
+    assert CFG.stop_mode is StopMode.WICK
+    intent = build_order_intent(_map(grade, draw=1.1050), _view(), "EURUSD", AS_OF, CFG)
+    assert (intent.direction, intent.stop_loss) == ("LONG", 1.0990)
+    assert intent.r_ratio == pytest.approx(0.0050 / 0.0010)
+
+
+def test_stop_mode_body_uses_body_stop():
+    grade = _grade(entry=1.1000, stop=1.0990, body=1.0994)
+    body = StrategyConfig(entry_tf=Timeframe.M5, stop_mode="BODY")
+    intent = build_order_intent(_map(grade, draw=1.1050), _view(), "EURUSD", AS_OF, body)
+    assert (intent.direction, intent.stop_loss) == ("LONG", 1.0994)
+    assert intent.r_ratio == pytest.approx(0.0050 / 0.0006)
+
+    short = _grade(entry=1.1000, stop=1.1010, body=1.1004)
+    assert build_order_intent(_map(short, draw=1.0950), _view(), "EURUSD", AS_OF, body).stop_loss == 1.1004
+
+
+@pytest.mark.parametrize("stop_mode, stop, body", [
+    ("WICK", 1.1000, 1.0995),    # the stop on the entry
+    ("WICK", 1.1010, 1.1005),    # a LONG with its stop above the entry
+    ("BODY", 1.0990, 1.1002),    # the body stop beyond the entry
+    ("BODY", 1.0990, None),      # no body stop recorded
+])
+def test_invalid_stop_is_no_trade(stop_mode, stop, body):
+    # Requirement 19.3: the chosen stop must be beyond the entry in the trade direction.
+    grade = _grade(entry=1.1000, stop=1.0990).model_copy(
+        update={"suggested_stop": stop, "protected_swing_body_stop": body})
+    cfg = StrategyConfig(entry_tf=Timeframe.M5, stop_mode=stop_mode)
+    result = build_order_intent(_map(grade, draw=1.1050), _view(), "EURUSD", AS_OF, cfg)
+    assert isinstance(result, NoTrade)
+    assert (result.grade, result.reason, result.r_ratio) == ("A", "INVALID_STOP", None)
+    assert stop_mode in result.detail
+
+
+def test_default_tp_levels():
+    # Requirement 19.4: TP1 at 2.0 SD of the setup leg; TP2 (recorded, not traded) at 2.5.
+    assert StrategyConfig().tp_levels == (2.0, 2.5)
+    sd = SDProjection(anchor_0=1.1010, anchor_1=1.0980, targets={2.0: 1.1070, 2.5: 1.1085, 4.0: 1.1130})
+    intent = build_order_intent(_map(_grade(), draw=1.1050, sd=sd), _view(), "EURUSD", AS_OF, CFG)
+    assert (intent.take_profit_1, intent.take_profit_2) == (1.1070, 1.1085)
+
 
 def test_sd_target_used_when_on_correct_side_else_draw_on_liquidity():
     grade = _grade(entry=1.1000, stop=1.0990)
-    above = SDProjection(anchor_0=1.1010, anchor_1=1.0980, targets={2.5: 1.1085, 4.0: 1.1130})
-    below = SDProjection(anchor_0=1.0980, anchor_1=1.1010, targets={2.5: 1.0905, 4.0: 1.0860})
+    above = SDProjection(anchor_0=1.1010, anchor_1=1.0980, targets={2.0: 1.1070, 2.5: 1.1085, 4.0: 1.1130})
+    below = SDProjection(anchor_0=1.0980, anchor_1=1.1010, targets={2.0: 1.0920, 2.5: 1.0905, 4.0: 1.0860})
 
     with_sd = build_order_intent(_map(grade, draw=1.1050, sd=above), _view(), "EURUSD", AS_OF, CFG)
-    assert (with_sd.take_profit_1, with_sd.take_profit_2) == (1.1085, 1.1130)
+    assert (with_sd.take_profit_1, with_sd.take_profit_2) == (1.1070, 1.1085)
 
     # A LONG can't target below entry: fall back to the draw on liquidity, no TP2.
     wrong_side = build_order_intent(_map(grade, draw=1.1050, sd=below), _view(), "EURUSD", AS_OF, CFG)
@@ -231,7 +312,7 @@ def test_runner_delegates_to_build_order_intent(monkeypatch):
     assert summary == {"instrument": "EURUSD", "grade": "A", "decision": None, "trade_id": "t-1"}
 
 
-@pytest.mark.parametrize("min_rr, decision", [(3.0, None), (8.0, "SKIP (R:R 7.07 < 8.0)")])
+@pytest.mark.parametrize("min_rr, decision", [(3.0, None), (8.0, "SKIP (R:R 5.92 < 8.0)")])
 def test_runner_summary_unchanged(min_rr, decision):
     import scripts.run_live_agent as runner
 

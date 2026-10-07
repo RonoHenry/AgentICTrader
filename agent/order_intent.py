@@ -11,7 +11,13 @@ per pass (task 189), so re-grading the same array on the next bar yields
 the same setup. That identity is what allows one attempt per setup (D6)
 and duplicate-order protection.
 
-Validates: Requirements 1.2, 1.3 (.kiro/specs/algo-backtester/requirements.md)
+The direction, stop and targets come from the setup sequence the grader
+read (liquidity-engine update 2026-10): the sequence's direction, the stop
+behind its protected swing (cfg.stop_mode), and TP1 at an SD level of its
+setup leg.
+
+Validates: Requirements 1.2, 1.3 (.kiro/specs/algo-backtester/requirements.md);
+Requirement 19 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
 
@@ -20,15 +26,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Optional
 
-from agent.strategy_config import StrategyConfig
-from liquidity_engine.models import Candle, LiquidityMap, SetupGrade, Timeframe
+from agent.strategy_config import StopMode, StrategyConfig
+from liquidity_engine.models import BiasDirection, Candle, LiquidityMap, SetupGrade, Timeframe
 from liquidity_engine.utils.id_utils import deterministic_id
 from ml.features.session_features import TimeFeatures, TimeWindowClassifier
 
 __all__ = ["NoTrade", "OrderIntent", "build_order_intent", "setup_id_for"]
 
 Direction = Literal["LONG", "SHORT"]
-NoTradeReason = Literal["NO_GRADE", "NO_TRADE", "RR_BELOW_MIN"]
+NoTradeReason = Literal["NO_GRADE", "NO_TRADE", "RR_BELOW_MIN", "INVALID_STOP"]
 
 
 @dataclass(frozen=True)
@@ -91,7 +97,7 @@ class OrderIntent:
 class NoTrade:
     instrument: str
     as_of: datetime
-    grade: str             # "NO_TRADE", or the letter grade that fell short of min R:R
+    grade: str             # "NO_TRADE", or the letter grade of a setup with no valid stop or short of min R:R
     reason: NoTradeReason
     detail: str = ""       # the grader's reason, or the R:R shortfall
     r_ratio: Optional[float] = None
@@ -125,20 +131,26 @@ def build_order_intent(
     if setup_grade.grade == SetupGrade.NO_TRADE:
         return NoTrade(instrument, as_of, "NO_TRADE", "NO_TRADE", setup_grade.grade_reason)
 
-    # A tradeable grade always has an entry array: without one, both the
-    # entry-array and stop-placement conditions fail, leaving at most 6/8.
-    entry = setup_grade.suggested_entry
-    stop_loss = setup_grade.suggested_stop
+    # A tradeable grade always has a setup sequence: the grader gates on it
+    # (liquidity-engine Req 18.9), and its array is the entry array.
+    sequence = liquidity_map.setup_sequence
+    if sequence is None:
+        raise ValueError(f"{instrument}: graded {setup_grade.grade.value} without a setup sequence")
 
-    # Direction must come from the entry/stop relationship itself, not the
-    # overall D1 bias: SetupGrader picks whichever unfilled PD array has the
-    # highest strength_score for suggested_entry/suggested_stop, and that
-    # array's own polarity (which can be a countertrend micro-structure
-    # array) — not the D1 bias — is what _suggested_stop actually places the
-    # stop relative to (BEARISH array -> stop above entry; BULLISH -> stop
-    # below). Inferring from D1 bias instead caused a stop placed on the
-    # wrong side of entry, which MT5 correctly rejected.
-    direction: Direction = "LONG" if stop_loss < entry else "SHORT"
+    # The direction is the sequence's (Req 19.2), not the D1 bias: a
+    # counter-trend setup trades against it, capped at B. (It was inferred
+    # from the stop's side of the entry.)
+    direction: Direction = "LONG" if sequence.direction == BiasDirection.BULLISH else "SHORT"
+    entry = setup_grade.suggested_entry
+    stop_loss = (setup_grade.suggested_stop if cfg.stop_mode == StopMode.WICK
+                 else setup_grade.protected_swing_body_stop)
+    stop_beyond_entry = stop_loss is not None and (stop_loss < entry if direction == "LONG" else stop_loss > entry)
+    if not stop_beyond_entry:
+        return NoTrade(
+            instrument, as_of, setup_grade.grade.value, "INVALID_STOP",
+            f"{cfg.stop_mode.value} stop {stop_loss} is not beyond the {direction} entry {entry}",
+        )
+
     take_profit_1, take_profit_2 = _pick_sd_targets(liquidity_map, entry, direction, cfg.tp_levels)
     r_ratio = abs(take_profit_1 - entry) / abs(entry - stop_loss)
 
@@ -182,12 +194,11 @@ def _pick_sd_targets(
     """Standard Deviation projection targets replace the earlier crude
     draw_on_liquidity.price stand-in used for take_profit_1.
 
-    Falls back to draw_on_liquidity.price (TP2 left unset) when
-    sd_projection is unavailable (no displacement leg found), or when its
-    direction — derived from D1 bias inside the engine — disagrees with
-    this trade's actual direction (derived from the entry array itself,
-    which can differ from D1 bias, see the direction-inference comment
-    above) and would land the target on the wrong side of entry.
+    The projection is anchored on the setup leg in the sequence's direction
+    (liquidity-engine Req 18.15), so TP1 lands beyond the entry by
+    construction. Falls back to draw_on_liquidity.price (TP2 left unset)
+    when sd_projection is unavailable or its TP1 would still land on the
+    wrong side of the entry.
     """
     sd = liquidity_map.sd_projection
     if sd is not None:

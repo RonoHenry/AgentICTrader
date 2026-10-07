@@ -1,5 +1,5 @@
 {
-  "source": "build_order_intent(...).to_message('AUTONOMOUS') on engine_windows/EURUSD_M5.json.gz at its timestamp, live default StrategyConfig with entry_tf M5; setup_id and candles_by_tf left out. Re-baselined by the setup-sequence grader (liquidity-engine tasks 228-230); first captured from scripts/run_live_agent.py before task 190 (commit 24fc14a)",
+  "source": "build_order_intent(...).to_message('AUTONOMOUS') on engine_windows/EURUSD_M5.json.gz at its timestamp, live default StrategyConfig with entry_tf M5; setup_id and candles_by_tf left out. Re-baselined by the setup-sequence grader and order derivation (liquidity-engine tasks 228-231); first captured from scripts/run_live_agent.py before task 190 (commit 24fc14a)",
   "message": {
     "instrument": "EURUSD",
     "timeframe": "M5",
@@ -21,9 +21,9 @@
     "trade_plan": {
       "entry": 1.1209896000000001,
       "stop_loss": 1.1220560000000002,
-      "take_profit_1": 1.1134549999999999,
-      "take_profit_2": 1.1097799999999998,
-      "r_ratio": 7.065453863465978,
+      "take_profit_1": 1.11468,
+      "take_profit_2": 1.1134549999999999,
+      "r_ratio": 5.91672918229568,
       "recommended_size": 0.01
     },
     "time_window": "NY_AM_KILLZONE",

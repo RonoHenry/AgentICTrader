@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from agent.strategy_config import PendingExpiry, StrategyConfig
+from agent.strategy_config import PendingExpiry, StopMode, StrategyConfig
 from algo_backtester.config import (
     HoldoutOverlapError,
     RunConfig,
@@ -79,6 +79,15 @@ def test_variant_dotted_key_override(tmp_path):
 
     with pytest.raises(ValueError, match="min_rr_5"):  # names the variants that do exist
         load_run_config(write(tmp_path), variant="min_rr_6")
+
+
+def test_stop_body_variant_in_base_config():
+    # The variant task 233 measures against the default WICK stop (liquidity-engine Req 19.1).
+    base_toml = Path(__file__).resolve().parents[2] / "config" / "backtests" / "base.toml"
+    base = load_run_config(base_toml)
+    body = load_run_config(base_toml, variant="stop_body")
+    assert (base.strategy.stop_mode, body.strategy.stop_mode) == (StopMode.WICK, StopMode.BODY)
+    assert body.model_copy(update={"variant": None, "strategy": base.strategy}) == base
 
 
 @pytest.mark.parametrize("edit, key", [

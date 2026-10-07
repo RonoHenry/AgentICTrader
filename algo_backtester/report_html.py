@@ -25,12 +25,16 @@ small inline script. No library, server or network is needed (Req 11.1).
 
 Each row with a setup gets a chart window (Req 11.5). It runs from
 ``bars_before`` bars before the decision bar to ``bars_after`` bars after the
-bar of its close, or of the decision when it never closed. The chart marks:
+bar of its close, or of the decision when it never closed. When the setup's
+raid or protected swing is earlier, it starts 8 bars before that instead.
+The chart marks:
 - the decision, and for an order the position tool: its reward (entry to
   target) and risk (entry to stop) boxes from the fill, or the placement when
   it never filled, to the exit or expiry, with R and money labels, the path
   from fill to exit and the result; for a skipped intent, its levels;
-- the entry array, the draw on liquidity and the swept level, where recorded;
+- the entry array and the draw on liquidity, and the setup sequence's raided
+  pool (a dotted line from where it formed to the raid) and protected swing,
+  where recorded;
 - the killzones, shaded.
 A filled order also gets its M1 close-up, with the ask (bid + spread) drawn:
 fills, stops and targets trigger on the side the fill model uses. A link
@@ -67,6 +71,7 @@ UTC = timezone.utc
 _NY = ZoneInfo("America/New_York")
 _MINUTES = {Timeframe.M1: 1, Timeframe.M3: 3, Timeframe.M5: 5, Timeframe.M15: 15}   # entry timeframes
 _FILTERS = ("outcome", "decision", "instrument", "grade", "killzone")
+_BARS_BEFORE_RAID = 8   # a chart window reaching back to the raid shows this many bars before it
 
 
 # ── what a run records for its report ──────────────────────────────────────
@@ -93,11 +98,12 @@ def write_report_inputs(run_dir: Path, journal: Sequence[JournalRow], candles: M
         if row.intent is None:
             continue
         end = row.trade.closed_at if row.trade is not None else row.t
-        lo, hi = spans.get(row.instrument, (row.t, end))
-        spans[row.instrument] = (min(lo, row.t), max(hi, end))
+        start = min(row.t, _setup_start(asdict(row.context) if row.context is not None else None) or row.t)
+        lo, hi = spans.get(row.instrument, (start, end))
+        spans[row.instrument] = (min(lo, start), max(hi, end))
     cut = {}
     for instrument, (first, last) in sorted(spans.items()):
-        lo, hi = first - (bars_before + 2) * step, last + (bars_after + 2) * step
+        lo, hi = first - (max(bars_before, _BARS_BEFORE_RAID) + 2) * step, last + (bars_after + 2) * step
         cut[instrument] = [[_iso(b.timestamp), b.open, b.high, b.low, b.close]
                            for b in candles.get(instrument, ()) if lo <= b.timestamp <= hi]
     body = {"timeframe": entry_tf.value, "bars_before": bars_before, "bars_after": bars_after, "instruments": cut}
@@ -235,9 +241,17 @@ def _row(n: int, *, t: datetime, instrument: str, setup_id, grade, decision: str
         "exit": [_iso(exit_at), exit_price] if exit_at is not None and exit_price is not None else None,
         "closed": _iso(exit_at) if exit_at is not None else None,
     }
-    row["window"] = charts.window(instrument, t, exit_at)
+    row["window"] = charts.window(instrument, t, exit_at, since=_setup_start(context))
     row["bands"] = charts.killzones(row["window"]) if row["window"] else []
     return row
+
+
+def _setup_start(context: Optional[Mapping[str, Any]]) -> Optional[datetime]:
+    """The earlier of the setup's raid and protected swing bar, where recorded."""
+    if not context:
+        return None
+    times = [(context.get("swept_level") or {}).get("raided_at"), (context.get("protected_swing") or {}).get("candle_at")]
+    return min((datetime.fromisoformat(v) for v in times if v), default=None)
 
 
 class _Charts:
@@ -250,13 +264,16 @@ class _Charts:
         self.bars = candles["instruments"]
         self._times = {i: [datetime.fromisoformat(b[0]) for b in bars] for i, bars in self.bars.items()}
 
-    def window(self, instrument: str, decision: datetime, closed: Optional[datetime]) -> Optional[list[str]]:
+    def window(self, instrument: str, decision: datetime, closed: Optional[datetime],
+               since: Optional[datetime] = None) -> Optional[list[str]]:
         times = self._times.get(instrument)
         if not times:
             return None
         decided = max(0, bisect_left(times, decision) - 1)              # the bar closing at the decision
         ended = bisect_right(times, closed) - 1 if closed is not None else decided
         lo, hi = max(0, decided - self.before), min(len(times) - 1, max(decided, ended) + self.after)
+        if since is not None:                                           # 8 bars before the raid, if earlier
+            lo = max(0, min(lo, bisect_right(times, since) - 1 - _BARS_BEFORE_RAID))
         return [_iso(times[lo]), _iso(times[hi])]
 
     def killzones(self, window: Sequence[str]) -> list[list[str]]:
@@ -439,10 +456,10 @@ _PAGE = """<!doctype html>
 <style>
 :root { --bg:#fff; --fg:#1d2329; --muted:#6b7480; --line:#d9dee4; --panel:#f5f7f9; --up:#1a7f5a; --down:#c23b3b;
   --entry:#2563eb; --stop:#c23b3b; --target:#1a7f5a; --band:rgba(250,190,40,.13); --array:rgba(37,99,235,.13);
-  --dol:#8b5cf6; --sel:#e8eefc; --reward:rgba(26,127,90,.16); --risk:rgba(194,59,59,.16); }
+  --dol:#8b5cf6; --raid:#c2410c; --sel:#e8eefc; --reward:rgba(26,127,90,.16); --risk:rgba(194,59,59,.16); }
 @media (prefers-color-scheme: dark) { :root { --bg:#14181c; --fg:#e3e7eb; --muted:#9aa4ae; --line:#2c333a;
   --panel:#1b2026; --up:#3fbf8a; --down:#ef6b6b; --entry:#6c9cff; --stop:#ef6b6b; --target:#3fbf8a;
-  --band:rgba(250,190,40,.10); --array:rgba(108,156,255,.16); --dol:#b794f6; --sel:#243049;
+  --band:rgba(250,190,40,.10); --array:rgba(108,156,255,.16); --dol:#b794f6; --raid:#fb923c; --sel:#243049;
   --reward:rgba(63,191,138,.18); --risk:rgba(239,107,107,.18); } }
 body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
   font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
@@ -473,6 +490,8 @@ select, button { font:inherit; background:var(--panel); color:var(--fg); border:
 .lbl-entry { fill:var(--entry); } .lbl-stop { fill:var(--stop); } .lbl-target { fill:var(--target); }
 .band { fill:var(--band); } .array { fill:var(--array); stroke:var(--entry); stroke-dasharray:3 3; }
 .dol { stroke:var(--dol); stroke-dasharray:6 4; } .lbl-dol { fill:var(--dol); }
+.raid { stroke:var(--raid); stroke-width:1.5; stroke-dasharray:1 3; stroke-linecap:round; } svg text.lbl-raid { fill:var(--raid); }
+.protected { fill:none; stroke:var(--raid); stroke-width:1.6; }
 .decision { stroke:var(--fg); stroke-dasharray:2 3; opacity:.6; }
 .fill { fill:var(--entry); } .exit { stroke:var(--fg); stroke-width:2; }
 .pos-reward { fill:var(--reward); stroke:var(--target); stroke-opacity:.6; }
@@ -570,7 +589,8 @@ svg text.tag { font-weight:600; fill:var(--fg); } svg text.pos { fill:var(--up);
       ["R", r.net_r == null ? "" : `gross ${num(r.gross_r, 2)}, net ${num(r.net_r, 2)}, costs ${num(r.cost_r, 2)}`],
       ["entry array", c.entry_array ? `${c.entry_array.type} ${c.entry_array.direction} ${c.entry_array.timeframe} ${c.entry_array.low}-${c.entry_array.high}, formed ${c.entry_array.formed_at}` : ""],
       ["draw on liquidity", c.draw_on_liquidity ? `${c.draw_on_liquidity.type} ${c.draw_on_liquidity.source} ${c.draw_on_liquidity.price}` : ""],
-      ["swept level", c.swept_level ? JSON.stringify(c.swept_level) : ""],
+      ["raid", c.swept_level ? `${c.swept_level.side} ${c.swept_level.source} ${c.swept_level.timeframe} ${c.swept_level.price}, formed ${c.swept_level.formed_at}, raided ${c.swept_level.raided_at}` : ""],
+      ["protected swing", c.protected_swing ? `wick ${c.protected_swing.wick}, body ${c.protected_swing.body}, bar ${c.protected_swing.candle_at}` : ""],
       ["link", "report.html#" + link(r)]];
     document.getElementById("info").innerHTML = "<dl>" + items.filter(([, v]) => v)
       .map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("") + "</dl>";
@@ -578,7 +598,8 @@ svg text.tag { font-weight:600; fill:var(--fg); } svg text.pos { fill:var(--up);
   const link = r => r.order_id ? `order=${r.order_id}` : `row=${r.id}`;
 
   // One candle chart. bars: [t, open, high, low, close(, spread)], oldest first. The context chart also
-  // draws the entry array and the draw on liquidity; a chart with spreads (M1) draws the ask.
+  // draws the entry array, the draw on liquidity, the raided pool and the protected swing; a chart with
+  // spreads (M1) draws the ask.
   function chart(r, bars, tf, context) {
     const n = bars.length;
     if (!n) return "<p>No candles recorded for this window.</p>";
@@ -586,6 +607,8 @@ svg text.tag { font-weight:600; fill:var(--fg); } svg text.pos { fill:var(--up);
     const m = r.markers, c = context ? ctx(r) : {}, ask = b => b[5] || 0;
     const levels = [m.entry, m.stop, m.target].filter(v => v != null);
     if (c.entry_array) levels.push(c.entry_array.high, c.entry_array.low);
+    if (c.swept_level) levels.push(c.swept_level.price);
+    if (c.protected_swing) levels.push(c.protected_swing.wick);
     let lo = Math.min(...bars.map(b => b[3]), ...levels), hi = Math.max(...bars.map(b => b[2] + ask(b)), ...levels);
     const dol = c.draw_on_liquidity && c.draw_on_liquidity.price;
     if (dol != null && dol > lo - (hi - lo) && dol < hi + (hi - lo)) { lo = Math.min(lo, dol); hi = Math.max(hi, dol); }
@@ -606,12 +629,32 @@ svg text.tag { font-weight:600; fill:var(--fg); } svg text.pos { fill:var(--up);
     if (dol != null && dol >= lo && dol <= hi) {
       out.push(`<line class="dol" x1="${L}" x2="${L + pw}" y1="${y(dol)}" y2="${y(dol)}"/><text class="lbl-dol" x="${L + pw + 4}" y="${y(dol) + 4}">DOL ${esc(c.draw_on_liquidity.source)}</text>`);
     }
+    // The raid and the protected swing sit by the stop, where the position tool puts its labels (on the stop's
+    // far side), so their labels stack on the entry side: [x, y, text] each, written once the candles are drawn.
+    const setupMarks = [];
+    if (c.swept_level && c.swept_level.raided_at >= first) {         // the raided pool, from where it formed to the raid
+      const s = c.swept_level, a = clampX(s.formed_at), b = Math.max(clampX(s.raided_at), a + step), py = y(s.price);
+      out.push(`<line class="raid" x1="${a}" x2="${b}" y1="${py}" y2="${py}"><title>${esc(s.side)} ${esc(s.source)} ${esc(s.timeframe)} ${s.price}, raided ${esc(s.raided_at)}</title></line>`);
+      setupMarks.push([b, py, `raid ${s.source} ${s.timeframe}`]);
+    }
     bars.forEach((b, i) => {
       const cx = L + (i + 0.5) * step, cls = b[4] >= b[1] ? "candle-up" : "candle-down";
       const top = y(Math.max(b[1], b[4])), h = Math.max(1, Math.abs(y(b[1]) - y(b[4])));
       out.push(`<line class="${cls}" x1="${cx}" x2="${cx}" y1="${y(b[2])}" y2="${y(b[3])}"/><rect class="${cls}" x="${cx - step * 0.35}" y="${top}" width="${step * 0.7}" height="${h}"/>`);
       if (ask(b)) out.push(`<line class="ask" x1="${cx + step * 0.45}" x2="${cx + step * 0.45}" y1="${y(b[2] + b[5])}" y2="${y(b[3] + b[5])}"><title>ask ${(b[3] + b[5]).toPrecision(6)}-${(b[2] + b[5]).toPrecision(6)}</title></line>`);
     });
+    if (c.protected_swing && c.protected_swing.candle_at >= first && c.protected_swing.candle_at <= last) {
+      const p = c.protected_swing, px = x(p.candle_at), py = y(p.wick);
+      out.push(`<circle class="protected" cx="${px}" cy="${py}" r="5"><title>protected swing: wick ${p.wick}, body ${p.body}, bar ${esc(p.candle_at)}</title></circle>`);
+      setupMarks.push([px, py, "protected swing"]);
+    }
+    if (setupMarks.length) {
+      const down = r.direction === "SHORT", y0 = setupMarks[0][1] + (down ? 18 : -10);   // a SHORT's entry is below
+      setupMarks.forEach(([mx, , text], k) => {
+        const room = mx - L > 150;                                   // read leftwards from the mark, unless at the edge
+        out.push(`<text class="halo lbl-raid" x="${room ? mx - 6 : mx + 8}" y="${y0 + (down ? 13 : -13) * k}" text-anchor="${room ? "end" : "start"}">${esc(text)}</text>`);
+      });
+    }
     if (m.decision >= first && m.decision <= last) {
       const d = x(m.decision) - step / 2;
       out.push(`<line class="decision" x1="${d}" x2="${d}" y1="${T}" y2="${T + ph}"><title>decision ${m.decision}</title></line>`);

@@ -14,14 +14,15 @@ from datetime import timedelta
 import pytest
 from pydantic import ValidationError
 
-from agent.strategy_config import PendingExpiry, StrategyConfig
+from agent.strategy_config import PendingExpiry, StopMode, StrategyConfig
 from liquidity_engine.models import SetupGrade, Timeframe as TF
 
 
 def test_defaults_equal_current_runner_constants():
     # Today's values in scripts/run_live_agent.py (_CANDLE_COUNT,
     # _GRADE_TO_CONFIDENCE, --min-rr, _TP1/_TP2_SD_LEVEL, CONTEXT_TIMEFRAMES,
-    # ENTRY_TIMEFRAME). Changing a default changes live behaviour.
+    # ENTRY_TIMEFRAME). Changing a default changes live behaviour. tp_levels
+    # and stop_mode follow the setup-sequence update (liquidity-engine Req 19).
     cfg = StrategyConfig()
 
     assert cfg.entry_tf is TF.M15
@@ -33,7 +34,8 @@ def test_defaults_equal_current_runner_constants():
     }
     assert cfg.min_rr == 3.0
     assert dict(cfg.grade_confidence) == {SetupGrade.A_PLUS: 0.90, SetupGrade.A: 0.80, SetupGrade.B: 0.70}
-    assert cfg.tp_levels == (2.5, 4.0)
+    assert cfg.tp_levels == (2.0, 2.5)
+    assert cfg.stop_mode is StopMode.WICK
 
 
 def test_pending_expiry_default_killzone_end_with_3h_fallback():
@@ -58,6 +60,7 @@ def test_entry_tf_and_window_sizes_accept_string_values():
     ({"min_rr": -1}, "min_rr"),
     ({"tp_levels": (4.0, 2.5)}, "tp_levels"),           # TP1 before TP2
     ({"tp_levels": ()}, "tp_levels"),
+    ({"stop_mode": "MIDPOINT"}, "stop_mode"),           # WICK or BODY
     ({"grade_confidence": {"A+": 1.5, "A": 0.8, "B": 0.7}}, "grade_confidence"),
     ({"grade_confidence": {"A+": 0.9, "A": 0.8, "B": 0.7, "NO_TRADE": 0.1}}, "NO_TRADE"),
     ({"fallback_ttl_minutes": 0}, "fallback_ttl_minutes"),
@@ -85,6 +88,7 @@ _CHANGED = {
     "min_rr": 5.0,
     "grade_confidence": {SetupGrade.A_PLUS: 0.95, SetupGrade.A: 0.80, SetupGrade.B: 0.70},
     "tp_levels": (2.5, 4.5),
+    "stop_mode": StopMode.BODY,
     "pending_expiry": PendingExpiry.FIXED_TTL,
     "fallback_ttl_minutes": 181,
 }

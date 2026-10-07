@@ -40,7 +40,8 @@ def trade(net_r: float, gross_r: float, minutes: int = 60, at: datetime = T0, di
 
 
 def row(t: ClosedTrade, grade: str = "A", killzone="NY_AM", time_window: str = "NY_AM_KILLZONE") -> JournalRow:
-    context = TradeContext(entry_array=None, draw_on_liquidity=None, swept_level=None, killzone=killzone)
+    context = TradeContext(entry_array=None, draw_on_liquidity=None, swept_level=None, protected_swing=None,
+                           killzone=killzone)
     return JournalRow(t=t.placed_at, instrument=t.instrument, decision="EXECUTE", reason="", grade=grade,
                       intent=None, context=context, order_id=t.order_id, trade=t,
                       time_window=time_window)

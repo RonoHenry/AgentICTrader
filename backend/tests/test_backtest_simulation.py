@@ -140,9 +140,11 @@ def test_no_trade_and_engine_error_records_journaled():
     no_trade = SignalRecord(T0, "EURUSD", NoTrade("EURUSD", T0, "A", "RR_BELOW_MIN", "R:R 2.10 is below the 3.0 floor", 2.1))
     graded_out = SignalRecord(T0 + 15 * MIN, "EURUSD", NoTrade("EURUSD", T0 + 15 * MIN, "NO_TRADE", "NO_TRADE", "5/8"))
     error = SignalRecord(T0 + 30 * MIN, "EURUSD", EngineError("ValueError", "boom"))
-    result = run({"EURUSD": flat("EURUSD")}, {"EURUSD": [no_trade, graded_out, error]})
+    bad_stop = SignalRecord(T0 + 45 * MIN, "EURUSD", NoTrade("EURUSD", T0 + 45 * MIN, "B", "INVALID_STOP", "WICK stop"))
+    result = run({"EURUSD": flat("EURUSD")}, {"EURUSD": [no_trade, graded_out, error, bad_stop]})
     assert [(r.decision, r.reason) for r in result.journal] == [
-        ("RR_BELOW_MIN", "R:R 2.10 is below the 3.0 floor"), ("NO_TRADE", "5/8"), ("ENGINE_ERROR", "ValueError: boom")]
+        ("RR_BELOW_MIN", "R:R 2.10 is below the 3.0 floor"), ("NO_TRADE", "5/8"), ("ENGINE_ERROR", "ValueError: boom"),
+        ("INVALID_STOP", "WICK stop")]
     assert result.journal[0].grade == "A" and result.trades == []
 
 

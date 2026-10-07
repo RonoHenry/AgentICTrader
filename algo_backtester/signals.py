@@ -16,7 +16,8 @@ A failure inside the engine or the order logic is recorded as an EngineError
 and counted, not raised: one bad bar mustn't end a year-long run.
 
 An order intent's record also carries a TradeContext: what the engine saw at
-t (the entry array it chose, the draw on liquidity, the killzone), so the run
+t (the entry array it chose, the draw on liquidity, the raid and protected
+swing of its setup sequence, the killzone), so the run
 report can draw each setup from the run's own records without re-running the
 engine (Req 11.5, 11.6). No-trade records carry none, which keeps the cache
 small.
@@ -25,7 +26,8 @@ Records are cached between runs (algo_backtester/cache.py) as JSON lines:
 ``record.to_json()`` and ``SignalRecord.from_json()`` restore a record
 exactly, types included.
 
-Validates: Requirements 1.1, 2.1-2.6, 9.2, 11.5, 11.6 (.kiro/specs/algo-backtester/requirements.md)
+Validates: Requirements 1.1, 2.1-2.6, 9.2, 11.5, 11.6 (.kiro/specs/algo-backtester/requirements.md);
+Requirement 19.5 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
 
@@ -80,7 +82,8 @@ class TradeContext:
     are JSON-ready (times as ISO strings), as the report draws them."""
     entry_array: Optional[dict]        # type, direction, timeframe, high, low, formed_at
     draw_on_liquidity: Optional[dict]  # type (BSL/SSL), source, price, formed_at
-    swept_level: Optional[dict]        # the opposite-side raid; None until the grader records it
+    swept_level: Optional[dict]        # the raided pool: side (BSL/SSL), source, timeframe, price, formed_at, raided_at
+    protected_swing: Optional[dict]    # the bar the stop hides behind: wick, body, candle_at
     killzone: Optional[str]            # LONDON, NY_AM, NY_PM; None outside every killzone
 
 
@@ -88,6 +91,7 @@ def trade_context(liquidity_map: LiquidityMap, t: datetime) -> TradeContext:
     grade = liquidity_map.setup_grade
     array = next((a for a in liquidity_map.pd_arrays if grade and a.array_id == grade.entry_array_id), None)
     draw = liquidity_map.draw_on_liquidity
+    sequence = liquidity_map.setup_sequence
     killzone = get_killzone(t)
     return TradeContext(
         entry_array=None if array is None else {
@@ -98,7 +102,15 @@ def trade_context(liquidity_map: LiquidityMap, t: datetime) -> TradeContext:
             "type": draw.liquidity_type.value, "source": draw.source.value, "price": draw.price,
             "formed_at": draw.formed_at.isoformat(),
         },
-        swept_level=None,
+        swept_level=None if sequence is None else {
+            "side": sequence.raid.pool.side.value, "source": sequence.raid.pool.source.value,
+            "timeframe": sequence.raid.pool.timeframe.value, "price": sequence.raid.pool.price,
+            "formed_at": sequence.raid.pool.formed_at.isoformat(), "raided_at": sequence.raid.raided_at.isoformat(),
+        },
+        protected_swing=None if sequence is None else {
+            "wick": sequence.protected_swing.wick, "body": sequence.protected_swing.body,
+            "candle_at": sequence.protected_swing.candle_at.isoformat(),
+        },
         killzone=None if killzone == KillzoneWindow.NONE else killzone.value,
     )
 

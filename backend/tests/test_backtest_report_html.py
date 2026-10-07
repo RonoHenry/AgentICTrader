@@ -37,7 +37,9 @@ CONTEXT = TradeContext(
     entry_array={"type": "FVG", "direction": "BULLISH", "timeframe": "M15", "high": 1.1003, "low": 1.0999,
                  "formed_at": "2026-09-30T12:15:00+00:00"},
     draw_on_liquidity={"type": "BSL", "source": "PDH", "price": 1.1060, "formed_at": "2026-09-29T21:00:00+00:00"},
-    swept_level=None,
+    swept_level={"side": "SSL", "source": "SWING_LOW", "timeframe": "M15", "price": 1.0992,
+                 "formed_at": "2026-09-30T10:30:00+00:00", "raided_at": "2026-09-30T11:45:00+00:00"},
+    protected_swing={"wick": 1.0988, "body": 1.0991, "candle_at": "2026-09-30T11:45:00+00:00"},
     killzone="NY_AM",
 )
 
@@ -160,7 +162,12 @@ def test_chart_window_lengths_configurable(tmp_path):
     write_report_inputs(directory, result.journal, {i: m15_candles(i) for i in PRICES}, Timeframe.M15,
                         bars_before=4, bars_after=2)
     data = data_of(write_html_report(directory).read_text(encoding="utf-8"))
-    assert row_of(data, "EURUSD-1")["window"] == [(T0 - M15 - 4 * M15).isoformat(), (T0 + M15 + 2 * M15).isoformat()]
+    assert row_of(data, "GBPUSD-1")["window"][0] == (T0 - M15 - 4 * M15).isoformat()   # no context recorded
+    # EURUSD-1 has a raid recorded: its window starts 8 bars before the raid when that is earlier
+    # (liquidity-engine Req 19.5), so the chart shows the whole sequence.
+    raid = datetime.fromisoformat(CONTEXT.swept_level["raided_at"])
+    assert raid - 8 * M15 < T0 - M15 - 4 * M15
+    assert row_of(data, "EURUSD-1")["window"] == [(raid - 8 * M15).isoformat(), (T0 + M15 + 2 * M15).isoformat()]
 
 
 def test_markers_for_decision_entry_stop_target_fill_exit(run_dir):
@@ -187,10 +194,22 @@ def test_context_drawn_only_from_recorded_signal_records(run_dir, monkeypatch):
     data = data_of(write_html_report(run_dir).read_text(encoding="utf-8"))
     assert row_of(data, "EURUSD-1")["context"] == {
         "entry_array": CONTEXT.entry_array, "draw_on_liquidity": CONTEXT.draw_on_liquidity,
-        "swept_level": None, "killzone": "NY_AM"}
+        "swept_level": CONTEXT.swept_level, "protected_swing": CONTEXT.protected_swing, "killzone": "NY_AM"}
     assert row_of(data, "GBPUSD-1")["context"] is None           # none was recorded for it
     recorded = json.loads((run_dir / "context.json").read_text(encoding="utf-8"))
     assert len(recorded) == 1 and recorded[0]["setup_id"] == "EURUSD-1"
+
+
+def test_chart_draws_raid_and_protected_swing(run_dir):
+    # liquidity-engine Req 19.5: the raided pool as a dotted line from where it formed to the raid,
+    # labelled with its source and timeframe, and the protected swing marked on its bar. The page
+    # script draws them from the recorded context; headless Chrome checks the picture (task 231c).
+    html = write_html_report(run_dir).read_text(encoding="utf-8")
+    script = html[html.rindex("<script>"):]
+    assert 'class="raid"' in script and ".raided_at" in script and "raid ${s.source} ${s.timeframe}" in script
+    assert 'class="protected"' in script and ".candle_at" in script
+    # a run recorded before the update has neither: the chart must not need them
+    assert "c.swept_level &&" in script and "c.protected_swing &&" in script
 
 
 def test_insufficient_evidence_buckets_marked(run_dir):

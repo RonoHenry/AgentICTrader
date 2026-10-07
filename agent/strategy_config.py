@@ -14,7 +14,8 @@ task 188). A run config's [strategy] table maps onto the fields directly:
 Grader parameters stay in liquidity_engine; a run manifest records them
 through the engine code fingerprint, and these through fingerprint().
 
-Validates: Requirements 1.6 (.kiro/specs/algo-backtester/requirements.md)
+Validates: Requirements 1.6 (.kiro/specs/algo-backtester/requirements.md);
+Requirement 19.1, 19.4 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializ
 
 from liquidity_engine.models import SetupGrade, Timeframe
 
-__all__ = ["ENTRY_TIMEFRAMES", "PendingExpiry", "StrategyConfig"]
+__all__ = ["ENTRY_TIMEFRAMES", "PendingExpiry", "StopMode", "StrategyConfig"]
 
 # Entries come from M15 and below; higher timeframes are bias and context
 # only (liquidity_engine.grader.setup_grader._ENTRY_ELIGIBLE_TIMEFRAMES).
@@ -42,6 +43,12 @@ class PendingExpiry(str, Enum):
     """When an unfilled pending order is cancelled."""
     KILLZONE_END = "KILLZONE_END"  # end of the killzone it was placed in; fallback_ttl outside every killzone
     FIXED_TTL = "FIXED_TTL"        # fallback_ttl after placement, always
+
+
+class StopMode(str, Enum):
+    """Where the stop goes behind the setup's protected swing (liquidity-engine LE-D5)."""
+    WICK = "WICK"   # beyond its wick: SetupGradeDetail.suggested_stop
+    BODY = "BODY"   # beyond its body: SetupGradeDetail.protected_swing_body_stop
 
 
 K = TypeVar("K")
@@ -83,10 +90,11 @@ class StrategyConfig(BaseModel):
         SetupGrade.A: 0.80,
         SetupGrade.B: 0.70,
     }
-    # Standard Deviation projection levels for TP1 and TP2. TTrades' reference
-    # material labels 2.5 as "Target" on its projection chart, with 4.0 as a
-    # further runner target (liquidity_engine.projections.standard_deviation).
-    tp_levels: tuple[float, ...] = (2.5, 4.0)
+    # Standard Deviation levels of the setup leg for TP1 and TP2. The trade
+    # exits at TP1; TP2 is recorded for a later scale-out (algo-backtester
+    # D19). Most partials come off by 2-2.5 SD, often around 3-5R (LE-D4).
+    tp_levels: tuple[float, ...] = (2.0, 2.5)
+    stop_mode: StopMode = StopMode.WICK
     pending_expiry: PendingExpiry = PendingExpiry.KILLZONE_END
     fallback_ttl_minutes: PositiveInt = 180
 

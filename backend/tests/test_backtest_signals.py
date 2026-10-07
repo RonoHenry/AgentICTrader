@@ -176,9 +176,31 @@ def test_order_intent_records_carry_trade_context():
         assert context.entry_array["type"] and datetime.fromisoformat(context.entry_array["formed_at"]) < record.t
         assert context.draw_on_liquidity == {"type": draw.liquidity_type.value, "source": draw.source.value,
                                              "price": draw.price, "formed_at": draw.formed_at.isoformat()}
-        assert context.swept_level is None                          # until the grader records the raid
+        assert context.swept_level is not None and context.protected_swing is not None
         assert context.killzone == get_killzone(record.t).value != "NONE"
         json.dumps(vars(context))                                   # ready for the report as it is
+
+
+def test_trade_context_records_raid_and_protected_swing():
+    # liquidity-engine Requirement 19.5: the raid and the protected swing, as the report draws them.
+    intents = [r for r in context_records() if isinstance(r.result, OrderIntent)]
+    assert intents
+    for record in intents:
+        sequence = liquidity_map_at(record.t).setup_sequence
+        pool, swing = sequence.raid.pool, sequence.protected_swing
+        assert record.context.swept_level == {
+            "side": pool.side.value, "source": pool.source.value, "timeframe": pool.timeframe.value,
+            "price": pool.price, "formed_at": pool.formed_at.isoformat(),
+            "raided_at": sequence.raid.raided_at.isoformat(),
+        }
+        assert record.context.protected_swing == {
+            "wick": swing.wick, "body": swing.body, "candle_at": swing.candle_at.isoformat(),
+        }
+        # the raid comes before the array the order trades, which comes before t
+        raided_at = datetime.fromisoformat(record.context.swept_level["raided_at"])
+        assert raided_at <= datetime.fromisoformat(record.context.entry_array["formed_at"]) < record.t
+        # the pool is on the side opposite the trade: sell stops below a LONG, buy stops above a SHORT
+        assert record.context.swept_level["side"] == ("SSL" if record.result.direction == "LONG" else "BSL")
 
 
 def test_no_trade_records_carry_no_context():

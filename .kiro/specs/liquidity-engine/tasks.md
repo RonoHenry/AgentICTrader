@@ -690,7 +690,20 @@ Requirements 13.4, 13.5, 18 and 19; design section "Update 2026-10"; decisions L
   - **230b. GREEN** — grader and engine as designed. Re-baseline the fixtures and the golden journal.
   - **230c. REFACTOR**
 
-- [ ] 231. Order derivation and report (Req 19)
+- [x] 231. Order derivation and report (Req 19)
+  - **Done 2026-10-07.**
+    - **Code:**
+      - `build_order_intent` trades the sequence's direction and takes the stop from `cfg.stop_mode`. A stop not beyond the entry is `NoTrade` `INVALID_STOP`, journaled as its own decision so task 233 can count it.
+      - A tradeable grade without a sequence raises: the grader never produces one.
+      - `TradeContext` records the raid and the protected swing.
+    - **Report:**
+      - The M15 chart draws the raided pool (a dotted line from where it formed to the raid) and rings the protected swing's wick.
+      - Their labels stack on the entry side, clear of the position tool's labels.
+      - A window starts 8 bars before the raid when that is earlier than its usual start.
+      - Checked in headless Chrome on the golden week: a SHORT TP and a LONG stop-out.
+    - **Re-baselined:**
+      - the golden journal: 8 EXECUTE, 17 RR_BELOW_MIN, no INVALID_STOP;
+      - the pinned runner message: TP1 is now 2.0 SD, R:R 5.92 (was 7.07).
   - **231a. RED**
     - In `test_backtest_order_intent.py`:
       - `test_stop_mode_wick_uses_suggested_stop`

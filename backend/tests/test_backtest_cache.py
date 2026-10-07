@@ -70,6 +70,7 @@ def test_key_changes_with_each_input():
         "engine code": key_with(engine_fp="f" * 64),
         "min_rr": key_with(cfg=cfg_with(min_rr=5.0)),
         "tp_levels": key_with(cfg=cfg_with(tp_levels=(2.0, 4.0))),
+        "stop_mode": key_with(cfg=cfg_with(stop_mode="BODY")),     # its own Phase A entry
         "candle_counts": key_with(cfg=cfg_with(candle_counts={**CFG.model_dump()["candle_counts"], "M15": 61})),
         "grade_confidence": key_with(cfg=cfg_with(grade_confidence={"A+": 0.9, "A": 0.8, "B": 0.6})),
         "instrument": key_with(instrument="GBPUSD"),

@@ -76,7 +76,7 @@ class JournalRow:
     once that order closed."""
     t: datetime
     instrument: str
-    decision: str     # NO_TRADE / RR_BELOW_MIN / ENGINE_ERROR / IN_TRADE / SETUP_ALREADY_ATTEMPTED / EXECUTE / SKIP
+    decision: str     # NO_TRADE / RR_BELOW_MIN / INVALID_STOP / ENGINE_ERROR / IN_TRADE / SETUP_ALREADY_ATTEMPTED / EXECUTE / SKIP
     reason: str
     grade: Optional[str]
     intent: Optional[OrderIntent] = None
@@ -161,7 +161,7 @@ def _decide(record: SignalRecord, t: datetime, broker: SimBroker, account: SimAc
     if isinstance(result, EngineError):
         return JournalRow(record.t, record.instrument, "ENGINE_ERROR", f"{result.exception}: {result.message}", None)
     if isinstance(result, NoTrade):
-        decision = "RR_BELOW_MIN" if result.reason == "RR_BELOW_MIN" else "NO_TRADE"
+        decision = result.reason if result.reason in ("RR_BELOW_MIN", "INVALID_STOP") else "NO_TRADE"
         return JournalRow(record.t, record.instrument, decision, result.detail, result.grade)
 
     row = dict(t=record.t, instrument=record.instrument, grade=result.grade.value, intent=result,

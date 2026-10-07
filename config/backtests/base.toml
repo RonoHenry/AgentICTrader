@@ -34,3 +34,6 @@ bootstrap_resamples = 10000
 
 [variants.min_rr_5]
 strategy.min_rr = 5.0
+
+[variants.stop_body]           # stop behind the protected swing's body, not its wick (liquidity-engine LE-D5)
+strategy.stop_mode = "BODY"
