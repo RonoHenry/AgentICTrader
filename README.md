@@ -136,6 +136,64 @@ validation). They fail until `scripts/live_validation_*.py` and
 default run. To leave them out of a run, add
 `-- --deselect tests/test_live_validation.py`.
 
+## 📉 Backtesting
+
+`algo_backtester` replays stored M1 history through the code the live agent
+runs. It builds the same as-of candle window (`compose_as_of_view`), runs the
+real engine, the shared order logic (`build_order_intent`), the `AgentGraph`
+with `RiskEngine`, and the paper broker's fill model. It runs in two phases:
+- **Phase A** (signals): per instrument, in parallel, cached;
+- **Phase B** (account): one time line across instruments, so the concurrent-trade and drawdown limits see the real account.
+
+The spec is `.kiro/specs/algo-backtester/`.
+
+### Setup
+
+1. Start the candle store (`docker/docker-compose.yml`, TimescaleDB) and set `TIMESCALE_URL` in `.env`.
+2. In the MT5 terminal, set Tools → Options → Charts → "Max bars in chart" to Unlimited and restart it.
+3. Load M1 (with spread) and native H1/D1/W1 for each instrument through the broker profile:
+   ```bash
+   python scripts/load_historical_data_mt5.py --profile exness-standard
+   ```
+   Broker profiles live in `config/brokers/` (symbols, server clock, credentials from `.env`), and their costs in `config/instruments/<profile>.toml`.
+
+### Commands
+
+```bash
+python -m algo_backtester check-data config/backtests/base.toml
+python -m algo_backtester run config/backtests/base.toml [--variant min_rr_5] [--walk-forward 3M] [--final]
+python -m algo_backtester compare data/backtests/<run_a> data/backtests/<run_b> [--by killzone]
+python -m algo_backtester report data/backtests/<run_id>
+python -m algo_backtester report --forward-test data/paper_trades.json --profile binance
+```
+
+- **`check-data`** reports, per instrument, the M1 coverage, gaps the venue's schedule doesn't explain, and where each timeframe's warm-up came from. It exits 1 on coverage problems.
+- **`run`** writes `data/backtests/<run_id>/`. The run id is a hash of the manifest, so identical inputs give the same id and byte-identical outputs. The directory holds:
+  - `manifest.json`: code commit, configuration, data fingerprint, costs;
+  - `journal.csv`: one row per decision, skipped setups and their reasons included;
+  - `summary.json` and `summary.md`;
+  - `report.html`: one offline file with charts of every setup.
+
+  Phase A results are cached in `data/backtests/cache/` and reused until the data, the engine code or the strategy settings change. `--no-cache` recomputes them.
+- **`compare`** puts runs side by side. It refuses runs on different data (range, instruments or fingerprint).
+- **`report`** rewrites a run's `report.html`, or renders a paper forward test's trades the same way.
+
+A run is configured in TOML (`config/backtests/base.toml`), and `[strategy]` is the live `StrategyConfig`. A variant is a named set of dotted-key overrides (`[variants.min_rr_5]` with `strategy.min_rr = 5.0`). Unknown keys are rejected.
+
+### Hold-out rules
+
+- Every run belongs to a study (`[run] study`). The study's hold-out is the most recent 3 months of stored data, fixed when the study is first used. It is written to `config/backtests/studies/<study>.toml` and never moves.
+- **`check-data` creates the study, so run it only once the full history is loaded.** A study created early locks the hold-out to whatever data was there; delete its file to start again.
+- A run whose range reaches the hold-out is refused (exit 2) unless it is the one final validation run, `--final`, which the manifest records.
+- Results are in R (1R = the entry-to-stop distance the order was sized on), net of spread, slippage and commission. Buckets with fewer than `[report] min_trades` trades (30) are marked insufficient evidence, not findings.
+
+### The golden run
+
+`backend/tests/test_backtest_golden.py` runs the whole pipeline on a committed EURUSD week and compares the journal with `backend/tests/fixtures/backtester/golden/expected_journal.csv`. When a change alters it on purpose, regenerate it in the same commit:
+```bash
+cd backend && UPDATE_GOLDEN=1 pytest tests/test_backtest_golden.py
+```
+
 ## 📊 Project Structure
 
 ```

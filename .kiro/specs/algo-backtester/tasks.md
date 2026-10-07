@@ -531,9 +531,11 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - `.gitattributes` stops line-ending conversion of the golden journal, which `core.autocrlf` would otherwise turn into CRLF on a Windows checkout.
   - **Validates: Requirements 9.4**
 
-- [ ] 210. Checkpoint: backtester complete
+- [x] 210. Checkpoint: backtester complete
   - `python scripts/run_all_tests.py` is green (apart from the task-39 RED file).
   - Add a "Backtesting" section to `README.md`: setup, `check-data`, `run`, `compare`, hold-out rules.
+  - **Done 2026-10-07.** Full suite: root 845 passed; backend 1842 passed, 8 skipped. The only failures are the 27 task-39 RED tests in `test_live_validation.py` (12 failed, 15 errors), as before.
+    - **README:** a "Backtesting" section covers setup, the five commands, run outputs, the cache, variants, hold-out rules (including: run `check-data` only after the full history is loaded), the R definition and the golden run.
 
 - [ ] 211. First baseline of the current grader **(user action)**
   - Set the Exness terminal's Tools → Options → Charts → "Max bars in chart" to Unlimited and restart it.
