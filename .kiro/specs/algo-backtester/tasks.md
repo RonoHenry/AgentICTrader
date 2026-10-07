@@ -466,11 +466,16 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - The SignalRecords file the HTML report needs (`TradeContext`) is left to task 218.
   - **Validates: Requirements 8.1, 8.6, 9.5**
 
-- [ ] 207. Run comparison (`algo_backtester/compare.py`)
+- [x] 207. Run comparison (`algo_backtester/compare.py`)
   - **207a. RED** (`backend/tests/test_backtest_compare.py`)
     - `test_side_by_side_summary`
     - `test_refuses_different_data_fingerprint_or_range`
   - **207b. GREEN** / **207c. REFACTOR**
+  - **Done 2026-10-07.** `compare(run_dirs, by=None)` reads each run's `manifest.json` and `summary.json`.
+    - **Overall table:** a column per run (variant and run id), with code commit, engine fingerprint and final flag on top.
+    - **`by=` a breakdown:** bucket by bucket, avg net R and n, insufficient buckets marked.
+    - **Refused:** a different instrument set, or a different range, row count or fingerprint per instrument. Different code, settings or costs are allowed; that's what a comparison is for.
+    - `report.stats_cells()` formats numbers the same way in `summary.md` and in comparisons.
   - **Validates: Requirements 8.5**
 
 - [ ] 208. CLI: `python -m algo_backtester run | compare | check-data`

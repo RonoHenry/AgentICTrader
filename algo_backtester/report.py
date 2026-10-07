@@ -61,6 +61,8 @@ __all__ = [
     "journal_csv",
     "run_id",
     "spec_source",
+    "stats_cells",
+    "stats_from_json",
     "summary_json",
     "summary_md",
     "write_run",
@@ -269,25 +271,37 @@ _COLUMNS = ("trades", "win rate", "avg net R", "expectancy R (95% CI)", "profit 
             "cost share", "evidence")
 
 
+def stats_cells(s: Stats) -> dict[str, str]:
+    """A Stats as display strings, keyed by column name (as in summary.md)."""
+    return {
+        "trades": str(s.trades),
+        "win rate": _pct(s.win_rate),
+        "avg gross R": _r(s.avg_gross_r),
+        "avg net R": _r(s.avg_net_r),
+        "expectancy R (95% CI)": _r(s.expectancy_r) + (
+            f" ({_r(s.expectancy_ci[0])} to {_r(s.expectancy_ci[1])})" if s.expectancy_ci else ""),
+        "profit factor": "–" if s.profit_factor is None else f"{s.profit_factor:.2f}",
+        "max DD R": f"{s.max_drawdown_r:.2f}",
+        "max DD %": f"{s.max_drawdown_pct:.2f}%",
+        "losing streak": str(s.longest_losing_streak),
+        "avg hold (min)": "–" if s.avg_holding_minutes is None else f"{s.avg_holding_minutes:.0f}",
+        "avg cost R": _r(s.avg_cost_r),
+        "cost share": _pct(s.cost_share),
+        "evidence": s.evidence,
+    }
+
+
+def stats_from_json(values: Mapping[str, Any]) -> Stats:
+    """A Stats back from summary.json."""
+    ci = values["expectancy_ci"]
+    return Stats(**{**values, "expectancy_ci": tuple(ci) if ci is not None else None})
+
+
 def _stats_table(rows: Sequence[tuple[str, Stats]], first: str, wide: bool = False) -> list[str]:
     columns = _COLUMNS_WIDE if wide else _COLUMNS
     out = [f"| {first} | " + " | ".join(columns) + " |", "|" + "---|" * (len(columns) + 1)]
     for label, s in rows:
-        cells = {
-            "trades": str(s.trades),
-            "win rate": _pct(s.win_rate),
-            "avg gross R": _r(s.avg_gross_r),
-            "avg net R": _r(s.avg_net_r),
-            "expectancy R (95% CI)": _r(s.expectancy_r) + (
-                f" ({_r(s.expectancy_ci[0])} to {_r(s.expectancy_ci[1])})" if s.expectancy_ci else ""),
-            "profit factor": "–" if s.profit_factor is None else f"{s.profit_factor:.2f}",
-            "max DD R": f"{s.max_drawdown_r:.2f}",
-            "max DD %": f"{s.max_drawdown_pct:.2f}%",
-            "losing streak": str(s.longest_losing_streak),
-            "avg hold (min)": "–" if s.avg_holding_minutes is None else f"{s.avg_holding_minutes:.0f}",
-            "avg cost R": _r(s.avg_cost_r),
-            "cost share": _pct(s.cost_share),
-        }
+        cells = stats_cells(s)
         insufficient = s.evidence == "insufficient"
         values = [f"*{cells[c]}*" if insufficient and cells[c] != "–" else cells[c] for c in columns if c != "evidence"]
         out.append(f"| {label} | " + " | ".join(values) + f" | {s.evidence} |")
