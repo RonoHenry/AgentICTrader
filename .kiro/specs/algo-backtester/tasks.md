@@ -515,7 +515,7 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - **Fixed on the way:** a run config without `[strategy]` crashed (pydantic deep-copies a model default; `StrategyConfig`'s read-only mappings can't be). Defaults are now built by `default_factory`.
   - **Validates: Requirements 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7**
 
-- [ ] 209. Golden run
+- [x] 209. Golden run
   - **209a.** Build `backend/tests/fixtures/backtester/golden/`: two weeks of EURUSD M1 plus native HTF warm-up, exported by `scripts/export_aggregation_fixture.py`. **(user action** for the export.)
   - **209b. RED** (`backend/tests/test_backtest_golden.py`)
     - `test_golden_journal_matches_expected`
@@ -523,6 +523,12 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - **PBT — Property 10: Determinism and Cache Transparency** — cache-hit run equals empty-cache run
       - **Validates: Requirements 7.4, 9.5**
   - **209c. GREEN** — commit the expected journal. Any later intended change updates it in the same commit.
+  - **Done 2026-10-07.** **The user chose the existing task 186 MetaQuotes week** over a fresh two-week Exness export.
+    - **Inputs:** M1 from Sunday 2026-09-27 plus a year of native H1/H4/D1/W1; the run covers 2026-09-30 to 2026-10-03, once the live M15 window has its warm-up. Live default strategy settings, and a frozen copy of the exness-standard spec file (`golden/specs.toml`), so a spec re-export doesn't move the golden.
+    - **The golden journal** (`golden/expected_journal.csv`, 277 rows): 6 orders (1 stop-out, 5 expired limits), 13 refusals, 42 IN_TRADE, 215 NO_TRADE. Regenerate on purpose with `UPDATE_GOLDEN=1 pytest tests/test_backtest_golden.py` in the same commit as the change.
+    - **Byte-identity:** a second run writes byte-identical files: journal, summaries, `report.html`, `context.json`, `candles.json`, and the manifest with git state and `created_at` fixed.
+    - **Property 10** (6 examples, two instruments, walk-forward or not): a run served from the cache, with the engine made to fail if called, writes the same journal and summaries as an empty-cache run.
+    - `.gitattributes` stops line-ending conversion of the golden journal, which `core.autocrlf` would otherwise turn into CRLF on a Windows checkout.
   - **Validates: Requirements 9.4**
 
 - [ ] 210. Checkpoint: backtester complete
