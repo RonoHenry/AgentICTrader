@@ -23,7 +23,9 @@ fallback_ttl_minutes = 180
 
 [data]
 max_gap_minutes = 30          # outside weekends/holidays (Req 3.6)
-allow_gaps = false
+# Exness 2025-01 → 2026-06 (task 211): gold's US-holiday closes, the 2025-11-28 CME
+# outage and two sub-hour feed gaps. Real closures, recorded in the manifest.
+allow_gaps = true
 
 [report]
 min_trades = 30               # D8

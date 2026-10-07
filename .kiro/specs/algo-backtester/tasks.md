@@ -537,12 +537,24 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - **Done 2026-10-07.** Full suite: root 845 passed; backend 1842 passed, 8 skipped. The only failures are the 27 task-39 RED tests in `test_live_validation.py` (12 failed, 15 errors), as before.
     - **README:** a "Backtesting" section covers setup, the five commands, run outputs, the cache, variants, hold-out rules (including: run `check-data` only after the full history is loaded), the R definition and the golden run.
 
-- [ ] 211. First baseline of the current grader **(user action)**
+- [x] 211. First baseline of the current grader **(user action)**
   - Set the Exness terminal's Tools → Options → Charts → "Max bars in chart" to Unlimited and restart it.
   - Load M1 (with spread) plus native H1/D1/W1 for EURUSD, GBPUSD, USDJPY and XAUUSD (D1) from the `exness-standard` profile, with `scripts/load_historical_data_mt5.py --profile exness-standard`.
   - Run `check-data`. Create the study, which locks the hold-out (D7). Run `config/backtests/base.toml` (`profile = "exness-standard"`).
   - Write `docs/backtests/BASELINE.md`: the summary, cost share, insufficient-evidence buckets, and observations.
   - No strategy changes in this task. Grader changes are measured against this baseline in the `liquidity-engine` spec update.
+  - **Done 2026-10-07.** The results are in `docs/backtests/BASELINE.md`, run `4de46a99e6a0`.
+    - **Pass mark:** the user agreed it before the run. It is written at the top of BASELINE.md.
+    - **Data:** the Exness terminal was set to unlimited bars. The loader ran with `--instruments EURUSD,GBPUSD,USDJPY,XAUUSD --timeframes M1,H1,D1,W1`; the default list holds symbols the profile doesn't map. That gave 3 years of M1 from 2023-10-08, and every warm-up came from M1.
+    - **Study:** `baseline-2026q3`, hold-out from 2026-07-07.
+    - **Gaps:** `check-data` flagged gold's US-holiday closes, the 2025-11-28 CME outage and two feed gaps under an hour. All are real, so `[data] allow_gaps = true` is set in `base.toml`.
+    - **Result: fail, 1 of 5 criteria.** 216 trades; net −0.54R (95% CI −0.89 to −0.23); PF 0.45; max DD 117.4R; costs 192% of gross.
+      - Trades with stops of at least 2× the spread show no gross edge: −0.02R gross, with the target hit 10% of the time.
+      - 28 trades had stops narrower than 2× the spread. They lost 66.6R, one of them 26R.
+      - 85% of orders expired unfilled.
+    - **Runtime:** about 80 minutes cold.
+    - **Report size:** `report.html` is 48 MB (see task 218's note).
+    - **Noticed:** `CoverageError`'s message suggests `--allow-gaps`, but `run` has no such flag. Only `[data] allow_gaps` exists.
 
 - [ ] 219. Exness FX/gold paper forward test on the Windows host (Req 9.6)
   - Numbered 219 to keep earlier numbers stable. Added 2026-10-05: the `exness-standard` account offers no crypto, so the Binance forward test cannot be evidence for the Exness strategy.
