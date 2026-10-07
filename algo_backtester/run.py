@@ -6,6 +6,7 @@
     result.journal, result.trades     # all windows, concatenated
     result.windows[0].result          # one window's own SimulationResult
     result.manifest                   # the run-mode fields: study, hold-out, final flag, windows
+    result.bars                       # the M1 bars Phase B priced fills on (bid, with the spread used)
 
 In order:
 1. Before any work, refuse a run that reaches into its study's hold-out
@@ -27,10 +28,11 @@ from __future__ import annotations
 import calendar
 import re
 from bisect import bisect_left
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Mapping, Optional, Sequence, TypeVar
 
+from agent.brokers.fill_model import Bar
 from agent.instruments import InstrumentSpecs
 from algo_backtester.cache import SignalCache
 from algo_backtester.config import RunConfig, StudyConfig, check_holdout
@@ -60,6 +62,7 @@ class RunResult:
     signals: dict[str, list[SignalRecord]]   # Phase A, the whole range
     floored_bars: dict[str, int]             # M1 bars priced at the typical spread (Req 5.1)
     manifest: dict
+    bars: dict[str, list[Bar]] = field(default_factory=dict)   # what Phase B priced fills on, the whole range
 
     @property
     def journal(self) -> list[JournalRow]:
@@ -136,7 +139,7 @@ def run_backtest(
         "variant": cfg.variant,
         "windows": [[a.isoformat(), b.isoformat()] for a, b in windows],
     }
-    return RunResult(windows=results, signals=signals, floored_bars=floored, manifest=manifest)
+    return RunResult(windows=results, signals=signals, floored_bars=floored, manifest=manifest, bars=bars)
 
 
 def _between(bars: Sequence[T], start: datetime, end: datetime) -> list[T]:

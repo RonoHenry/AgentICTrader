@@ -104,6 +104,16 @@ def test_walk_forward_combined_equals_concatenation():
     assert len(whole.windows) == 1 and whole.journal == whole.windows[0].result.journal
 
 
+def test_run_result_keeps_the_m1_bars_phase_b_priced():
+    # The report's execution charts (task 226) show the bars fills were decided on, with the spread used.
+    whole, windowed = runs()
+    bars = whole.bars["EURUSD"]
+    assert bars and all(b.spread >= SPECS["EURUSD"].default_spread for b in bars)
+    assert [b.timestamp for b in bars] == sorted(b.timestamp for b in bars) and bars[-1].timestamp < utc(2026, 10, 2)
+    assert {t.filled_at for t in whole.trades if t.filled_at} <= {b.timestamp for b in bars}
+    assert windowed.bars == whole.bars                      # one series for the whole range, windows or not
+
+
 def test_cross_without_conversion_refused():
     # A cross needs its quote currency's USD rate over time; refuse it rather than skip every trade.
     eurgbp = replace(SPECS["EURUSD"], symbol="EURGBP", quote_ccy="GBP")

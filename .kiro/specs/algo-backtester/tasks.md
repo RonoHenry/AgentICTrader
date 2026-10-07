@@ -556,6 +556,31 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
     - **Report size:** `report.html` is 48 MB (see task 218's note).
     - **Noticed:** `CoverageError`'s message suggests `--allow-gaps`, but `run` has no such flag. Only `[data] allow_gaps` exists.
 
+- [x] 226. Position tool and M1 execution close-up in the HTML report (`algo_backtester/report_html.py`, Req 11.5)
+  - Numbered 226: tasks 220–225 are reserved by the deferred validation handoff brief. Added 2026-10-07 at the user's request after the baseline, so trades can be judged by eye ("visualize how the mock trade was executed with the PNL tool").
+  - **226a. RED**
+    - `test_run_result_keeps_the_m1_bars_phase_b_priced` (`test_backtest_run_modes.py`)
+    - In `test_backtest_report_html.py`:
+      - `test_executions_record_each_closed_order_with_its_m1_bars`
+      - `test_long_trades_get_no_m1_close_up`
+      - `test_report_embeds_executions_and_order_timeline`
+      - `test_run_written_before_executions_still_renders`
+    - The golden run and the CLI test now expect `executions.json` in the run directory.
+  - **226b. GREEN**
+    - **`RunResult.bars`:** the M1 bars Phase B priced fills on, bid plus the spread used.
+    - **`executions.json`:** `write_report_inputs(..., m1=, account_ccy=)` writes it. Per closed order it holds lots, risk and P&L in the account currency. For a filled trade it also holds the M1 bars from 30 minutes before the fill to 15 after the exit; trades over 12 hours get none, and their M15 chart shows them.
+    - **Markers:** placement and expiry times.
+  - **226c. Page**
+    - **Position tool:** each order draws TradingView-style boxes: reward (entry to target) and risk (entry to stop), from the fill (or the placement, when it never filled) to the exit or expiry.
+      - The labels show target and R:R, stop and risk in money, and kind, side, lots and entry.
+      - The pending period, the path from fill to exit and the result (R and money) are drawn too.
+      - An order that never filled is pale and dashed.
+    - **M1 close-up:** below the M15 chart for every filled order. It also draws the ask (bid + spread), the side a SHORT's stop and a LONG's fill trigger on.
+    - **Links:** `report.html#order=<id>` or `#row=<n>` opens a row's charts.
+    - **Layout:** the explorer table is capped at 45% of the window height, so the chart sits under it.
+    - **Checked:** in headless Chrome on the golden week, for a stopped market short and an expired limit.
+  - **Validates: Requirements 11.5**
+
 - [ ] 219. Exness FX/gold paper forward test on the Windows host (Req 9.6)
   - Numbered 219 to keep earlier numbers stable. Added 2026-10-05: the `exness-standard` account offers no crypto, so the Binance forward test cannot be evidence for the Exness strategy.
   - **219a. RED** (`backend/tests/test_backtest_runner_view.py`)
@@ -669,6 +694,12 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
       "tasks": ["211"],
       "description": "First measured baseline of the current grader on MT5 history",
       "dependencies": ["Golden Run and Checkpoint"]
+    },
+    {
+      "name": "Trade Review",
+      "tasks": ["226"],
+      "description": "Position tool and M1 execution close-up in the HTML report, for judging trades by eye",
+      "dependencies": ["Baseline"]
     },
     {
       "name": "FX Forward Test",

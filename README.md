@@ -172,7 +172,11 @@ python -m algo_backtester report --forward-test data/paper_trades.json --profile
   - `manifest.json`: code commit, configuration, data fingerprint, costs;
   - `journal.csv`: one row per decision, skipped setups and their reasons included;
   - `summary.json` and `summary.md`;
-  - `report.html`: one offline file with charts of every setup.
+  - `report.html`: one offline file with charts of every setup. Each order is drawn with a position tool:
+    - risk and reward boxes, with R and money labels;
+    - the path from fill to exit, and the result.
+
+    A filled trade also gets an M1 close-up with the ask drawn. `report.html#order=<order_id>` opens one trade.
 
   Phase A results are cached in `data/backtests/cache/` and reused until the data, the engine code or the strategy settings change. `--no-cache` recomputes them.
 - **`compare`** puts runs side by side. It refuses runs on different data (range, instruments or fingerprint).

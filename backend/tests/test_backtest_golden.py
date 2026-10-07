@@ -71,7 +71,7 @@ def golden_run(root: Path, cache: SignalCache = None) -> Path:
                               git=GIT, created_at=CREATED)
     run_dir = write_run(root, cfg, manifest, result)
     write_report_inputs(run_dir, result.journal, {i: d.closed[cfg.strategy.entry_tf] for i, d in datas.items()},
-                        cfg.strategy.entry_tf)
+                        cfg.strategy.entry_tf, m1=result.bars, account_ccy=SPECS.account_ccy)
     write_html_report(run_dir)
     return run_dir
 
@@ -100,7 +100,8 @@ def test_second_run_byte_identical():
         again = {p.name: p.read_bytes() for p in run_dir.iterdir()}
     first = first_run()
     assert sorted(again) == sorted(first) == [
-        "candles.json", "context.json", "journal.csv", "manifest.json", "report.html", "summary.json", "summary.md"]
+        "candles.json", "context.json", "executions.json", "journal.csv", "manifest.json", "report.html",
+        "summary.json", "summary.md"]
     for name in first:
         assert again[name] == first[name], name
 

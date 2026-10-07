@@ -10,6 +10,7 @@ Validates: Requirements 11.1-11.7 (.kiro/specs/algo-backtester/requirements.md)
 """
 from __future__ import annotations
 
+import csv
 import json
 import re
 from dataclasses import replace
@@ -26,10 +27,11 @@ from algo_backtester.signals import TradeContext
 from liquidity_engine import LiquidityMappingEngine
 from liquidity_engine.models import Timeframe
 from tests.test_backtest_report import cfg, manifest, scripted
-from tests.test_backtest_simulation import PRICES
+from tests.test_backtest_simulation import PRICES, dip, flat
 
 UTC = timezone.utc
 T0 = datetime(2026, 9, 30, 13, 0, tzinfo=UTC)
+MIN = timedelta(minutes=1)
 M15 = timedelta(minutes=15)
 CONTEXT = TradeContext(
     entry_array={"type": "FVG", "direction": "BULLISH", "timeframe": "M15", "high": 1.1003, "low": 1.0999,
@@ -49,6 +51,13 @@ def m15_candles(instrument: str) -> list:
     return out
 
 
+def m1_bars() -> dict:
+    """The scripted run's M1 bars, as Phase B priced them (bid, with spread)."""
+    bars = {i: flat(i) for i in PRICES}
+    bars["EURUSD"] = dip(bars["EURUSD"], T0 + 29 * MIN, low=1.0985)
+    return bars
+
+
 def with_context(result: RunResult) -> RunResult:
     window = result.windows[0]
     journal = [replace(row, context=CONTEXT) if row.setup_id == "EURUSD-1" else row for row in window.result.journal]
@@ -59,7 +68,8 @@ def with_context(result: RunResult) -> RunResult:
 def run_dir(tmp_path) -> Path:
     result = with_context(scripted())
     directory = write_run(tmp_path, cfg(), manifest(), result)
-    write_report_inputs(directory, result.journal, {i: m15_candles(i) for i in PRICES}, Timeframe.M15)
+    write_report_inputs(directory, result.journal, {i: m15_candles(i) for i in PRICES}, Timeframe.M15,
+                        m1=m1_bars(), account_ccy="USD")
     return directory
 
 
@@ -220,3 +230,56 @@ def test_forward_test_trades_file_renders_same_explorer():
     with_run = set(row_of(data_of(render(model)), "s1"))
     assert {"window", "markers", "bands", "context", "outcome", "decision", "killzone"} <= with_run
     assert 'id="explorer"' in html and 'id="chart"' in html
+    assert data["executions"] == {}                              # the paper broker records no M1 close-up
+
+
+# ── the execution view: position tool and M1 close-up (task 226) ───────────
+
+def executions(run_dir: Path) -> dict:
+    return json.loads((run_dir / "executions.json").read_text(encoding="utf-8"))
+
+
+def test_executions_record_each_closed_order_with_its_m1_bars(run_dir):
+    recorded = executions(run_dir)
+    assert recorded["account_ccy"] == "USD"
+    trade = next(t for t in scripted().trades if t.setup_id == "EURUSD-1")
+    [order] = [o for o in recorded["orders"] if o["order_id"] == trade.order_id]
+    assert (order["instrument"], order["lots"], order["risk_amount"], order["pnl"]) == (
+        "EURUSD", trade.lots, trade.risk_amount, trade.pnl)
+    # the bars the fill model used, bid plus the spread it priced: 30 minutes before the fill to 15 after the exit
+    m1 = order["m1"]
+    assert m1[0][0] == (T0 - 30 * MIN).isoformat() and m1[-1][0] == (T0 + 29 * MIN + 15 * MIN).isoformat()
+    assert len(m1) == 75
+    assert next(b for b in m1 if b[0] == (T0 + 29 * MIN).isoformat())[1:] == [1.1, 1.1, 1.0985, 1.1, 0.0001]
+    # closed orders only: one still open at the end has no outcome to show yet
+    still_open = {o.order_id for o in scripted().open_orders}
+    assert still_open and not still_open & {o["order_id"] for o in recorded["orders"]}
+
+
+def test_long_trades_get_no_m1_close_up(tmp_path):
+    result = with_context(scripted())
+    directory = write_run(tmp_path, cfg(), manifest(), result)
+    write_report_inputs(directory, result.journal, {i: m15_candles(i) for i in PRICES}, Timeframe.M15,
+                        m1=m1_bars(), account_ccy="USD", m1_max_minutes=20)
+    [order] = [o for o in executions(directory)["orders"] if o["instrument"] == "EURUSD"]
+    assert "m1" not in order and order["pnl"] < 0              # 29 minutes is over the cap: the M15 chart shows it
+
+
+def test_report_embeds_executions_and_order_timeline(run_dir):
+    data = data_of(write_html_report(run_dir).read_text(encoding="utf-8"))
+    row = row_of(data, "EURUSD-1")
+    [order] = [o for o in executions(run_dir)["orders"] if o["order_id"] == row["order_id"]]
+    assert data["executions"][row["order_id"]] == {k: order[k] for k in ("lots", "risk_amount", "pnl", "m1")}
+    assert data["account_ccy"] == "USD"
+    # the position tool runs from placement (a pending order) or fill to the exit, or to the expiry
+    with (run_dir / "journal.csv").open(encoding="utf-8", newline="") as fh:
+        journal = next(r for r in csv.DictReader(fh) if r["setup_id"] == "EURUSD-1")
+    assert datetime.fromisoformat(row["markers"]["placed"]) == datetime.fromisoformat(journal["placed_at"])
+    expires = journal["expires_at"] and datetime.fromisoformat(journal["expires_at"]).isoformat()
+    assert row["markers"]["expires"] == (expires or None)          # a market order: none
+
+
+def test_run_written_before_executions_still_renders(run_dir):
+    (run_dir / "executions.json").unlink()
+    data = data_of(write_html_report(run_dir).read_text(encoding="utf-8"))
+    assert data["executions"] == {} and row_of(data, "EURUSD-1")["markers"]["fill"]

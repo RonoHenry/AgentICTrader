@@ -95,7 +95,9 @@ def test_run_writes_outputs_to_run_dir(setup, capsys):
     assert cli(["run", str(config), "--runs-dir", str(runs), "--no-cache", "--workers", "1"], root) == 0
     [run_dir] = list(runs.iterdir())
     assert sorted(p.name for p in run_dir.iterdir()) == [
-        "candles.json", "context.json", "journal.csv", "manifest.json", "report.html", "summary.json", "summary.md"]
+        "candles.json", "context.json", "executions.json", "journal.csv", "manifest.json", "report.html",
+        "summary.json", "summary.md"]
+    assert json.loads((run_dir / "executions.json").read_text(encoding="utf-8"))["account_ccy"] == "USD"
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["run_id"] == run_dir.name and manifest["final_validation"] is False
     assert manifest["instrument_spec_source"].startswith("Exness")

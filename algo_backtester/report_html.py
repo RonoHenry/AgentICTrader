@@ -1,7 +1,8 @@
 """The HTML run report (Req 11): report.html, one file that opens offline.
 
-    write_report_inputs(run_dir, result.journal, candles, cfg.strategy.entry_tf)   # context.json, candles.json
-    write_html_report(run_dir)                                                     # run_dir/report.html
+    write_report_inputs(run_dir, result.journal, candles, cfg.strategy.entry_tf,
+                        m1=result.bars, account_ccy=specs.account_ccy)   # context, candles, executions .json
+    write_html_report(run_dir)                                           # run_dir/report.html
     html = render(build_forward_test(trades, candles, Timeframe.M15, source="paper_trades.json"))
 
 A report is drawn only from what the run recorded, never by re-running the
@@ -11,6 +12,12 @@ engine (Req 11.6):
   liquidity, swept level, killzone);
 - candles.json: the entry-timeframe candles, cut from the run's own data
   around its decisions, with the chart window lengths;
+- executions.json: each closed order's lots, risk and P&L in the account
+  currency, and for a filled one the M1 bars Phase B priced it on (bid, with
+  the spread used), from ``m1_before`` minutes before the fill to
+  ``m1_after`` after the exit. Trades longer than ``m1_max_minutes`` get none.
+  Runs written before task 226 have no such file; their reports lack the
+  close-up and the money labels;
 - manifest.json and summary.json: the header and the summary (Req 11.2, 11.3).
 
 Everything is embedded: the data as JSON, and the charts drawn as SVG by a
@@ -19,9 +26,15 @@ small inline script. No library, server or network is needed (Req 11.1).
 Each row with a setup gets a chart window (Req 11.5). It runs from
 ``bars_before`` bars before the decision bar to ``bars_after`` bars after the
 bar of its close, or of the decision when it never closed. The chart marks:
-- the decision, entry, stop and target, and the fill and exit;
+- the decision, and for an order the position tool: its reward (entry to
+  target) and risk (entry to stop) boxes from the fill, or the placement when
+  it never filled, to the exit or expiry, with R and money labels, the path
+  from fill to exit and the result; for a skipped intent, its levels;
 - the entry array, the draw on liquidity and the swept level, where recorded;
 - the killzones, shaded.
+A filled order also gets its M1 close-up, with the ask (bid + spread) drawn:
+fills, stops and targets trigger on the side the fill model uses. A link
+``report.html#order=<order_id>`` (or ``#row=<n>``) opens one row's charts.
 
 The same page renders a paper forward test's trades file (Req 11.7). Its
 trades become rows, with candles from the store, and no context: the paper
@@ -41,6 +54,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from agent.brokers.fill_model import Bar
 from algo_backtester.metrics import Stats
 from algo_backtester.report import stats_cells, stats_from_json
 from algo_backtester.simulation import JournalRow
@@ -58,11 +72,17 @@ _FILTERS = ("outcome", "decision", "instrument", "grade", "killzone")
 # ── what a run records for its report ──────────────────────────────────────
 
 def write_report_inputs(run_dir: Path, journal: Sequence[JournalRow], candles: Mapping[str, Sequence[Any]],
-                        entry_tf: Timeframe, bars_before: int = 60, bars_after: int = 20) -> None:
-    """context.json and candles.json: the recorded context of each order
-    intent, and the entry-timeframe candles its charts need (``candles``:
-    each instrument's bars, with timestamp/open/high/low/close, oldest first)."""
+                        entry_tf: Timeframe, bars_before: int = 60, bars_after: int = 20,
+                        m1: Optional[Mapping[str, Sequence[Bar]]] = None, account_ccy: Optional[str] = None,
+                        m1_before: int = 30, m1_after: int = 15, m1_max_minutes: int = 720) -> None:
+    """context.json, candles.json and executions.json: the recorded context of
+    each order intent, the entry-timeframe candles its charts need
+    (``candles``: each instrument's bars, with timestamp/open/high/low/close,
+    oldest first), and each closed order's execution (``m1``: the bars Phase B
+    priced, RunResult.bars)."""
     run_dir = Path(run_dir)
+    _write_executions(run_dir, journal, m1 or {}, account_ccy, timedelta(minutes=m1_before),
+                      timedelta(minutes=m1_after), timedelta(minutes=m1_max_minutes))
     context = [{"t": _iso(r.t), "instrument": r.instrument, "setup_id": r.setup_id, "context": asdict(r.context)}
                for r in sorted(journal, key=lambda r: (r.t, r.instrument)) if r.context is not None]
     (run_dir / "context.json").write_text(json.dumps(context, indent=1) + "\n", encoding="utf-8", newline="\n")
@@ -82,6 +102,25 @@ def write_report_inputs(run_dir: Path, journal: Sequence[JournalRow], candles: M
                            for b in candles.get(instrument, ()) if lo <= b.timestamp <= hi]
     body = {"timeframe": entry_tf.value, "bars_before": bars_before, "bars_after": bars_after, "instruments": cut}
     (run_dir / "candles.json").write_text(json.dumps(body) + "\n", encoding="utf-8", newline="\n")
+
+
+def _write_executions(run_dir: Path, journal: Sequence[JournalRow], m1: Mapping[str, Sequence[Bar]],
+                      account_ccy: Optional[str], before: timedelta, after: timedelta, longest: timedelta) -> None:
+    orders = []
+    for row in sorted(journal, key=lambda r: (r.t, r.instrument)):
+        trade = row.trade
+        if row.decision != "EXECUTE" or trade is None:
+            continue
+        order = {"order_id": trade.order_id, "instrument": trade.instrument, "lots": trade.lots,
+                 "risk_amount": trade.risk_amount, "pnl": trade.pnl}
+        bars = m1.get(trade.instrument)
+        if bars and trade.filled_at is not None and trade.closed_at - trade.filled_at <= longest:
+            lo = bisect_left(bars, trade.filled_at - before, key=lambda b: b.timestamp)
+            hi = bisect_right(bars, trade.closed_at + after, key=lambda b: b.timestamp)
+            order["m1"] = [[_iso(b.timestamp), b.open, b.high, b.low, b.close, b.spread] for b in bars[lo:hi]]
+        orders.append(order)
+    body = {"account_ccy": account_ccy, "orders": orders}
+    (run_dir / "executions.json").write_text(json.dumps(body) + "\n", encoding="utf-8", newline="\n")
 
 
 def write_html_report(run_dir: Path) -> Path:
@@ -120,8 +159,12 @@ def build_from_run_dir(run_dir: Path) -> dict:
     ]
     charts = _Charts(candles)
     rows = [_journal_row(n, r, contexts.get((r["t"], r["instrument"])), charts) for n, r in enumerate(journal)]
+    executed = read("executions.json") if (run_dir / "executions.json").is_file() else {}
+    executions = {o["order_id"]: {k: v for k, v in o.items() if k not in ("order_id", "instrument")}
+                  for o in executed.get("orders", [])}
     return _model(f"Backtest {manifest['run_id'][:12]}", header, rows, charts,
-                  summary={**summary, "min_trades": manifest["run_config"]["report"]["min_trades"]})
+                  summary={**summary, "min_trades": manifest["run_config"]["report"]["min_trades"]},
+                  executions=executions, account_ccy=executed.get("account_ccy"))
 
 
 def build_forward_test(trades: Sequence[Mapping[str, Any]], candles: Mapping[str, Sequence[Any]],
@@ -138,7 +181,7 @@ def build_forward_test(trades: Sequence[Mapping[str, Any]], candles: Mapping[str
             n, t=placed, instrument=trade["instrument"], setup_id=trade.get("setup_id"), grade=None,
             decision="EXECUTE", reason="", killzone=None, time_window=None, direction=trade["direction"],
             entry=trade.get("entry"), stop=trade.get("stop_loss"), target=trade.get("take_profit"),
-            order_id=trade["trade_id"], kind=trade.get("kind"),
+            order_id=trade["trade_id"], kind=trade.get("kind"), placed=placed, expires=_dt(trade.get("expires_at")),
             outcome=trade.get("exit_reason") or ("OPEN" if trade.get("status") != "CLOSED" else None),
             fill=(_dt(trade.get("filled_at")), trade.get("fill_price")), exit=(closed, trade.get("exit_price")),
             gross_r=trade.get("gross_r"), net_r=trade.get("net_r"), cost_r=None, context=None, charts=charts,
@@ -158,6 +201,7 @@ def _journal_row(n: int, r: Mapping[str, str], context: Optional[dict], charts: 
         decision=r["decision"], reason=r["reason"], killzone=r["killzone"] or None,
         time_window=r["time_window"] or None, direction=r["direction"] or None, entry=_f(r["entry"]),
         stop=_f(r["stop"]), target=_f(r["target"]), order_id=r["order_id"] or None, kind=r["order_kind"] or None,
+        placed=_dt(r["placed_at"]), expires=_dt(r["expires_at"]),
         outcome=r["exit_reason"] or None, fill=(_dt(r["filled_at"]), _f(r["fill"])),
         exit=(_dt(r["closed_at"]), _f(r["exit"])), gross_r=_f(r["gross_r"]), net_r=_f(r["net_r"]),
         cost_r=sum(costs) if None not in costs else None, context=context, charts=charts,
@@ -166,8 +210,9 @@ def _journal_row(n: int, r: Mapping[str, str], context: Optional[dict], charts: 
 
 
 def _row(n: int, *, t: datetime, instrument: str, setup_id, grade, decision: str, reason: str, killzone,
-         time_window, direction, entry, stop, target, order_id, kind, outcome, fill: tuple, exit: tuple,
-         gross_r, net_r, cost_r, context, charts: "_Charts", has_setup: bool) -> dict:
+         time_window, direction, entry, stop, target, order_id, kind, placed: Optional[datetime],
+         expires: Optional[datetime], outcome, fill: tuple, exit: tuple, gross_r, net_r, cost_r, context,
+         charts: "_Charts", has_setup: bool) -> dict:
     if killzone is None:
         window_name = get_killzone(t)
         killzone = None if window_name == KillzoneWindow.NONE else window_name.value
@@ -184,6 +229,8 @@ def _row(n: int, *, t: datetime, instrument: str, setup_id, grade, decision: str
     exit_at, exit_price = exit
     row["markers"] = {
         "decision": _iso(t), "entry": entry, "stop": stop, "target": target,
+        "placed": _iso(placed) if placed is not None else None,
+        "expires": _iso(expires) if expires is not None else None,
         "fill": [_iso(fill_at), fill_price] if fill_at is not None and fill_price is not None else None,
         "exit": [_iso(exit_at), exit_price] if exit_at is not None and exit_price is not None else None,
         "closed": _iso(exit_at) if exit_at is not None else None,
@@ -225,12 +272,14 @@ class _Charts:
         return sorted(bands)
 
 
-def _model(title: str, header: list, rows: list[dict], charts: _Charts, summary: Optional[dict]) -> dict:
+def _model(title: str, header: list, rows: list[dict], charts: _Charts, summary: Optional[dict],
+           executions: Optional[dict] = None, account_ccy: Optional[str] = None) -> dict:
     used = {r["instrument"] for r in rows if r["window"]}
     filters = {name: sorted({str(r[name]) for r in rows if r[name] is not None}) for name in _FILTERS}
     return {"title": title, "header": header, "rows": rows, "filters": filters, "summary": summary,
             "timeframe": charts.timeframe.value,
-            "candles": {i: bars for i, bars in sorted(charts.bars.items()) if i in used}}
+            "candles": {i: bars for i, bars in sorted(charts.bars.items()) if i in used},
+            "executions": executions or {}, "account_ccy": account_ccy}
 
 
 # ── the page ───────────────────────────────────────────────────────────────
@@ -390,10 +439,11 @@ _PAGE = """<!doctype html>
 <style>
 :root { --bg:#fff; --fg:#1d2329; --muted:#6b7480; --line:#d9dee4; --panel:#f5f7f9; --up:#1a7f5a; --down:#c23b3b;
   --entry:#2563eb; --stop:#c23b3b; --target:#1a7f5a; --band:rgba(250,190,40,.13); --array:rgba(37,99,235,.13);
-  --dol:#8b5cf6; --sel:#e8eefc; }
+  --dol:#8b5cf6; --sel:#e8eefc; --reward:rgba(26,127,90,.16); --risk:rgba(194,59,59,.16); }
 @media (prefers-color-scheme: dark) { :root { --bg:#14181c; --fg:#e3e7eb; --muted:#9aa4ae; --line:#2c333a;
   --panel:#1b2026; --up:#3fbf8a; --down:#ef6b6b; --entry:#6c9cff; --stop:#ef6b6b; --target:#3fbf8a;
-  --band:rgba(250,190,40,.10); --array:rgba(108,156,255,.16); --dol:#b794f6; --sel:#243049; } }
+  --band:rgba(250,190,40,.10); --array:rgba(108,156,255,.16); --dol:#b794f6; --sel:#243049;
+  --reward:rgba(63,191,138,.18); --risk:rgba(239,107,107,.18); } }
 body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
   font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
 h1 { font-size:20px; margin:0 0 12px; } h2 { font-size:16px; margin:28px 0 8px; } h3 { font-size:14px; margin:18px 0 6px; }
@@ -408,7 +458,8 @@ svg text { fill:var(--muted); font-size:11px; }
 .axis { stroke:var(--line); } .eq { fill:none; stroke:var(--entry); stroke-width:1.6; }
 .dd { fill:none; stroke:var(--down); stroke-width:1; opacity:.7; }
 rect.win { fill:var(--up); } rect.loss { fill:var(--down); }
-.scroll { overflow-x:auto; max-width:100%; }
+.scroll { overflow:auto; max-width:100%; max-height:45vh; }
+#explorer th { position:sticky; top:0; background:var(--bg); }
 .filters { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; align-items:center; }
 .filters label { color:var(--muted); font-size:12px; display:flex; flex-direction:column; }
 select, button { font:inherit; background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:2px 6px; }
@@ -424,6 +475,14 @@ select, button { font:inherit; background:var(--panel); color:var(--fg); border:
 .dol { stroke:var(--dol); stroke-dasharray:6 4; } .lbl-dol { fill:var(--dol); }
 .decision { stroke:var(--fg); stroke-dasharray:2 3; opacity:.6; }
 .fill { fill:var(--entry); } .exit { stroke:var(--fg); stroke-width:2; }
+.pos-reward { fill:var(--reward); stroke:var(--target); stroke-opacity:.6; }
+.pos-risk { fill:var(--risk); stroke:var(--stop); stroke-opacity:.6; }
+.unfilled { fill-opacity:.45; stroke-dasharray:4 3; }
+.pending { stroke:var(--entry); stroke-dasharray:2 3; } .path { stroke:var(--fg); stroke-dasharray:4 3; opacity:.7; }
+.ask { stroke:var(--muted); opacity:.6; }
+svg text.halo { paint-order:stroke; stroke:var(--panel); stroke-width:3px; stroke-linejoin:round; }
+svg text.tag { font-weight:600; fill:var(--fg); } svg text.pos { fill:var(--up); } svg text.neg { fill:var(--down); }
+.caption { color:var(--muted); font-size:12px; margin:10px 0 4px; }
 </style>
 </head>
 <body>
@@ -483,42 +542,62 @@ select, button { font:inherit; background:var(--panel); color:var(--fg); border:
     selected = Number(tr.dataset.id); table(); show(rows[selected]);
   });
 
+  const ccy = data.account_ccy ? " " + data.account_ccy : "";
+  const money = v => (v < 0 ? "\\u2212" : "+") + Math.abs(v).toFixed(2) + ccy;
+  // the last bar opening at or before t (bars oldest first, timestamps as ISO strings in UTC)
+  const find = (bars, t) => { let lo = 0, hi = bars.length - 1, ans = 0; while (lo <= hi) { const mid = (lo + hi) >> 1;
+    if (bars[mid][0] <= t) { ans = mid; lo = mid + 1; } else hi = mid - 1; } return ans; };
+
   function show(r) {
-    const chart = document.getElementById("chart");
-    chart.innerHTML = r.window ? svg(r) : "<p>No setup to draw for this row.</p>";
-    const m = r.markers || {}, c = ctx(r);
+    const m = r.markers || {}, c = ctx(r), ex = (r.order_id && data.executions[r.order_id]) || null;
+    const parts = [];
+    if (r.window) {
+      const all = data.candles[r.instrument] || [];
+      parts.push(`<p class="caption">${esc(r.instrument)} ${data.timeframe}: the setup in context</p>`,
+                 chart(r, all.slice(find(all, r.window[0]), find(all, r.window[1]) + 1), data.timeframe, true));
+    } else parts.push("<p>No setup to draw for this row.</p>");
+    if (ex && ex.m1) {
+      const side = r.direction === "LONG" ? "A LONG fills on the ask and exits on the bid" : "A SHORT fills on the bid and exits on the ask";
+      parts.push(`<p class="caption">${esc(r.instrument)} M1: how the order was executed. Candles are bid prices; the grey tick ` +
+                 `right of each candle is the ask (bid + spread). ${side}.</p>`, chart(r, ex.m1, "M1", false));
+    } else if (ex && m.fill) parts.push('<p class="caption">No M1 close-up: the trade ran longer than the close-up covers. The chart above shows it.</p>');
+    document.getElementById("chart").innerHTML = parts.join("");
     const items = [["setup", r.setup_id], ["decision", `${r.decision} ${why(r)}`], ["grade", r.grade],
-      ["time window", r.time_window], ["order", r.order_id ? `${r.order_id} ${r.kind || ""}` : ""],
+      ["time window", r.time_window], ["order", r.order_id ? `${r.order_id} ${r.kind || ""} ${r.direction || ""}` : ""],
+      ["placed", m.placed ? m.placed + (m.expires ? `, expires ${m.expires}` : "") : ""],
+      ["position", ex ? `${ex.lots} lots, risk ${num(ex.risk_amount, 2)}${ccy}` + (m.fill ? `, P&L ${money(ex.pnl)}` : "") : ""],
       ["fill", m.fill ? `${m.fill[1]} at ${m.fill[0]}` : ""], ["exit", m.exit ? `${m.exit[1]} at ${m.exit[0]} (${r.outcome})` : r.outcome],
       ["R", r.net_r == null ? "" : `gross ${num(r.gross_r, 2)}, net ${num(r.net_r, 2)}, costs ${num(r.cost_r, 2)}`],
       ["entry array", c.entry_array ? `${c.entry_array.type} ${c.entry_array.direction} ${c.entry_array.timeframe} ${c.entry_array.low}-${c.entry_array.high}, formed ${c.entry_array.formed_at}` : ""],
       ["draw on liquidity", c.draw_on_liquidity ? `${c.draw_on_liquidity.type} ${c.draw_on_liquidity.source} ${c.draw_on_liquidity.price}` : ""],
-      ["swept level", c.swept_level ? JSON.stringify(c.swept_level) : ""]];
+      ["swept level", c.swept_level ? JSON.stringify(c.swept_level) : ""],
+      ["link", "report.html#" + link(r)]];
     document.getElementById("info").innerHTML = "<dl>" + items.filter(([, v]) => v)
       .map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("") + "</dl>";
   }
+  const link = r => r.order_id ? `order=${r.order_id}` : `row=${r.id}`;
 
-  function svg(r) {
-    const all = data.candles[r.instrument] || [];
-    const index = t => { let lo = 0, hi = all.length - 1, ans = 0; while (lo <= hi) { const mid = (lo + hi) >> 1;
-      if (all[mid][0] <= t) { ans = mid; lo = mid + 1; } else hi = mid - 1; } return ans; };
-    const i0 = index(r.window[0]), i1 = index(r.window[1]), bars = all.slice(i0, i1 + 1), n = bars.length;
+  // One candle chart. bars: [t, open, high, low, close(, spread)], oldest first. The context chart also
+  // draws the entry array and the draw on liquidity; a chart with spreads (M1) draws the ask.
+  function chart(r, bars, tf, context) {
+    const n = bars.length;
     if (!n) return "<p>No candles recorded for this window.</p>";
     const W = 960, H = 380, L = 8, R = 84, T = 10, B = 22, pw = W - L - R, ph = H - T - B, step = pw / n;
-    const m = r.markers, c = ctx(r);
+    const m = r.markers, c = context ? ctx(r) : {}, ask = b => b[5] || 0;
     const levels = [m.entry, m.stop, m.target].filter(v => v != null);
     if (c.entry_array) levels.push(c.entry_array.high, c.entry_array.low);
-    let lo = Math.min(...bars.map(b => b[3]), ...levels), hi = Math.max(...bars.map(b => b[2]), ...levels);
+    let lo = Math.min(...bars.map(b => b[3]), ...levels), hi = Math.max(...bars.map(b => b[2] + ask(b)), ...levels);
     const dol = c.draw_on_liquidity && c.draw_on_liquidity.price;
     if (dol != null && dol > lo - (hi - lo) && dol < hi + (hi - lo)) { lo = Math.min(lo, dol); hi = Math.max(hi, dol); }
-    const pad = (hi - lo) * 0.04 || 1e-6; lo -= pad; hi += pad;
+    const pad = (hi - lo) * 0.1 || 1e-6; lo -= pad; hi += pad;      // room for the position tool's labels
     const y = p => T + (hi - p) / (hi - lo) * ph;
-    const x = t => L + (index(t) - i0 + 0.5) * step;
-    const clampX = t => t < r.window[0] ? L : (t > r.window[1] ? L + pw : x(t));
+    const first = bars[0][0], last = bars[n - 1][0];
+    const x = t => L + (find(bars, t) + 0.5) * step;
+    const clampX = t => t < first ? L : (t > last ? L + pw : x(t));
     const out = [`<svg viewBox="0 0 ${W} ${H}" role="img">`];
     for (const [s, e, name] of r.bands || []) {
       const a = clampX(s) - step / 2, b = clampX(e) - step / 2;
-      out.push(`<rect class="band" x="${a}" y="${T}" width="${Math.max(0, b - a)}" height="${ph}"/><text x="${a + 2}" y="${T + 11}">${name}</text>`);
+      if (b > a) out.push(`<rect class="band" x="${a}" y="${T}" width="${b - a}" height="${ph}"/><text x="${a + 2}" y="${T + 11}">${name}</text>`);
     }
     if (c.entry_array) {
       const a = clampX(c.entry_array.formed_at) - step / 2;
@@ -531,24 +610,86 @@ select, button { font:inherit; background:var(--panel); color:var(--fg); border:
       const cx = L + (i + 0.5) * step, cls = b[4] >= b[1] ? "candle-up" : "candle-down";
       const top = y(Math.max(b[1], b[4])), h = Math.max(1, Math.abs(y(b[1]) - y(b[4])));
       out.push(`<line class="${cls}" x1="${cx}" x2="${cx}" y1="${y(b[2])}" y2="${y(b[3])}"/><rect class="${cls}" x="${cx - step * 0.35}" y="${top}" width="${step * 0.7}" height="${h}"/>`);
+      if (ask(b)) out.push(`<line class="ask" x1="${cx + step * 0.45}" x2="${cx + step * 0.45}" y1="${y(b[2] + b[5])}" y2="${y(b[3] + b[5])}"><title>ask ${(b[3] + b[5]).toPrecision(6)}-${(b[2] + b[5]).toPrecision(6)}</title></line>`);
     });
-    const d = x(m.decision) + step / 2, end = m.closed ? x(m.closed) + step / 2 : L + pw;
-    out.push(`<line class="decision" x1="${d}" x2="${d}" y1="${T}" y2="${T + ph}"/>`);
-    for (const [name, v] of [["entry", m.entry], ["stop", m.stop], ["target", m.target]]) {
-      if (v == null) continue;
-      out.push(`<line class="lvl-${name}" x1="${d}" x2="${Math.max(end, d + step)}" y1="${y(v)}" y2="${y(v)}"/><text class="lbl-${name}" x="${L + pw + 4}" y="${y(v) + 4}">${name} ${v}</text>`);
+    if (m.decision >= first && m.decision <= last) {
+      const d = x(m.decision) - step / 2;
+      out.push(`<line class="decision" x1="${d}" x2="${d}" y1="${T}" y2="${T + ph}"><title>decision ${m.decision}</title></line>`);
     }
-    if (m.fill) out.push(`<circle class="fill" cx="${x(m.fill[0])}" cy="${y(m.fill[1])}" r="4"><title>fill ${m.fill[1]}</title></circle>`);
-    if (m.exit) { const ex = x(m.exit[0]), ey = y(m.exit[1]);
-      out.push(`<path class="exit" d="M${ex - 4},${ey - 4}L${ex + 4},${ey + 4}M${ex - 4},${ey + 4}L${ex + 4},${ey - 4}"><title>exit ${m.exit[1]}</title></path>`); }
+    if (r.order_id && m.entry != null && m.stop != null) out.push(...position(r, m, clampX, y, step, L, pw));
+    else {                                                  // an intent that never became an order: its levels
+      const d = clampX(m.decision) - step / 2, end = m.closed ? clampX(m.closed) + step / 2 : L + pw;
+      for (const [name, v] of [["entry", m.entry], ["stop", m.stop], ["target", m.target]]) {
+        if (v == null) continue;
+        out.push(`<line class="lvl-${name}" x1="${d}" x2="${Math.max(end, d + step)}" y1="${y(v)}" y2="${y(v)}"/><text class="lbl-${name}" x="${L + pw + 4}" y="${y(v) + 4}">${name} ${v}</text>`);
+      }
+    }
+    if (m.fill) out.push(`<circle class="fill" cx="${clampX(m.fill[0])}" cy="${y(m.fill[1])}" r="4"><title>fill ${m.fill[1]} at ${m.fill[0]}</title></circle>`);
+    if (m.exit) { const ex = clampX(m.exit[0]), ey = y(m.exit[1]);
+      out.push(`<path class="exit" d="M${ex - 4},${ey - 4}L${ex + 4},${ey + 4}M${ex - 4},${ey + 4}L${ex + 4},${ey - 4}"><title>exit ${m.exit[1]} at ${m.exit[0]}</title></path>`); }
     for (let k = 0; k <= 4; k++) { const p = lo + (hi - lo) * k / 4;
       out.push(`<text x="${L + pw + 4}" y="${y(p) + 4}" opacity=".5">${p.toPrecision(6)}</text>`); }
-    for (const k of [0, Math.floor(n / 2), n - 1])
-      out.push(`<text x="${L + (k + 0.5) * step}" y="${H - 6}" text-anchor="middle">${bars[k][0].slice(5, 16).replace("T", " ")}</text>`);
-    out.push(`<text x="${L}" y="${H - 6}">${esc(r.instrument)} ${data.timeframe}</text></svg>`);
+    for (const [k, at] of [[0, "start"], [Math.floor(n / 2), "middle"], [n - 1, "end"]])   // the caption names the chart
+      out.push(`<text x="${L + (k + 0.5) * step}" y="${H - 6}" text-anchor="${at}">${bars[k][0].slice(5, 16).replace("T", " ")}</text>`);
+    out.push(`<title>${esc(r.instrument)} ${tf}</title></svg>`);
     return out.join("");
   }
+
+  // The position tool, as on a TradingView chart: the reward box (entry to target) and the risk box (entry
+  // to stop) from the fill, or the placement when it never filled, to the exit or expiry; then the
+  // path from fill to exit and the result. Pale and dashed when the order never filled.
+  function position(r, m, clampX, y, step, L, pw) {
+    const ex = data.executions[r.order_id] || {}, filled = !!m.fill, long = r.direction === "LONG", out = [];
+    const a = clampX(filled ? m.fill[0] : (m.placed || m.decision)) - step / 2;
+    const b = m.closed ? Math.max(clampX(m.closed) + step / 2, a + Math.max(step, 6)) : L + pw;
+    const box = (p, q, kind) => { const top = y(Math.max(p, q));
+      return `<rect class="pos-${kind}${filled ? "" : " unfilled"}" x="${a}" y="${top}" width="${b - a}" height="${Math.max(1, y(Math.min(p, q)) - top)}"/>`; };
+    if (m.target != null) out.push(box(m.entry, m.target, "reward"));
+    out.push(box(m.entry, m.stop, "risk"),
+             `<line class="lvl-entry" x1="${a}" x2="${b}" y1="${y(m.entry)}" y2="${y(m.entry)}"/>`);
+    if (filled && m.placed && m.placed < m.fill[0]) {           // waiting as a pending order
+      const p = clampX(m.placed) - step / 2;
+      if (p < a) out.push(`<line class="pending" x1="${p}" x2="${a}" y1="${y(m.entry)}" y2="${y(m.entry)}"><title>pending from ${m.placed}</title></line>`);
+    }
+    // Labels beside the boxes: the levels on the left (most positions sit mid-chart), the result on the right.
+    // Near an edge both go on the free side, the result stacked beyond the level labels.
+    const risk = Math.abs(m.entry - m.stop), rr = m.target != null && risk ? Math.abs(m.target - m.entry) / risk : null;
+    const left = a - L > 270, right = b + 230 < L + pw;
+    const lx = left ? a - 6 : b + 6, anchor = left ? "end" : "start";
+    const label = (text, price, cls, above, dy) =>
+      `<text class="halo ${cls}" x="${lx}" y="${(above ? y(price) - 5 : y(price) + 13) + dy}" text-anchor="${anchor}">${esc(text)}</text>`;
+    if (m.target != null) out.push(label(`Target ${m.target}` + (rr == null ? "" : `   +${rr.toFixed(2)}R`), m.target, "lbl-target", long, 0));
+    out.push(label(`Stop ${m.stop}   \\u22121R` + (ex.risk_amount != null ? `   risk ${num(ex.risk_amount, 2)}${ccy}` : ""), m.stop, "lbl-stop", !long, 0),
+             label(`${r.kind || ""} ${r.direction} ` + (ex.lots != null ? `${ex.lots} lots ` : "") + `@ ${m.entry}`, m.stop, "lbl-entry", !long, long ? 13 : -13));
+    const result = (text, cls, price) => {
+      const apart = left ? right : !right;                  // on the other side of the box from the level labels
+      const ty = apart ? y(price) + 4 : (long ? y(m.stop) + 39 : y(m.stop) - 31);
+      const tx = apart ? (left ? b + 6 : a - 6) : lx, ta = apart ? (left ? "start" : "end") : anchor;
+      return `<text class="halo tag ${cls}" x="${tx}" y="${ty}" text-anchor="${ta}">${esc(text)}</text>`;
+    };
+    if (filled && m.exit) {
+      const fx = clampX(m.fill[0]), fy = y(m.fill[1]), xx = clampX(m.exit[0]), xy = y(m.exit[1]);
+      out.push(`<line class="path" x1="${fx}" y1="${fy}" x2="${xx}" y2="${xy}"/>`,
+               result(`${r.outcome}   ${r.net_r > 0 ? "+" : ""}${num(r.net_r, 2)}R` + (ex.pnl != null ? `   ${money(ex.pnl)}` : ""),
+                      r.net_r > 0 ? "pos" : r.net_r < 0 ? "neg" : "", m.exit[1]));
+    } else out.push(result(filled ? "still open at the end of the run" : `${r.outcome || "pending"}: never filled`, "", m.entry));
+    return out;
+  }
+
+  document.getElementById("explorer").addEventListener("click", () => {
+    if (selected == null) return;
+    try { history.replaceState(null, "", "#" + link(rows[selected])); } catch (e) { /* a file: page may refuse */ }
+  });
+  function openLink() {                                      // report.html#order=<order_id> or #row=<n>
+    const p = new URLSearchParams(location.hash.slice(1));
+    const r = p.has("order") ? rows.find(x => x.order_id === p.get("order")) : p.has("row") ? rows[Number(p.get("row"))] : null;
+    if (!r) return;
+    selected = r.id; table(); show(r);
+    document.getElementById("detail").scrollIntoView();
+  }
+  window.addEventListener("hashchange", openLink);
   apply();
+  openLink();
 })();
 </script>
 </body>

@@ -205,7 +205,8 @@ def _run(args: argparse.Namespace, cfg: RunConfig, profile: BrokerProfile, sourc
     run_dir = write_run(args.runs_dir, cfg, manifest, result)
     entry_tf = cfg.strategy.entry_tf
     write_report_inputs(run_dir, result.journal, {i: d.closed[entry_tf] for i, d in datas.items()}, entry_tf,
-                        cfg.report.chart_bars_before, cfg.report.chart_bars_after)
+                        cfg.report.chart_bars_before, cfg.report.chart_bars_after, m1=result.bars,
+                        account_ccy=specs.account_ccy)
     report = write_html_report(run_dir)
     counts = {"journal rows": len(result.journal), "closed": len(result.trades), "open": len(result.open_orders)}
     print(f"wrote {run_dir}  ({', '.join(f'{k} {v}' for k, v in counts.items())})")
