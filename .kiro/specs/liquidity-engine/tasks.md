@@ -721,7 +721,13 @@ Requirements 13.4, 13.5, 18 and 19; design section "Update 2026-10"; decisions L
     - Re-baseline the golden journal.
   - **231c. REFACTOR** — check the chart in headless Chrome.
 
-- [ ] 232. Checkpoint
+- [x] 232. Checkpoint
+  - **Done 2026-10-07.**
+    - **Suite:** root 844 + 1 flaky, backend 1892. The only failures are the 27 task-39 RED tests and `test_mocked_ensure_collection_completes_under_5ms`, an algorag wall-clock assert that passes 3/3 alone.
+    - **Speed:** `analyze()` takes 39–42 ms per M15 window and 45–57 ms per M5 window (median of 30, engine-window fixtures).
+      - `SetupSequenceDetector` is 3.5–5.8 ms of that, about 10%.
+      - Well within Requirement 1.7's 500 ms. Task 199's 33 ms was per Phase A close on stored data; task 233's run times give the like-for-like figure.
+    - **Live impact:** the paper-trader image (built 2026-10-06) bakes in the code. It keeps trading the old grader until the image is rebuilt and the container restarted, which needs the user's OK.
   - Full suite green, apart from the task-39 RED tests.
   - Measure `analyze()` per M15 close on the engine-window fixtures, against task 199's 33 ms.
   - **Live impact:** the paper-trader container runs the new grader only after a restart, which needs the user's OK.
