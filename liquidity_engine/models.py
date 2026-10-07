@@ -425,11 +425,14 @@ class SetupGradeDetail(BaseModel):
     # Additional fields
     grade_reason: str
     suggested_entry: Optional[float] = None
+    # Behind the protected swing's wick, by 10% of its bar's range (Requirement
+    # 18.11); None without a setup sequence. The body variant is the same rule
+    # on the bar's body extreme (StrategyConfig.stop_mode = BODY).
     suggested_stop: Optional[float] = None
-    # The entry array's own range/direction — the local LTF leg price
-    # retraces into its discount/premium *within*, as distinct from the
-    # broader HTF displacement leg OTEZone anchors on. Used to project SD
-    # targets at a scale proportionate to this entry, not the whole swing.
+    protected_swing_body_stop: Optional[float] = None
+    counter_trend: bool = False                 # entry array against the D1 bias: capped at B (18.13)
+    # The entry array's own range and direction (the setup sequence's array
+    # when there is one).
     entry_array_high: Optional[float] = None
     entry_array_low: Optional[float] = None
     entry_array_direction: Optional[BiasDirection] = None

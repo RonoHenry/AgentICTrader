@@ -9,6 +9,7 @@ Validates: Requirements 1.2, 1.3 (.kiro/specs/algo-backtester/requirements.md)
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,6 +32,10 @@ from tests.test_liquidity_engine_perf import FIXTURES, _load
 from tests.test_liquidity_grader import full_liquidity_map, make_level
 
 GOLDEN_MESSAGE = Path(__file__).parent / "fixtures" / "backtester" / "order_intent" / "EURUSD_M5_message.json"
+GOLDEN_SOURCE = ("build_order_intent(...).to_message('AUTONOMOUS') on engine_windows/EURUSD_M5.json.gz at its "
+                 "timestamp, live default StrategyConfig with entry_tf M5; setup_id and candles_by_tf left out. "
+                 "Re-baselined by the setup-sequence grader (liquidity-engine tasks 228-230); first captured from "
+                 "scripts/run_live_agent.py before task 190 (commit 24fc14a)")
 AS_OF = datetime(2026, 1, 14, 14, 0, tzinfo=timezone.utc)  # 09:00 New York: NY AM killzone
 
 
@@ -180,15 +185,21 @@ def _fixture_intent():
 
 
 def test_to_message_matches_runner_message_minus_candles():
-    # The golden is what the runner itself built on this window before the
-    # move (see its "source"). Only setup_id differs, by design (task 189).
+    # The golden was what the runner itself built on this window before the
+    # move (task 190); only setup_id differed, by design (task 189). A grader
+    # change alters it on purpose: rerun with UPDATE_GOLDEN=1 and commit it
+    # with that change (its "source" says which). Runner parity itself is
+    # test_runner_delegates_to_build_order_intent.
     lm, _, t, cfg, intent = _fixture_intent()
-    golden = json.loads(GOLDEN_MESSAGE.read_text(encoding="utf-8"))["message"]
 
     message = intent.to_message("AUTONOMOUS")
 
     assert message.pop("setup_id") == setup_id_for("EURUSD", cfg.entry_tf, lm.setup_grade.entry_array_id)
     assert "candles_by_tf" not in message
+    if os.environ.get("UPDATE_GOLDEN"):
+        GOLDEN_MESSAGE.write_text(json.dumps({"source": GOLDEN_SOURCE, "message": message}, indent=2) + "\n",
+                                  encoding="utf-8", newline="\n")
+    golden = json.loads(GOLDEN_MESSAGE.read_text(encoding="utf-8"))["message"]
     assert json.loads(json.dumps(message)) == golden
 
 
@@ -220,7 +231,7 @@ def test_runner_delegates_to_build_order_intent(monkeypatch):
     assert summary == {"instrument": "EURUSD", "grade": "A", "decision": None, "trade_id": "t-1"}
 
 
-@pytest.mark.parametrize("min_rr, decision", [(3.0, None), (6.0, "SKIP (R:R 5.00 < 6.0)")])
+@pytest.mark.parametrize("min_rr, decision", [(3.0, None), (8.0, "SKIP (R:R 7.07 < 8.0)")])
 def test_runner_summary_unchanged(min_rr, decision):
     import scripts.run_live_agent as runner
 

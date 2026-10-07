@@ -697,7 +697,13 @@ The user's rules (decided 2026-10-02, before any result, and refined 2026-10-07)
 
 **Property 30: Counter-Trend Cap.** *For any* graded setup whose entry array direction differs from the D1 bias direction, the grade SHALL be `B` or `NO_TRADE`. **Validates: 18.13**
 
-**Property 31: Protected Swing Ordering.** *For any* bullish sequence: `wick ≤ body`, `suggested_stop < wick`, `suggested_stop < protected_swing_body_stop`, and `suggested_stop` is below the entry array's low. Bearish sequences mirror this. **Validates: 18.5, 18.11, 18.12**
+**Property 31: Protected Swing Ordering.** *For any* bullish sequence:
+- `wick ≤ body`;
+- `suggested_stop ≤ wick`, strictly below it when the protected bar has a range;
+- `suggested_stop ≤ protected_swing_body_stop`;
+- `stop_placement_valid` is `True` exactly when `suggested_stop` is below the entry array's low.
+
+Bearish sequences mirror this. **Validates: 18.5, 18.11, 18.12**
 
 **Property 32: Raid Integrity.** *For any* sequence, `raid.raided_at ≥ raid.pool.known_at`, no bar of the array's timeframe from `known_at` up to the raid traded beyond the pool, and the array formed at or after the raid. **Validates: 18.2–18.4**
 

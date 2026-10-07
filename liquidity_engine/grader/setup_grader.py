@@ -6,11 +6,19 @@ returns the full `SetupGradeDetail` (not just the bare `SetupGrade` enum)
 since that's what `LiquidityMap.setup_grade` actually stores and what
 `grade_reason`/`suggested_entry`/`suggested_stop` need to be computed once,
 consistently, alongside the grade itself.
+
+Update 2026-10 (Requirement 18.9-18.14): grading follows the setup sequence
+the engine records (raid -> CISD -> PD array, liquidity_engine/grader/sequence.py):
+- its array is the entry array;
+- the sweep condition means a sequence exists, and gates any trade;
+- the stop goes behind the protected swing (wick, with the body variant
+  recorded), and is valid when it lies beyond the entry array;
+- an entry array against the D1 bias grades at most B.
 """
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from liquidity_engine.models import (
     BiasDirection,
@@ -23,8 +31,8 @@ from liquidity_engine.models import (
 )
 from liquidity_engine.utils.time_utils import is_in_killzone
 
-# Stop is placed this fraction of the entry array's own range beyond its far
-# boundary — a stop sitting exactly on the boundary isn't "beyond" it.
+# The stop sits this fraction of the protected swing bar's range beyond its
+# wick (or body): a stop exactly on the extreme isn't "beyond" it.
 _STOP_BUFFER_RATIO = 0.1
 
 # HTF PD arrays (D1/W1/H4/...) inform bias and the draw-on-liquidity target,
@@ -76,6 +84,11 @@ class SetupGrader:
             cisd_confirmed,
             entry_pd_array_present,
         )
+        counter_trend = self._is_counter_trend(liquidity_map, entry_array)
+        capped = counter_trend and grade in (SetupGrade.A_PLUS, SetupGrade.A)
+        if capped:
+            grade = SetupGrade.B
+        wick_stop, body_stop = self._protected_swing_stops(liquidity_map)
 
         return SetupGradeDetail(
             grade=grade,
@@ -88,9 +101,11 @@ class SetupGrader:
             entry_pd_array_present=entry_pd_array_present,
             stop_placement_valid=stop_placement_valid,
             time_window_aligned=time_window_aligned,
-            grade_reason=self._build_grade_reason(liquidity_map, grade, conditions_met, entry_array),
+            grade_reason=self._build_grade_reason(liquidity_map, grade, conditions_met, entry_array, capped),
             suggested_entry=self._suggested_entry(liquidity_map, entry_array),
-            suggested_stop=self._suggested_stop(entry_array),
+            suggested_stop=wick_stop,
+            protected_swing_body_stop=body_stop,
+            counter_trend=counter_trend,
             entry_array_high=entry_array.high if entry_array is not None else None,
             entry_array_low=entry_array.low if entry_array is not None else None,
             entry_array_direction=entry_array.direction if entry_array is not None else None,
@@ -108,7 +123,8 @@ class SetupGrader:
         return lm.draw_on_liquidity is not None
 
     def _check_liquidity_sweep(self, lm: LiquidityMap) -> bool:
-        return lm.sweep_detected
+        # Requirement 18.4: an opposite-side raid, reclaimed, then a CISD and the entry array.
+        return lm.setup_sequence is not None
 
     def _check_displacement(self, lm: LiquidityMap) -> bool:
         # Deliberately independent of FVG presence: the B grade (Requirement
@@ -135,18 +151,47 @@ class SetupGrader:
         return bool(self._entry_eligible_arrays(lm))
 
     def _check_stop_placement(self, lm: LiquidityMap) -> bool:
-        # A stop is placed relative to the same array used for entry, so
-        # validity is coupled to an entry array actually being available.
-        return self._check_entry_pd_array(lm)
+        # Requirement 18.12: the protected-swing stop lies beyond the entry array's far side.
+        entry_array = self._select_entry_array(lm)
+        stop, _ = self._protected_swing_stops(lm)
+        if entry_array is None or stop is None:
+            return False
+        if lm.setup_sequence.direction == BiasDirection.BULLISH:
+            return stop < entry_array.low
+        return stop > entry_array.high
 
     def _check_time_window(self, lm: LiquidityMap, ts: datetime) -> bool:
         return is_in_killzone(ts)
 
     def _select_entry_array(self, lm: LiquidityMap) -> Optional[PDArray]:
+        # Requirement 18.10: the array the raid sequence produced. Without a
+        # sequence the strongest array still names the setup in the grade
+        # reason, but the sweep gate stops it from trading.
         unfilled = self._entry_eligible_arrays(lm)
         if not unfilled:
             return None
+        if lm.setup_sequence is not None:
+            for array in unfilled:
+                if array.array_id == lm.setup_sequence.entry_array_id:
+                    return array
         return max(unfilled, key=lambda a: a.strength_score)
+
+    def _protected_swing_stops(self, lm: LiquidityMap) -> Tuple[Optional[float], Optional[float]]:
+        """The wick and body stops behind the protected swing (Requirement 18.11)."""
+        sequence = lm.setup_sequence
+        if sequence is None:
+            return None, None
+        swing = sequence.protected_swing
+        buffer = swing.candle_range * _STOP_BUFFER_RATIO
+        if sequence.direction == BiasDirection.BULLISH:
+            return swing.wick - buffer, swing.body - buffer
+        return swing.wick + buffer, swing.body + buffer
+
+    def _is_counter_trend(self, lm: LiquidityMap, entry_array: Optional[PDArray]) -> bool:
+        d1 = lm.htf_bias.get(Timeframe.D1.value)
+        if entry_array is None or d1 is None or d1.direction == BiasDirection.NEUTRAL:
+            return False
+        return entry_array.direction != d1.direction
 
     def _assign_grade(
         self,
@@ -158,7 +203,8 @@ class SetupGrader:
         cisd_confirmed: bool,
         entry_pd_array_present: bool,
     ) -> SetupGrade:
-        if not htf_bias_confirmed or not draw_on_liquidity_identified:
+        # Requirement 9.5 and the sweep gate (18.9, LE-D1).
+        if not htf_bias_confirmed or not draw_on_liquidity_identified or not liquidity_sweep_confirmed:
             return SetupGrade.NO_TRADE
         if conditions_met < 6:
             return SetupGrade.NO_TRADE
@@ -197,22 +243,26 @@ class SetupGrader:
             return lm.ote_zone.golden_level
         return (entry_array.high + entry_array.low) / 2
 
-    def _suggested_stop(self, entry_array: Optional[PDArray]) -> Optional[float]:
-        if entry_array is None:
-            return None
-        buffer = (entry_array.high - entry_array.low) * _STOP_BUFFER_RATIO
-        if entry_array.direction == BiasDirection.BEARISH:
-            return entry_array.high + buffer
-        return entry_array.low - buffer
-
     def _build_grade_reason(
         self,
         lm: LiquidityMap,
         grade: SetupGrade,
         conditions_met: int,
         entry_array: Optional[PDArray],
+        capped: bool = False,
     ) -> str:
         parts: List[str] = [f"Grade {grade.value} ({conditions_met}/8 conditions met)."]
+        sequence = lm.setup_sequence
+        if sequence is None:
+            parts.append("No opposite-side raid before the entry array.")
+        else:
+            pool = sequence.raid.pool
+            parts.append(
+                f"Raid of {pool.source.value} ({pool.timeframe.value}) at {pool.price:.10g}; "
+                f"protected swing {sequence.protected_swing.wick:.10g}."
+            )
+        if capped:
+            parts.append("Counter-trend (entry array against the D1 bias): capped at B.")
         if entry_array is not None and entry_array.structure_confirmed:
             parts.append(
                 "Entry array is structure-confirmed (sweep followed by a structural break back "

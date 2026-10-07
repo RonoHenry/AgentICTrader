@@ -609,7 +609,8 @@ Requirements 13.4, 13.5, 18 and 19; design section "Update 2026-10"; decisions L
   - design.md: section "Update 2026-10".
   - The user decided the rules on 2026-10-02 and answered the open questions on 2026-10-07: the sweep is a gate; all pools can be raided; no fixed raid window; SD targets at 2–2.5 SD.
 
-- [ ] 228. Mark swept levels; draw on liquidity from untouched pools (Req 13.5, Property 34)
+- [x] 228. Mark swept levels; draw on liquidity from untouched pools (Req 13.5, Property 34)
+  - **Done 2026-10-07, committed with task 230.** `_mark_swept_levels` uses bisect per timeframe and stops at the earliest breach.
   - **Lands together with task 230 (one commit).** On its own it leaves the old sweep check (the draw on liquidity already traded through) unable ever to fire. The golden week then has no orders at all until 230 replaces that check.
   - **228a. RED** (`backend/tests/test_liquidity_engine.py`)
     - `test_level_marked_swept_when_later_bar_trades_beyond`
@@ -651,7 +652,24 @@ Requirements 13.4, 13.5, 18 and 19; design section "Update 2026-10"; decisions L
     - Re-baseline the engine-window fixtures (new field). The golden journal is unchanged.
   - **229c. REFACTOR**
 
-- [ ] 230. Grade from the setup sequence (Req 9.5, 9.8, 13.4, 18.9–18.16; Properties 29–31)
+- [x] 230. Grade from the setup sequence (Req 9.5, 9.8, 13.4, 18.9–18.16; Properties 29–31)
+  - **Done 2026-10-07, together with 228.**
+    - **Code:**
+      - The grader takes the entry array from the sequence and gates on it.
+      - It records the wick and body stops (10% buffer of the protected bar's range) and caps counter-trend setups at B, recorded as `SetupGradeDetail.counter_trend`.
+      - The grade reason names the raid, the protected swing, the gate and the cap.
+      - The engine sets `sweep_detected = setup_sequence is not None` and projects SD from the setup leg. `_detect_sweep` is removed.
+    - **Tests:**
+      - `full_liquidity_map` builds a sequence on the strongest entry array unless one is given. The old target-side sweep and array-edge stop tests are rewritten.
+      - Property 31 was too strict: a protected bar without range gets no buffer, and wick = body gives equal stops. It now reads ≤, and is strict when the bar has a range.
+    - **Re-baselined:**
+      - the engine-window fixtures;
+      - the golden journal;
+      - the pinned runner message (`EURUSD_M5_message.json`, refreshed by `UPDATE_GOLDEN=1`; it encoded the old grader).
+    - **Golden week:** 7 orders, against the baseline's sub-spread ones.
+      - Stops are 13–79 pips (were 0.6–3.5), and R:R runs 3.3–11 (was always 5.0).
+      - A stopped trade costs about −1.005R net (spread about 0.005R).
+      - Two counter-trend shorts were capped at B.
   - **230a. RED** (`test_liquidity_grader.py`, `test_liquidity_engine.py`)
     - `test_no_trade_without_setup_sequence`
     - `test_entry_array_is_the_sequence_array`
