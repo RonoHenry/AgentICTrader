@@ -368,9 +368,10 @@ def test_property_8_sizing_never_over_risks(case):
     base = SPECS[instrument]
     one = spec(instrument, base.base_ccy, base.quote_ccy, contract=base.contract_size, volume_min=volume_min,
                volume_step=step, volume_max=volume_max)
-    per_lot = distance * money_per_price_unit(one, price, GBPUSD if instrument == "EURGBP" else None)
-    b = priced(broker(InstrumentSpecs("mt5", "USD", {instrument: one})), instrument, close=price * 1.01)
     entry = price
+    # The broker sizes on the placed prices' distance, which floats can make differ from `distance`.
+    per_lot = (entry - (entry - distance)) * money_per_price_unit(one, price, GBPUSD if instrument == "EURGBP" else None)
+    b = priced(broker(InstrumentSpecs("mt5", "USD", {instrument: one})), instrument, close=price * 1.01)
     try:
         b.place_order(order("LONG", entry, entry - distance, entry * 1.1, risk_amount, instrument))
     except SimBrokerError as exc:
