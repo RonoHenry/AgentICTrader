@@ -817,7 +817,12 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     - The engine calls the analyzer after `SetupSequenceDetector`.
   - **236c. REFACTOR**
 
-- [ ] 237. False move, manipulation window, weekday (Req 22)
+- [x] 237. False move, manipulation window, weekday (Req 22)
+  - **Done 2026-10-08.**
+    - `CandleProfile` gains `false_move_taken`, `asia_raided`, the candle's low and high so far (from the finest timeframe's bars, the earliest bar on a tie), `in_window`, `raid_in_window` and `weekday`.
+    - The window is [01:00, 13:00) New York, tested on both sides of DST: `in_window` is about t, `raid_in_window` about the raid bar's open.
+    - No direction means no false move and no Asian raid. The Asian range is `sequence.asian_pools`, shared with the setup sequence.
+    - The golden journal and the engine windows are unchanged.
   - **237a. RED**
     - `false_move_taken`, `asia_raided` and the candle's low and high so far;
     - `in_window` and `raid_in_window` at the window's edges (01:00 and 13:00 New York, DST on both sides);

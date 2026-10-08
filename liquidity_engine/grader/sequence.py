@@ -54,7 +54,7 @@ from liquidity_engine.models import (
 from liquidity_engine.utils.candle_utils import find_swing_highs, find_swing_lows
 from liquidity_engine.utils.time_utils import ny_time_in_day, trading_day_open
 
-__all__ = ["ASIA_SESSION", "SWING_LOOKBACK", "SetupSequenceDetector"]
+__all__ = ["ASIA_SESSION", "SWING_LOOKBACK", "SetupSequenceDetector", "asian_pools"]
 
 #: Bars on each side that confirm a swing point (the equal-highs/lows detector's default).
 SWING_LOOKBACK = 2
@@ -96,7 +96,7 @@ class SetupSequenceDetector:
                 pools.append(_pool(LiquidityType.BSL, sources[0], tf, previous.high, previous, current))
                 pools.append(_pool(LiquidityType.SSL, sources[1], tf, previous.low, previous, current))
         if as_of is not None:
-            pools += _asian_pools(candles_by_tf.get(Timeframe.H1, []), as_of)
+            pools += asian_pools(candles_by_tf.get(Timeframe.H1, []), as_of)
         return pools
 
     def detect(
@@ -224,7 +224,7 @@ class _EntryWindow:
         return None
 
 
-def _asian_pools(h1: List[Candle], as_of: datetime) -> List[LiquidityPool]:
+def asian_pools(h1: List[Candle], as_of: datetime) -> List[LiquidityPool]:
     """The Asian high and low of the trading day containing ``as_of``, known from
     its midnight New York; none before then, or when the session has no H1 bar."""
     day_open = trading_day_open(as_of)

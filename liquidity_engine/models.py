@@ -523,6 +523,16 @@ class CandleProfile(BaseModel):
     draw: Optional[Objective] = None
     draw_above: Optional[Objective] = None
     draw_below: Optional[Objective] = None
+    # What the candle has done by t (Requirement 22).
+    false_move_taken: bool       # traded beyond frame_open against the direction (below it for bullish)
+    asia_raided: bool            # the Asian pool on the false-move side has been raided
+    candle_low: float
+    candle_low_at: datetime
+    candle_high: float
+    candle_high_at: datetime
+    in_window: bool              # t is in the manipulation window, 01:00-13:00 New York (LE-D11)
+    raid_in_window: bool         # the setup sequence's raid bar opened in this candle's window
+    weekday: int                 # the trading day (17:00 boundary): 0 = Monday
 
 
 class LiquidityMap(BaseModel):

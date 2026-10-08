@@ -10,10 +10,14 @@ closed by that open only (decisions LE-D9, LE-D10, LE-D15):
 - direction: the trend when trending (drawn to a W1 objective), otherwise
   toward the nearer objective.
 
+Task 237 adds what the candle has done so far: its false move, the Asian
+raid on that side, its low and high, the manipulation window (01:00 to
+13:00 New York) and the trading weekday (Requirement 22).
+
 The hand-built context: the trading day Wednesday 2024-01-10 (EST) opens
 Tuesday 17:00 New York = 22:00 UTC. Its week opened Saturday 17:00 New York
 (2024-01-06 22:00 UTC), the label the strategy calendar gives W1 bars.
-Validates: Requirements 21.1-21.6; Properties 35, 36
+Validates: Requirements 21.1-21.6, 22.1-22.3; Properties 35, 36
 """
 from __future__ import annotations
 
@@ -25,7 +29,10 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from liquidity_engine.models import BiasDirection, Candle, Objective, Timeframe
+from liquidity_engine.models import (
+    BiasDirection, Candle, LiquidityPool, LiquidityRaid, LiquiditySource, LiquidityType, Objective,
+    ProtectedSwing, SetupSequence, Timeframe,
+)
 from liquidity_engine.profile.candle_profile import CandleProfileAnalyzer, nearest_objectives
 from services.market_data.as_of_view import aggregate
 from services.market_data.strategy_calendar import StrategyCalendar
@@ -47,9 +54,11 @@ def bars(rows, tf: Timeframe, start: datetime, step: timedelta) -> List[Candle]:
 def context(last_w=(1.1000, 1.1150, 1.0850, 1.1000), prev_w=(1.1000, 1.1200, 1.0800, 1.1000),
             week_d1=((1.1000, 1.1060, 1.0960, 1.1000), (1.1000, 1.1040, 1.0980, 1.1000)),
             frame_open=1.1000, m15_rows=((1.1000, 1.1005, 1.0995, 1.1000),) * 4,
-            t: Optional[datetime] = None) -> Dict[Timeframe, List[Candle]]:
+            t: Optional[datetime] = None, open_time: datetime = OPEN,
+            h1: List[Candle] = ()) -> Dict[Timeframe, List[Candle]]:
     """Two closed weeks, this week's closed days (Monday, Tuesday), six flat H4 bars of Tuesday,
     and the forming D1/W1/H4 bars from the frame open, built from M15 bars that closed by t."""
+    OPEN, WEEK = open_time, CAL.period_start(open_time, Timeframe.W1)  # noqa: N806 (the module's by default)
     m15 = bars(m15_rows, Timeframe.M15, OPEN, timedelta(minutes=15))
     m15[0] = m15[0].model_copy(update={"open": frame_open, "high": max(frame_open, m15[0].high),
                                        "low": min(frame_open, m15[0].low)})
@@ -64,6 +73,7 @@ def context(last_w=(1.1000, 1.1150, 1.0850, 1.1000), prev_w=(1.1000, 1.1200, 1.0
         Timeframe.D1: day_bars + forming(Timeframe.D1, OPEN, []),
         Timeframe.H4: h4 + forming(Timeframe.H4, OPEN, []),
         Timeframe.M15: m15,
+        **({Timeframe.H1: [b for b in h1 if b.timestamp + timedelta(hours=1) <= t]} if h1 else {}),
     }
 
 
@@ -72,10 +82,10 @@ def combine(group: List[Candle], tf: Timeframe, start: datetime) -> Candle:
                   low=min(b.low for b in group), close=group[-1].close, timeframe=tf, instrument="EURUSD")
 
 
-def profile(**kwargs):
+def profile(sequence: Optional[SetupSequence] = None, **kwargs):
     candles = context(**kwargs)
     t = kwargs.get("t") or candles[Timeframe.M15][-1].timestamp + timedelta(minutes=15)
-    return CandleProfileAnalyzer().analyze(candles, t)
+    return CandleProfileAnalyzer().analyze(candles, t, sequence)
 
 
 def summary(objective: Optional[Objective]):
@@ -269,3 +279,92 @@ def test_property_36_draw_ordering(moves, i):
         assert p.draw is not None and p.draw.price < p.frame_open
     else:
         assert p.draw is None
+
+
+# ── false move, manipulation window, weekday (Requirement 22, task 237) ────
+
+BULL = {"last_w": (1.1000, 1.1250, 1.0850, 1.1210)}          # trending up: anticipates a bullish candle
+BEAR = {"last_w": (1.1000, 1.1150, 1.0750, 1.0790)}          # trending down
+QUIET = (1.1002, 1.1008, 1.1001, 1.1004)                     # above the 1.1000 open all day
+M15 = timedelta(minutes=15)
+
+
+def day(**changes) -> list:
+    """95 M15 rows, to 16:45 New York: the candle bar the last one closes in; changes["i40"] replaces bar 40."""
+    rows = [QUIET] * 95
+    for key, row in changes.items():
+        rows[int(key[1:])] = row
+    return rows
+
+
+def asia(open_time: datetime = OPEN) -> List[Candle]:
+    """The Asian session, 20:00-23:00 New York: high 1.1012, low 1.0992."""
+    return bars([(1.1003, 1.1012, 1.0992, 1.1004)] * 4, Timeframe.H1, open_time + timedelta(hours=3),
+                timedelta(hours=1))
+
+
+def test_false_move_is_a_trade_beyond_the_open_against_the_direction():
+    assert profile(m15_rows=day(), **BULL).false_move_taken is False                 # never below the open
+    dipped = profile(m15_rows=day(i10=(1.1002, 1.1004, 1.0997, 1.1003)), **BULL)
+    assert dipped.direction == BiasDirection.BULLISH and dipped.false_move_taken is True
+    assert profile(m15_rows=day(), **BEAR).false_move_taken is True                  # traded above the open
+    below = (1.0998, 1.0999, 1.0992, 1.0996)
+    assert profile(m15_rows=[below] * 95, frame_open=1.0999, **BEAR).false_move_taken is False
+    neutral = profile(m15_rows=day(i10=(1.1002, 1.1004, 1.0997, 1.1003)), frame_open=1.2000, **BULL)
+    assert neutral.direction == BiasDirection.NEUTRAL and neutral.false_move_taken is False
+
+
+def test_asia_raid_on_the_false_move_side_after_midnight():
+    raid = profile(m15_rows=day(i40=(1.1002, 1.1004, 1.0990, 1.1003)), h1=asia(), **BULL)   # 03:00 New York
+    assert raid.asia_raided is True
+    shallow = profile(m15_rows=day(i40=(1.1002, 1.1004, 1.0995, 1.1003)), h1=asia(), **BULL)
+    assert shallow.false_move_taken is True and shallow.asia_raided is False      # below the open, not the Asian low
+    early = profile(m15_rows=day(i40=(1.1002, 1.1004, 1.0990, 1.1003)), h1=asia(), t=OPEN + 26 * M15, **BULL)
+    assert early.asia_raided is False                                              # 23:30 New York: no Asian pools yet
+    above = profile(m15_rows=day(i40=(1.1002, 1.1015, 1.1001, 1.1003)), h1=asia(), **BEAR)
+    assert above.asia_raided is True                                               # bearish: the Asian high
+    assert profile(m15_rows=day(i40=(1.1002, 1.1004, 1.0990, 1.1003)), **BULL).asia_raided is False   # no H1
+
+
+def test_candle_low_and_high_so_far():
+    rows = day(i10=(1.1002, 1.1004, 1.0997, 1.1003), i50=(1.1004, 1.1030, 1.1003, 1.1010))
+    p = profile(m15_rows=rows, t=OPEN + 60 * M15, **BULL)
+    assert (p.candle_low, p.candle_low_at, p.candle_high, p.candle_high_at) == (
+        1.0997, OPEN + 10 * M15, 1.1030, OPEN + 50 * M15)
+    earlier = profile(m15_rows=rows, t=OPEN + 40 * M15, **BULL)
+    assert (earlier.candle_high, earlier.candle_high_at) == (1.1008, OPEN)       # the first bar to reach it
+
+
+def sequence(raided_at: datetime) -> SetupSequence:
+    pool = LiquidityPool(side=LiquidityType.SSL, source=LiquiditySource.ASIA_LOW, timeframe=Timeframe.H1,
+                         price=1.0992, formed_at=raided_at - timedelta(hours=2), known_at=raided_at - M15)
+    return SetupSequence(
+        entry_array_id="fvg", direction=BiasDirection.BULLISH,
+        raid=LiquidityRaid(pool=pool, raided_at=raided_at, reclaimed_at=raided_at), cisd_at=raided_at + M15,
+        protected_swing=ProtectedSwing(candle_at=raided_at, wick=1.0990, body=1.0995, candle_range=0.001),
+        leg_extreme=1.1050)
+
+
+@pytest.mark.parametrize("open_time", [OPEN, datetime(2024, 7, 9, 21, tzinfo=UTC)], ids=["EST", "EDT"])
+def test_manipulation_window_edges(open_time):
+    one, thirteen = open_time + timedelta(hours=8), open_time + timedelta(hours=20)     # 01:00 and 13:00 New York
+
+    def window(t, raided_at=None):
+        p = profile(m15_rows=day(), open_time=open_time, t=t, sequence=raided_at and sequence(raided_at), **BULL)
+        return p.in_window, p.raid_in_window
+
+    assert window(one - timedelta(minutes=1)) == (False, False)
+    assert window(one, raided_at=one) == (True, True)
+    assert window(one + M15, raided_at=one - M15) == (True, False)            # raid bar opened at 00:45
+    assert window(thirteen - timedelta(minutes=1), raided_at=thirteen - M15) == (True, True)
+    assert window(thirteen, raided_at=thirteen) == (False, False)
+    assert window(one + M15, raided_at=one - timedelta(days=1)) == (True, False)   # yesterday's window
+
+
+@pytest.mark.parametrize("open_time, weekday", [
+    (datetime(2024, 1, 7, 22, tzinfo=UTC), 0),       # Sunday 17:00 opens Monday
+    (OPEN, 2),                                        # Tuesday 17:00 opens Wednesday
+    (datetime(2024, 1, 11, 22, tzinfo=UTC), 4),      # Thursday 17:00 opens Friday
+])
+def test_weekday_is_the_trading_day(open_time, weekday):
+    assert profile(open_time=open_time).weekday == weekday

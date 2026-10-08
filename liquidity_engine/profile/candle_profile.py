@@ -22,6 +22,11 @@ At the D1 candle containing t (opening 17:00 New York, the strategy calendar):
 4. Direction: trending, the trend's, drawn to its nearest untaken W1
    objective, else its nearest objective; not trending, toward the nearer
    objective. NEUTRAL when that side has none.
+5. So far (Requirement 22), from the candle's bars up to t: whether it made
+   its false move (beyond the open against the direction) and raided the
+   Asian range on that side, its low and high, whether t and the setup's
+   raid fall in the manipulation window (01:00 to 13:00 New York: the 01:00,
+   05:00 and 09:00 H4 candles), and the trading weekday.
 
 Pure and stateless. The anticipation reads only bars that closed by the
 frame open, and the frame bar's open, so it is the same at every t in the
@@ -31,18 +36,24 @@ from __future__ import annotations
 
 import math
 from bisect import bisect_left, bisect_right
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from liquidity_engine.detectors.external import TIMEFRAME_WEIGHT
-from liquidity_engine.models import BiasDirection, Candle, CandleProfile, Objective, SetupSequence, Timeframe
+from liquidity_engine.grader.sequence import asian_pools
+from liquidity_engine.models import (
+    BiasDirection, Candle, CandleProfile, LiquiditySource, Objective, SetupSequence, Timeframe,
+)
 from liquidity_engine.utils.candle_utils import find_swing_highs, find_swing_lows
-from liquidity_engine.utils.time_utils import ny_time_in_day, trading_day_open, trading_week_open
+from liquidity_engine.utils.time_utils import ny_time_in_day, to_est, trading_day_open, trading_week_open
 
-__all__ = ["CandleProfileAnalyzer", "nearest_objectives"]
+__all__ = ["MANIPULATION_WINDOW", "CandleProfileAnalyzer", "nearest_objectives"]
 
 #: Bars on each side that confirm a swing, as for the setup sequence's pools.
 SWING_LOOKBACK = 2
+
+#: New York wall time [start, end): the candle's 01:00, 05:00 and 09:00 H4 candles (LE-D11).
+MANIPULATION_WINDOW = (time(1, 0), time(13, 0))
 
 _OBJECTIVE_TIMEFRAMES = (Timeframe.H4, Timeframe.D1, Timeframe.W1)
 _PREVIOUS_PERIOD = {Timeframe.D1: ("PDH", "PDL"), Timeframe.W1: ("PWH", "PWL")}
@@ -73,16 +84,32 @@ class CandleProfileAnalyzer:
         above, below = nearest_objectives(objectives, frame_open)
         trend = _trend(weeks[-2], weeks[-1])
         direction, draw = _anticipate(trend, objectives, above, below, frame_open)
+
+        finest = _finest(candles_by_tf)
+        candle = finest[bisect_left(finest, open_time, key=_open_time):] or [days[-1]]   # its bars up to t
+        low = min(candle, key=lambda c: c.low)                  # the earliest bar on a tie
+        high = max(candle, key=lambda c: c.high)
+        window_start, window_end = (ny_time_in_day(open_time, at) for at in MANIPULATION_WINDOW)
+        raided_at = setup_sequence.raid.raided_at if setup_sequence is not None else None
         return CandleProfile(
             frame_tf=Timeframe.D1,
             open_time=open_time,
             frame_open=frame_open,
-            midnight_open=_midnight_open(candles_by_tf, open_time),
+            midnight_open=_midnight_open(finest, open_time),
             trend=trend,
             direction=direction,
             draw=draw,
             draw_above=above,
             draw_below=below,
+            false_move_taken=_false_move_taken(direction, frame_open, low.low, high.high),
+            asia_raided=_asia_raided(direction, candles_by_tf.get(Timeframe.H1) or [], candle, t),
+            candle_low=low.low,
+            candle_low_at=low.timestamp,
+            candle_high=high.high,
+            candle_high_at=high.timestamp,
+            in_window=window_start <= t < window_end,
+            raid_in_window=raided_at is not None and window_start <= raided_at < window_end,
+            weekday=(to_est(open_time).date() + timedelta(days=1)).weekday(),
         )
 
     def objectives(self, candles_by_tf: Dict[Timeframe, List[Candle]], open_time: datetime) -> List[Objective]:
@@ -161,9 +188,36 @@ def _trend(previous: Candle, last: Candle) -> BiasDirection:
     return BiasDirection.NEUTRAL
 
 
-def _midnight_open(candles_by_tf: Dict[Timeframe, List[Candle]], open_time: datetime) -> Optional[float]:
+def _false_move_taken(direction: BiasDirection, frame_open: float, low: float, high: float) -> bool:
+    """A bullish candle's false move trades below its open; a bearish one's above it."""
+    if direction == BiasDirection.BULLISH:
+        return low < frame_open
+    if direction == BiasDirection.BEARISH:
+        return high > frame_open
+    return False
+
+
+def _asia_raided(direction: BiasDirection, h1: List[Candle], candle: List[Candle], t: datetime) -> bool:
+    """Whether a bar of the candle, from midnight New York on, traded beyond the Asian
+    pool on the false-move side: its low for a bullish candle, its high for a bearish one."""
+    if direction == BiasDirection.NEUTRAL:
+        return False
+    source = LiquiditySource.ASIA_LOW if direction == BiasDirection.BULLISH else LiquiditySource.ASIA_HIGH
+    pool = next((p for p in asian_pools(h1, t) if p.source == source), None)
+    if pool is None:
+        return False
+    after = candle[bisect_left(candle, pool.known_at, key=_open_time):]
+    if direction == BiasDirection.BULLISH:
+        return any(c.low < pool.price for c in after)
+    return any(c.high > pool.price for c in after)
+
+
+def _finest(candles_by_tf: Dict[Timeframe, List[Candle]]) -> List[Candle]:
+    return next((candles_by_tf[tf] for tf in _FINEST_FIRST if candles_by_tf.get(tf)), [])
+
+
+def _midnight_open(finest: List[Candle], open_time: datetime) -> Optional[float]:
     """The open of the finest timeframe's first bar at or after midnight New York in the candle."""
-    finest = next((candles_by_tf[tf] for tf in _FINEST_FIRST if candles_by_tf.get(tf)), [])
     midnight = ny_time_in_day(open_time, time(0, 0))
     i = bisect_left(finest, midnight, key=_open_time)
     if i == len(finest) or trading_day_open(finest[i].timestamp) != open_time:
