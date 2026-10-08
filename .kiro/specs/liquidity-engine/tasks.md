@@ -732,7 +732,18 @@ Requirements 13.4, 13.5, 18 and 19; design section "Update 2026-10"; decisions L
   - Measure `analyze()` per M15 close on the engine-window fixtures, against task 199's 33 ms.
   - **Live impact:** the paper-trader container runs the new grader only after a restart, which needs the user's OK.
 
-- [ ] 233. Measure against the baseline **(user review)**
+- [x] 233. Measure against the baseline **(user review)**
+  - **Done 2026-10-08.** Write-up: `docs/backtests/SETUP_SEQUENCE.md`.
+    - **Result:** both runs fail the pass mark (1 of 5):
+      - WICK `ec4876ba87a1`: −0.16R (CI −0.33 to +0.01), PF 0.79, DD 100R;
+      - BODY `475491a89d91`: −0.01R (CI −0.20 to +0.18), PF 0.98, DD 44R;
+      - baseline: −0.54R, PF 0.45, DD 117R.
+    - **Fixed:** costs 1.14R → 0.07/0.14R; fills 15% → 55%; no sub-spread stops in WICK.
+    - **Where it loses:** R:R 10+ (3% hit rate in both runs) and counter-trend setups.
+    - **Alignment:** only today's D1 candle separates results; BOS/CHoCH structure alignment doesn't.
+    - **Gaps:** BODY needs a minimum stop (10 sub-spread trades, −19R); swap isn't modelled.
+    - **Next variants proposed** in the write-up.
+    - **User review of the two reports:** requested 2026-10-08.
   - Run `config/backtests/base.toml` (stop `WICK`) and `--variant stop_body` on study `baseline-2026q3`. Compare each with the baseline run `5d241691c701`.
   - Write `docs/backtests/SETUP_SEQUENCE.md` with:
     - the pass-mark table per run;
