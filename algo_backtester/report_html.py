@@ -32,8 +32,9 @@ The chart marks:
   target) and risk (entry to stop) boxes from the fill, or the placement when
   it never filled, to the exit or expiry, with R and money labels, the path
   from fill to exit and the result; for a skipped intent, its levels;
-- the entry array and the draw on liquidity, and the setup sequence's raided
+- the entry array and the draw on liquidity, the setup sequence's raided
   pool (a dotted line from where it formed to the raid) and protected swing,
+  and the candle profile's D1 open and draw (from the candle's 17:00 open),
   where recorded;
 - the killzones, shaded.
 A filled order also gets its M1 close-up, with the ask (bid + spread) drawn:
@@ -456,10 +457,10 @@ _PAGE = """<!doctype html>
 <style>
 :root { --bg:#fff; --fg:#1d2329; --muted:#6b7480; --line:#d9dee4; --panel:#f5f7f9; --up:#1a7f5a; --down:#c23b3b;
   --entry:#2563eb; --stop:#c23b3b; --target:#1a7f5a; --band:rgba(250,190,40,.13); --array:rgba(37,99,235,.13);
-  --dol:#8b5cf6; --raid:#c2410c; --sel:#e8eefc; --reward:rgba(26,127,90,.16); --risk:rgba(194,59,59,.16); }
+  --dol:#8b5cf6; --raid:#c2410c; --open:#64748b; --draw:#0f766e; --sel:#e8eefc; --reward:rgba(26,127,90,.16); --risk:rgba(194,59,59,.16); }
 @media (prefers-color-scheme: dark) { :root { --bg:#14181c; --fg:#e3e7eb; --muted:#9aa4ae; --line:#2c333a;
   --panel:#1b2026; --up:#3fbf8a; --down:#ef6b6b; --entry:#6c9cff; --stop:#ef6b6b; --target:#3fbf8a;
-  --band:rgba(250,190,40,.10); --array:rgba(108,156,255,.16); --dol:#b794f6; --raid:#fb923c; --sel:#243049;
+  --band:rgba(250,190,40,.10); --array:rgba(108,156,255,.16); --dol:#b794f6; --raid:#fb923c; --open:#94a3b8; --draw:#2dd4bf; --sel:#243049;
   --reward:rgba(63,191,138,.18); --risk:rgba(239,107,107,.18); } }
 body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
   font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
@@ -492,6 +493,8 @@ select, button { font:inherit; background:var(--panel); color:var(--fg); border:
 .dol { stroke:var(--dol); stroke-dasharray:6 4; } .lbl-dol { fill:var(--dol); }
 .raid { stroke:var(--raid); stroke-width:1.5; stroke-dasharray:1 3; stroke-linecap:round; } svg text.lbl-raid { fill:var(--raid); }
 .protected { fill:none; stroke:var(--raid); stroke-width:1.6; }
+.frame-open { stroke:var(--open); stroke-width:1.2; } svg text.lbl-frame-open { fill:var(--open); }
+.draw { stroke:var(--draw); stroke-width:1.4; stroke-dasharray:8 3 2 3; } svg text.lbl-draw { fill:var(--draw); }
 .decision { stroke:var(--fg); stroke-dasharray:2 3; opacity:.6; }
 .fill { fill:var(--entry); } .exit { stroke:var(--fg); stroke-width:2; }
 .pos-reward { fill:var(--reward); stroke:var(--target); stroke-opacity:.6; }
@@ -591,15 +594,26 @@ svg text.tag { font-weight:600; fill:var(--fg); } svg text.pos { fill:var(--up);
       ["draw on liquidity", c.draw_on_liquidity ? `${c.draw_on_liquidity.type} ${c.draw_on_liquidity.source} ${c.draw_on_liquidity.price}` : ""],
       ["raid", c.swept_level ? `${c.swept_level.side} ${c.swept_level.source} ${c.swept_level.timeframe} ${c.swept_level.price}, formed ${c.swept_level.formed_at}, raided ${c.swept_level.raided_at}` : ""],
       ["protected swing", c.protected_swing ? `wick ${c.protected_swing.wick}, body ${c.protected_swing.body}, bar ${c.protected_swing.candle_at}` : ""],
+      ["candle profile", profileText(c.candle_profile)],
       ["link", "report.html#" + link(r)]];
     document.getElementById("info").innerHTML = "<dl>" + items.filter(([, v]) => v)
       .map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("") + "</dl>";
   }
   const link = r => r.order_id ? `order=${r.order_id}` : `row=${r.id}`;
+  const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  const objective = o => o ? `${o.source} ${o.timeframe} ${o.price}` : "none";
+  function profileText(p) {                                 // liquidity-engine Req 24: the D1 candle's anticipation
+    if (!p) return "";
+    const yes = v => v ? "yes" : "no";
+    return `${p.direction} (trend ${p.trend}), draw ${objective(p.draw)}; above ${objective(p.draw_above)}, ` +
+      `below ${objective(p.draw_below)}; D1 open ${p.frame_open}, midnight ${p.midnight_open ?? "not yet"}; ` +
+      `false move ${yes(p.false_move_taken)}, Asia raided ${yes(p.asia_raided)}, raid in window ${yes(p.raid_in_window)}; ` +
+      `${WEEKDAYS[p.weekday]}`;
+  }
 
   // One candle chart. bars: [t, open, high, low, close(, spread)], oldest first. The context chart also
-  // draws the entry array, the draw on liquidity, the raided pool and the protected swing; a chart with
-  // spreads (M1) draws the ask.
+  // draws the entry array, the draw on liquidity, the raided pool, the protected swing and the candle
+  // profile's D1 open and draw; a chart with spreads (M1) draws the ask.
   function chart(r, bars, tf, context) {
     const n = bars.length;
     if (!n) return "<p>No candles recorded for this window.</p>";
@@ -612,6 +626,10 @@ svg text.tag { font-weight:600; fill:var(--fg); } svg text.pos { fill:var(--up);
     let lo = Math.min(...bars.map(b => b[3]), ...levels), hi = Math.max(...bars.map(b => b[2] + ask(b)), ...levels);
     const dol = c.draw_on_liquidity && c.draw_on_liquidity.price;
     if (dol != null && dol > lo - (hi - lo) && dol < hi + (hi - lo)) { lo = Math.min(lo, dol); hi = Math.max(hi, dol); }
+    const cp = c.candle_profile && c.candle_profile.open_time <= bars[n - 1][0] ? c.candle_profile : null;   // a candle on the chart
+    if (cp) { lo = Math.min(lo, cp.frame_open); hi = Math.max(hi, cp.frame_open); }
+    const draw = cp && cp.draw && cp.draw.price > lo - (hi - lo) && cp.draw.price < hi + (hi - lo) ? cp.draw : null;
+    if (draw) { lo = Math.min(lo, draw.price); hi = Math.max(hi, draw.price); }
     const pad = (hi - lo) * 0.1 || 1e-6; lo -= pad; hi += pad;      // room for the position tool's labels
     const y = p => T + (hi - p) / (hi - lo) * ph;
     const first = bars[0][0], last = bars[n - 1][0];
@@ -628,6 +646,16 @@ svg text.tag { font-weight:600; fill:var(--fg); } svg text.pos { fill:var(--up);
     }
     if (dol != null && dol >= lo && dol <= hi) {
       out.push(`<line class="dol" x1="${L}" x2="${L + pw}" y1="${y(dol)}" y2="${y(dol)}"/><text class="lbl-dol" x="${L + pw + 4}" y="${y(dol) + 4}">DOL ${esc(c.draw_on_liquidity.source)}</text>`);
+    }
+    if (cp) {        // the D1 candle's 17:00 open and its draw, from the open on; labelled in the right margin, like the DOL
+      const a = clampX(c.candle_profile.open_time) - step / 2, oy = y(cp.frame_open);
+      out.push(`<line class="frame-open" x1="${a}" x2="${L + pw}" y1="${oy}" y2="${oy}"><title>D1 open ${cp.frame_open} at ${esc(cp.open_time)}</title></line>` +
+               `<text class="lbl-frame-open" x="${L + pw + 4}" y="${oy + 4}">D1 open</text>`);
+      if (draw) {
+        const d = draw, dy = y(d.price);
+        out.push(`<line class="draw" x1="${a}" x2="${L + pw}" y1="${dy}" y2="${dy}"><title>${esc(d.kind)} ${esc(d.source)} ${esc(d.timeframe)} ${d.price}</title></line>` +
+                 `<text class="lbl-draw" x="${L + pw + 4}" y="${dy + 4}">${esc(`draw ${d.source} ${d.timeframe}`)}</text>`);
+      }
     }
     // The raid and the protected swing sit by the stop, where the position tool puts its labels (on the stop's
     // far side), so their labels stack on the entry side: [x, y, text] each, written once the candles are drawn.

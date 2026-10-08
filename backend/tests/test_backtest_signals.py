@@ -214,6 +214,28 @@ def test_trade_context_records_raid_and_protected_swing():
         assert record.context.swept_level["side"] == ("SSL" if record.result.direction == "LONG" else "BSL")
 
 
+def test_trade_context_records_the_candle_profile():
+    # liquidity-engine Req 24.1: the anticipation and what the candle had done, for the breakdowns.
+    def objective(o):
+        return None if o is None else {"kind": o.kind, "source": o.source, "timeframe": o.timeframe.value,
+                                       "price": o.price}
+
+    intents = [r for r in context_records() if isinstance(r.result, OrderIntent)]
+    assert any(r.context.candle_profile is not None for r in intents)
+    for record in intents:
+        p = liquidity_map_at(record.t).candle_profile
+        if p is None:
+            assert record.context.candle_profile is None
+            continue
+        assert record.context.candle_profile == {
+            "open_time": p.open_time.isoformat(), "frame_open": p.frame_open, "midnight_open": p.midnight_open,
+            "trend": p.trend.value, "direction": p.direction.value, "draw": objective(p.draw),
+            "draw_above": objective(p.draw_above), "draw_below": objective(p.draw_below),
+            "false_move_taken": p.false_move_taken, "asia_raided": p.asia_raided,
+            "raid_in_window": p.raid_in_window, "weekday": p.weekday,
+        }
+
+
 def test_no_trade_records_carry_no_context():
     no_trades = [r for r in context_records() if isinstance(r.result, NoTrade)]
     fail_at = datetime(2026, 9, 30, 13, 30, tzinfo=UTC)

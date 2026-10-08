@@ -850,7 +850,11 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     - The `anticipation`, `anticipation_body` and `anticipation_poi` variants in `config/backtests/base.toml`.
   - **238c. REFACTOR**
 
-- [ ] 239. Recording and report (Req 24)
+- [x] 239. Recording and report (Req 24)
+  - **Done 2026-10-08.**
+    - `TradeContext.candle_profile` holds the opens, trend, direction, the draws (above, below and chosen), the false-move facts and the weekday. It defaults to `None` for older records.
+    - The M15 chart draws the D1 open (solid) and the draw (dashed) from the candle's 17:00 open, labelled in the right margin. The info panel spells out the profile.
+    - **Checked in headless Chrome on the golden run.** A first version referenced `last` before it was defined and broke the page script; it was caught here and fixed. Labels by the line start collided with the raid labels, so they moved to the margin.
   - **239a. RED** — `TradeContext.candle_profile`, and the report script draws the frame open and the draw.
   - **239b. GREEN**
   - **239c. REFACTOR** — check the chart in headless Chrome.

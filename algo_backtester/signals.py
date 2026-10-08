@@ -17,7 +17,7 @@ and counted, not raised: one bad bar mustn't end a year-long run.
 
 An order intent's record also carries a TradeContext: what the engine saw at
 t (the entry array it chose, the draw on liquidity, the raid and protected
-swing of its setup sequence, the killzone), so the run
+swing of its setup sequence, the killzone, the candle profile), so the run
 report can draw each setup from the run's own records without re-running the
 engine (Req 11.5, 11.6). No-trade records carry none, which keeps the cache
 small.
@@ -27,7 +27,7 @@ Records are cached between runs (algo_backtester/cache.py) as JSON lines:
 exactly, types included.
 
 Validates: Requirements 1.1, 2.1-2.6, 9.2, 11.5, 11.6 (.kiro/specs/algo-backtester/requirements.md);
-Requirement 19.5 (.kiro/specs/liquidity-engine/requirements.md)
+Requirements 19.5, 24.1 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
 
@@ -41,7 +41,9 @@ from agent.order_intent import NoTrade, OrderIntent, build_order_intent
 from agent.strategy_config import StrategyConfig
 from algo_backtester.data import InstrumentData
 from liquidity_engine import LiquidityMappingEngine
-from liquidity_engine.models import Candle, KillzoneWindow, LiquidityMap, SetupGrade, Timeframe
+from liquidity_engine.models import (
+    Candle, CandleProfile, KillzoneWindow, LiquidityMap, Objective, SetupGrade, Timeframe,
+)
 from liquidity_engine.utils.time_utils import get_killzone
 from ml.features.session_features import TimeFeatures
 from services.market_data.as_of_view import compose_as_of_view
@@ -85,6 +87,9 @@ class TradeContext:
     swept_level: Optional[dict]        # the raided pool: side (BSL/SSL), source, timeframe, price, formed_at, raided_at
     protected_swing: Optional[dict]    # the bar the stop hides behind: wick, body, candle_at
     killzone: Optional[str]            # LONDON, NY_AM, NY_PM; None outside every killzone
+    # The D1 candle's anticipation and what it had done by t (liquidity-engine Req 24.1); None
+    # in runs recorded before update 2026-10b.
+    candle_profile: Optional[dict] = None
 
 
 def trade_context(liquidity_map: LiquidityMap, t: datetime) -> TradeContext:
@@ -112,7 +117,22 @@ def trade_context(liquidity_map: LiquidityMap, t: datetime) -> TradeContext:
             "candle_at": sequence.protected_swing.candle_at.isoformat(),
         },
         killzone=None if killzone == KillzoneWindow.NONE else killzone.value,
+        candle_profile=None if liquidity_map.candle_profile is None else _profile_context(liquidity_map.candle_profile),
     )
+
+
+def _profile_context(p: CandleProfile) -> dict:
+    def objective(o: Optional[Objective]) -> Optional[dict]:
+        return None if o is None else {"kind": o.kind, "source": o.source, "timeframe": o.timeframe.value,
+                                       "price": o.price}
+
+    return {
+        "open_time": p.open_time.isoformat(), "frame_open": p.frame_open, "midnight_open": p.midnight_open,
+        "trend": p.trend.value, "direction": p.direction.value, "draw": objective(p.draw),
+        "draw_above": objective(p.draw_above), "draw_below": objective(p.draw_below),
+        "false_move_taken": p.false_move_taken, "asia_raided": p.asia_raided,
+        "raid_in_window": p.raid_in_window, "weekday": p.weekday,
+    }
 
 
 @dataclass(frozen=True)

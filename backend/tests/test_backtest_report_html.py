@@ -41,6 +41,12 @@ CONTEXT = TradeContext(
                  "formed_at": "2026-09-30T10:30:00+00:00", "raided_at": "2026-09-30T11:45:00+00:00"},
     protected_swing={"wick": 1.0988, "body": 1.0991, "candle_at": "2026-09-30T11:45:00+00:00"},
     killzone="NY_AM",
+    candle_profile={"open_time": "2026-09-29T21:00:00+00:00", "frame_open": 1.0995, "midnight_open": 1.0993,
+                    "trend": "NEUTRAL", "direction": "BULLISH",
+                    "draw": {"kind": "POOL", "source": "PDH", "timeframe": "D1", "price": 1.1060},
+                    "draw_above": {"kind": "POOL", "source": "PDH", "timeframe": "D1", "price": 1.1060},
+                    "draw_below": {"kind": "FVG", "source": "FVG", "timeframe": "H4", "price": 1.0950},
+                    "false_move_taken": True, "asia_raided": True, "raid_in_window": True, "weekday": 2},
 )
 
 
@@ -194,7 +200,8 @@ def test_context_drawn_only_from_recorded_signal_records(run_dir, monkeypatch):
     data = data_of(write_html_report(run_dir).read_text(encoding="utf-8"))
     assert row_of(data, "EURUSD-1")["context"] == {
         "entry_array": CONTEXT.entry_array, "draw_on_liquidity": CONTEXT.draw_on_liquidity,
-        "swept_level": CONTEXT.swept_level, "protected_swing": CONTEXT.protected_swing, "killzone": "NY_AM"}
+        "swept_level": CONTEXT.swept_level, "protected_swing": CONTEXT.protected_swing, "killzone": "NY_AM",
+        "candle_profile": CONTEXT.candle_profile}
     assert row_of(data, "GBPUSD-1")["context"] is None           # none was recorded for it
     recorded = json.loads((run_dir / "context.json").read_text(encoding="utf-8"))
     assert len(recorded) == 1 and recorded[0]["setup_id"] == "EURUSD-1"
@@ -210,6 +217,18 @@ def test_chart_draws_raid_and_protected_swing(run_dir):
     assert 'class="protected"' in script and ".candle_at" in script
     # a run recorded before the update has neither: the chart must not need them
     assert "c.swept_level &&" in script and "c.protected_swing &&" in script
+
+
+def test_chart_draws_frame_open_and_draw(run_dir):
+    # liquidity-engine Req 24.2: the candle's 17:00 open from its time on, and the profile's draw,
+    # dashed and labelled with its source and timeframe; the info panel spells the profile out.
+    html = write_html_report(run_dir).read_text(encoding="utf-8")
+    script = html[html.rindex("<script>"):]
+    assert 'class="frame-open"' in script and "c.candle_profile.open_time" in script
+    assert 'class="draw"' in script and "draw ${d.source} ${d.timeframe}" in script
+    assert '["candle profile"' in script
+    assert "c.candle_profile &&" in script                     # runs recorded before the update have none
+    assert data_of(html)["contexts"][0]["candle_profile"]["direction"] == "BULLISH"
 
 
 def test_insufficient_evidence_buckets_marked(run_dir):
