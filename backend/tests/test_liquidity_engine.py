@@ -26,6 +26,7 @@ from liquidity_engine.models import (
     Timeframe,
 )
 from liquidity_engine.ote.calculator import OTECalculator
+from liquidity_engine.profile.candle_profile import CandleProfileAnalyzer
 from liquidity_engine.unicorn.detector import UnicornDetector
 
 _BASE = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -196,6 +197,7 @@ class TestSubComponentOrder:
         monkeypatch.setattr(OTECalculator, "calculate", record("OTECalculator", OTECalculator.calculate))
         monkeypatch.setattr(UnicornDetector, "detect", record("UnicornDetector", UnicornDetector.detect))
         monkeypatch.setattr(SetupSequenceDetector, "detect", record("SetupSequenceDetector", SetupSequenceDetector.detect))
+        monkeypatch.setattr(CandleProfileAnalyzer, "analyze", record("CandleProfileAnalyzer", CandleProfileAnalyzer.analyze))
         monkeypatch.setattr(SetupGrader, "grade", record("SetupGrader", SetupGrader.grade))
 
         LiquidityMappingEngine().analyze(build_candles_by_tf(), "EURUSD", d1_ts(20))
@@ -208,7 +210,8 @@ class TestSubComponentOrder:
         expected = [
             "HTFBiasClassifier", "LiquidityLevelDetector", "SwingStructureClassifier",
             "PDArrayDetector", "FractalModelTracker", "IPDAClassifier", "OTECalculator",
-            "UnicornDetector", "SetupSequenceDetector", "SetupGrader",            # Requirement 1.5, amended 2026-10
+            "UnicornDetector", "SetupSequenceDetector", "CandleProfileAnalyzer",  # Requirement 1.5, amended 2026-10(b)
+            "SetupGrader",
         ]
         assert first_seen == expected
 

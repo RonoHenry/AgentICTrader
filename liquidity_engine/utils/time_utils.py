@@ -67,3 +67,11 @@ def ny_time_in_day(day_open: datetime, at: time) -> datetime:
     open_date = to_est(day_open).date()
     day = open_date if at >= TRADING_DAY_OPEN else open_date + timedelta(days=1)
     return datetime.combine(day, at, tzinfo=_NY_TZ).astimezone(timezone.utc)
+
+
+def trading_week_open(dt: datetime) -> datetime:
+    """UTC open of the W1 period containing dt: Saturday 17:00 New York, the label the
+    strategy calendar gives weekly bars (the FX week itself opens Sunday 17:00)."""
+    day = to_est(trading_day_open(dt)).date()
+    saturday = day - timedelta(days=(day.weekday() - 5) % 7)
+    return datetime.combine(saturday, TRADING_DAY_OPEN, tzinfo=_NY_TZ).astimezone(timezone.utc)

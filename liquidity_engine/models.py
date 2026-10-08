@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -500,6 +500,31 @@ class SetupSequence(BaseModel):
     leg_extreme: float           # far end of the setup leg from the protected wick (Requirement 18.6)
 
 
+class Objective(BaseModel):
+    """Where price is drawn (Requirement 21.3): resting liquidity beyond a swing or
+    the previous day/week extreme (POOL), or an inefficiency to rebalance (FVG)."""
+    kind: Literal["POOL", "FVG"]
+    source: str                  # SWING_HIGH / SWING_LOW / PDH / PDL / PWH / PWL, or FVG
+    timeframe: Timeframe
+    price: float                 # the pool's price, or the gap's near edge
+    direction: BiasDirection     # the way price moves to reach it: BULLISH for an objective above
+    formed_at: datetime          # the bar that made it
+
+
+class CandleProfile(BaseModel):
+    """How the frame candle is anticipated to form (Requirement 21). Everything but
+    midnight_open depends only on bars closed by the frame open (Property 35)."""
+    frame_tf: Timeframe          # D1 in stage 1
+    open_time: datetime          # the candle's open: 17:00 New York
+    frame_open: float
+    midnight_open: Optional[float] = None    # the first bar at or after 00:00 New York; recorded only (LE-D11)
+    trend: BiasDirection         # LE-D15; NEUTRAL = not trending
+    direction: BiasDirection     # the anticipated direction; NEUTRAL = none
+    draw: Optional[Objective] = None
+    draw_above: Optional[Objective] = None
+    draw_below: Optional[Objective] = None
+
+
 class LiquidityMap(BaseModel):
     """Complete liquidity analysis output."""
     analyzed_at: datetime
@@ -518,6 +543,7 @@ class LiquidityMap(BaseModel):
     fractal_model: Optional[FractalModelResult] = None
     sd_projection: Optional[SDProjection] = None
     setup_sequence: Optional[SetupSequence] = None          # Requirement 18.8
+    candle_profile: Optional[CandleProfile] = None          # Requirement 21
 
     def get_bias(self, timeframe: Timeframe) -> Optional[HTFBias]:
         """Get HTF bias for a specific timeframe."""

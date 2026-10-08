@@ -6,10 +6,12 @@ Wires every detector/analytics component into a single deterministic
 
     HTFBiasClassifier -> LiquidityLevelDetector -> SwingStructureClassifier ->
     PDArrayDetector -> FractalModelTracker -> IPDAClassifier -> OTECalculator ->
-    UnicornDetector -> SetupSequenceDetector -> SetupGrader
+    UnicornDetector -> SetupSequenceDetector -> CandleProfileAnalyzer -> SetupGrader
 
 SetupSequenceDetector (Requirement 18, update 2026-10) runs before grading:
-the grader reads the setup sequence it records.
+the grader reads the setup sequence it records. CandleProfileAnalyzer
+(Requirement 21, update 2026-10b) records how the D1 candle is anticipated
+to form; the order policy reads it, the grader doesn't.
 
 A few cross-component values (draw_on_liquidity, sweep_detected, the OTE
 displacement leg, the Fractal Model's key_level) are engine-level derivations,
@@ -43,6 +45,7 @@ from liquidity_engine.models import (
     Timeframe,
 )
 from liquidity_engine.ote.calculator import OTECalculator
+from liquidity_engine.profile.candle_profile import CandleProfileAnalyzer
 from liquidity_engine.projections.standard_deviation import StandardDeviationCalculator
 from liquidity_engine.unicorn.detector import UnicornDetector
 
@@ -116,6 +119,7 @@ class LiquidityMappingEngine:
         ote_zone = self._calculate_ote_zone(finest_candles, htf_bias, current_price)
         unicorn = UnicornDetector().detect(pd_arrays)
         setup_sequence = SetupSequenceDetector().detect(candles_by_tf, pd_arrays, as_of=timestamp)
+        candle_profile = CandleProfileAnalyzer().analyze(candles_by_tf, timestamp, setup_sequence)
 
         liquidity_map = LiquidityMap(
             analyzed_at=timestamp,
@@ -134,6 +138,7 @@ class LiquidityMappingEngine:
             fractal_model=fractal_model,
             sd_projection=None,
             setup_sequence=setup_sequence,
+            candle_profile=candle_profile,
         )
         liquidity_map.setup_grade = SetupGrader().grade(liquidity_map, timestamp)
         liquidity_map.sd_projection = self._calculate_sd_projection(setup_sequence)

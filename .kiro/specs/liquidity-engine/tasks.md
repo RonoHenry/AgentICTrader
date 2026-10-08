@@ -796,7 +796,12 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     - Re-baseline the engine windows and the golden journal.
   - **235c. REFACTOR** — measure `analyze()` per M15 close with the extra timeframes.
 
-- [ ] 236. CandleProfileAnalyzer: frame, objectives, trend, anticipation (Req 21; Properties 35, 36)
+- [x] 236. CandleProfileAnalyzer: frame, objectives, trend, anticipation (Req 21; Properties 35, 36)
+  - **Done 2026-10-08.** `liquidity_engine/profile/candle_profile.py`; `LiquidityMap.candle_profile`. The engine runs it after `SetupSequenceDetector`.
+    - `Objective` also records `direction` (the way price moves to reach it) and `formed_at`. Each objective counts on its own side only: pools above and bearish FVGs above the open, their mirrors below.
+    - Not trending and equally near on both sides gives `NEUTRAL`.
+    - **Golden week:** 274 of 277 closes carry a profile. The other 3 are the 17:00 closes themselves, before the candle's first bar has closed. Each day reads as a bearish W1 trend drawn to the previous day's low.
+    - **Engine windows:** re-baselined with `candle_profile: null`, otherwise unchanged. Their D1 bars are the broker's UTC days, so no bar opens at 17:00 New York.
   - **236a. RED** (`test_liquidity_profile.py`):
     - **Frame:** `frame_open` and `midnight_open`.
     - **Objectives:**
