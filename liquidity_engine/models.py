@@ -71,6 +71,8 @@ class LiquiditySource(str, Enum):
     TRENDLINE = "TRENDLINE"
     SWING_HIGH = "SWING_HIGH"      # a swing high on any timeframe: buy stops rest above it (Requirement 18.1)
     SWING_LOW = "SWING_LOW"        # a swing low: sell stops rest below it
+    ASIA_HIGH = "ASIA_HIGH"        # the Asian range, 20:00-00:00 New York (Requirement 20.2)
+    ASIA_LOW = "ASIA_LOW"
 
 
 class CRTPhase(str, Enum):
@@ -464,7 +466,7 @@ class LiquidityPool(BaseModel):
     above a swing high or previous-period high (BSL), sell stops below a low
     (SSL)."""
     side: LiquidityType
-    source: LiquiditySource      # SWING_HIGH / SWING_LOW, or PDH / PDL / PWH / PWL / PMH / PML
+    source: LiquiditySource      # SWING_HIGH / SWING_LOW, PDH / PDL / PWH / PWL / PMH / PML, or ASIA_HIGH / ASIA_LOW
     timeframe: Timeframe         # the pool's weight: a higher-timeframe swing holds more
     price: float
     formed_at: datetime          # the swing bar, or the previous period's bar

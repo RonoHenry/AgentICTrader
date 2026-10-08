@@ -8,6 +8,7 @@ Breakers, the swing structure) passed in.
 """
 from __future__ import annotations
 
+from bisect import bisect_right
 from typing import Dict, List, Optional
 
 from liquidity_engine.models import (
@@ -84,9 +85,7 @@ class PDArrayDetector:
         return arrays
 
     def _mark_fvg_filled(self, fvg: PDArray, candles: List[Candle]) -> None:
-        for candle in candles:
-            if candle.timestamp <= fvg.formed_at:
-                continue
+        for candle in candles[bisect_right(candles, fvg.formed_at, key=_open_time):]:   # oldest first
             if fvg.direction == BiasDirection.BULLISH and candle.low <= fvg.low:
                 fvg.is_filled = True
                 fvg.filled_at = candle.timestamp
@@ -176,9 +175,7 @@ class PDArrayDetector:
         return breakers
 
     def _find_violation(self, ob: PDArray, candles: List[Candle]) -> Optional[Candle]:
-        for candle in candles:
-            if candle.timestamp <= ob.formed_at:
-                continue
+        for candle in candles[bisect_right(candles, ob.formed_at, key=_open_time):]:    # oldest first
             if ob.direction == BiasDirection.BEARISH and candle.close > ob.high:
                 return candle
             if ob.direction == BiasDirection.BULLISH and candle.close < ob.low:
@@ -313,3 +310,7 @@ class PDArrayDetector:
 
     def _assign_strength_score(self, array: PDArray) -> float:
         return _ARRAY_TYPE_WEIGHT.get(array.array_type, 0.5)
+
+
+def _open_time(candle: Candle):
+    return candle.timestamp

@@ -14,6 +14,7 @@ ever sees it. Pure and stateless: the classifier never mutates its inputs.
 """
 from __future__ import annotations
 
+from bisect import bisect_right
 from typing import Dict, List, Optional
 
 from liquidity_engine.models import (
@@ -113,9 +114,8 @@ class SwingStructureClassifier:
 
     @staticmethod
     def _scan_for_break(swing: SwingPoint, candles: List[Candle]) -> Optional[Candle]:
-        for candle in candles:
-            if candle.timestamp <= swing.formed_at:
-                continue
+        # Candles are oldest first: start after the swing's own bar.
+        for candle in candles[bisect_right(candles, swing.formed_at, key=_open_time):]:
             if swing.is_high and candle.close > swing.price:
                 return candle
             if not swing.is_high and candle.close < swing.price:
@@ -142,11 +142,10 @@ class SwingStructureClassifier:
 
         ordered = sorted(swings, key=lambda s: s.formed_at)
         promoted: List[SwingPoint] = []
-        for i, swing in enumerate(ordered):
-            preceding_opposite = next(
-                (prior for prior in reversed(ordered[:i]) if prior.is_high != swing.is_high),
-                None,
-            )
+        last: Dict[bool, SwingPoint] = {}                 # the latest swing so far, per side (is_high)
+        for swing in ordered:
+            preceding_opposite = last.get(not swing.is_high)
+            last[swing.is_high] = swing
             if self._break_confirmed(preceding_opposite, candles) is not None:
                 promoted.append(
                     SwingPoint(
@@ -195,3 +194,7 @@ class SwingStructureClassifier:
                 )
             )
         return events
+
+
+def _open_time(candle: Candle):
+    return candle.timestamp

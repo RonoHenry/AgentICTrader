@@ -115,7 +115,7 @@ class LiquidityMappingEngine:
 
         ote_zone = self._calculate_ote_zone(finest_candles, htf_bias, current_price)
         unicorn = UnicornDetector().detect(pd_arrays)
-        setup_sequence = SetupSequenceDetector().detect(candles_by_tf, pd_arrays)
+        setup_sequence = SetupSequenceDetector().detect(candles_by_tf, pd_arrays, as_of=timestamp)
 
         liquidity_map = LiquidityMap(
             analyzed_at=timestamp,

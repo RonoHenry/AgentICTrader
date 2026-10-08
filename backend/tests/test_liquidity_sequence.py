@@ -277,3 +277,93 @@ def test_property_no_lookahead(steps, cut):
     seq = detector.detect({Timeframe.M15: prefix}, PDArrayDetector().detect({Timeframe.M15: prefix}, {}))
     if seq is not None:
         assert max(seq.raid.raided_at, seq.raid.reclaimed_at, seq.cisd_at, seq.protected_swing.candle_at) <= last_open
+
+
+# ── Asian range pools (Requirement 20.2, task 235) ─────────────────────────
+#
+# Trading day Tuesday 2024-01-09 (EST): opens Monday 17:00 New York = 22:00 UTC.
+# The Asian session, 20:00-00:00 New York, is the H1 bars at 01:00-04:00 UTC;
+# its pools are known from midnight New York, 05:00 UTC. In July (EDT) every
+# New York time is an hour earlier in UTC.
+
+def asia_day(day_open: datetime, drop_session: bool = False) -> List[Candle]:
+    """24 H1 bars from the day's open. Bars 3-6 are the Asian session: high 101.4 (bar 4), low 99.9 (bar 5).
+    Bar 1 (18:00 New York) is wider still, outside the session."""
+    rows = [(100.5, 100.8, 100.2, 100.5)] * 24
+    rows[1] = (100.5, 102.0, 99.0, 100.5)
+    rows[3:7] = [(100.5, 101.0, 100.3, 100.6), (100.6, 101.4, 100.4, 101.0),
+                 (101.0, 101.1, 99.9, 100.2), (100.2, 100.7, 100.1, 100.5)]
+    bars = series(rows, Timeframe.H1, day_open, timedelta(hours=1))
+    return [b for i, b in enumerate(bars) if not (drop_session and 3 <= i <= 6)]
+
+
+WINTER_OPEN = datetime(2024, 1, 8, 22, tzinfo=UTC)       # 17:00 EST
+SUMMER_OPEN = datetime(2024, 7, 8, 21, tzinfo=UTC)       # 17:00 EDT
+
+
+def closed_by(bars: List[Candle], as_of: datetime) -> List[Candle]:
+    return [b for b in bars if b.timestamp + timedelta(hours=1) <= as_of]
+
+
+def asia_pools(bars: List[Candle], as_of):
+    pools = SetupSequenceDetector().pools({Timeframe.H1: bars}, as_of=as_of)
+    return {p.source: p for p in pools if p.source in (LiquiditySource.ASIA_HIGH, LiquiditySource.ASIA_LOW)}
+
+
+def test_asian_pools_from_the_session_h1_bars():
+    as_of = WINTER_OPEN + timedelta(hours=8)                      # 01:00 New York
+    pools = asia_pools(closed_by(asia_day(WINTER_OPEN), as_of), as_of)
+    high, low = pools[LiquiditySource.ASIA_HIGH], pools[LiquiditySource.ASIA_LOW]
+    midnight = datetime(2024, 1, 9, 5, tzinfo=UTC)
+    assert (high.side, high.timeframe, high.price, high.formed_at, high.known_at) == (
+        LiquidityType.BSL, Timeframe.H1, 101.4, datetime(2024, 1, 9, 2, tzinfo=UTC), midnight)
+    assert (low.side, low.timeframe, low.price, low.formed_at, low.known_at) == (
+        LiquidityType.SSL, Timeframe.H1, 99.9, datetime(2024, 1, 9, 3, tzinfo=UTC), midnight)
+
+
+def test_no_asian_pools_before_midnight_or_without_a_time():
+    bars = asia_day(WINTER_OPEN)
+    before = WINTER_OPEN + timedelta(hours=6, minutes=30)         # 23:30 New York
+    assert asia_pools(closed_by(bars, before), before) == {}
+    assert asia_pools(closed_by(bars, WINTER_OPEN + timedelta(hours=8)), None) == {}
+
+
+def test_no_asian_pools_without_session_bars():
+    as_of = WINTER_OPEN + timedelta(hours=8)
+    assert asia_pools(closed_by(asia_day(WINTER_OPEN, drop_session=True), as_of), as_of) == {}
+
+
+def test_asian_pools_belong_to_the_current_day_only():
+    # 17:30 New York: a new trading day, whose session hasn't happened yet.
+    as_of = WINTER_OPEN + timedelta(hours=24, minutes=30)
+    assert asia_pools(closed_by(asia_day(WINTER_OPEN), as_of), as_of) == {}
+
+
+def test_asia_low_raid_starts_a_bullish_sequence():
+    # BULLISH_ROWS from midnight New York: bar 7 trades to 99.6, through the M15 swing low (100.0)
+    # and the Asian low (99.9). On the same bar the heavier pool wins: the H1 Asian low.
+    start = datetime(2024, 1, 9, 5, tzinfo=UTC)
+    m15_bars = series(BULLISH_ROWS, start=start)
+    session = [b for b in asia_day(WINTER_OPEN) if datetime(2024, 1, 9, 1, tzinfo=UTC) <= b.timestamp < start]
+    fvg = BULLISH_FVG.model_copy(update={"formed_at": start + timedelta(minutes=150)})
+    seq = SetupSequenceDetector().detect({Timeframe.M15: m15_bars, Timeframe.H1: session}, [fvg],
+                                         as_of=start + timedelta(minutes=195))
+    assert seq is not None and seq.direction == BiasDirection.BULLISH
+    assert (seq.raid.pool.source, seq.raid.pool.price, seq.raid.raided_at) == (
+        LiquiditySource.ASIA_LOW, 99.9, start + timedelta(minutes=105))
+
+
+@settings(max_examples=80, deadline=None)
+@given(st.sampled_from([WINTER_OPEN, SUMMER_OPEN]), st.integers(0, 24 * 60 - 1))
+def test_property_asian_pools_after_the_session(day_open, minutes):
+    """Property 39: before midnight New York the day has no Asian pool; from then on both are
+    known, from midnight."""
+    as_of = day_open + timedelta(minutes=minutes)
+    midnight = day_open + timedelta(hours=7)
+    pools = asia_pools(closed_by(asia_day(day_open), as_of), as_of)
+    if as_of < midnight:
+        assert pools == {}
+    else:
+        assert set(pools) == {LiquiditySource.ASIA_HIGH, LiquiditySource.ASIA_LOW}
+        assert {p.known_at for p in pools.values()} == {midnight}
+        assert (pools[LiquiditySource.ASIA_HIGH].price, pools[LiquiditySource.ASIA_LOW].price) == (101.4, 99.9)

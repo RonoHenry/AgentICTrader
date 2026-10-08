@@ -390,8 +390,7 @@ def _as_of_window(
     for tf in (cfg.entry_tf, Timeframe.H1):
         if not _CALENDAR.matches_native(venue_clock, tf):
             raise ValueError(f"{tf.value} bars at this venue don't follow the strategy calendar")
-    context_tf_labels = "/".join(tf.value for tf in cfg.context_tfs)
-    logger.info("Fetching D1/W1/%s/%s candles...", context_tf_labels, cfg.entry_tf.value)
+    logger.info("Fetching %s candles...", "/".join(tf.value for tf in cfg.timeframes))
 
     # One more than the window: the newest native bar may still be forming.
     entry = fetch(cfg.entry_tf, windows[cfg.entry_tf] + 1)

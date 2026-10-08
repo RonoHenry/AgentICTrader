@@ -773,7 +773,18 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
   - LE-D15 (the trend definition) confirmed by the user on 2026-10-08.
   - LE-D16 added the same day: swap belongs to the account. The user may run swap and swap-free accounts at once.
 
-- [ ] 235. Intraday timeframes and Asian pools (Req 20; Property 39)
+- [x] 235. Intraday timeframes and Asian pools (Req 20; Property 39)
+  - **Done 2026-10-08.**
+    - `context_tfs` adds H1, M30 and M15; `timeframes` lists each once.
+    - The M30 window is 100 bars, not 200: about 50 hours, M15's span. The golden week has no native M30 for a longer warm-up. Req 20.1 amended.
+    - Asian pools come from the current day's 20:00–23:00 New York H1 bars, known at midnight. The engine passes the analysis time to `SetupSequenceDetector`.
+    - **Golden journal:** the same decisions (8 EXECUTE, 17 RR_BELOW_MIN); reasons now name H1 raids. The engine windows are unchanged (they have no H1).
+    - **Speed (235c):** per M15 close on the golden week, 35 ms went to 109 ms with the new timeframes. Output-preserving speedups bring it to about 60 ms (old timeframes: 26 ms):
+      - cached uuid5 ids;
+      - bisect starts for the break, fill and violation scans;
+      - faster swing finders;
+      - unicorn pairs grouped by timeframe;
+      - raids sorted once.
   - **235a. RED**
     - `test_backtest_strategy_config.py`: the defaults include H1, M30 and M15 with their counts; `timeframes` has no duplicates.
     - `test_liquidity_sequence.py`:

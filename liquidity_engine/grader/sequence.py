@@ -10,9 +10,11 @@ behind the protected swing, the extreme the displacement started from.
 Per entry timeframe, for every unfilled entry-eligible PD array:
 
 1. Pools: swing highs and lows (lookback 2) on every timeframe, known from
-   the open of the bar after the confirming bar; and the previous day, week
-   and month high and low, known from the current period's open. Every pool
-   gates alike; its timeframe weight only breaks ties (decision LE-D2).
+   the open of the bar after the confirming bar; the previous day, week
+   and month high and low, known from the current period's open; and the
+   current day's Asian range (20:00 to 00:00 New York, from H1), known from
+   midnight New York (Requirement 20.2). Every pool gates alike; its
+   timeframe weight only breaks ties (decision LE-D2).
 2. Raid: the first bar of the entry timeframe, from known_at on, that trades
    beyond the pool. A pool that a bar of another timeframe traded beyond and
    closed before that bar opened was already taken: it has no raid.
@@ -31,6 +33,7 @@ from __future__ import annotations
 
 import math
 from bisect import bisect_left, bisect_right
+from datetime import datetime, time
 from typing import Dict, List, Optional, Tuple
 
 from liquidity_engine.detectors.external import TIMEFRAME_WEIGHT
@@ -49,11 +52,15 @@ from liquidity_engine.models import (
     Timeframe,
 )
 from liquidity_engine.utils.candle_utils import find_swing_highs, find_swing_lows
+from liquidity_engine.utils.time_utils import ny_time_in_day, trading_day_open
 
-__all__ = ["SWING_LOOKBACK", "SetupSequenceDetector"]
+__all__ = ["ASIA_SESSION", "SWING_LOOKBACK", "SetupSequenceDetector"]
 
 #: Bars on each side that confirm a swing point (the equal-highs/lows detector's default).
 SWING_LOOKBACK = 2
+
+#: The Asian session in New York wall time, [start, end): the H1 bars from 20:00 to 23:00.
+ASIA_SESSION = (time(20, 0), time(0, 0))
 
 _PREVIOUS_PERIOD: Dict[Timeframe, Tuple[LiquiditySource, LiquiditySource]] = {
     Timeframe.D1: (LiquiditySource.PDH, LiquiditySource.PDL),
@@ -67,8 +74,11 @@ _Raid = Tuple[LiquidityPool, int, int]          # the pool, the raid bar, the re
 class SetupSequenceDetector:
     """Finds the setup sequence the grader trades (Requirement 18)."""
 
-    def pools(self, candles_by_tf: Dict[Timeframe, List[Candle]]) -> List[LiquidityPool]:
-        """Every raidable pool in the window, each with the moment it became known (18.1, 18.2)."""
+    def pools(
+        self, candles_by_tf: Dict[Timeframe, List[Candle]], as_of: Optional[datetime] = None
+    ) -> List[LiquidityPool]:
+        """Every raidable pool in the window, each with the moment it became known (18.1, 18.2).
+        The Asian range needs the time of the analysis, ``as_of`` (20.2): without it there is none."""
         pools: List[LiquidityPool] = []
         known = SWING_LOOKBACK + 1                  # the bar after the one that confirms a swing
         for tf, candles in candles_by_tf.items():
@@ -85,10 +95,13 @@ class SetupSequenceDetector:
                 previous, current = candles[-2], candles[-1]
                 pools.append(_pool(LiquidityType.BSL, sources[0], tf, previous.high, previous, current))
                 pools.append(_pool(LiquidityType.SSL, sources[1], tf, previous.low, previous, current))
+        if as_of is not None:
+            pools += _asian_pools(candles_by_tf.get(Timeframe.H1, []), as_of)
         return pools
 
     def detect(
-        self, candles_by_tf: Dict[Timeframe, List[Candle]], pd_arrays: List[PDArray]
+        self, candles_by_tf: Dict[Timeframe, List[Candle]], pd_arrays: List[PDArray],
+        as_of: Optional[datetime] = None,
     ) -> Optional[SetupSequence]:
         arrays_by_tf: Dict[Timeframe, List[PDArray]] = {}
         for array in pd_arrays:
@@ -98,7 +111,7 @@ class SetupSequenceDetector:
         if not arrays_by_tf:
             return None
 
-        pools = self.pools(candles_by_tf)
+        pools = self.pools(candles_by_tf, as_of)
         best: Optional[Tuple[tuple, SetupSequence]] = None
         for tf, arrays in arrays_by_tf.items():
             window = _EntryWindow(tf, candles_by_tf, pools)
@@ -143,6 +156,10 @@ class _EntryWindow:
             raid = self._raid(pool)
             if raid is not None:
                 self.raids[pool.side].append(raid)
+        # Most recent raid first; on one bar the heavier, then the deeper pool. Sorted
+        # once here (stably), so each array's candidates keep this order.
+        for side, raids in self.raids.items():
+            raids.sort(key=lambda r: _recency(r, bullish=side == LiquidityType.SSL), reverse=True)
 
     def _raid(self, pool: LiquidityPool) -> Optional[_Raid]:
         sell_side = pool.side == LiquidityType.SSL
@@ -178,11 +195,7 @@ class _EntryWindow:
         side = LiquidityType.SSL if bullish else LiquidityType.BSL
         cisd = self.cisd[array.direction]
 
-        def recency(raid: _Raid):                 # most recent raid; on one bar the heavier, then the deeper pool
-            pool = raid[0]
-            return raid[1], _weight(pool), -pool.price if bullish else pool.price
-
-        for pool, raid, reclaim in sorted((r for r in self.raids[side] if r[1] <= formed), key=recency, reverse=True):
+        for pool, raid, reclaim in (r for r in self.raids[side] if r[1] <= formed):
             after = bisect_right(cisd, raid)                             # the first CISD after the raid bar
             if after == len(cisd):
                 continue
@@ -211,6 +224,30 @@ class _EntryWindow:
         return None
 
 
+def _asian_pools(h1: List[Candle], as_of: datetime) -> List[LiquidityPool]:
+    """The Asian high and low of the trading day containing ``as_of``, known from
+    its midnight New York; none before then, or when the session has no H1 bar."""
+    day_open = trading_day_open(as_of)
+    start, midnight = (ny_time_in_day(day_open, at) for at in ASIA_SESSION)
+    if as_of < midnight:
+        return []
+    session = h1[bisect_left(h1, start, key=_open_time): bisect_left(h1, midnight, key=_open_time)]
+    if not session:
+        return []
+    high = max(session, key=lambda c: c.high)          # the earliest bar on a tie
+    low = min(session, key=lambda c: c.low)
+    return [
+        LiquidityPool(side=LiquidityType.BSL, source=LiquiditySource.ASIA_HIGH, timeframe=Timeframe.H1,
+                      price=high.high, formed_at=high.timestamp, known_at=midnight),
+        LiquidityPool(side=LiquidityType.SSL, source=LiquiditySource.ASIA_LOW, timeframe=Timeframe.H1,
+                      price=low.low, formed_at=low.timestamp, known_at=midnight),
+    ]
+
+
+def _open_time(candle: Candle) -> datetime:
+    return candle.timestamp
+
+
 def _pool(side: LiquidityType, source: LiquiditySource, tf: Timeframe, price: float,
           formed: Candle, known: Candle) -> LiquidityPool:
     return LiquidityPool(side=side, source=source, timeframe=tf, price=price,
@@ -219,6 +256,11 @@ def _pool(side: LiquidityType, source: LiquiditySource, tf: Timeframe, price: fl
 
 def _beyond(candle: Candle, pool: LiquidityPool, sell_side: bool) -> bool:
     return candle.low < pool.price if sell_side else candle.high > pool.price
+
+
+def _recency(raid: _Raid, bullish: bool) -> tuple:
+    pool = raid[0]
+    return raid[1], _weight(pool), -pool.price if bullish else pool.price
 
 
 def _weight(pool: LiquidityPool) -> float:

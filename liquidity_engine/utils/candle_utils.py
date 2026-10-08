@@ -5,6 +5,7 @@ Stateless functions only; no I/O, no shared mutable state.
 """
 from __future__ import annotations
 
+import math
 from typing import List
 
 from liquidity_engine.models import Candle, CandleType
@@ -17,28 +18,18 @@ REVERSAL_WICK_RATIO_MIN: float = 0.5
 
 def find_swing_highs(candles: List[Candle], lookback: int = 2) -> List[int]:
     """Indices of local maxima confirmed by `lookback` candles on both sides."""
-    n = len(candles)
-    swings: List[int] = []
-    for i in range(lookback, n - lookback):
-        pivot = candles[i].high
-        if all(pivot > candles[j].high for j in range(i - lookback, i)) and all(
-            pivot > candles[j].high for j in range(i + 1, i + lookback + 1)
-        ):
-            swings.append(i)
-    return swings
+    highs = [c.high for c in candles]
+    return [i for i in range(lookback, len(highs) - lookback)
+            if highs[i] > max(highs[i - lookback:i], default=-math.inf)
+            and highs[i] > max(highs[i + 1:i + lookback + 1], default=-math.inf)]
 
 
 def find_swing_lows(candles: List[Candle], lookback: int = 2) -> List[int]:
     """Indices of local minima confirmed by `lookback` candles on both sides."""
-    n = len(candles)
-    swings: List[int] = []
-    for i in range(lookback, n - lookback):
-        pivot = candles[i].low
-        if all(pivot < candles[j].low for j in range(i - lookback, i)) and all(
-            pivot < candles[j].low for j in range(i + 1, i + lookback + 1)
-        ):
-            swings.append(i)
-    return swings
+    lows = [c.low for c in candles]
+    return [i for i in range(lookback, len(lows) - lookback)
+            if lows[i] < min(lows[i - lookback:i], default=math.inf)
+            and lows[i] < min(lows[i + 1:i + lookback + 1], default=math.inf)]
 
 
 def calculate_atr(candles: List[Candle], period: int = 14) -> float:

@@ -224,6 +224,19 @@ class TestSetupSequenceOnMap:
         assert result.setup_sequence == SetupSequenceDetector().detect(candles_by_tf, result.pd_arrays)
         assert result.setup_sequence.raid.raided_at == datetime(2024, 1, 2, 7, 45, tzinfo=timezone.utc)
 
+    def test_engine_passes_the_analysis_time_to_the_detector(self, monkeypatch):
+        # Requirement 20.2: the Asian pools depend on when the analysis runs.
+        seen = {}
+        original = SetupSequenceDetector.detect
+
+        def spy(self, candles_by_tf, pd_arrays, as_of=None):
+            seen["as_of"] = as_of
+            return original(self, candles_by_tf, pd_arrays, as_of=as_of)
+
+        monkeypatch.setattr(SetupSequenceDetector, "detect", spy)
+        LiquidityMappingEngine().analyze(sequence_window(), "EURUSD", d1_ts(20))
+        assert seen["as_of"] == d1_ts(20)
+
     def test_no_sequence_without_entry_arrays(self):
         result = LiquidityMappingEngine().analyze(
             {Timeframe.D1: bullish_d1(), Timeframe.W1: bullish_w1()}, "EURUSD", d1_ts(20))

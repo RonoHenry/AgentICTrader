@@ -754,7 +754,7 @@ This update encodes the user's bias method, described on 2026-10-08 (LE-D9 to LE
 
 #### Acceptance Criteria
 
-1. `StrategyConfig.context_tfs` SHALL default to H12, H8, H6, H4, H3, H1, M30 and M15, with `candle_counts` of 200 for H1 and M30. `StrategyConfig.timeframes` SHALL list each timeframe once, so the entry timeframe is never duplicated. (Was: H12 to H3; LE-D13.)
+1. `StrategyConfig.context_tfs` SHALL default to H12, H8, H6, H4, H3, H1, M30 and M15, with `candle_counts` of 200 for H1 and 100 for M30 (about 50 hours, the span of M15's 200; amended in task 235). `StrategyConfig.timeframes` SHALL list each timeframe once, so the entry timeframe is never duplicated. (Was: H12 to H3; LE-D13.)
 2. `SetupSequenceDetector` SHALL add the Asian range of the current D1 candle (strategy calendar; 20:00 to 00:00 New York, from H1 bars) as two pools:
    - `ASIA_HIGH` (BSL) and `ASIA_LOW` (SSL);
    - timeframe H1;

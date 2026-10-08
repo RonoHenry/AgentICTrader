@@ -28,7 +28,7 @@ UTC = timezone.utc
 MINUTE = timedelta(minutes=1)
 NOW = datetime(2026, 1, 14, 15, 7, 20, tzinfo=UTC)  # Wednesday; the M15 bar from 15:00 is forming
 CFG = StrategyConfig(candle_counts={
-    TF.M1: 300, TF.M3: 300, TF.M5: 300, TF.M15: 12,
+    TF.M1: 300, TF.M3: 300, TF.M5: 300, TF.M15: 12, TF.M30: 6, TF.H1: 6,
     TF.H3: 6, TF.H4: 6, TF.H6: 5, TF.H8: 5, TF.H12: 4, TF.D1: 5, TF.W1: 3,
 })
 VENUES = {"ny_close": MT5ServerClock("ny_close"), "utc_mt5": MT5ServerClock("+0"), "binance": None}
@@ -56,7 +56,7 @@ def _utc_floor(ts: datetime, tf: TF) -> datetime:
         return day - timedelta(days=day.weekday())
     if tf == TF.D1:
         return day
-    minutes = {TF.M1: 1, TF.M5: 5, TF.M15: 15, TF.H1: 60, TF.H3: 180, TF.H4: 240, TF.H6: 360, TF.H8: 480, TF.H12: 720}[tf]
+    minutes = {TF.M1: 1, TF.M5: 5, TF.M15: 15, TF.M30: 30, TF.H1: 60, TF.H3: 180, TF.H4: 240, TF.H6: 360, TF.H8: 480, TF.H12: 720}[tf]
     elapsed = (ts - day) // MINUTE
     return day + (elapsed - elapsed % minutes) * MINUTE
 
@@ -139,8 +139,8 @@ def test_native_htf_bars_used_only_where_calendar_matches():
     for kind in ("utc_mt5", "binance"):
         venue, view, _ = window(kind)
         fetched = [tf for tf, _ in venue.native_calls]
-        # Only what lines up natively; everything above H1 comes from native H1.
-        assert set(fetched) == {CFG.entry_tf, TF.H1}, kind
+        # Only what lines up natively (H1 and below); everything above H1 comes from native H1.
+        assert set(fetched) == {CFG.entry_tf, TF.M30, TF.H1}, kind
         h1_count = dict(venue.native_calls)[TF.H1]
         assert h1_count >= (CFG.candle_counts[TF.W1] + 1) * 7 * 24
         # The point of D9: the same prices give the engine the same candles at any venue.

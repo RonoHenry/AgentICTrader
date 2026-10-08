@@ -26,9 +26,10 @@ def test_defaults_equal_current_runner_constants():
     cfg = StrategyConfig()
 
     assert cfg.entry_tf is TF.M15
-    assert cfg.context_tfs == (TF.H12, TF.H8, TF.H6, TF.H4, TF.H3)
+    # H1, M30 and M15 liquidity is analysed too (liquidity-engine Req 20.1, LE-D13).
+    assert cfg.context_tfs == (TF.H12, TF.H8, TF.H6, TF.H4, TF.H3, TF.H1, TF.M30, TF.M15)
     assert dict(cfg.candle_counts) == {
-        TF.M1: 300, TF.M3: 300, TF.M5: 300, TF.M15: 200,
+        TF.M1: 300, TF.M3: 300, TF.M5: 300, TF.M15: 200, TF.M30: 100, TF.H1: 200,
         TF.H3: 150, TF.H4: 150, TF.H6: 120, TF.H8: 100, TF.H12: 90,
         TF.D1: 90, TF.W1: 30,
     }
@@ -36,6 +37,12 @@ def test_defaults_equal_current_runner_constants():
     assert dict(cfg.grade_confidence) == {SetupGrade.A_PLUS: 0.90, SetupGrade.A: 0.80, SetupGrade.B: 0.70}
     assert cfg.tp_levels == (2.0, 2.5)
     assert cfg.stop_mode is StopMode.WICK
+
+
+def test_timeframes_list_each_once():
+    # The entry timeframe is also a context timeframe by default: it is fetched and analysed once.
+    assert StrategyConfig().timeframes == (TF.D1, TF.W1, TF.H12, TF.H8, TF.H6, TF.H4, TF.H3, TF.H1, TF.M30, TF.M15)
+    assert StrategyConfig(entry_tf="M5").timeframes[-2:] == (TF.M15, TF.M5)
 
 
 def test_pending_expiry_default_killzone_end_with_3h_fallback():

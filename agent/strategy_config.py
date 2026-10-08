@@ -65,17 +65,23 @@ class StrategyConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
 
     entry_tf: Timeframe = Timeframe.M15
-    # Analysed alongside D1 and W1 (which the engine requires) for bias and
-    # CRT-phase context. HTFBiasClassifier computes a bias for every timeframe
-    # it is given, so these let H4 (or H12/H8/H6/H3) inform intraday bias
-    # distinctly from D1/W1's swing bias. Entries never come from them.
-    context_tfs: tuple[Timeframe, ...] = (Timeframe.H12, Timeframe.H8, Timeframe.H6, Timeframe.H4, Timeframe.H3)
+    # Analysed alongside D1 and W1 (which the engine requires) for bias,
+    # CRT-phase context and liquidity: every timeframe's swings are raidable
+    # pools, H1 to M15 included (liquidity-engine Req 20.1, LE-D13), and H1
+    # gives the Asian range. Entries come from entry_tf only; the default
+    # entry timeframe is also listed here and handed to the engine once.
+    context_tfs: tuple[Timeframe, ...] = (
+        Timeframe.H12, Timeframe.H8, Timeframe.H6, Timeframe.H4, Timeframe.H3,
+        Timeframe.H1, Timeframe.M30, Timeframe.M15,
+    )
     # Bars per timeframe handed to the engine.
     candle_counts: ReadOnlyMapping[Timeframe, PositiveInt] = {
         Timeframe.M1: 300,
         Timeframe.M3: 300,
         Timeframe.M5: 300,
         Timeframe.M15: 200,
+        Timeframe.M30: 100,   # ~50 h, the span of M15's 200; older M30 swings are H1 swings too
+        Timeframe.H1: 200,
         Timeframe.H3: 150,
         Timeframe.H4: 150,
         Timeframe.H6: 120,
@@ -104,8 +110,8 @@ class StrategyConfig(BaseModel):
 
     @property
     def timeframes(self) -> tuple[Timeframe, ...]:
-        """Every timeframe handed to the engine, in the order the runner fetches them."""
-        return (Timeframe.D1, Timeframe.W1, *self.context_tfs, self.entry_tf)
+        """Every timeframe handed to the engine, once each, in the order the runner fetches them."""
+        return tuple(dict.fromkeys((Timeframe.D1, Timeframe.W1, *self.context_tfs, self.entry_tf)))
 
     def __reduce__(self):
         # Read-only mappings don't pickle; rebuild from plain values instead
