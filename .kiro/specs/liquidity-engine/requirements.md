@@ -783,7 +783,7 @@ This update encodes the user's bias method, described on 2026-10-08 (LE-D9 to LE
 4. **Trend** (LE-D15):
    - `BULLISH` when the last closed W1 candle closed above the high of the W1 candle before it;
    - `BEARISH` when it closed below that candle's low;
-   - otherwise `NONE`.
+   - otherwise `NEUTRAL` (not trending).
 5. **Anticipated direction** (LE-D9, LE-D10):
    - **Trending:** the trend's direction. The draw is the nearest untaken W1 objective in that direction, or else the nearest objective in that direction.
    - **Not trending:** toward the nearer of `draw_above` and `draw_below`, measured from `frame_open`. The draw is that objective.
@@ -842,7 +842,9 @@ This update encodes the user's bias method, described on 2026-10-08 (LE-D9 to LE
 
 #### Acceptance Criteria
 
-1. **Swap.** The instrument specs SHALL record the MT5 swap values (`swap_long`, `swap_short`, `swap_mode`, the triple-swap day), exported from the terminal. The shared fill model SHALL charge swap at each 17:00 New York rollover a filled position is held through, journaled as `cost_r_swap`. Swap-free accounts have zero values.
+1. **Swap.** The instrument specs SHALL record the MT5 swap values (`swap_long`, `swap_short`, `swap_mode`, the triple-swap day), exported from the terminal. The shared fill model SHALL charge swap at each 17:00 New York rollover a filled position is held through, journaled as `cost_r_swap`.
+   - **Per account (LE-D16).** A broker profile is one account. A profile with `swap_free = true` charges no swap, whatever its spec file says, so a swap account and a swap-free account at one broker are two profiles sharing a spec file and the venue's candles.
+   - **Measurement.** Results are reported with swap charged and without it. Swap never changes a decision, and with compounding off it never changes a size, so the swap-free figure is the net result plus `cost_r_swap`.
 2. **Minimum stop.** `StrategyConfig.min_stop_spreads` (default 0, off): `build_order_intent` SHALL return `NoTrade` with `STOP_TOO_TIGHT` WHEN the entry-to-stop distance is under `min_stop_spreads` × the instrument's typical spread (`InstrumentSpec.default_spread`). The caller passes that spread in.
 
 ### Correctness Properties (2026-10b)
@@ -876,7 +878,8 @@ This update encodes the user's bias method, described on 2026-10-08 (LE-D9 to LE
 | LE-D12 | The Asian range is a pool, and its raid is the preferred false move | User 2026-10-08: "Ideally, I want to see price manipulate Asian lows" |
 | LE-D13 | H1, M30 and M15 swings are pools like any other | User 2026-10-08: "they are equally important" |
 | LE-D14 | Entry: at a predetermined higher-timeframe POI, a failed displacement (CRT / turtle soup) or an engulfing, then a CISD. This is the setup sequence, optionally required to start at an H4/D1 PD array | User 2026-10-08 |
-| LE-D15 | Trending: the last closed W1 candle closed beyond the previous W1 candle's range (a CRT closure) | Proposed by Claude 2026-10-08 as a measurable default; for the user to confirm |
+| LE-D15 | Trending: the last closed W1 candle closed beyond the previous W1 candle's range (a CRT closure) | Proposed by Claude 2026-10-08 as a measurable default; confirmed by the user the same day |
+| LE-D16 | Swap belongs to the account, not the strategy: a swap-free account is its own broker profile (`swap_free = true`), and results are reported with and without swap | User 2026-10-08: swap and swap-free accounts may run at the same time |
 
 ### Deferred (2026-10b)
 

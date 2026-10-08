@@ -770,7 +770,8 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     - time anchors: the 01:00, 05:00 and 09:00 H4 candles, New York time, the 17:00 open blended with midnight;
     - the Asian range raid;
     - H1, M30 and M15 liquidity.
-  - **For the user to confirm:** LE-D15 (the trend definition).
+  - LE-D15 (the trend definition) confirmed by the user on 2026-10-08.
+  - LE-D16 added the same day: swap belongs to the account. The user may run swap and swap-free accounts at once.
 
 - [ ] 235. Intraday timeframes and Asian pools (Req 20; Property 39)
   - **235a. RED**
@@ -832,7 +833,10 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     - **Export:** the exporter reads the swap fields; old spec files load with zero swap.
     - **Fill model:** swap is charged per rollover held through, triple on the rollover day, converted to account currency; `cost_r_swap` is in the journal.
     - **Modes:** an unsupported `swap_mode` raises.
-  - **240b. GREEN** — the user re-exports `config/instruments/exness-standard.toml` from the MT5 terminal (MT5 must be open and logged in).
+    - **Accounts:** a profile with `swap_free = true` loads zero swap (LE-D16).
+  - **240b. GREEN**
+    - Re-export `config/instruments/exness-standard.toml` from the MT5 terminal, logged in to the swap account (MT5 must be open).
+    - Add `config/brokers/exness-standard-swapfree.toml`.
   - **240c. REFACTOR** — re-price `ec4876ba87a1` and `475491a89d91` with swap from the Phase A cache, and note the difference.
 
 - [ ] 241. Checkpoint
@@ -848,7 +852,7 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     - `NoTrade` counts per reason;
     - the breakdowns by weekday and by `midnight_open` side;
     - stops against the spread;
-    - swap's share of costs.
+    - swap's share of costs, and each run's result without swap (the swap-free account, LE-D16).
   - The hold-out stays unused. The user reviews the trades in `report.html`.
 
 - [ ] 243. Decide the next step with the user

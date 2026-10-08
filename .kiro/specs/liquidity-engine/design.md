@@ -1502,6 +1502,8 @@ New `StrategyConfig` fields, all in the fingerprint and the Phase A cache key:
   - booked as `cost_r_swap`.
 - **Modes.** Only `SWAP_MODE_POINTS` and `SWAP_MODE_CURRENCY_*` are supported; any other mode raises at load time.
 - **Phase A.** Swap is execution-only, outside Phase A, so the WICK and BODY runs can be re-priced from their cache.
+- **Accounts (LE-D16).** A broker profile gains an optional `swap_free` (default `false`). When it is `true`, `BrokerProfile.specs()` returns every instrument with zero swap. `config/brokers/exness-standard-swapfree.toml` is the swap-free account: the same venue, spec file and symbols as `exness-standard`, so it reads the same candles and shares the Phase A cache.
+- **Both figures.** The journal and the write-up give the net result with swap and without it (net plus `cost_r_swap`). That is exact while compounding is off, since swap changes neither a decision nor a size.
 
 ### Report
 
