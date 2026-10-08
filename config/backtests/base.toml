@@ -37,3 +37,30 @@ strategy.min_rr = 5.0
 
 [variants.stop_body]           # stop behind the protected swing's body, not its wick (liquidity-engine LE-D5)
 strategy.stop_mode = "BODY"
+
+# Candle anticipation (liquidity-engine update 2026-10b, task 242): trade the setup
+# only on the anticipated candle's false-move side, raided in the 01:00-13:00
+# New York window, toward the nearer of SD 2.0 and the profile's draw, with a
+# stop of at least two typical spreads.
+[variants.anticipation]
+strategy.bias_mode = "PROFILE"
+strategy.require_false_move = true
+strategy.time_window = "MANIPULATION"
+strategy.target_mode = "NEAREST"
+strategy.min_stop_spreads = 2.0
+
+[variants.anticipation_body]   # the same, with the stop behind the protected swing's body
+strategy.bias_mode = "PROFILE"
+strategy.require_false_move = true
+strategy.time_window = "MANIPULATION"
+strategy.target_mode = "NEAREST"
+strategy.min_stop_spreads = 2.0
+strategy.stop_mode = "BODY"
+
+[variants.anticipation_poi]    # the same, with the protected swing inside an H4/D1 PD array (LE-D14)
+strategy.bias_mode = "PROFILE"
+strategy.require_false_move = true
+strategy.time_window = "MANIPULATION"
+strategy.target_mode = "NEAREST"
+strategy.min_stop_spreads = 2.0
+strategy.require_htf_poi = true

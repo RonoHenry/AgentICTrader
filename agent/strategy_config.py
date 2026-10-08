@@ -15,7 +15,7 @@ Grader parameters stay in liquidity_engine; a run manifest records them
 through the engine code fingerprint, and these through fingerprint().
 
 Validates: Requirements 1.6 (.kiro/specs/algo-backtester/requirements.md);
-Requirement 19.1, 19.4 (.kiro/specs/liquidity-engine/requirements.md)
+Requirements 19.1, 19.4, 20.1, 23, 25.2 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializ
 
 from liquidity_engine.models import SetupGrade, Timeframe
 
-__all__ = ["ENTRY_TIMEFRAMES", "PendingExpiry", "StopMode", "StrategyConfig"]
+__all__ = ["ENTRY_TIMEFRAMES", "BiasMode", "PendingExpiry", "StopMode", "StrategyConfig", "TargetMode", "TimeWindow"]
 
 # Entries come from M15 and below; higher timeframes are bias and context
 # only (liquidity_engine.grader.setup_grader._ENTRY_ELIGIBLE_TIMEFRAMES).
@@ -49,6 +49,24 @@ class StopMode(str, Enum):
     """Where the stop goes behind the setup's protected swing (liquidity-engine LE-D5)."""
     WICK = "WICK"   # beyond its wick: SetupGradeDetail.suggested_stop
     BODY = "BODY"   # beyond its body: SetupGradeDetail.protected_swing_body_stop
+
+
+class BiasMode(str, Enum):
+    """Which bias a setup must agree with before it is ordered (liquidity-engine Req 23.1)."""
+    OPEN = "OPEN"        # none here: the grader's D1-open bias only caps counter-trend setups at B
+    PROFILE = "PROFILE"  # the candle profile's anticipated direction (LE-D9)
+
+
+class TimeWindow(str, Enum):
+    """When the setup's raid may happen (liquidity-engine Req 23.3)."""
+    ANY = "ANY"
+    MANIPULATION = "MANIPULATION"  # in the candle's 01:00-13:00 New York window (LE-D11)
+
+
+class TargetMode(str, Enum):
+    """Where TP1 goes (liquidity-engine Req 23.5)."""
+    SD = "SD"            # tp_levels[0] SD of the setup leg
+    NEAREST = "NEAREST"  # the nearer of that and the candle profile's draw (LE-D10)
 
 
 K = TypeVar("K")
@@ -101,6 +119,14 @@ class StrategyConfig(BaseModel):
     # D19). Most partials come off by 2-2.5 SD, often around 3-5R (LE-D4).
     tp_levels: tuple[float, ...] = (2.0, 2.5)
     stop_mode: StopMode = StopMode.WICK
+    # Candle anticipation (liquidity-engine update 2026-10b). Each rule is off by
+    # default, so each one is measured as a variant against the others.
+    bias_mode: BiasMode = BiasMode.OPEN
+    require_false_move: bool = False     # the protected wick beyond the candle's open on the false-move side
+    time_window: TimeWindow = TimeWindow.ANY
+    require_htf_poi: bool = False        # the protected wick inside an unfilled H4/D1 PD array (LE-D14)
+    target_mode: TargetMode = TargetMode.SD
+    min_stop_spreads: float = Field(default=0.0, ge=0)   # a stop of at least k typical spreads; 0 is off
     pending_expiry: PendingExpiry = PendingExpiry.KILLZONE_END
     fallback_ttl_minutes: PositiveInt = 180
 

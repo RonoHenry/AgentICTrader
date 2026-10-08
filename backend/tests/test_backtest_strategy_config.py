@@ -14,7 +14,7 @@ from datetime import timedelta
 import pytest
 from pydantic import ValidationError
 
-from agent.strategy_config import PendingExpiry, StopMode, StrategyConfig
+from agent.strategy_config import BiasMode, PendingExpiry, StopMode, StrategyConfig, TargetMode, TimeWindow
 from liquidity_engine.models import SetupGrade, Timeframe as TF
 
 
@@ -37,6 +37,9 @@ def test_defaults_equal_current_runner_constants():
     assert dict(cfg.grade_confidence) == {SetupGrade.A_PLUS: 0.90, SetupGrade.A: 0.80, SetupGrade.B: 0.70}
     assert cfg.tp_levels == (2.0, 2.5)
     assert cfg.stop_mode is StopMode.WICK
+    # The candle anticipation rules are all off by default (liquidity-engine Req 23, 25.2).
+    assert (cfg.bias_mode, cfg.require_false_move, cfg.time_window, cfg.require_htf_poi, cfg.target_mode,
+            cfg.min_stop_spreads) == (BiasMode.OPEN, False, TimeWindow.ANY, False, TargetMode.SD, 0.0)
 
 
 def test_timeframes_list_each_once():
@@ -68,6 +71,10 @@ def test_entry_tf_and_window_sizes_accept_string_values():
     ({"tp_levels": (4.0, 2.5)}, "tp_levels"),           # TP1 before TP2
     ({"tp_levels": ()}, "tp_levels"),
     ({"stop_mode": "MIDPOINT"}, "stop_mode"),           # WICK or BODY
+    ({"bias_mode": "STRUCTURE"}, "bias_mode"),          # OPEN or PROFILE
+    ({"time_window": "LONDON"}, "time_window"),         # ANY or MANIPULATION
+    ({"target_mode": "FAR"}, "target_mode"),            # SD or NEAREST
+    ({"min_stop_spreads": -1.0}, "min_stop_spreads"),
     ({"grade_confidence": {"A+": 1.5, "A": 0.8, "B": 0.7}}, "grade_confidence"),
     ({"grade_confidence": {"A+": 0.9, "A": 0.8, "B": 0.7, "NO_TRADE": 0.1}}, "NO_TRADE"),
     ({"fallback_ttl_minutes": 0}, "fallback_ttl_minutes"),
@@ -96,6 +103,12 @@ _CHANGED = {
     "grade_confidence": {SetupGrade.A_PLUS: 0.95, SetupGrade.A: 0.80, SetupGrade.B: 0.70},
     "tp_levels": (2.5, 4.5),
     "stop_mode": StopMode.BODY,
+    "bias_mode": BiasMode.PROFILE,
+    "require_false_move": True,
+    "time_window": TimeWindow.MANIPULATION,
+    "require_htf_poi": True,
+    "target_mode": TargetMode.NEAREST,
+    "min_stop_spreads": 2.0,
     "pending_expiry": PendingExpiry.FIXED_TTL,
     "fallback_ttl_minutes": 181,
 }

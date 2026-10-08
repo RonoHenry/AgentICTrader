@@ -16,8 +16,16 @@ read (liquidity-engine update 2026-10): the sequence's direction, the stop
 behind its protected swing (cfg.stop_mode), and TP1 at an SD level of its
 setup leg.
 
+The candle anticipation policy (update 2026-10b) runs after the grade gates
+and before the stop checks; the first rule a setup fails names its NoTrade:
+the anticipated direction (bias_mode), the false move (require_false_move),
+the manipulation window (time_window), the higher-timeframe POI
+(require_htf_poi). Then the stop must be beyond the entry and at least
+min_stop_spreads typical spreads away, and TP1 may be the profile's draw
+when it is nearer (target_mode).
+
 Validates: Requirements 1.2, 1.3 (.kiro/specs/algo-backtester/requirements.md);
-Requirement 19 (.kiro/specs/liquidity-engine/requirements.md)
+Requirements 19, 23, 25.2 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
 
@@ -26,15 +34,25 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Optional
 
-from agent.strategy_config import StopMode, StrategyConfig
-from liquidity_engine.models import BiasDirection, Candle, LiquidityMap, SetupGrade, Timeframe
+from agent.strategy_config import BiasMode, StopMode, StrategyConfig, TargetMode, TimeWindow
+from liquidity_engine.models import BiasDirection, Candle, LiquidityMap, SetupGrade, SetupSequence, Timeframe
 from liquidity_engine.utils.id_utils import deterministic_id
 from ml.features.session_features import TimeFeatures, TimeWindowClassifier
 
-__all__ = ["NoTrade", "OrderIntent", "build_order_intent", "setup_id_for"]
+__all__ = ["OWN_DECISION_REASONS", "NoTrade", "OrderIntent", "build_order_intent", "setup_id_for"]
 
 Direction = Literal["LONG", "SHORT"]
-NoTradeReason = Literal["NO_GRADE", "NO_TRADE", "RR_BELOW_MIN", "INVALID_STOP"]
+NoTradeReason = Literal[
+    "NO_GRADE", "NO_TRADE", "RR_BELOW_MIN", "INVALID_STOP",
+    "NO_ANTICIPATION", "AGAINST_PROFILE", "NO_FALSE_MOVE", "OUTSIDE_WINDOW", "NO_POI", "STOP_TOO_TIGHT",
+]
+#: Reasons the backtest journal records as their own decision rather than NO_TRADE
+#: (liquidity-engine Req 23.6): a graded setup refused by a rule, not by the grader.
+OWN_DECISION_REASONS = (
+    "RR_BELOW_MIN", "INVALID_STOP",
+    "NO_ANTICIPATION", "AGAINST_PROFILE", "NO_FALSE_MOVE", "OUTSIDE_WINDOW", "NO_POI", "STOP_TOO_TIGHT",
+)
+_POI_TIMEFRAMES = (Timeframe.H4, Timeframe.D1)
 
 
 @dataclass(frozen=True)
@@ -118,13 +136,18 @@ def build_order_intent(
     instrument: str,
     as_of: datetime,
     cfg: StrategyConfig,
+    typical_spread: Optional[float] = None,
 ) -> OrderIntent | NoTrade:
     """Turn the engine's graded setup at ``as_of`` into an order, or say why not.
 
     ``view`` is the candle window the engine analysed: the entry timeframe's
     last close is the current price, and the D1/W1 bars give the daily and
-    weekly opens.
+    weekly opens. ``typical_spread`` is the instrument's (InstrumentSpec.
+    default_spread); cfg.min_stop_spreads needs it.
     """
+    if cfg.min_stop_spreads > 0 and typical_spread is None:
+        # Raised, not skipped: a run without spreads must not quietly drop the rule.
+        raise ValueError(f"{instrument}: min_stop_spreads {cfg.min_stop_spreads} needs the typical spread")
     setup_grade = liquidity_map.setup_grade
     if setup_grade is None:
         return NoTrade(instrument, as_of, "NO_TRADE", "NO_GRADE", "no grade computed")
@@ -141,6 +164,10 @@ def build_order_intent(
     # counter-trend setup trades against it, capped at B. (It was inferred
     # from the stop's side of the entry.)
     direction: Direction = "LONG" if sequence.direction == BiasDirection.BULLISH else "SHORT"
+    refused = _candle_policy(liquidity_map, sequence, cfg)
+    if refused is not None:
+        return NoTrade(instrument, as_of, setup_grade.grade.value, *refused)
+
     entry = setup_grade.suggested_entry
     stop_loss = (setup_grade.suggested_stop if cfg.stop_mode == StopMode.WICK
                  else setup_grade.protected_swing_body_stop)
@@ -151,8 +178,16 @@ def build_order_intent(
             f"{cfg.stop_mode.value} stop {stop_loss} is not beyond the {direction} entry {entry}",
         )
 
-    take_profit_1, take_profit_2 = _pick_sd_targets(liquidity_map, entry, direction, cfg.tp_levels)
-    r_ratio = abs(take_profit_1 - entry) / abs(entry - stop_loss)
+    risk = abs(entry - stop_loss)
+    if cfg.min_stop_spreads > 0 and risk < cfg.min_stop_spreads * typical_spread:
+        return NoTrade(
+            instrument, as_of, setup_grade.grade.value, "STOP_TOO_TIGHT",
+            f"{cfg.stop_mode.value} stop {risk:.6g} away is under {cfg.min_stop_spreads} x the "
+            f"{typical_spread:.6g} typical spread",
+        )
+
+    take_profit_1, take_profit_2 = _pick_targets(liquidity_map, entry, direction, cfg)
+    r_ratio = abs(take_profit_1 - entry) / risk
 
     if r_ratio < cfg.min_rr:
         return NoTrade(
@@ -186,6 +221,52 @@ def build_order_intent(
         patterns=tuple(_build_patterns(liquidity_map)),
         regime=f"TRENDING_{d1_bias.direction.value}",
     )
+
+
+def _candle_policy(
+    liquidity_map: LiquidityMap, sequence: SetupSequence, cfg: StrategyConfig,
+) -> Optional[tuple[NoTradeReason, str]]:
+    """The first candle anticipation rule the setup fails, as (reason, detail);
+    None when it passes them all (liquidity-engine Req 23.1-23.4)."""
+    profile = liquidity_map.candle_profile
+    bullish = sequence.direction == BiasDirection.BULLISH
+    wick = sequence.protected_swing.wick
+    if cfg.bias_mode == BiasMode.PROFILE:
+        if profile is None or profile.direction == BiasDirection.NEUTRAL:
+            return "NO_ANTICIPATION", "no anticipated direction for the candle"
+        if profile.direction != sequence.direction:
+            return "AGAINST_PROFILE", (f"{sequence.direction.value} setup in a candle anticipated "
+                                       f"{profile.direction.value}")
+    if cfg.require_false_move:
+        if profile is None or not (wick < profile.frame_open if bullish else wick > profile.frame_open):
+            side = "below" if bullish else "above"
+            open_ = "no candle open" if profile is None else f"the open {profile.frame_open}"
+            return "NO_FALSE_MOVE", f"protected swing {wick} is not {side} {open_}"
+    if cfg.time_window == TimeWindow.MANIPULATION and (profile is None or not profile.raid_in_window):
+        return "OUTSIDE_WINDOW", (f"raid at {sequence.raid.raided_at:%Y-%m-%d %H:%M} UTC is outside the "
+                                  f"candle's 01:00-13:00 New York window")
+    if cfg.require_htf_poi and not any(
+        a.timeframe in _POI_TIMEFRAMES and not a.is_filled and a.direction == sequence.direction
+        and a.low <= wick <= a.high
+        for a in liquidity_map.pd_arrays
+    ):
+        return "NO_POI", f"protected swing {wick} is not inside an unfilled H4 or D1 {sequence.direction.value} PD array"
+    return None
+
+
+def _pick_targets(
+    liquidity_map: LiquidityMap, entry: float, direction: Direction, cfg: StrategyConfig,
+) -> tuple[float, Optional[float]]:
+    """The SD targets; under NEAREST, TP1 is the nearer of SD's TP1 and the candle
+    profile's draw when the draw lies beyond the entry, and TP2 the other (Req 23.5)."""
+    tp1, tp2 = _pick_sd_targets(liquidity_map, entry, direction, cfg.tp_levels)
+    profile = liquidity_map.candle_profile
+    if cfg.target_mode != TargetMode.NEAREST or profile is None or profile.draw is None:
+        return tp1, tp2
+    draw = profile.draw.price
+    if not (draw > entry if direction == "LONG" else draw < entry):
+        return tp1, tp2
+    return (draw, tp1) if abs(draw - entry) < abs(tp1 - entry) else (tp1, draw)
 
 
 def _pick_sd_targets(

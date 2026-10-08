@@ -71,6 +71,9 @@ def test_key_changes_with_each_input():
         "min_rr": key_with(cfg=cfg_with(min_rr=5.0)),
         "tp_levels": key_with(cfg=cfg_with(tp_levels=(2.0, 4.0))),
         "stop_mode": key_with(cfg=cfg_with(stop_mode="BODY")),     # its own Phase A entry
+        "bias_mode": key_with(cfg=cfg_with(bias_mode="PROFILE")),
+        "target_mode": key_with(cfg=cfg_with(target_mode="NEAREST")),
+        "min_stop_spreads": key_with(cfg=cfg_with(min_stop_spreads=2.0)),
         "candle_counts": key_with(cfg=cfg_with(candle_counts={**CFG.model_dump()["candle_counts"], "M15": 61})),
         "grade_confidence": key_with(cfg=cfg_with(grade_confidence={"A+": 0.9, "A": 0.8, "B": 0.6})),
         "instrument": key_with(instrument="GBPUSD"),
@@ -80,6 +83,13 @@ def test_key_changes_with_each_input():
     assert key_with() == base
     assert base not in variants.values()
     assert len(set(variants.values())) == len(variants)
+
+
+def test_typical_spread_keys_only_the_minimum_stop_rule():
+    # Phase A reads the spread only for min_stop_spreads (liquidity-engine Req 25.2).
+    tight = cfg_with(min_stop_spreads=2.0)
+    assert key_with(cfg=tight, typical_spread=0.0001) != key_with(cfg=tight, typical_spread=0.0002)
+    assert key_with(typical_spread=0.0001) == key_with(typical_spread=0.0002) == key_with()
 
 
 def test_execution_only_settings_share_key():

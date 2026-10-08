@@ -436,6 +436,7 @@ def _process_instrument(
     mode: str,
     verbose: bool = True,
     evaluated: Optional[dict[str, datetime]] = None,
+    typical_spread: Optional[float] = None,
 ) -> dict:
     """Grade the window as of ``t`` and, if warranted, trade it. Returns a
     summary dict for the end-of-run table — never raises for a NO_TRADE
@@ -443,7 +444,8 @@ def _process_instrument(
 
     ``evaluated`` remembers the last t per instrument, so the same closed bar
     is evaluated once: over an FX weekend t stays at Friday's close, and every
-    pass would otherwise re-send the same setup.
+    pass would otherwise re-send the same setup. ``typical_spread`` is the
+    instrument's spec spread, for cfg.min_stop_spreads.
     """
     if evaluated is not None and evaluated.get(instrument) == t:
         return {"instrument": instrument, "grade": "-", "decision": "NO NEW BAR", "trade_id": None}
@@ -454,7 +456,7 @@ def _process_instrument(
     if verbose:
         print("\n" + liquidity_map.to_agent_context() + "\n")
 
-    intent = build_order_intent(liquidity_map, candles_by_tf, instrument, t, cfg)
+    intent = build_order_intent(liquidity_map, candles_by_tf, instrument, t, cfg, typical_spread=typical_spread)
     if isinstance(intent, NoTrade):
         if intent.reason == "RR_BELOW_MIN":
             print(f"[{instrument}] Graded {intent.grade} but {intent.detail} — skipping.")
@@ -533,7 +535,7 @@ def main() -> None:
     redis_client = fakeredis.FakeRedis(decode_responses=True)
     risk_engine = RiskEngine(redis_client)
 
-    paper = None
+    paper, specs = None, None
     fcm_sender, mode = None, "AUTONOMOUS"
     if broker == "mt5":
         broker_client = _mt5_broker_client()
@@ -556,6 +558,9 @@ def main() -> None:
         broker_client = paper
     else:
         broker_client, fcm_sender, mode = None, _console_alert, "HUMAN_IN_LOOP"
+
+    # Each instrument's typical spread, for StrategyConfig.min_stop_spreads (off by default).
+    spreads = {i: specs[i].default_spread for i in instruments if i in specs} if specs is not None else {}
 
     # Paper trades still active from an earlier run count against the limit.
     open_trades = sum(1 for t in paper.trades() if t["status"] in ("PENDING", "OPEN")) if paper else 0
@@ -629,7 +634,8 @@ def main() -> None:
                     datetime.now(timezone.utc),
                 )
                 results.append(
-                    _process_instrument(instrument, view, t, graph, cfg, mode, verbose=not args.loop, evaluated=evaluated)
+                    _process_instrument(instrument, view, t, graph, cfg, mode, verbose=not args.loop, evaluated=evaluated,
+                                        typical_spread=spreads.get(instrument))
                 )
             except _FEED_DOWN as exc:
                 logger.error("Feed unavailable (%s) — skipping the rest of this pass", exc)

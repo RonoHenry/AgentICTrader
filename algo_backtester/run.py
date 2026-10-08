@@ -112,8 +112,9 @@ def run_backtest(
     start, end = _midnight(cfg.run.start), _midnight(cfg.run.end)
     windows = walk_forward_windows(start, end, walk_forward) if walk_forward else [(start, end)]
     run_datas = [datas[instrument] for instrument in cfg.run.instruments]
+    spreads = {i: specs[i].default_spread for i in cfg.run.instruments}     # for min_stop_spreads
     signals = {i: [r for r in records if r.t < end]
-               for i, records in generate_all(run_datas, cfg.strategy, start, end, workers, cache).items()}
+               for i, records in generate_all(run_datas, cfg.strategy, start, end, workers, cache, spreads).items()}
 
     bars, floored = {}, {}
     for data in run_datas:

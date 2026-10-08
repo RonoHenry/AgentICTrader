@@ -136,6 +136,17 @@ def test_real_engine_produces_records_on_fixture_week():
     assert records and all(isinstance(r.result, (OrderIntent, NoTrade)) for r in records)
 
 
+def test_minimum_stop_rule_gets_the_spread():
+    # Without the spread the rule can't be applied, and every record says so (Req 25.2).
+    tight = CFG.model_copy(update={"min_stop_spreads": 2.0})
+    start, end = datetime(2026, 9, 30, 13, 0, tzinfo=UTC), datetime(2026, 9, 30, 14, 0, tzinfo=UTC)
+    without = list(generate_signals(data_for(), tight, start, end))
+    assert {type(r.result) for r in without} == {EngineError}
+    given = list(generate_signals(data_for(), tight, start, end, typical_spread=0.0001))
+    assert given and not any(isinstance(r.result, EngineError) for r in given)
+    assert generate_all([data_for()], tight, start, end, workers=1, spreads={"EURUSD": 0.0001}) == {"EURUSD": given}
+
+
 def test_parallel_per_instrument_equals_sequential():
     datas = [data_for("EURUSD"), data_for("XAUUSD")]
     start, end = datetime(2026, 9, 30, 13, 0, tzinfo=UTC), datetime(2026, 9, 30, 14, 30, tzinfo=UTC)

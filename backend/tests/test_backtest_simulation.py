@@ -136,6 +136,15 @@ def test_risk_rejection_journaled_with_reason():
     assert result.account.equity == pytest.approx(10_000.0 - 2 * 200.0, abs=1.0)
 
 
+@pytest.mark.parametrize("reason", ["NO_ANTICIPATION", "AGAINST_PROFILE", "NO_FALSE_MOVE", "OUTSIDE_WINDOW",
+                                    "NO_POI", "STOP_TOO_TIGHT"])
+def test_policy_reasons_journaled_as_their_own_decision(reason):
+    # liquidity-engine Req 23.6: the breakdowns count each rule's refusals.
+    record = SignalRecord(T0, "EURUSD", NoTrade("EURUSD", T0, "A", reason, "detail"))
+    result = run({"EURUSD": flat("EURUSD")}, {"EURUSD": [record]})
+    assert [(r.decision, r.reason, r.grade) for r in result.journal] == [(reason, "detail", "A")]
+
+
 def test_no_trade_and_engine_error_records_journaled():
     no_trade = SignalRecord(T0, "EURUSD", NoTrade("EURUSD", T0, "A", "RR_BELOW_MIN", "R:R 2.10 is below the 3.0 floor", 2.1))
     graded_out = SignalRecord(T0 + 15 * MIN, "EURUSD", NoTrade("EURUSD", T0 + 15 * MIN, "NO_TRADE", "NO_TRADE", "5/8"))

@@ -178,13 +178,15 @@ def entry_closes(data: InstrumentData, entry_tf: Timeframe, start: datetime, end
     return [t for t in closes if start <= t <= end and t <= last_close]
 
 
-def signal_at(data: InstrumentData, cfg: StrategyConfig, t: datetime, engine: Optional[Engine] = None) -> SignalRecord:
-    """The decision at t, from the data known at t only."""
+def signal_at(data: InstrumentData, cfg: StrategyConfig, t: datetime, engine: Optional[Engine] = None,
+              typical_spread: Optional[float] = None) -> SignalRecord:
+    """The decision at t, from the data known at t only. ``typical_spread`` is the
+    instrument's spec spread, for cfg.min_stop_spreads."""
     view = compose_as_of_view(data.closed, data.m1, t, cfg.entry_tf, cfg.candle_counts, _CALENDAR)
     context = None
     try:
         liquidity_map = (engine or LiquidityMappingEngine()).analyze(view, data.instrument, t)
-        result = build_order_intent(liquidity_map, view, data.instrument, t, cfg)
+        result = build_order_intent(liquidity_map, view, data.instrument, t, cfg, typical_spread)
         if isinstance(result, OrderIntent):
             context = trade_context(liquidity_map, t)
     except Exception as exc:
@@ -193,32 +195,37 @@ def signal_at(data: InstrumentData, cfg: StrategyConfig, t: datetime, engine: Op
 
 
 def generate_signals(data: InstrumentData, cfg: StrategyConfig, start: datetime, end: datetime,
-                     engine: Optional[Engine] = None) -> Iterator[SignalRecord]:
+                     engine: Optional[Engine] = None, typical_spread: Optional[float] = None) -> Iterator[SignalRecord]:
     """One SignalRecord per entry-timeframe close in [start, end], oldest first."""
     engine = engine or LiquidityMappingEngine()  # stateless: one per instrument is enough
     for t in entry_closes(data, cfg.entry_tf, start, end):
-        yield signal_at(data, cfg, t, engine)
+        yield signal_at(data, cfg, t, engine, typical_spread)
 
 
 def generate_all(datas: Sequence[InstrumentData], cfg: StrategyConfig, start: datetime, end: datetime,
-                 workers: Optional[int] = None, cache: Optional[SignalCache] = None) -> dict[str, list[SignalRecord]]:
+                 workers: Optional[int] = None, cache: Optional[SignalCache] = None,
+                 spreads: Optional[Mapping[str, float]] = None) -> dict[str, list[SignalRecord]]:
     """Phase A for every instrument, one process each (``workers=1``: in this
-    process). Results are identical either way.
+    process). Results are identical either way. ``spreads`` holds each
+    instrument's typical spread, for cfg.min_stop_spreads.
 
     With a ``cache``, instruments it holds are served from it; the others are
     computed and stored by their worker."""
-    hits = {d.instrument: cache.load(cache.key(d, cfg, start, end)) for d in datas} if cache else {}
+    spreads = spreads or {}
+    hits = ({d.instrument: cache.load(cache.key(d, cfg, start, end, spreads.get(d.instrument))) for d in datas}
+            if cache else {})
     todo = [d for d in datas if hits.get(d.instrument) is None]
     if workers == 1 or len(todo) <= 1:
-        computed = {d.instrument: _generate_list(d, cfg, start, end, cache) for d in todo}
+        computed = {d.instrument: _generate_list(d, cfg, start, end, cache, spreads.get(d.instrument)) for d in todo}
     else:
         with ProcessPoolExecutor(max_workers=min(workers or len(todo), len(todo))) as pool:
-            futures = {d.instrument: pool.submit(_generate_list, d, cfg, start, end, cache) for d in todo}
+            futures = {d.instrument: pool.submit(_generate_list, d, cfg, start, end, cache, spreads.get(d.instrument))
+                       for d in todo}
             computed = {instrument: future.result() for instrument, future in futures.items()}
     return {d.instrument: computed[d.instrument] if d.instrument in computed else hits[d.instrument] for d in datas}
 
 
 def _generate_list(data: InstrumentData, cfg: StrategyConfig, start: datetime, end: datetime,
-                   cache: Optional[SignalCache] = None) -> list[SignalRecord]:
-    records = generate_signals(data, cfg, start, end)
-    return cache.store(cache.key(data, cfg, start, end), records) if cache else list(records)
+                   cache: Optional[SignalCache] = None, typical_spread: Optional[float] = None) -> list[SignalRecord]:
+    records = generate_signals(data, cfg, start, end, typical_spread=typical_spread)
+    return cache.store(cache.key(data, cfg, start, end, typical_spread), records) if cache else list(records)

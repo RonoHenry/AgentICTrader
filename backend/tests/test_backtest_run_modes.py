@@ -114,6 +114,14 @@ def test_run_result_keeps_the_m1_bars_phase_b_priced():
     assert windowed.bars == whole.bars                      # one series for the whole range, windows or not
 
 
+def test_phase_a_gets_each_instruments_spread():
+    # The minimum-stop rule reads the spec's typical spread (liquidity-engine Req 25.2).
+    tight = cfg(end=date(2026, 9, 30)).model_copy(update={"strategy": CFG.model_copy(update={"min_stop_spreads": 2.0})})
+    result = run_backtest(tight, OPEN_STUDY, final=False, datas={"EURUSD": data_for("EURUSD")}, specs=SPECS, workers=1)
+    records = result.signals["EURUSD"]
+    assert records and not any(type(r.result).__name__ == "EngineError" for r in records)
+
+
 def test_cross_without_conversion_refused():
     # A cross needs its quote currency's USD rate over time; refuse it rather than skip every trade.
     eurgbp = replace(SPECS["EURUSD"], symbol="EURGBP", quote_ccy="GBP")

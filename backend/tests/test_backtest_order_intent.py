@@ -5,9 +5,10 @@ backtester derive from a graded setup.
 Tasks 189 (deterministic setup_id) and 190 (build_order_intent, moved out
 of scripts/run_live_agent.py) in .kiro/specs/algo-backtester/tasks.md, and
 task 231 in .kiro/specs/liquidity-engine/tasks.md (direction, stop mode and
-targets from the setup sequence).
+targets from the setup sequence), and task 238 there (the candle
+anticipation policy, nearest targets and the minimum stop).
 Validates: Requirements 1.2, 1.3 (.kiro/specs/algo-backtester/requirements.md);
-Requirement 19 (.kiro/specs/liquidity-engine/requirements.md)
+Requirements 19, 23, 25.2; Properties 37, 38 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
 
@@ -19,6 +20,8 @@ from types import SimpleNamespace
 from typing import Optional
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from agent.order_intent import NoTrade, OrderIntent, build_order_intent, setup_id_for
 from agent.strategy_config import StopMode, StrategyConfig
@@ -26,6 +29,8 @@ from liquidity_engine import LiquidityMappingEngine
 from liquidity_engine.models import (
     BiasDirection,
     Candle,
+    CandleProfile,
+    Objective,
     PDArrayType,
     SDProjection,
     SetupGrade,
@@ -290,18 +295,20 @@ def test_runner_delegates_to_build_order_intent(monkeypatch):
     lm, candles_by_tf, t, cfg, expected = _fixture_intent()
     calls, messages = [], []
 
-    def spy(*args):
-        calls.append(args)
-        return build_order_intent(*args)
+    def spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        return build_order_intent(*args, **kwargs)
 
     monkeypatch.setattr(runner, "build_order_intent", spy)
     graph = SimpleNamespace(run=lambda message: messages.append(message) or SimpleNamespace(
         decision=None, decision_reason="", error=None, trade_id="t-1"))
 
-    summary = runner._process_instrument("EURUSD", candles_by_tf, t, graph, cfg, "AUTONOMOUS", verbose=False)
+    summary = runner._process_instrument("EURUSD", candles_by_tf, t, graph, cfg, "AUTONOMOUS", verbose=False,
+                                         typical_spread=0.00008)
 
-    [(_, view, instrument, as_of, used_cfg)] = calls
+    [((_, view, instrument, as_of, used_cfg), kwargs)] = calls
     assert (view, instrument, as_of, used_cfg) == (candles_by_tf, "EURUSD", t, cfg)
+    assert kwargs == {"typical_spread": 0.00008}           # for the minimum-stop rule (Req 25.2)
     [message] = messages
     # Detected at hand-off, not at the bar close (see task 192's staleness test).
     assert datetime.fromisoformat(message.pop("detected_at")) > t
@@ -323,3 +330,182 @@ def test_runner_summary_unchanged(min_rr, decision):
     summary = runner._process_instrument("EURUSD", candles_by_tf, t, graph, cfg, "AUTONOMOUS", verbose=False)
 
     assert summary == {"instrument": "EURUSD", "grade": "A", "decision": decision, "trade_id": None}
+
+
+# ── candle anticipation policy (liquidity-engine Req 23, 25.2; task 238) ───
+# A LONG from 1.1000 with its WICK stop at 1.0990 (10 pips) behind a protected
+# swing at 1.0989; a SHORT mirrors it with the swing at 1.1011.
+
+LONG_WICK, SHORT_WICK = 1.0989, 1.1011
+BULL, BEAR, NONE = BiasDirection.BULLISH, BiasDirection.BEARISH, BiasDirection.NEUTRAL
+
+
+def _profile(direction=BULL, frame_open=1.0995, draw: Optional[float] = 1.1030, raid_in_window=True) -> CandleProfile:
+    objective = None if draw is None or direction == NONE else Objective(
+        kind="POOL", source="PDH" if draw > frame_open else "PDL", timeframe=Timeframe.D1, price=draw,
+        direction=BULL if draw > frame_open else BEAR, formed_at=AS_OF - timedelta(days=1))
+    return CandleProfile(
+        frame_tf=Timeframe.D1, open_time=AS_OF - timedelta(hours=16), frame_open=frame_open, trend=NONE,
+        direction=direction, draw=objective, false_move_taken=True, asia_raided=False,
+        candle_low=1.0985, candle_low_at=AS_OF - timedelta(hours=3), candle_high=1.1005,
+        candle_high_at=AS_OF - timedelta(hours=10), in_window=True, raid_in_window=raid_in_window, weekday=2)
+
+
+def _policy_map(grade: Optional[SetupGradeDetail] = None, profile: Optional[CandleProfile] = None,
+                wick: Optional[float] = None, pd_arrays=None, sd: Optional[SDProjection] = None,
+                draw: Optional[float] = None):
+    grade = grade or _grade(entry=1.1000, stop=1.0990)
+    long = grade.entry_array_direction == BULL
+    array = make_pdarray(PDArrayType.FVG, grade.entry_array_direction, grade.entry_array_high,
+                         grade.entry_array_low, array_id=grade.entry_array_id)
+    sequence = make_sequence(array, wick=wick or (LONG_WICK if long else SHORT_WICK))
+    return full_liquidity_map(
+        instrument="EURUSD", setup_grade=grade, draw_on_liquidity=make_level(price=draw or (1.1050 if long else 1.0950)),
+        sd_projection=sd, setup_sequence=sequence, candle_profile=profile,
+        **({} if pd_arrays is None else {"pd_arrays": pd_arrays}))
+
+
+def policy(**fields) -> StrategyConfig:
+    return StrategyConfig(entry_tf=Timeframe.M5, **fields)
+
+
+def decide(lm, cfg: StrategyConfig, **kwargs):
+    return build_order_intent(lm, _view(), "EURUSD", AS_OF, cfg, **kwargs)
+
+
+def reason(result) -> str:
+    return "ORDER" if isinstance(result, OrderIntent) else result.reason
+
+
+SHORT = _grade(entry=1.1000, stop=1.1010)
+
+
+def test_profile_mode_needs_an_anticipation():
+    cfg = policy(bias_mode="PROFILE")
+    for profile in (None, _profile(direction=NONE, draw=None)):
+        result = decide(_policy_map(profile=profile), cfg)
+        assert isinstance(result, NoTrade) and (result.grade, result.reason) == ("A", "NO_ANTICIPATION")
+
+
+def test_profile_mode_trades_with_the_anticipated_direction():
+    cfg = policy(bias_mode="PROFILE")
+    assert reason(decide(_policy_map(profile=_profile()), cfg)) == "ORDER"
+    against = _policy_map(profile=_profile(direction=BEAR, draw=1.0950))
+    assert reason(decide(against, cfg)) == "AGAINST_PROFILE"
+    assert reason(decide(_policy_map(SHORT, profile=_profile(direction=BEAR, frame_open=1.1005, draw=1.0950)), cfg)) == "ORDER"
+    assert reason(decide(against, CFG)) == "ORDER"              # OPEN, the default, doesn't read the profile
+
+
+def test_false_move_needs_the_protected_swing_beyond_the_open():
+    cfg = policy(require_false_move=True)
+    assert reason(decide(_policy_map(profile=_profile(frame_open=1.0995)), cfg)) == "ORDER"     # 1.0989 below the open
+    assert reason(decide(_policy_map(profile=_profile(frame_open=1.0985)), cfg)) == "NO_FALSE_MOVE"
+    assert reason(decide(_policy_map(profile=None), cfg)) == "NO_FALSE_MOVE"
+    bearish = dict(direction=BEAR, draw=1.0950)
+    assert reason(decide(_policy_map(SHORT, profile=_profile(frame_open=1.1005, **bearish)), cfg)) == "ORDER"
+    assert reason(decide(_policy_map(SHORT, profile=_profile(frame_open=1.1015, **bearish)), cfg)) == "NO_FALSE_MOVE"
+
+
+def test_manipulation_window_needs_the_raid_inside_it():
+    cfg = policy(time_window="MANIPULATION")
+    assert reason(decide(_policy_map(profile=_profile(raid_in_window=True)), cfg)) == "ORDER"
+    assert reason(decide(_policy_map(profile=_profile(raid_in_window=False)), cfg)) == "OUTSIDE_WINDOW"
+    assert reason(decide(_policy_map(profile=None), cfg)) == "OUTSIDE_WINDOW"
+    assert reason(decide(_policy_map(profile=_profile(raid_in_window=False)), CFG)) == "ORDER"     # ANY
+
+
+def _htf(tf=Timeframe.H4, direction=BULL, low=1.0980, high=1.0995, filled=False):
+    return make_pdarray(PDArrayType.FVG, direction, high, low, is_filled=filled, tf=tf)
+
+
+@pytest.mark.parametrize("arrays, expected", [
+    ([_htf()], "ORDER"),                                   # the wick (1.0989) inside an unfilled H4 bullish FVG
+    ([_htf(Timeframe.D1)], "ORDER"),
+    ([_htf(filled=True)], "NO_POI"),
+    ([_htf(direction=BEAR)], "NO_POI"),
+    ([_htf(Timeframe.H1)], "NO_POI"),                       # only H4 and D1 arrays are the POI
+    ([_htf(Timeframe.W1)], "NO_POI"),
+    ([_htf(low=1.0990, high=1.0995)], "NO_POI"),            # the wick is below it
+    ([], "NO_POI"),
+])
+def test_htf_poi_needs_the_wick_inside_an_unfilled_h4_or_d1_array(arrays, expected):
+    cfg = policy(require_htf_poi=True)
+    assert reason(decide(_policy_map(profile=_profile(), pd_arrays=arrays), cfg)) == expected
+
+
+def test_policy_checks_in_order_before_the_stop_and_targets():
+    cfg = policy(bias_mode="PROFILE", require_false_move=True, time_window="MANIPULATION", require_htf_poi=True)
+    steps = [
+        (dict(direction=BEAR, frame_open=1.0985, draw=1.0950, raid_in_window=False), [], "AGAINST_PROFILE"),
+        (dict(frame_open=1.0985, raid_in_window=False), [], "NO_FALSE_MOVE"),
+        (dict(raid_in_window=False), [], "OUTSIDE_WINDOW"),
+        (dict(), [], "NO_POI"),
+        (dict(), [_htf()], "ORDER"),
+    ]
+    for fields, arrays, expected in steps:
+        assert reason(decide(_policy_map(profile=_profile(**fields), pd_arrays=arrays), cfg)) == expected, expected
+    # The policy runs before the stop checks: a LONG with its stop above the entry, against the profile.
+    bad_stop = _grade(entry=1.1000, stop=1.0990).model_copy(update={"suggested_stop": 1.1010})
+    against = _profile(direction=BEAR, draw=1.0950)
+    assert reason(decide(_policy_map(bad_stop, profile=against), policy(bias_mode="PROFILE"))) == "AGAINST_PROFILE"
+    assert reason(decide(_policy_map(bad_stop, profile=against), CFG)) == "INVALID_STOP"
+
+
+SD_ABOVE = SDProjection(anchor_0=1.1010, anchor_1=1.0980, targets={2.0: 1.1070, 2.5: 1.1085})
+
+
+def test_nearest_target_takes_the_nearer_of_sd_and_the_draw():
+    cfg = policy(target_mode="NEAREST")
+
+    def targets(profile, config=cfg):
+        intent = decide(_policy_map(profile=profile, sd=SD_ABOVE), config)
+        return intent.take_profit_1, intent.take_profit_2
+
+    assert targets(_profile(draw=1.1040)) == (1.1040, 1.1070)          # the draw is nearer: TP1, SD 2.0 is TP2
+    assert targets(_profile(draw=1.1100)) == (1.1070, 1.1100)          # SD 2.0 is nearer
+    assert targets(_profile(direction=BEAR, draw=1.0950)) == (1.1070, 1.1085)   # a draw behind the entry: SD
+    assert targets(None) == (1.1070, 1.1085)
+    assert targets(_profile(draw=1.1040), CFG) == (1.1070, 1.1085)     # SD, the default
+    # min_rr still applies: a draw 2R away.
+    assert reason(decide(_policy_map(profile=_profile(draw=1.1020), sd=SD_ABOVE), cfg)) == "RR_BELOW_MIN"
+
+
+def test_minimum_stop_in_typical_spreads():
+    cfg = policy(min_stop_spreads=2.0)
+    lm = _policy_map(profile=_profile())                                # a 10-pip stop
+    assert reason(decide(lm, cfg, typical_spread=0.0004)) == "ORDER"    # needs 8 pips
+    tight = decide(lm, cfg, typical_spread=0.0006)                     # needs 12 pips
+    assert isinstance(tight, NoTrade) and (tight.grade, tight.reason) == ("A", "STOP_TOO_TIGHT")
+    assert "2.0" in tight.detail
+    with pytest.raises(ValueError, match="spread"):
+        decide(lm, cfg)                                                 # the rule can't be skipped silently
+    assert reason(decide(lm, CFG)) == "ORDER"                           # off by default: no spread needed
+    body = policy(min_stop_spreads=2.0, stop_mode="BODY")               # measured to the chosen stop
+    body_grade = _grade(entry=1.1000, stop=1.0990, body=1.0995)
+    assert reason(decide(_policy_map(body_grade, profile=_profile()), body, typical_spread=0.0004)) == "STOP_TOO_TIGHT"
+
+
+@settings(max_examples=150, deadline=None)
+@given(long=st.booleans(), direction=st.sampled_from([BULL, BEAR, NONE]), frame_open=st.floats(1.0980, 1.1020),
+       draw=st.floats(1.0880, 1.1120), sd_distance=st.floats(0.0005, 0.0150), raid_in_window=st.booleans())
+def test_property_37_38_policy_gates_and_nearest_target(long, direction, frame_open, draw, sd_distance,
+                                                        raid_in_window):
+    """Property 37: an order under these gates goes the profile's way, with its protected wick beyond
+    the open on the false-move side and its raid in the window. Property 38: under NEAREST, TP1 lies
+    beyond the entry and no further than SD 2.0."""
+    grade = _grade(entry=1.1000, stop=1.0990) if long else SHORT
+    sd2 = 1.1000 + sd_distance if long else 1.1000 - sd_distance
+    sd = SDProjection(anchor_0=1.1010, anchor_1=1.0980, targets={2.0: sd2, 2.5: sd2})
+    profile = _profile(direction=direction, frame_open=frame_open, draw=draw, raid_in_window=raid_in_window)
+    cfg = policy(bias_mode="PROFILE", require_false_move=True, time_window="MANIPULATION", target_mode="NEAREST",
+                 min_rr=0)
+    result = decide(_policy_map(grade, profile=profile, sd=sd), cfg)
+    if not isinstance(result, OrderIntent):
+        return
+    wick = LONG_WICK if long else SHORT_WICK
+    assert result.direction == ("LONG" if profile.direction == BULL else "SHORT")
+    assert (wick < frame_open) if long else (wick > frame_open)
+    assert profile.raid_in_window
+    tp1 = result.take_profit_1
+    assert (tp1 > result.entry) if long else (tp1 < result.entry)
+    assert abs(tp1 - result.entry) <= abs(sd2 - result.entry)

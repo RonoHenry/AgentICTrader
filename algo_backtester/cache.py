@@ -9,6 +9,7 @@ stored per instrument under a key over everything that shapes them (Req 7.4):
   the code that builds what the engine sees (ENGINE_SOURCES). Any edit there
   changes the key, so a stale entry is never hit;
 - the StrategyConfig, minus the settings only the fill model reads;
+- the instrument's typical spread, when the minimum-stop rule reads it;
 - the instrument and the run's [start, end].
 
     cache = SignalCache.default()                      # data/backtests/cache/
@@ -82,10 +83,11 @@ def engine_code_fingerprint(root: Path = REPO_ROOT) -> str:
 
 
 def cache_key(data_fp: DataFingerprint, engine_fp: str, cfg: StrategyConfig, instrument: str,
-              start: datetime, end: datetime) -> str:
+              start: datetime, end: datetime, typical_spread: Optional[float] = None) -> str:
     strategy = {k: v for k, v in cfg.model_dump(mode="json").items() if k not in _EXECUTION_ONLY}
+    spread = typical_spread if cfg.min_stop_spreads > 0 else None     # read by min_stop_spreads only
     parts = [data_fp.rows, data_fp.sha256, engine_fp, strategy, instrument,
-             start.astimezone(timezone.utc).isoformat(), end.astimezone(timezone.utc).isoformat()]
+             start.astimezone(timezone.utc).isoformat(), end.astimezone(timezone.utc).isoformat(), spread]
     return hashlib.sha256(json.dumps(parts, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -98,19 +100,20 @@ class SignalCache:
     def default(cls) -> SignalCache:
         return cls(CACHE_DIR, engine_code_fingerprint())
 
-    def key(self, data: InstrumentData, cfg: StrategyConfig, start: datetime, end: datetime) -> str:
-        return cache_key(data.fingerprint, self.engine_fingerprint, cfg, data.instrument, start, end)
+    def key(self, data: InstrumentData, cfg: StrategyConfig, start: datetime, end: datetime,
+            typical_spread: Optional[float] = None) -> str:
+        return cache_key(data.fingerprint, self.engine_fingerprint, cfg, data.instrument, start, end, typical_spread)
 
     def path(self, key: str) -> Path:
         return Path(self.root) / f"{key}.jsonl"
 
     def signals(self, data: InstrumentData, cfg: StrategyConfig, start: datetime, end: datetime,
-                engine: Optional[Engine] = None) -> list[SignalRecord]:
+                engine: Optional[Engine] = None, typical_spread: Optional[float] = None) -> list[SignalRecord]:
         """generate_signals(), served from the cache when it holds the entry."""
-        key = self.key(data, cfg, start, end)
+        key = self.key(data, cfg, start, end, typical_spread)
         records = self.load(key)
         if records is None:
-            records = self.store(key, generate_signals(data, cfg, start, end, engine))
+            records = self.store(key, generate_signals(data, cfg, start, end, engine, typical_spread))
         return records
 
     def load(self, key: str) -> Optional[list[SignalRecord]]:

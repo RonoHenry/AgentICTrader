@@ -90,6 +90,24 @@ def test_stop_body_variant_in_base_config():
     assert body.model_copy(update={"variant": None, "strategy": base.strategy}) == base
 
 
+def test_anticipation_variants_in_base_config():
+    # The variants task 242 measures (liquidity-engine design, update 2026-10b).
+    base_toml = Path(__file__).resolve().parents[2] / "config" / "backtests" / "base.toml"
+    base = load_run_config(base_toml)
+
+    def rules(name):
+        s = load_run_config(base_toml, variant=name).strategy
+        return (s.bias_mode.value, s.require_false_move, s.time_window.value, s.target_mode.value,
+                s.min_stop_spreads, s.require_htf_poi, s.stop_mode.value)
+
+    assert rules("anticipation") == ("PROFILE", True, "MANIPULATION", "NEAREST", 2.0, False, "WICK")
+    assert rules("anticipation_body") == ("PROFILE", True, "MANIPULATION", "NEAREST", 2.0, False, "BODY")
+    assert rules("anticipation_poi") == ("PROFILE", True, "MANIPULATION", "NEAREST", 2.0, True, "WICK")
+    for name in ("anticipation", "anticipation_body", "anticipation_poi"):
+        variant = load_run_config(base_toml, variant=name)
+        assert variant.model_copy(update={"variant": None, "strategy": base.strategy}) == base, name
+
+
 @pytest.mark.parametrize("edit, key", [
     (("[account]", "[account]\nrisk_per_trde = 0.02"), "risk_per_trde"),       # typo in a section
     (("[report]", "[reports]"), "reports"),                                     # unknown section

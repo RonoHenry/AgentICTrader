@@ -830,7 +830,13 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
   - **237b. GREEN**
   - **237c. REFACTOR**
 
-- [ ] 238. Order policy and variants (Req 23; Properties 37, 38)
+- [x] 238. Order policy and variants (Req 23; Properties 37, 38)
+  - **Done 2026-10-08.**
+    - `StrategyConfig` gains `bias_mode`, `require_false_move`, `time_window`, `require_htf_poi`, `target_mode` and `min_stop_spreads`. All are off by default, so the golden journal is unchanged.
+    - **Check order:** `build_order_intent` checks the candle policy after the grade gates, in the order the reasons are listed. Then the stop (`INVALID_STOP`, then `STOP_TOO_TIGHT`), then the targets and `min_rr`.
+    - `OWN_DECISION_REASONS` is what the journal records as its own decision.
+    - **Spread:** `generate_all(..., spreads=)` and the live runner pass each instrument's spec spread. The cache key includes it only while `min_stop_spreads` is on.
+    - **Variants:** `anticipation`, `anticipation_body` and `anticipation_poi` are in `base.toml`.
   - **238a. RED** (`test_backtest_order_intent.py`, `test_backtest_strategy_config.py`, `test_backtest_simulation.py`):
     - **Reasons:** each `NoTrade` reason and the order of the checks.
     - **Targets:** `NEAREST` takes the nearer of SD 2.0 and the draw, and falls back to SD when the draw doesn't lie beyond the entry.
