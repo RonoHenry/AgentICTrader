@@ -729,3 +729,159 @@ Bearish sequences mirror this. **Validates: 18.5, 18.11, 18.12**
 - **Premium and discount.** The user's premise: longs from discount, shorts from premium, within the dealing range. Not a rule yet; candidate for the next update, measured against this one.
 - **A minimum stop relative to costs.** The protected-swing stop is expected to remove most stops narrower than the spread. Revisit if the measured run still shows them.
 - **Scale-out at TP1 with a runner** (algo-backtester D19).
+
+## Update 2026-10b: Candle Anticipation (Power of 3)
+
+**Why.** The setup-sequence rewrite (Update 2026-10, `docs/backtests/SETUP_SEQUENCE.md`) removed the baseline's mechanical failures, but still fails the pass mark: WICK −0.16R and BODY −0.01R a trade.
+
+A hindsight diagnostic on the WICK trades shows where the edge sits:
+- Only 45% of trades went the way their D1 candle closed.
+- In that direction they made +0.46R a trade, and +1.09R when entered below the open of a day that closed up (on the false-move side).
+- Against it they lost −0.68R.
+
+So the setup pays when the frame candle's direction is right. The engine's bias (price against the period open, Requirement 2) can't anticipate it. Worse, it calls the Power of 3 entry, a long below the open of a bullish day, counter-trend.
+
+This update encodes the user's bias method, described on 2026-10-08 (LE-D9 to LE-D15):
+1. Anticipate how the frame candle will form.
+2. Expect its false move first.
+3. Trade the setup sequence on the false-move side, in the manipulation window, toward a realistic objective.
+
+**Scope.** Stage 1 is the D1 frame, anticipated from W1, with M15 execution. Lower frames (H4/H1 frames, M5/M1 execution, 24-hour trading) are deferred until stage 1 is measured.
+
+### Requirement 20: Intraday and Session Liquidity
+
+**User Story:** As the agent, I want swing liquidity on H1, M30 and M15 and the Asian range to be raidable pools, so that the intraday raids a trader watches are not invisible to the engine.
+
+#### Acceptance Criteria
+
+1. `StrategyConfig.context_tfs` SHALL default to H12, H8, H6, H4, H3, H1, M30 and M15, with `candle_counts` of 200 for H1 and M30. `StrategyConfig.timeframes` SHALL list each timeframe once, so the entry timeframe is never duplicated. (Was: H12 to H3; LE-D13.)
+2. `SetupSequenceDetector` SHALL add the Asian range of the current D1 candle (strategy calendar; 20:00 to 00:00 New York, from H1 bars) as two pools:
+   - `ASIA_HIGH` (BSL) and `ASIA_LOW` (SSL);
+   - timeframe H1;
+   - `known_at` 00:00 New York.
+
+   Before 00:00 the current candle has no Asian pools (LE-D12).
+3. `LiquiditySource` SHALL gain `ASIA_HIGH` and `ASIA_LOW`.
+
+### Requirement 21: Candle Profile (Anticipation)
+
+**User Story:** As the agent, I want at each D1 open the objectives above and below, whether the market is trending, and the direction I anticipate the candle to take, so that setups are traded with the candle's expected profile, not with where price sits against the open.
+
+#### Acceptance Criteria
+
+1. `CandleProfileAnalyzer` SHALL set `LiquidityMap.candle_profile` for the D1 candle (strategy calendar, opening 17:00 New York) that contains `t`. It SHALL be `None` when D1 or W1 history is too short.
+2. It SHALL record:
+   - `frame_open`: the 17:00 open;
+   - `midnight_open`: the open of the first bar at or after 00:00 New York in the candle, `None` before it.
+
+   The rules use `frame_open`; `midnight_open` is recorded for analysis (LE-D11).
+3. **Objectives** SHALL be computed from bars that closed by the frame open only:
+   - pools: swing highs and lows (lookback 2) on H4, D1 and W1, and the previous day and week high and low;
+   - inefficiencies: FVGs on H4, D1 and W1, at the gap's near edge.
+
+   An objective counts if it is **untaken**: no bar after it became known and before the frame open traded beyond it (a pool) or into it (an FVG). `draw_above` is the nearest untaken objective above `frame_open` and `draw_below` the nearest below; ties go to the higher timeframe.
+4. **Trend** (LE-D15):
+   - `BULLISH` when the last closed W1 candle closed above the high of the W1 candle before it;
+   - `BEARISH` when it closed below that candle's low;
+   - otherwise `NONE`.
+5. **Anticipated direction** (LE-D9, LE-D10):
+   - **Trending:** the trend's direction. The draw is the nearest untaken W1 objective in that direction, or else the nearest objective in that direction.
+   - **Not trending:** toward the nearer of `draw_above` and `draw_below`, measured from `frame_open`. The draw is that objective.
+   - **`NEUTRAL`** when the chosen side has no objective.
+6. The anticipation (objectives, trend, direction, draw) SHALL depend only on bars that closed by the frame open, so it is the same at every `t` within one D1 candle.
+
+### Requirement 22: False Move and Manipulation Window
+
+**User Story:** As the agent, I want to know whether the candle has made its false move and whether a raid happened in the manipulation window, so that I only take the sequence where the candle's profile expects it.
+
+#### Acceptance Criteria
+
+1. `candle_profile` SHALL record, from the candle's bars up to `t`:
+   - `false_move_taken`: price traded beyond `frame_open` against the anticipated direction (below it for a bullish candle);
+   - `asia_raided`: the Asian pool on the false-move side (`ASIA_LOW` for bullish) has been raided;
+   - the candle's low and high so far, with their times.
+2. **Manipulation window:** 01:00 to 13:00 New York, i.e. the candle's 01:00, 05:00 and 09:00 H4 candles (LE-D11). It SHALL record:
+   - `in_window` for `t`;
+   - `raid_in_window`: the setup sequence's raid bar opened inside the window of the current candle.
+3. `candle_profile.weekday` SHALL be the trading day (17:00 boundary). It is recorded for breakdowns, not used as a rule (Deferred).
+
+### Requirement 23: Order Policy for Candle Anticipation
+
+**User Story:** As the agent and the backtester, I want each anticipation rule to be a strategy setting, so that each one is measured as a variant against the setup-sequence runs.
+
+#### Acceptance Criteria
+
+1. `StrategyConfig.bias_mode` SHALL be `OPEN` (the default, today's behaviour) or `PROFILE`. Under `PROFILE`, `build_order_intent` SHALL return `NoTrade`:
+   - `NO_ANTICIPATION` when `candle_profile` is `None` or its direction is `NEUTRAL`;
+   - `AGAINST_PROFILE` when the setup sequence's direction differs from it.
+2. `StrategyConfig.require_false_move` (default `False`): WHEN `True`, the protected swing's wick SHALL lie beyond `frame_open` on the false-move side (below it for a long). Otherwise `NoTrade` with `NO_FALSE_MOVE`.
+3. `StrategyConfig.time_window` SHALL be `ANY` (default) or `MANIPULATION`. Under `MANIPULATION`, `raid_in_window` SHALL be `True`, otherwise `NoTrade` with `OUTSIDE_WINDOW`.
+4. `StrategyConfig.require_htf_poi` (default `False`): WHEN `True`, the protected swing's wick SHALL lie within an unfilled H4 or D1 PD array of the trade's direction (the predetermined POI, LE-D14). Otherwise `NoTrade` with `NO_POI`.
+5. `StrategyConfig.target_mode` SHALL be `SD` (default) or `NEAREST` (LE-D10). Under `NEAREST`:
+   - TP1 SHALL be whichever of the 2.0 SD level and the profile's draw is nearer to the entry, provided it lies beyond the entry;
+   - TP2 SHALL be the other.
+
+   `min_rr` still applies.
+6. These reasons SHALL each be journaled as their own decision, as `INVALID_STOP` is: `NO_ANTICIPATION`, `AGAINST_PROFILE`, `NO_FALSE_MOVE`, `OUTSIDE_WINDOW` and `NO_POI`.
+7. The grader is unchanged in this update. Its D1-open notions (`htf_bias_confirmed`, the counter-trend cap) still set the grade label and confidence under `PROFILE`.
+
+### Requirement 24: Recording and Report
+
+#### Acceptance Criteria
+
+1. `TradeContext.candle_profile` SHALL record:
+   - the opens: `frame_open` and `midnight_open`;
+   - the anticipation: direction and trend, the draw (kind, source, timeframe, price), and the draw above and below;
+   - the false move: `false_move_taken`, `asia_raided` and `raid_in_window`;
+   - `weekday`.
+2. The HTML report SHALL draw the frame open and the draw on the setup's chart.
+
+### Requirement 25: Cost and Stop Realism
+
+**User Story:** As the user, I want the backtest to charge overnight swap and to refuse stops too tight for the spread, so that the measured results are what the account would see.
+
+#### Acceptance Criteria
+
+1. **Swap.** The instrument specs SHALL record the MT5 swap values (`swap_long`, `swap_short`, `swap_mode`, the triple-swap day), exported from the terminal. The shared fill model SHALL charge swap at each 17:00 New York rollover a filled position is held through, journaled as `cost_r_swap`. Swap-free accounts have zero values.
+2. **Minimum stop.** `StrategyConfig.min_stop_spreads` (default 0, off): `build_order_intent` SHALL return `NoTrade` with `STOP_TOO_TIGHT` WHEN the entry-to-stop distance is under `min_stop_spreads` × the instrument's typical spread (`InstrumentSpec.default_spread`). The caller passes that spread in.
+
+### Correctness Properties (2026-10b)
+
+**Property 35: Anticipation Without Lookahead.** *For any* candle window and `t`, the anticipation (objectives, trend, direction, draw) SHALL be unchanged when every bar that opened at or after the frame open is removed. It SHALL also be equal for every `t` within the same D1 candle. **Validates: 21.3, 21.6**
+
+**Property 36: Draw Ordering.**
+- `draw_below < frame_open < draw_above` whenever present.
+- A `BULLISH` direction has its draw above `frame_open`; a `BEARISH` one below.
+
+**Validates: 21.3, 21.5**
+
+**Property 37: Policy Gates.** *For any* `OrderIntent` under:
+- `PROFILE`: its direction equals `candle_profile.direction`;
+- `require_false_move`: its protected wick lies beyond `frame_open` on the false-move side;
+- `MANIPULATION`: its raid opened inside the window.
+
+**Validates: 23.1–23.3**
+
+**Property 38: Nearest Target.** *For any* `OrderIntent` under `NEAREST`, TP1 lies beyond the entry, and `|TP1 − entry| ≤ |SD 2.0 − entry|`. **Validates: 23.5**
+
+**Property 39: Asian Pools After the Session.** *For any* `t` before 00:00 New York in a D1 candle, that candle has no Asian pool. After it, the pools are known from 00:00. **Validates: 20.2**
+
+### Decisions (2026-10b)
+
+| Id | Decision | Source |
+|---|---|---|
+| LE-D9 | Bias is the anticipated direction of the frame candle (Power of 3): a bullish candle is expected to make its false move lower first, a bearish one higher | User 2026-10-08: "The core quiz I ask each time is how is the next candle going to form. If bullish, then there is likely to be that false move lower; if bearish, that false move higher" |
+| LE-D10 | Price has two objectives: liquidity beyond swing highs and lows, and inefficiencies. Nearer objectives are more likely; in a trending environment, further objectives in the trend's direction count | User 2026-10-08: "nearest objectives are more likely to be reached for by price than extreme targets … are we in a trending environment, then yes longer objectives will be put to consideration; if not … we want to be realistic" |
+| LE-D11 | New York time. The 17:00 open for candle anatomy, the midnight open blended in (recorded). The manipulation window is the 01:00, 05:00 and 09:00 H4 candles | User 2026-10-08. Measured the same day: daily extremes form in these candles 6–11 points more often than chance (design "Update 2026-10b") |
+| LE-D12 | The Asian range is a pool, and its raid is the preferred false move | User 2026-10-08: "Ideally, I want to see price manipulate Asian lows" |
+| LE-D13 | H1, M30 and M15 swings are pools like any other | User 2026-10-08: "they are equally important" |
+| LE-D14 | Entry: at a predetermined higher-timeframe POI, a failed displacement (CRT / turtle soup) or an engulfing, then a CISD. This is the setup sequence, optionally required to start at an H4/D1 PD array | User 2026-10-08 |
+| LE-D15 | Trending: the last closed W1 candle closed beyond the previous W1 candle's range (a CRT closure) | Proposed by Claude 2026-10-08 as a measurable default; for the user to confirm |
+
+### Deferred (2026-10b)
+
+- **The economic calendar** (expected volatility for the week): needs a news data source.
+- **Day of week as a rule.** Recorded only: the measured excess (weekly extremes on Monday and Tuesday) is modest and sits on Monday.
+- **The midnight open in rules,** and the monthly, quarterly and yearly layers of anticipation.
+- **Frame/execution pairs below D1** (H4/H1 frames, M5/M1 execution) and 24-hour trading.
+- **Premium and discount; trade management** (breakeven, partials); **an open-risk budget** in place of the 3-trade cap; **dynamic risk**.

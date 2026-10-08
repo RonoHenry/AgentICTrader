@@ -1364,3 +1364,160 @@ SetupGradeDetail.counter_trend: bool = False
    - the `RR_BELOW_MIN` and `INVALID_STOP` counts;
    - the share of stops narrower than 2× the spread.
 5. The hold-out stays unused.
+
+## Update 2026-10b: Candle Anticipation (Requirements 20–25)
+
+The engine records facts about the frame candle; the strategy decides what to do with them. Every rule is a `StrategyConfig` setting, so each is a backtest variant and lives in the Phase A cache key.
+
+The update encodes the user's method (decisions LE-D9 to LE-D15):
+1. Anticipate how the D1 candle will form, from the W1 context and the nearest objectives.
+2. Wait for its false move, ideally a raid of the Asian range, in the 01:00–13:00 New York window.
+3. Trade the setup sequence (Requirement 18) on the false-move side, toward a realistic objective.
+
+### Evidence it builds on (2026-10-08)
+
+**Hindsight, WICK run `ec4876ba87a1`.** This is an upper bound, not a strategy: a day that closes up also tends to carry a long to its target.
+
+| Trades | n | Avg net R |
+|---|---|---|
+| In the direction their D1 candle closed | 243 | +0.46 |
+| …entered below the open of an up day (or above the open of a down day) | 56 | +1.09 |
+| Against it | 294 | −0.68 |
+
+**Market timing, M15 2025-01 → 2026-07, four instruments.** Shown as the excess over a baseline that shuffles each period's moves. Without that baseline, any up period tends to show its low early (the arcsine law).
+
+| Statistic | Real | Shuffled | Excess |
+|---|---|---|---|
+| Up days, low in the 01/05/09 H4 candles | 34% | 28% | +6 pts |
+| Down days, high in the 01/05/09 H4 candles | 42% | 31% | +11 pts |
+| Up weeks, low on Monday or Tuesday | 85% | 76% | +9 pts (Monday +8, Tuesday +1) |
+| Daily extremes in the Asian H4 candles (17:00, 21:00) | – | – | −5 to −9 pts |
+
+### Pipeline
+
+```
+... PDArrayDetector ... UnicornDetector
+SetupSequenceDetector (+ Asian pools)   -> LiquidityMap.setup_sequence
+CandleProfileAnalyzer(candles_by_tf, t, setup_sequence, pd_arrays) -> LiquidityMap.candle_profile
+SetupGrader (unchanged) -> SD projection
+build_order_intent: grade gates, then the candle policy (bias_mode, require_false_move, time_window,
+                    require_htf_poi), then stop and minimum stop, then targets (target_mode) and min_rr
+```
+
+### Timeframes and Asian pools (Requirement 20)
+
+**Timeframes.**
+- `context_tfs` gains H1, M30 and M15.
+- `StrategyConfig.timeframes` de-duplicates while keeping order, so an M15 entry timeframe appears once.
+- Phase A cost rises with the pools and arrays on three more timeframes; it is measured at the checkpoint.
+
+**Asian pools** (`SetupSequenceDetector.pools`):
+- **Source:** the H1 bars from 20:00 to 23:00 New York of the D1 candle containing `t`, found by `StrategyCalendar.period_start(t, D1)`.
+- **Prices:** the highest high and the lowest low.
+- **Timing:** both pools are known at 00:00 New York.
+- **Gaps:** with no H1 bar in the range (data gaps), there are no Asian pools.
+
+### CandleProfileAnalyzer (`liquidity_engine/profile/candle_profile.py`)
+
+Pure and stateless, like every component. Per `analyze()`:
+
+1. **Frame.** `open_time = StrategyCalendar.period_start(t, D1)`. `frame_open` is the open of the D1 bar at `open_time`, and `midnight_open` the open of the first H1 bar at or after 00:00 New York.
+2. **Before the open.** Each timeframe's bars are cut to those whose period ended by `open_time`.
+3. **Objectives**, from the cut bars:
+   - **Pools:** swings (lookback 2) on H4, D1 and W1 that became known before `open_time` and that no later cut bar traded beyond, plus the previous day and week high and low (the D1 and W1 bars before the frame).
+   - **FVGs:** `PDArrayDetector`'s FVG rule on the cut H4, D1 and W1 bars, at the near edge (bearish FVGs above `frame_open`, bullish FVGs below). An FVG counts if no later cut bar traded into it.
+4. **Nearest objectives.** `draw_above` is the minimum objective price above `frame_open` and `draw_below` the maximum below. Ties go to the higher timeframe.
+5. **Trend.** From the two most recent W1 bars that closed by `open_time`.
+6. **Direction and draw**, as Requirement 21.5.
+7. **Facts up to `t`**, from the current candle's bars on the finest timeframe up to `t`:
+   - `false_move_taken`;
+   - `asia_raided`;
+   - the low and high so far;
+   - `in_window` and `weekday`.
+
+   `raid_in_window` compares `setup_sequence.raid.raided_at` with the window of the current candle.
+
+**Cost.** Steps 1–6 depend only on the candle's open, so a later optimisation can memoise them per instrument and candle without changing a result (Property 35). Not done in the first version; measured first.
+
+### Models
+
+```python
+class Objective(BaseModel):
+    kind: Literal["POOL", "FVG"]
+    source: str                 # LiquiditySource value or "FVG"
+    timeframe: Timeframe
+    price: float
+
+class CandleProfile(BaseModel):
+    frame_tf: Timeframe         # D1 in stage 1
+    open_time: datetime
+    frame_open: float
+    midnight_open: Optional[float]
+    trend: BiasDirection        # NEUTRAL = not trending
+    direction: BiasDirection    # the anticipated direction; NEUTRAL = none
+    draw: Optional[Objective]
+    draw_above: Optional[Objective]
+    draw_below: Optional[Objective]
+    false_move_taken: bool
+    asia_raided: bool
+    candle_low: float
+    candle_low_at: datetime
+    candle_high: float
+    candle_high_at: datetime
+    in_window: bool
+    raid_in_window: bool
+    weekday: int                # 0 = Monday, trading day (17:00 boundary)
+```
+
+`LiquidityMap.candle_profile: Optional[CandleProfile] = None` is the last field.
+
+### Order policy (`agent/order_intent.py`, `agent/strategy_config.py`)
+
+New `StrategyConfig` fields, all in the fingerprint and the Phase A cache key:
+
+| Field | Values (default first) |
+|---|---|
+| `bias_mode` | `OPEN` \| `PROFILE` |
+| `require_false_move` | `False` \| `True` |
+| `time_window` | `ANY` \| `MANIPULATION` |
+| `require_htf_poi` | `False` \| `True` |
+| `target_mode` | `SD` \| `NEAREST` |
+| `min_stop_spreads` | `0.0` (off) or k |
+
+**Order of checks.** The candle policy runs after the grade gates and before the stop checks. The first failing rule names the `NoTrade`.
+
+**Spread.** `build_order_intent` gains `typical_spread: Optional[float] = None`:
+- Phase A passes `InstrumentSpec.default_spread` from the run's specs.
+- The live runner passes its profile's spec.
+- `min_stop_spreads > 0` without a spread raises `ValueError`, so a run can't silently skip the rule.
+
+**Journal.** `simulation._decide` journals each new reason as its own decision, as it does `INVALID_STOP`.
+
+### Swap (algo-backtester code, Requirement 25.1)
+
+- **Export.** `scripts/export_instrument_specs.py` reads `swap_long`, `swap_short`, `swap_mode` and `swap_rollover3days` from `mt5.symbol_info`. A spec file without them means zero swap, so old files still load.
+- **Charge.** The shared fill model (`agent/brokers/fill_model.py`) charges at each 17:00 New York rollover a filled position is held through:
+  - triple on `swap_rollover3days`;
+  - converted to account currency as P&L is;
+  - booked as `cost_r_swap`.
+- **Modes.** Only `SWAP_MODE_POINTS` and `SWAP_MODE_CURRENCY_*` are supported; any other mode raises at load time.
+- **Phase A.** Swap is execution-only, outside Phase A, so the WICK and BODY runs can be re-priced from their cache.
+
+### Report
+
+The M15 chart draws:
+- `frame_open`: a horizontal line from the candle's open time;
+- the draw: dashed, labelled with its source and timeframe.
+
+`TradeContext.candle_profile` is a JSON-ready dict.
+
+### Measurement (task 242)
+
+1. **Variants** in `config/backtests/base.toml`:
+   - **`anticipation`:** `bias_mode = "PROFILE"`, `require_false_move = true`, `time_window = "MANIPULATION"`, `target_mode = "NEAREST"`, `min_stop_spreads = 2.0`;
+   - **`anticipation_body`:** the same with `stop_mode = "BODY"`;
+   - **`anticipation_poi`:** `anticipation` plus `require_htf_poi = true`.
+2. **Reference:** `base.toml` itself, rerun because the new timeframes and swap change it. The WICK and BODY runs are also re-priced with swap from the Phase A cache.
+3. **Compare** each variant with the reference and with `ec4876ba87a1` and `475491a89d91`, on the same pass mark. The hold-out stays unused.
+4. **Ablations, later:** if a variant shows promise, drop one rule at a time to see which ones carry the result.
+5. **Write-up:** results in `docs/backtests/CANDLE_ANTICIPATION.md`, including the NoTrade counts per reason and the breakdown by weekday and by `midnight_open` side.

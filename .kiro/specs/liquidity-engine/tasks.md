@@ -754,6 +754,109 @@ Requirements 13.4, 13.5, 18 and 19; design section "Update 2026-10"; decisions L
 
 ---
 
+## Update 2026-10b: Candle Anticipation (tasks 234–243)
+
+Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D15.
+- Numbered after task 233.
+- Each task that changes engine output regenerates, in its own commit, the engine-window fixtures and the golden journal (as in tasks 227–233).
+- Tasks 238 and 240 also change algo-backtester code (the journal decisions, the fill model and the instrument specs). They are tracked here because this update's measurement depends on them.
+
+- [x] 234. Spec update 2026-10b
+  - requirements.md: Requirements 20–25, Properties 35–39, decisions LE-D9 to LE-D15, deferred list.
+  - design.md: section "Update 2026-10b", with the hindsight diagnostic and the market-timing statistics.
+  - The user described the method on 2026-10-08:
+    - anticipate how the next candle forms; a bullish candle makes its false move lower first;
+    - two objectives: liquidity and inefficiencies; nearest is realistic, further only when trending;
+    - time anchors: the 01:00, 05:00 and 09:00 H4 candles, New York time, the 17:00 open blended with midnight;
+    - the Asian range raid;
+    - H1, M30 and M15 liquidity.
+  - **For the user to confirm:** LE-D15 (the trend definition).
+
+- [ ] 235. Intraday timeframes and Asian pools (Req 20; Property 39)
+  - **235a. RED**
+    - `test_backtest_strategy_config.py`: the defaults include H1, M30 and M15 with their counts; `timeframes` has no duplicates.
+    - `test_liquidity_sequence.py`:
+      - Asian pools come from the 20:00–23:00 New York H1 bars, known at 00:00;
+      - there are none before 00:00 (Property 39);
+      - none when the session has no bars;
+      - an `ASIA_LOW` raid can start a bullish sequence.
+  - **235b. GREEN** — the config defaults, the `LiquiditySource` values and the pools.
+    - Re-baseline the engine windows and the golden journal.
+  - **235c. REFACTOR** — measure `analyze()` per M15 close with the extra timeframes.
+
+- [ ] 236. CandleProfileAnalyzer: frame, objectives, trend, anticipation (Req 21; Properties 35, 36)
+  - **236a. RED** (`test_liquidity_profile.py`):
+    - **Frame:** `frame_open` and `midnight_open`.
+    - **Objectives:**
+      - untaken pools and unfilled FVGs only, from bars before the open;
+      - the nearest objective on each side, with ties going to the higher timeframe.
+    - **Trend:** the W1 closure rule.
+    - **Direction:**
+      - trending: the trend, with the W1 objective as the draw;
+      - not trending: toward the nearer objective;
+      - `NEUTRAL` with no objective.
+    - **Properties:** 35 (no lookahead: equal at every `t` in the candle) and 36 (ordering) with Hypothesis.
+  - **236b. GREEN** — `liquidity_engine/profile/`, the models, and `LiquidityMap.candle_profile`.
+    - The engine calls the analyzer after `SetupSequenceDetector`.
+  - **236c. REFACTOR**
+
+- [ ] 237. False move, manipulation window, weekday (Req 22)
+  - **237a. RED**
+    - `false_move_taken`, `asia_raided` and the candle's low and high so far;
+    - `in_window` and `raid_in_window` at the window's edges (01:00 and 13:00 New York, DST on both sides);
+    - `weekday` on the 17:00 boundary (Sunday 17:00 is Monday).
+  - **237b. GREEN**
+  - **237c. REFACTOR**
+
+- [ ] 238. Order policy and variants (Req 23; Properties 37, 38)
+  - **238a. RED** (`test_backtest_order_intent.py`, `test_backtest_strategy_config.py`, `test_backtest_simulation.py`):
+    - **Reasons:** each `NoTrade` reason and the order of the checks.
+    - **Targets:** `NEAREST` takes the nearer of SD 2.0 and the draw, and falls back to SD when the draw doesn't lie beyond the entry.
+    - **Minimum stop:** `STOP_TOO_TIGHT` with `typical_spread`; `ValueError` without it.
+    - **Config:** the new fields are validated and in the fingerprint.
+    - **Journal:** each reason gets its own decision.
+    - **Properties:** 37 and 38 with Hypothesis.
+  - **238b. GREEN**
+    - The `StrategyConfig` fields, `build_order_intent`, `NoTradeReason`, and `simulation._decide`.
+    - Phase A and the live runner pass `typical_spread`.
+    - The `anticipation`, `anticipation_body` and `anticipation_poi` variants in `config/backtests/base.toml`.
+  - **238c. REFACTOR**
+
+- [ ] 239. Recording and report (Req 24)
+  - **239a. RED** — `TradeContext.candle_profile`, and the report script draws the frame open and the draw.
+  - **239b. GREEN**
+  - **239c. REFACTOR** — check the chart in headless Chrome.
+
+- [ ] 240. Swap in the cost model (Req 25.1; algo-backtester code)
+  - **240a. RED**
+    - **Export:** the exporter reads the swap fields; old spec files load with zero swap.
+    - **Fill model:** swap is charged per rollover held through, triple on the rollover day, converted to account currency; `cost_r_swap` is in the journal.
+    - **Modes:** an unsupported `swap_mode` raises.
+  - **240b. GREEN** — the user re-exports `config/instruments/exness-standard.toml` from the MT5 terminal (MT5 must be open and logged in).
+  - **240c. REFACTOR** — re-price `ec4876ba87a1` and `475491a89d91` with swap from the Phase A cache, and note the difference.
+
+- [ ] 241. Checkpoint
+  - **Suite:** the full suite is green apart from the task-39 RED tests.
+  - **Speed:** `analyze()` time against task 232.
+  - **Live impact:** the paper trader's configuration (entry timeframe, instruments) differs from the backtest. Aligning it is a separate decision for the user, and needs a container rebuild.
+
+- [ ] 242. Measure candle anticipation **(user review)**
+  - Run `base.toml` (the new reference) and the `anticipation`, `anticipation_body` and `anticipation_poi` variants on study `baseline-2026q3`.
+  - Compare each with the reference, `ec4876ba87a1` and `475491a89d91`.
+  - Write `docs/backtests/CANDLE_ANTICIPATION.md` with:
+    - the pass-mark table;
+    - `NoTrade` counts per reason;
+    - the breakdowns by weekday and by `midnight_open` side;
+    - stops against the spread;
+    - swap's share of costs.
+  - The hold-out stays unused. The user reviews the trades in `report.html`.
+
+- [ ] 243. Decide the next step with the user
+  - **If a variant passes:** ablations (one rule removed at a time), then the hold-out `--final` run once the user agrees the version is final.
+  - **If none passes:** use the breakdowns to choose between the deferred items (lower frames, trade management, premium/discount, the economic calendar).
+
+---
+
 ## Task Dependency Graph
 
 The Liquidity Engine tasks follow a strict dependency hierarchy from foundational models to advanced analytics. Dependencies are denoted as `prerequisite → dependent`.
@@ -819,6 +922,12 @@ The Liquidity Engine tasks follow a strict dependency hierarchy from foundationa
       "tasks": ["227", "228", "229", "230", "231", "232", "233"],
       "description": "Opposite-side raid sequence, protected-swing stop, counter-trend cap; measured against the algo-backtester baseline",
       "dependencies": ["Final Integration"]
+    },
+    {
+      "name": "Candle Anticipation Update (2026-10b)",
+      "tasks": ["234", "235", "236", "237", "238", "239", "240", "241", "242", "243"],
+      "description": "Power of 3 candle profile: anticipated D1 direction from W1 and the nearest objectives, false move, manipulation window, Asian and intraday pools, swap and minimum stop; measured against the setup-sequence runs",
+      "dependencies": ["Setup Sequence Update (2026-10)"]
     }
   ]
 }
