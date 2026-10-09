@@ -185,11 +185,11 @@ def test_missing_snapshot_names_the_export_command(tmp_path):
 
 # ── the snapshot command ─────────────────────────────────────────────────────
 
-def fixture_root(tmp_path: Path, confirm_end: str = "2026-10-02") -> Path:
+def fixture_root(tmp_path: Path, confirm_end: str = "2026-10-02", profile: str = "metaquotes-demo") -> Path:
     """A repository root whose research.toml covers the fixture week."""
     (tmp_path / "config" / "research").mkdir(parents=True)
     (tmp_path / "config" / "research" / "research.toml").write_text(f"""
-profile = "metaquotes-demo"
+profile = "{profile}"
 study = "golden"
 instruments = ["EURUSD", "XAUUSD"]
 start = 2026-09-29

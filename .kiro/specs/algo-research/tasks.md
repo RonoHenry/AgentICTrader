@@ -62,7 +62,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
 
 ### B. Features, labels and races
 
-- [ ] 247. Market features
+- [x] 247. Market features
   - **247a. RED** (`backend/tests/test_research_features.py`, hand-made frames)
     - `test_opens_and_sides` — `d1_open`, `midnight_open` (null before 00:00), `h4_open` and the sign columns.
     - `test_day_extremes_so_far_earliest_on_tie`

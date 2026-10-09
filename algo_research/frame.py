@@ -139,6 +139,20 @@ def close_times(open_times: pd.DatetimeIndex, tf: Timeframe) -> pd.DatetimeIndex
     return _from_server_wall(start_wall + _LENGTH[tf])
 
 
+def period_bounds(times: pd.DatetimeIndex, tf: Timeframe) -> tuple[pd.DatetimeIndex, pd.DatetimeIndex]:
+    """UTC [start, end) of the ``tf`` period containing each instant."""
+    start_wall = _period_start_wall(_server_wall(pd.DatetimeIndex(times)), tf)
+    return _from_server_wall(start_wall), _from_server_wall(start_wall + _LENGTH[tf])
+
+
+def ny_instant(trading_dates, ny_minute: int) -> pd.DatetimeIndex:
+    """The UTC instant of New York wall time ``ny_minute`` (minutes after 00:00)
+    within each trading date: 17:00 and later fall on the eve, earlier times on
+    the date itself (00:00 is the candle's midnight)."""
+    wall = pd.DatetimeIndex(trading_dates) + pd.Timedelta(minutes=(ny_minute + 7 * 60) % 1440)
+    return _from_server_wall(wall)
+
+
 def aggregate_frame(m1: pd.DataFrame, tf: Timeframe, as_of: Optional[pd.Timestamp] = None) -> pd.DataFrame:
     """Closed ``tf`` bars from M1 (columns time, open, high, low, close), as
     services.market_data.as_of_view.aggregate builds them: a period is kept only
