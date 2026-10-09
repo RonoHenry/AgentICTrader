@@ -49,7 +49,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
   - **245c. REFACTOR**
   - **Validates: Requirements 1.1–1.5**
 
-- [ ] 246. Frames and the trading calendar
+- [x] 246. Frames and the trading calendar
   - **246a. RED** (`backend/tests/test_research_frame.py`)
     - `test_trading_date_17_00_boundary` — Sunday 17:00 is Monday; Friday 16:59 is Friday.
     - `test_h4_index_on_both_sides_of_dst`
