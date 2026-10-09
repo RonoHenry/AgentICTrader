@@ -37,7 +37,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
   - **244c. REFACTOR**
   - **Validates: Requirements 13.1, 13.2**
 
-- [ ] 245. Snapshot: export, `SnapshotSource`, manifest, fingerprint
+- [x] 245. Snapshot: export, `SnapshotSource`, manifest, fingerprint
   - **245a. RED** (`backend/tests/test_research_snapshot.py`, with `CsvSource` over the backtester's fixtures)
     - `test_recording_source_keeps_every_row_load_instrument_reads`
     - `test_snapshot_round_trip_same_fingerprint` — `load_instrument()` on a `SnapshotSource` gives the `InstrumentData.fingerprint` it gives on the original source (Req 1.4).
