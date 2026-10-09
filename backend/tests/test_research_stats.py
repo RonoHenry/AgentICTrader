@@ -159,3 +159,13 @@ def test_property_7_duplicates_dont_shrink_intervals(rows, seed):
     a = evaluate_rule(once, Bootstrap(once, 300, seed), Rule("stat"))
     b = evaluate_rule(twice, Bootstrap(twice, 300, seed), Rule("stat"))
     assert (a.estimate, a.lo, a.hi) == pytest.approx((b.estimate, b.lo, b.hi), rel=1e-12, abs=1e-12)
+
+
+def test_breakdown_dates_count_only_measured_events():
+    # A rate's events where `given` fails count 0; their dates aren't evidence for the group.
+    t = table({"stat": np.array([1.0, 0.0, 1.0, 1.0]), "base": np.full(4, 0.5)},
+              dates=[DATES[0], DATES[1], DATES[2], DATES[3]],
+              counts={"stat": np.array([1.0, 0.0, 1.0, 0.0])})
+    parts = breakdowns(t, Rule("stat", versus=("base",)))
+    row = parts["instrument"].iloc[0]
+    assert (row["events"], row["dates"]) == (2, 2)

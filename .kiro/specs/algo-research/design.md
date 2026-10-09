@@ -626,6 +626,21 @@ Measured so far (this machine, synthetic 18-month M1 of one instrument, 786,420 
 
 The full suite at the checkpoint: root 845 passed; backend 2,157 passed, 9 skipped (one of them Property 8, run separately with `-m slow`). The only failures are the 27 task-39 RED tests (`test_live_validation.py`), as before.
 
+**The real snapshot and build (task 257), `exness-2025-2026h1`.** Exness Standard, 4 instruments, trading dates 2025-01-01 to 2026-07-07 (end exclusive).
+
+| What | Value |
+|---|---|
+| Snapshot export from TimescaleDB | 1 min 24 s; 56 MB of Parquet. M1 only: it covers every warm-up window. |
+| M1 rows | EURUSD 791,537; GBPUSD 791,387; USDJPY 791,600; XAUUSD 751,095 |
+| Build, no cache | 95 s: load and fingerprints ~40 s, frames 2.7 s, market 2.9 s, labels 0.7 s, anticipation 51 s |
+| Load from the cache, and one `explore` of H004 (two tests) | 46 s and 48 s |
+| Grid rows | explore 48,381 on 129 dates; confirm 99,510 on 265 dates |
+| Property 4 on every date | `w1_trend` equals the engine's `ant_trend` on all 1,562 instrument-dates |
+| Days without an anticipation | 13. All are closures with no bar: New Year, Christmas, and gold's Good Fridays. |
+| Anticipated direction | bullish 791, bearish 763, neutral 8 instrument-days |
+
+Coverage problems, recorded in the manifest: a 62-minute feed gap on 2025-01-03 on all four instruments, a 42-minute EURUSD gap on 2025-04-02, and gold's US-holiday and Easter / July 4 closures (17 entries).
+
 **Checkpoint review: changed before real data.**
 - The grid had a row at Friday 17:00 New York every week. That close opens Saturday's candle, which has no bars, so those rows were empty: they would have added an empty `daily` event per week and padded the 17:00 random-time pools. Trading dates that fall on a Saturday now have no rows. This comes from the calendar, not the data; checking the data for an empty candle would read the future and broke Property 1.
 - Random-time draws on rows without `atr_d1` (the first weeks of history) are now skipped and counted (`draw_null_level`); before, they were raced with a NaN stop (task 255).

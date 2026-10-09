@@ -145,8 +145,9 @@ def breakdowns(table: pd.DataFrame, rule: Rule) -> dict:
             part = table[keys == group]
             value = point(part, rule.stat)
             baseline = max(point(part, k) for k in rule.versus) if rule.versus else None
-            rows.append({"group": group, "events": int((part[f"n:{rule.stat}"] > 0).sum()),
-                         "dates": int(part["trading_date"].nunique()), "value": value, "baseline": baseline,
+            measured = (part[f"n:{rule.stat}"] > 0).to_numpy()
+            rows.append({"group": group, "events": int(measured.sum()),
+                         "dates": int(part.loc[measured, "trading_date"].nunique()), "value": value, "baseline": baseline,
                          "effect": value - baseline if baseline is not None else value})
         out[name] = pd.DataFrame(rows, columns=["group", "events", "dates", "value", "baseline", "effect"])
     overall = point(table, rule.stat) - (max(point(table, k) for k in rule.versus) if rule.versus else 0.0)

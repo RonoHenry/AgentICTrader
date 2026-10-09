@@ -211,7 +211,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
 
 ### D. First results
 
-- [ ] 257. Real snapshot and build **(user action: Docker running)**
+- [x] 257. Real snapshot and build **(user action: Docker running)**
   - `python -m algo_research snapshot` for `exness-standard`, the four instruments, 2025-01-01 → 2026-07-07.
   - `python -m algo_research build`, then:
     - record the snapshot size and build times (Req 14.4);
