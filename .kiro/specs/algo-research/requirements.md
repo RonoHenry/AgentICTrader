@@ -297,6 +297,59 @@ Recorded so they are not silently forgotten, and not bolted on mid-implementatio
 
 ---
 
+## Update 2026-10c: Ideas from the Fractal + POI Indicator
+
+On 2026-10-09 the user shared a TradingView indicator ("Fractal + POI") that frames a higher-timeframe candle (C1, C2 sweeping it, C3) and executes on a lower one, with SMT divergence across correlated instruments and Quarterly Theory sessions. Its direction is a manual input. The ideas are tested here before any of them reaches the engine (Requirements 15–17, and 9.5).
+
+Requirement 9 gains:
+
+5. `where` MAY also read the event's own columns: its direction, its levels and its attributes (e.g. `smt`). They are computed from the event's row, so they are known at its t. A direction-relative filter, such as "with the W1 trend", is then written once for both sides.
+
+### Requirement 15: Higher-Timeframe Candle Ranges
+
+**User Story:** As the researcher, I want the indicator's candle-range model as features and an event, so that "C2 swept C1 and closed back inside" can be measured against chance, alone and with a bias.
+
+#### Acceptance Criteria
+
+1. For H1, H4 and D1, each row SHALL carry the last candle closed by t (C2) and the one before it (C1):
+   - their highs and lows, and C2's close time;
+   - C2's side: +1 when C2 traded below C1's low, not above its high, and closed above C1's low; −1 mirrored; 0 otherwise.
+
+   They are known at C2's close (Property 1).
+2. THE `crt` event SHALL fire at the M15 close equal to C2's close when C2's side is ±1: LONG when C1's low was swept, SHORT when its high was.
+   - Its levels: C2's extreme on the swept side (the stop) and C1's opposite extreme (the target).
+   - Its time limit: the close of the next candle (C3).
+3. A race MAY use the event's own time limit (`time_limit = "event"`). Random-time draws keep the event's duration.
+
+### Requirement 16: SMT Divergence
+
+**User Story:** As the researcher, I want to know whether a sweep that a correlated instrument fails to confirm behaves differently, so that SMT divergence is tested, not assumed.
+
+#### Acceptance Criteria
+
+1. THE configuration SHALL name correlated pairs (default: EURUSD with GBPUSD). An instrument in no pair has null partner columns.
+2. Each row SHALL carry its partner's facts at the same t:
+   - whether the partner has raided its own Asian high and its own Asian low;
+   - whether the partner's C2 swept its C1 high and its C1 low, on H1, H4 and D1.
+
+   They are read from the partner's row at the same t, so they are known at t. A missing partner row, an unknown Asian range, or a partner C2 that is a different candle gives null.
+3. THE `asia_raid_reclaim` and `crt` events SHALL carry the attribute `smt`: true when the partner did not take its own matching level on the event's side (a low for LONG, a high for SHORT), false when it did, null when unknown.
+
+### Requirement 17: Daily Quarters
+
+**User Story:** As the researcher, I want the Quarterly Theory's daily quarters as timing labels, so that "the manipulation forms in the London quarter" is checked against shuffled paths.
+
+#### Acceptance Criteria
+
+1. Candle labels SHALL include the daily quarter (New York) of the M1 bar that made the candle's high and of the one that made its low:
+   - 0 = 17:00–00:00 (Asia, the rollover hour included);
+   - 1 = 00:00–06:00 (London);
+   - 2 = 06:00–12:00 (New York AM);
+   - 3 = 12:00–17:00 (New York PM).
+2. THE shuffled-path baseline SHALL recompute them.
+
+---
+
 ## Open Decisions
 
 Proposed defaults apply unless the user changes them at review.
@@ -314,3 +367,7 @@ Proposed defaults apply unless the user changes them at review.
 | AR-D9 | First batch | H001–H004 (design.md "First hypotheses"), then H005–H006 once stage 2 exists. The user confirms each file's pass rules before it is committed. |
 | AR-D10 | Machine learning | Gated: considered only once a hypothesis passes in the confirmation slice and at least 2,000 labelled candidate setups exist. Then it is meta-labelling with simple models, walk-forward in time with a gap. It gets its own spec update. |
 | AR-D11 | More history | Deferred. When added (e.g., Dukascopy FX and gold history before 2025), the older years become a second confirmation set, while costs stay modelled on the broker's data. |
+| AR-D12 | SMT pairs (update 2026-10c) | EURUSD with GBPUSD only. DXY and the index futures aren't in the data; USDJPY's link to EURUSD is inverse and looser; gold has no partner. |
+| AR-D13 | The `crt` trade (update 2026-10c) | Entry at C3's open (the first M1 bar at or after C2's close), stop at C2's sweep extreme, target C1's other side, limit C3's close: the geometry of the 2026-10-09 C3 test, so the lab reproduces that result before a bias is added. |
+| AR-D14 | Quarter 0 (update 2026-10c) | 17:00–00:00, the rollover hour included (the indicator's first quarter starts 18:00). The trading day opens at 17:00 and every hour belongs to one quarter. |
+| AR-D15 | Not built now (update 2026-10c) | IC-CISD, the C3/C4 entry zones and the London and New York session levels. They refine entries; the earlier results place the edge in direction and timing, which these updates test. |

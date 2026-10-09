@@ -658,6 +658,86 @@ Coverage problems, recorded in the manifest: a 62-minute feed gap on 2025-01-03 
 
 ---
 
+## Update 2026-10c: Ideas from the Fractal + POI Indicator
+
+The user's indicator frames a higher-timeframe candle and executes on a lower one. The lab tests three of its ideas before any reaches the engine. All three concern direction and timing, which the earlier results show carry the edge (AR-D15 lists what is left out).
+
+| Idea | What the lab gets | Requirement |
+|---|---|---|
+| C1/C2 candle range (CRT) on H1, H4, D1 | `crt_<tf>_*` market features, the `crt` event, the event's own time limit | 15 |
+| SMT divergence, EURUSD with GBPUSD | `partner_*` features (`features/partner.py`), the `smt` event attribute | 16 |
+| Quarterly Theory daily quarters | `day_high_q`, `day_low_q` candle labels, recomputed by the shuffled-path baseline | 17 |
+| Direction-relative filters | `where` reads the event's direction, levels and attributes | 9.5 |
+
+### Candle-range features (`features/market.py`)
+
+For each `tf` in `h1`, `h4`, `d1`, C2 is the last `tf` bar closed by t and C1 the bar before it (the previous bar with data, so Monday's first H4 follows Friday's last):
+
+| Column | Definition |
+|---|---|
+| `crt_<tf>_at` | C2's close time (UTC) |
+| `crt_<tf>_c1_high`, `crt_<tf>_c1_low` | C1's high and low |
+| `crt_<tf>_c2_high`, `crt_<tf>_c2_low` | C2's high and low |
+| `crt_<tf>_side` | +1: C2's low < C1's low, C2's high ≤ C1's high and C2's close > C1's low; −1 mirrored; else 0 |
+
+Everything is known at C2's close, so Property 1 covers the columns as it covers the others.
+
+### The `crt` event and the event time limit
+
+`crt` takes `tf` (H1, H4 or D1) and fires on rows where t equals `crt_<tf>_at` and the side is ±1. The direction is LONG for +1, SHORT for −1. Its rows carry:
+- `c2_extreme`: C2's low for LONG, its high for SHORT (the stop, AR-D13);
+- `c1_opposite`: C1's high for LONG, its low for SHORT (the target);
+- `limit`: C3's calendar close, `close_times(t, tf)`;
+- `smt`: see below.
+
+Two consequences of the grid:
+- A C2 that closes Friday at 17:00 has no row: that close opens Saturday's candle. It has no C3 before the weekend, so there is no event.
+- A C2 whose last M15 bar holds no M1 bar (a data gap) has no row either. That is rare and counted nowhere.
+
+`trade.time_limit = "event"` uses each event's `limit`. Only events that provide one accept it (`Event.limit`), and the hypothesis check refuses it otherwise. Random-time draws keep each event's duration (limit − t) from their own t.
+
+### Partner features (`features/partner.py`) and `smt`
+
+`research.toml` names pairs (`[smt] pairs = [["EURUSD", "GBPUSD"]]`, AR-D12). After the market tables are built, `partner_features(markets, pairs)` adds these columns to every instrument's table. They are null for an instrument without a partner, and null where the partner has no row at the same t.
+
+| Column | Definition |
+|---|---|
+| `partner` | the partner's name |
+| `partner_asia_high_raided`, `partner_asia_low_raided` | the partner's `asia_*_raided_at` is set at t; null when the partner's Asian range is unknown |
+| `partner_crt_<tf>_swept_high`, `partner_crt_<tf>_swept_low` | the partner's C2 high > its C1 high (low < low); null when the partner's `crt_<tf>_at` differs from the row's |
+
+The columns are copied from the partner's row at the same t, whose columns are known at t (Property 1), so they add no look-ahead. They are joined after the cache, because they cost one merge.
+
+Events with a partner side carry `smt`:
+- `asia_raid_reclaim`: for LONG, `not partner_asia_low_raided`; for SHORT, `not partner_asia_high_raided`;
+- `crt`: for LONG, `not partner_crt_<tf>_swept_low`; for SHORT, `not partner_crt_<tf>_swept_high`.
+
+`smt` is null when the partner column is null, so a filter reading it skips those rows and counts them (`where_null`).
+
+### `where` over the event's columns
+
+The filter's columns are the features, plus `direction`, the event's levels and its attributes (`Event.attributes`). These are evaluated on the event's feature row with the event's columns laid over it. "With the weekly trend" for a two-sided event reads:
+
+```toml
+where = "(direction == 'LONG' and w1_trend == 'UP') or (direction == 'SHORT' and w1_trend == 'DOWN')"
+```
+
+### Daily quarters (`labels.py`, `baselines.py`)
+
+`day_high_q` and `day_low_q` hold the quarter of the M1 bar that made the candle's high and low. The quarter comes from its New York open time: `0` for 17:00–00:00, `1` for 00:00–06:00, `2` for 06:00–12:00 and `3` for 12:00–17:00 (AR-D14). They are candle labels, so only the `daily` event reads them (Req 6.2). The shuffled-path baseline recomputes them from each slot's quarter, as it does `h4_index`.
+
+### Exploration plan (task 266)
+
+On the exploration slice only, before anything is pre-registered:
+1. **`crt` alone**, per timeframe. It should reproduce the C3 test, with a win rate near the coin flip and no gross edge.
+2. **`crt` with a bias** filter: the W1 trend, the engine's anticipated direction (from 17:15, so not for D1 C2s, which close at 17:00), the previous day's direction, and the PO3 side of the D1 open.
+3. **SMT**: `crt` and `asia_raid_reclaim` on EURUSD and GBPUSD, with `smt` against without.
+4. **Quarters**: the lows of up days and the highs of down days in quarter 1 (London), against shuffled paths.
+
+What shows promise is drafted as H007 onward, for the user's review of the pass rules (H005 and H006 stay reserved for stage 2).
+
+---
+
 ## Requirement Traceability
 
 | Requirement | Components | Properties | Tasks |
@@ -676,3 +756,7 @@ Coverage problems, recorded in the manifest: a 62-minute feed gap on 2025-01-03 
 | 12 Ledger and reports | `ledger.py`, `report.py` | 9 | 254 |
 | 13 Out-of-sample | `config.py`, `cli.py` | 10, 11 | 244, 254 |
 | 14 Self-validation | tests | 8, 9 | 255, 256 |
+| 9.5 `where` over event columns | `events.py`, `hypothesis.py`, `runner.py` | 1 | 263 |
+| 15 Candle ranges, `crt` | `features/market.py`, `events.py`, `baselines.py` | 1 | 263 |
+| 16 SMT | `features/partner.py`, `events.py`, `dataset.py`, `config.py` | 1 | 264 |
+| 17 Daily quarters | `labels.py`, `baselines.py` | 2 | 265 |

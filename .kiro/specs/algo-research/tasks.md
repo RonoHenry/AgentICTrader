@@ -258,6 +258,45 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
     - Consider more history (AR-D11) for statistical power.
     - Check the machine-learning gate (AR-D10).
 
+### F. Update 2026-10c: ideas from the Fractal + POI indicator
+
+These come after 257 and don't wait for 258–262: they explore only, and pre-register nothing without the user.
+
+- [ ] 263. Candle ranges, the `crt` event and filters over event columns
+  - **263a. RED** (`test_research_features.py`, `test_research_events.py`, `test_research_hypothesis.py`, `test_research_runner.py`)
+    - `crt_<tf>_*` on hand-made paths:
+      - a low sweep closed back inside is +1, a high sweep −1;
+      - both sides swept, or no close back inside, is 0;
+      - C1 is the previous bar with data.
+    - Property 1 covers the new columns.
+    - `crt` fires at C2's close with `c2_extreme`, `c1_opposite` and `limit` (C3's close). It doesn't fire for a C2 closing Friday at 17:00. Property 1 holds for events with `crt` added.
+    - `where` reads `direction`, levels and attributes; an unknown column is still refused.
+    - `time_limit = "event"` is refused for an event without limits. A race uses the event's limit, and random-time draws keep its duration.
+  - **263b. GREEN**: `features/market.py`, `events.py`, `hypothesis.py`, `runner.py`, `baselines.py`.
+  - **263c. REFACTOR**: rebuild the real tables and record the event counts per timeframe.
+  - **Validates: Requirements 9.5, 15**
+
+- [ ] 264. SMT partner features
+  - **264a. RED** (`test_research_partner.py`, `test_research_config.py`, `test_research_events.py`)
+    - `[smt] pairs` is loaded. An unknown instrument, or one in two pairs, is refused.
+    - Partner columns equal the partner's own facts at the same t. They are null without a partner row, with an unknown Asian range, or with a different C2.
+    - `smt` on `asia_raid_reclaim` and `crt`, both sides; null without a partner.
+    - `build_dataset` adds the columns to every instrument's table.
+  - **264b. GREEN**: `config.py`, `features/partner.py`, `events.py`, `dataset.py`, `research.toml`.
+  - **Validates: Requirement 16**
+
+- [ ] 265. Daily quarters
+  - **265a. RED** (`test_research_labels.py`, `test_research_baselines.py`)
+    - `day_high_q` and `day_low_q` on a hand-made candle, at the quarter edges (17:00, 00:00, 06:00, 12:00) and across both DST changes.
+    - The unshuffled path gives back the labels exactly. The shuffled rate matches the real one on a random walk.
+  - **265b. GREEN**: `labels.py`, `baselines.py`.
+  - **Validates: Requirement 17**
+
+- [ ] 266. Explore the ideas **(user review)**
+  - Run design.md → "Exploration plan (task 266)" on the exploration slice. Nothing is run on the confirmation slice.
+  - Write `docs/research/INDICATOR_IDEAS.md`: the exploration numbers, labelled as exploration, and what they suggest.
+  - Draft H007 onward for what shows promise, uncommitted. The user confirms the pass rules before the pre-registration commit.
+
 ---
 
 ## Task Dependency Graph
@@ -313,6 +352,12 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
       "tasks": ["260", "261", "262"],
       "description": "Engine features at every close, H005-H006, decide the next step",
       "dependencies": ["First Results"]
+    },
+    {
+      "name": "Indicator Ideas",
+      "tasks": ["263", "264", "265", "266"],
+      "description": "Update 2026-10c: candle ranges and crt, SMT, daily quarters, then exploration (264 needs 263; 266 needs 263-265)",
+      "dependencies": ["Self-Validation and Checkpoint"]
     }
   ]
 }
