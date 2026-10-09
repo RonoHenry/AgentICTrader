@@ -147,7 +147,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
   - **251c. REFACTOR**
   - **Validates: Requirements 6.2, 8.1, 8.5, 9.1–9.4**
 
-- [ ] 252. Statistics: day bootstrap and verdict
+- [x] 252. Statistics: day bootstrap and verdict
   - **252a. RED** (`backend/tests/test_research_stats.py`)
     - A constant series gives a zero-width interval at the constant.
     - With independent dates, the interval is close to the analytic binomial one.
