@@ -19,12 +19,13 @@ Two kinds:
     whether an M1 bar opening at or after t, before the D1 close, trades
     beyond it, and the close of the first that does.
 - **Candle labels** describe the whole D1 candle, bars before t included:
-  its direction, its final high and low, and the H4 candle each formed in.
+  its direction, its final high and low, and the H4 candle and the daily
+  quarter (Quarterly Theory, update 2026-10c) each formed in.
   Asked at 09:00, "did the day close up?" partly restates what has already
   happened, so hypothesis validation accepts candle labels only with the
   ``daily`` event (Req 6.2); direction questions use ``rem_move``.
 
-Validates: Requirements 6.1-6.4 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 6.1-6.4, 17.1 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -33,7 +34,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from algo_research.frame import InstrumentFrame, ny_instant
+from algo_research.frame import InstrumentFrame, daily_quarter, ny_instant
 
 __all__ = ["CANDLE_LABELS", "FORWARD_LABELS", "LABEL_COLUMNS", "LEVELS", "Label", "build_labels",
            "candle_labels", "forward_labels"]
@@ -71,6 +72,9 @@ CANDLE_LABELS: dict[str, Label] = {
     "day_low_final": Label("the candle's low", "price"),
     "day_high_h4": Label("h4_index of the M1 bar that made the high, the earliest on a tie", "0-5"),
     "day_low_h4": Label("h4_index of the M1 bar that made the low, the earliest on a tie", "0-5"),
+    "day_high_q": Label("daily quarter (New York) of the M1 bar that made the high, the earliest on a tie: "
+                        "0 = 17:00-00:00, 1 = 00:00-06:00, 2 = 06:00-12:00, 3 = 12:00-17:00", "0-3"),
+    "day_low_q": Label("daily quarter (New York) of the M1 bar that made the low, the earliest on a tie", "0-3"),
 }
 
 LABEL_COLUMNS: dict[str, Label] = {**FORWARD_LABELS, **CANDLE_LABELS}
@@ -161,8 +165,9 @@ def candle_labels(frame: InstrumentFrame) -> pd.DataFrame:
         "open": grouped["open"].first(), "close": grouped["close"].last(),
         "day_high_final": grouped["high"].max(), "day_low_final": grouped["low"].min(),
     })
-    h4 = m1["h4_index"].to_numpy()
-    days["day_high_h4"] = h4[grouped["high"].idxmax().to_numpy()]   # idxmax: the first occurrence
-    days["day_low_h4"] = h4[grouped["low"].idxmin().to_numpy()]
+    h4, quarter = m1["h4_index"].to_numpy(), daily_quarter(m1["ny_minute"].to_numpy())
+    high_at, low_at = grouped["high"].idxmax().to_numpy(), grouped["low"].idxmin().to_numpy()   # the first occurrence
+    days["day_high_h4"], days["day_low_h4"] = h4[high_at], h4[low_at]
+    days["day_high_q"], days["day_low_q"] = quarter[high_at], quarter[low_at]
     days["day_dir"] = np.sign(days["close"] - days["open"])
     return days.reset_index()[["trading_date", *CANDLE_LABELS]]

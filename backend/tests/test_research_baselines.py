@@ -196,12 +196,30 @@ def test_shuffled_path_keeps_each_dates_open_and_close():
     assert list(sums) == pytest.approx(up.astype(float))
 
 
-def test_shuffled_path_matches_the_real_statistic_on_a_random_walk():
+def test_unshuffled_path_gives_back_the_candle_labels():
+    # Identity order: the path rebuilt from its M15 moves is the real day (update 2026-10c: quarters too).
+    from algo_research.baselines import _m15_days, _path_labels
+
+    frame = walk_frame(days=20)
+    days = candle_labels(frame).set_index("trading_date")
+    for day, bars in _m15_days(frame).items():
+        if day not in days.index or day.weekday() >= 5:
+            continue
+        got = _path_labels(bars, np.arange(len(bars))[None, :]).iloc[0]
+        want = days.loc[day]
+        for name in ("day_dir", "day_high_h4", "day_low_h4", "day_high_q", "day_low_q"):
+            assert got[name] == want[name], (day, name)
+        assert got["day_high_final"] == pytest.approx(want["day_high_final"])
+        assert got["day_low_final"] == pytest.approx(want["day_low_final"])
+
+
+@pytest.mark.parametrize("of", ["day_low_h4 in [2, 3, 4]", "day_low_q == 1"])
+def test_shuffled_path_matches_the_real_statistic_on_a_random_walk(of):
     frame = walk_frame(days=300)
     days = candle_labels(frame)
     days = days[days["trading_date"].dt.weekday < 5].iloc[1:-1]   # whole weekdays only
     events = pd.DataFrame({"instrument": "EURUSD", "trading_date": days["trading_date"].to_numpy()})
-    of = compile_filter("day_low_h4 in [2, 3, 4]", CANDLE_LABELS)
+    of = compile_filter(of, CANDLE_LABELS)
     given = compile_filter("day_dir == 1", CANDLE_LABELS)
     sums, counts = shuffled_path({"EURUSD": frame}, events, of=of, given=given, shuffles=100,
                                  rng=np.random.default_rng(2))

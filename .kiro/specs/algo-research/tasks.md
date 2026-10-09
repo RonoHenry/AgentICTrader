@@ -285,7 +285,7 @@ These come after 257 and don't wait for 258–262: they explore only, and pre-re
   - **264b. GREEN**: `config.py`, `features/partner.py`, `events.py`, `dataset.py`, `research.toml`.
   - **Validates: Requirement 16**
 
-- [ ] 265. Daily quarters
+- [x] 265. Daily quarters
   - **265a. RED** (`test_research_labels.py`, `test_research_baselines.py`)
     - `day_high_q` and `day_low_q` on a hand-made candle, at the quarter edges (17:00, 00:00, 06:00, 12:00) and across both DST changes.
     - The unshuffled path gives back the labels exactly. The shuffled rate matches the real one on a random walk.

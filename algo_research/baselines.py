@@ -15,12 +15,13 @@ count, which the day bootstrap (stats.py) pairs with the event's own value.
 
 The shuffle moves whole M15 bars: each keeps its move from the previous close
 and its high and low relative to it, and takes the time slot (and so the H4
-candle) it lands in. Unshuffled, it gives back the candle labels exactly.
+candle and the daily quarter) it lands in. Unshuffled, it gives back the
+candle labels exactly.
 
 Draws are reproducible: their generator is seeded from the hypothesis hash
 (stats.seed_from) by the caller (Req 10.6).
 
-Validates: Requirements 10.1-10.6, 13.3 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 10.1-10.6, 13.3, 17.2 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ import pandas as pd
 
 from algo_research.events import direction_of
 from algo_research.filters import Filter
-from algo_research.frame import InstrumentFrame, calendar_columns, ny_instant
+from algo_research.frame import InstrumentFrame, calendar_columns, daily_quarter, ny_instant
 from liquidity_engine.models import Timeframe
 
 __all__ = ["NAIVE", "RandomTimeDraws", "coin_flip", "naive_direction", "random_time_draws", "rescale_orders",
@@ -191,24 +192,33 @@ def shuffled_path(frames: Mapping[str, InstrumentFrame], events: pd.DataFrame, o
 def _m15_days(frame: InstrumentFrame) -> dict[pd.Timestamp, pd.DataFrame]:
     bars = frame.bars[Timeframe.M15]
     cal = calendar_columns(pd.DatetimeIndex(bars["time"]))
-    bars = bars.assign(trading_date=cal["trading_date"].to_numpy(), h4_index=cal["h4_index"].to_numpy())
+    bars = bars.assign(trading_date=cal["trading_date"].to_numpy(), h4_index=cal["h4_index"].to_numpy(),
+                       quarter=daily_quarter(cal["ny_minute"].to_numpy()))
     return {pd.Timestamp(day): part.reset_index(drop=True) for day, part in bars.groupby("trading_date")}
 
 
 def _shuffled_labels(bars: pd.DataFrame, shuffles: int, rng: np.random.Generator) -> pd.DataFrame:
+    order = rng.permuted(np.tile(np.arange(len(bars)), (shuffles, 1)), axis=1)
+    return _path_labels(bars, order)
+
+
+def _path_labels(bars: pd.DataFrame, order: np.ndarray) -> pd.DataFrame:
+    """The candle labels of the date's M15 moves taken in each row's ``order``; the identity
+    order gives back the real day."""
     o = bars["open"].to_numpy()
     h, l, c = (bars[name].to_numpy() for name in ("high", "low", "close"))
     previous = np.concatenate([[o[0]], c[:-1]])
     move, up, down = c - previous, h - previous, l - previous
-    n = len(c)
-    order = rng.permuted(np.tile(np.arange(n), (shuffles, 1)), axis=1)
     level_after = o[0] + np.cumsum(move[order], axis=1)
-    level_before = np.concatenate([np.full((shuffles, 1), o[0]), level_after[:, :-1]], axis=1)
+    level_before = np.concatenate([np.full((len(order), 1), o[0]), level_after[:, :-1]], axis=1)
     highs, lows = level_before + up[order], level_before + down[order]
-    h4 = bars["h4_index"].to_numpy()                       # a slot keeps its time, and so its H4 candle
+    # A slot keeps its time, and so its H4 candle and its daily quarter.
+    h4, quarter = bars["h4_index"].to_numpy(), bars["quarter"].to_numpy()
+    high_at, low_at = highs.argmax(axis=1), lows.argmin(axis=1)
     final = level_after[:, -1]
     return pd.DataFrame({
         "day_dir": np.sign(final - o[0]),
         "day_high_final": highs.max(axis=1), "day_low_final": lows.min(axis=1),
-        "day_high_h4": h4[highs.argmax(axis=1)], "day_low_h4": h4[lows.argmin(axis=1)],
+        "day_high_h4": h4[high_at], "day_low_h4": h4[low_at],
+        "day_high_q": quarter[high_at], "day_low_q": quarter[low_at],
     })

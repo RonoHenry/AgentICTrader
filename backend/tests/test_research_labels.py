@@ -56,7 +56,8 @@ def test_label_columns_are_documented():
     assert set(LABEL_COLUMNS) == set(FORWARD_LABELS) | set(CANDLE_LABELS)
     for name, doc in LABEL_COLUMNS.items():
         assert doc.definition and doc.unit, name
-    assert {"day_dir", "day_high_final", "day_low_final", "day_high_h4", "day_low_h4"} == set(CANDLE_LABELS)
+    assert {"day_dir", "day_high_final", "day_low_final", "day_high_h4", "day_low_h4", "day_high_q",
+            "day_low_q"} == set(CANDLE_LABELS)
     for level in LEVELS:
         assert f"{level}_hit_after" in FORWARD_LABELS and f"{level}_hit_at" in FORWARD_LABELS
 
@@ -130,6 +131,26 @@ def test_candle_labels():
         assert row["day_dir"] == 1
         assert (row["day_high_final"], row["day_low_final"]) == (1.1200, 1.0800)
         assert (row["day_high_h4"], row["day_low_h4"]) == (4, 2)         # the earliest low: 02:00, the 01:00 H4
+
+
+# ── daily quarters (Requirement 17, update 2026-10c) ─────────────────────────
+
+@pytest.mark.parametrize("day", [date(2026, 1, 5), date(2026, 3, 9), date(2026, 11, 2)])   # EST; after both DST changes
+@pytest.mark.parametrize("hour, minute, quarter", [
+    (17, 0, 0), (23, 59, 0),                     # the eve: 17:00-00:00, the rollover hour included (AR-D14)
+    (0, 0, 1), (5, 59, 1), (6, 0, 2), (11, 59, 2), (12, 0, 3), (16, 59, 3)])
+def test_daily_quarter_of_the_high_and_low(day, hour, minute, quarter):
+    eve = day - timedelta(days=1)
+    when = (eve if hour >= 17 else day, hour, minute)
+    t = ny(when[0].year, when[0].month, when[0].day, when[1], when[2])
+    path = Path(ny(eve.year, eve.month, eve.day, 17), ny(day.year, day.month, day.day, 17))
+    path.bar(t, h=1.1200)
+    other = ny(day.year, day.month, day.day, 3) if quarter != 1 else ny(day.year, day.month, day.day, 9)
+    path.bar(other, lo=1.0800)
+    days = candle_labels(path.frame()).set_index("trading_date")
+    row = days.loc[pd.Timestamp(day)]
+    assert row["day_high_q"] == quarter
+    assert row["day_low_q"] == (1 if quarter != 1 else 2)
 
 
 def test_candle_labels_per_date_frame():

@@ -59,6 +59,7 @@ __all__ = [
     "aggregate_frame",
     "build_grid",
     "calendar_columns",
+    "daily_quarter",
     "frame_from_arrays",
     "frame_from_data",
 ]
@@ -146,6 +147,14 @@ def period_bounds(times: pd.DatetimeIndex, tf: Timeframe) -> tuple[pd.DatetimeIn
     """UTC [start, end) of the ``tf`` period containing each instant."""
     start_wall = _period_start_wall(_server_wall(pd.DatetimeIndex(times)), tf)
     return _from_server_wall(start_wall), _from_server_wall(start_wall + _LENGTH[tf])
+
+
+def daily_quarter(ny_minute) -> np.ndarray:
+    """The Quarterly Theory's daily quarter of a New York wall time, in minutes after 00:00
+    (update 2026-10c, AR-D14): 0 = 17:00-00:00 (the rollover hour included), 1 = 00:00-06:00,
+    2 = 06:00-12:00, 3 = 12:00-17:00."""
+    minute = np.asarray(ny_minute, dtype=np.int64)
+    return np.where(minute >= 17 * 60, 0, minute // 360 + 1).astype(np.int8)
 
 
 def ny_instant(trading_dates, ny_minute: int) -> pd.DatetimeIndex:
