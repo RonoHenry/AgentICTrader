@@ -20,8 +20,9 @@ ends before the hold-out's first trading date even begins.
     cfg = load_research_config()                   # config/research/research.toml
     cfg.slice_of(t)                                # "explore", "confirm" or None
     cfg.strategy()                                 # the StrategyConfig Phase A uses
+    cfg.smt.partners                               # {"EURUSD": "GBPUSD", ...}: SMT pairs (update 2026-10c)
 
-Validates: Requirements 13.1, 13.2 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 13.1, 13.2, 16.1 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -43,6 +44,7 @@ __all__ = [
     "SLICES",
     "HoldoutError",
     "ResearchConfig",
+    "SmtSection",
     "load_research_config",
     "trading_date",
     "trading_date_open",
@@ -89,6 +91,20 @@ class BaselinesSection(_Section):
     shuffles: PositiveInt = 200                      # shuffled-path baseline
 
 
+class SmtSection(_Section):
+    pairs: tuple[tuple[str, str], ...] = ()          # correlated instruments, for SMT divergence (AR-D12)
+
+    @field_validator("pairs")
+    @classmethod
+    def _uppercase(cls, pairs: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:
+        return tuple((a.upper(), b.upper()) for a, b in pairs)
+
+    @property
+    def partners(self) -> dict[str, str]:
+        """Each paired instrument's partner, both ways."""
+        return {**{a: b for a, b in self.pairs}, **{b: a for a, b in self.pairs}}
+
+
 class ResearchConfig(_Section):
     profile: str                                     # broker profile: candle source and spec file (costs)
     study: str                                       # its holdout_start ends the research period
@@ -99,12 +115,27 @@ class ResearchConfig(_Section):
     slices: Slices
     bootstrap: BootstrapSection = Field(default_factory=BootstrapSection)
     baselines: BaselinesSection = Field(default_factory=BaselinesSection)
+    smt: SmtSection = Field(default_factory=SmtSection)
     holdout_start: date                              # from the study file, not research.toml
 
     @field_validator("instruments")
     @classmethod
     def _uppercase(cls, instruments: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(i.upper() for i in instruments)
+
+    @model_validator(mode="after")
+    def _pairs(self) -> ResearchConfig:
+        seen: set[str] = set()
+        for a, b in self.smt.pairs:
+            if a == b:
+                raise ValueError(f"smt.pairs: {a} can't be paired with itself")
+            for instrument in (a, b):
+                if instrument not in self.instruments:
+                    raise ValueError(f"smt.pairs: {instrument} is not one of the instruments {list(self.instruments)}")
+                if instrument in seen:
+                    raise ValueError(f"smt.pairs: {instrument} is in two pairs")
+                seen.add(instrument)
+        return self
 
     @model_validator(mode="after")
     def _contiguous(self) -> ResearchConfig:

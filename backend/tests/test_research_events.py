@@ -179,7 +179,47 @@ def test_crt_parameters_validated():
         run_event(features(crt_path()), "crt", {"tf": "M15"})
 
 
+# ── smt (Requirement 16.3, update 2026-10c) ──────────────────────────────────
+
+def paired(eur: Path, gbp: Path, first=date(2026, 1, 5), end=date(2026, 1, 6)) -> pd.DataFrame:
+    from algo_research.features.partner import partner_features
+    markets = {"EURUSD": features(eur, first, end), "GBPUSD": features(gbp, first, end)}
+    for name, table in markets.items():
+        table["instrument"] = name
+    return pd.concat(partner_features(markets, (("EURUSD", "GBPUSD"),)).values(), ignore_index=True)
+
+
+@pytest.mark.parametrize("partner_raids, smt", [(False, True), (True, False)])
+def test_asia_raid_reclaim_smt(partner_raids, smt):
+    gbp = raid_path()
+    if partner_raids:
+        gbp.bar(ny(2026, 1, 5, 2, 30), lo=1.0945).bar(ny(2026, 1, 5, 2, 31), h=1.1065)    # both its lows and highs
+    eur = raid_path().bar(ny(2026, 1, 5, 3, 0), lo=1.0940)                              # EURUSD: LONG at 03:15
+    eur_short = raid_path().bar(ny(2026, 1, 5, 3, 0), h=1.1070)                         # SHORT at 03:15
+    for path, direction in ((eur, "LONG"), (eur_short, "SHORT")):
+        rows = run_event(paired(path, gbp), "asia_raid_reclaim", {"window": ["01:00", "09:00"]}).rows
+        mine = rows[rows["instrument"] == "EURUSD"]
+        assert list(mine["direction"]) == [direction]
+        assert list(mine["smt"]) == [smt], direction
+
+
+def test_crt_smt_both_sides():
+    flat = Path(ny(2026, 1, 4, 17), ny(2026, 1, 6, 17), base=1.1000)
+    rows = run_event(paired(crt_path(), flat), "crt", {"tf": "H1"}).rows
+    mine = rows[rows["instrument"] == "EURUSD"]
+    assert list(zip(mine["direction"], mine["smt"])) == [("SHORT", True), ("LONG", True), ("SHORT", True),
+                                                          ("LONG", True)]          # GBPUSD swept nothing
+    rows = run_event(paired(crt_path(), crt_path()), "crt", {"tf": "H1"}).rows
+    assert not rows["smt"].any() and len(rows) == 8                   # both swept the same candles
+
+
+def test_smt_null_without_partner_columns():
+    rows = run_event(features(crt_path()), "crt", {"tf": "H4"}).rows
+    assert rows["smt"].isna().all() and len(rows) == 1
+
+
 def test_registry_lists_levels_and_direction():
+    assert EVENTS["crt"].attributes == ("smt",) and EVENTS["asia_raid_reclaim"].attributes == ("smt",)
     assert EVENTS["crt"].levels == ("c2_extreme", "c1_opposite")
     assert EVENTS["crt"].limit and not EVENTS["asia_raid_reclaim"].limit
     assert EVENTS["asia_raid_reclaim"].levels == ("raid_extreme", "asia_opposite")

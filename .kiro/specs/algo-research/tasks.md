@@ -276,7 +276,7 @@ These come after 257 and don't wait for 258–262: they explore only, and pre-re
   - **263c. REFACTOR**: rebuild the real tables and record the event counts per timeframe.
   - **Validates: Requirements 9.5, 15**
 
-- [ ] 264. SMT partner features
+- [x] 264. SMT partner features
   - **264a. RED** (`test_research_partner.py`, `test_research_config.py`, `test_research_events.py`)
     - `[smt] pairs` is loaded. An unknown instrument, or one in two pairs, is refused.
     - Partner columns equal the partner's own facts at the same t. They are null without a partner row, with an unknown Asian range, or with a different C2.

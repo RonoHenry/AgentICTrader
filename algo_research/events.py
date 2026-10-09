@@ -14,6 +14,11 @@ fires at most once per instrument, trading date and direction (Req 9.4).
 | ``daily`` | the candle's last M15 close | none | - |
 | ``crt`` | the M15 close equal to C2's close on ``tf`` (H1, H4, D1), when C2 swept one side of C1 and closed back inside | LONG after C1's low was swept, SHORT after its high | ``c2_extreme``, ``c1_opposite``; its own ``limit``: C3's close |
 
+``asia_raid_reclaim`` and ``crt`` carry ``smt`` (Req 16.3): true when the
+correlated partner did not take its own matching level by t (its Asian low,
+or its C1's low, for LONG; the highs for SHORT), false when it did, None when
+unknown or unpaired.
+
 Rows an event can't use (no direction, no trend, a level already taken) are
 skipped and counted in ``EventResult.skipped``.
 
@@ -26,7 +31,7 @@ An event with ``Event.limit`` gives each row its own race time limit
     result = run_event(features, "asia_raid_reclaim", {"window": ["01:00", "09:00"], "reclaim_within": 4})
     result.rows, result.skipped
 
-Validates: Requirements 9.1, 9.2, 9.4, 9.5, 15.2 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 9.1, 9.2, 9.4, 9.5, 15.2, 16.3 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -40,13 +45,14 @@ from pydantic import BaseModel, ConfigDict, Field, PositiveInt, ValidationError,
 
 from algo_research.features.anticipation import ANTICIPATION_COLUMNS
 from algo_research.features.market import COLUMNS
+from algo_research.features.partner import PARTNER_COLUMNS
 from algo_research.frame import close_times
 from liquidity_engine.models import Timeframe
 
 __all__ = ["EVENTS", "EVENT_COLUMNS", "Event", "EventError", "EventResult", "direction_of", "run_event"]
 
 EVENT_COLUMNS = ("row", "t", "instrument", "trading_date", "direction")
-FEATURE_NAMES = frozenset(COLUMNS) | frozenset(ANTICIPATION_COLUMNS)
+FEATURE_NAMES = frozenset(COLUMNS) | frozenset(ANTICIPATION_COLUMNS) | frozenset(PARTNER_COLUMNS)
 
 _LONG = {"UP", "BULLISH", "LONG"}
 _SHORT = {"DOWN", "BEARISH", "SHORT"}
@@ -163,6 +169,17 @@ def direction_of(values: pd.Series) -> np.ndarray:
     return out
 
 
+def _not_taken(features: pd.DataFrame, column: str) -> np.ndarray:
+    """SMT per row: True when the partner hasn't taken its own level (``column`` false), False
+    when it has, None when that isn't known or there is no partner column (Req 16.3)."""
+    out = np.full(len(features), None, dtype=object)
+    if column in features.columns:
+        values = features[column]
+        known = values.notna().to_numpy()
+        out[known] = [not bool(v) for v in values[known]]
+    return out
+
+
 def _rows(features: pd.DataFrame, picked: np.ndarray, direction, **levels) -> pd.DataFrame:
     chosen = features[picked]
     out = chosen[["t", "instrument", "trading_date"]].reset_index(drop=True)
@@ -206,7 +223,8 @@ def _asia_raid_reclaim(features: pd.DataFrame, p: AsiaRaidReclaimParams) -> Even
         first = pd.Series(candidate).groupby(keys).cumsum().to_numpy() == 1
         picked = candidate & first
         frames.append(_rows(features, picked, direction, raid_extreme=features[extreme].to_numpy(dtype=float),
-                            asia_opposite=features[opposite].to_numpy(dtype=float)))
+                            asia_opposite=features[opposite].to_numpy(dtype=float),
+                            smt=_not_taken(features, f"partner_asia_{side}_raided")))
     rows = pd.concat(frames, ignore_index=True).sort_values(["instrument", "t", "direction"], kind="stable")
     return EventResult(rows.reset_index(drop=True))
 
@@ -249,9 +267,11 @@ def _crt(features: pd.DataFrame, p: CrtParams) -> EventResult:
     fires = (pd.DatetimeIndex(features[f"crt_{name}_at"]) == t) & np.isin(side, (1.0, -1.0))
     long = side == 1.0
     column = lambda which: features[f"crt_{name}_{which}"].to_numpy(dtype=float)         # noqa: E731
+    smt = np.where(long, _not_taken(features, f"partner_crt_{name}_swept_low"),
+                   _not_taken(features, f"partner_crt_{name}_swept_high"))
     rows = _rows(features, fires, np.where(long, "LONG", "SHORT").astype(object),
                  c2_extreme=np.where(long, column("c2_low"), column("c2_high")),
-                 c1_opposite=np.where(long, column("c1_high"), column("c1_low")))
+                 c1_opposite=np.where(long, column("c1_high"), column("c1_low")), smt=smt)
     rows["limit"] = close_times(pd.DatetimeIndex(rows["t"]), tf)       # C3 opens at C2's close
     return EventResult(rows)
 
@@ -260,10 +280,10 @@ EVENTS: dict[str, Event] = {
     "anchor": Event("anchor", AnchorParams, _anchor,
                     directional=lambda params: params.get("direction_from") is not None),
     "asia_raid_reclaim": Event("asia_raid_reclaim", AsiaRaidReclaimParams, _asia_raid_reclaim,
-                               levels=("raid_extreme", "asia_opposite")),
+                               levels=("raid_extreme", "asia_opposite"), attributes=("smt",)),
     "level_open": Event("level_open", LevelOpenParams, _level_open, levels=("level",)),
     "daily": Event("daily", DailyParams, _daily, directional=lambda params: False),
-    "crt": Event("crt", CrtParams, _crt, levels=("c2_extreme", "c1_opposite"), limit=True),
+    "crt": Event("crt", CrtParams, _crt, levels=("c2_extreme", "c1_opposite"), attributes=("smt",), limit=True),
 }
 
 

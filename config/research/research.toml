@@ -20,3 +20,6 @@ resamples = 10000                    # AR-D5: trading dates, 95% percentile inte
 [baselines]
 random_time_draws = 20               # AR-D7: per event, same instrument and New York 15-minute slot
 shuffles = 200                       # shuffled-path baseline for timing statistics
+
+[smt]                                # update 2026-10c, AR-D12: correlated pairs for SMT divergence
+pairs = [["EURUSD", "GBPUSD"]]       # DXY and index futures aren't in the data; gold has no partner

@@ -43,6 +43,17 @@ class ReportInputs:
     ledger_rows: Mapping[str, str] = field(default_factory=dict)   # test label -> ledger seq
 
 
+def _cell(value) -> str:
+    """An event column in the check-by-eye table: unknown values as a dash, times to the minute."""
+    if value is None or (not isinstance(value, str) and pd.isna(value)):
+        return "–"
+    if isinstance(value, float):
+        return _f(value, 5)
+    if isinstance(value, pd.Timestamp):
+        return f"{value:%Y-%m-%d %H:%M}"
+    return str(value)
+
+
 def _f(value: Optional[float], digits: int = 4) -> str:
     if value is None or (isinstance(value, float) and not np.isfinite(value)):
         return "–"
@@ -159,7 +170,7 @@ def _by_eye(r: TestResult) -> list[str]:
             t = pd.Timestamp(row.t)
             local = t.tz_convert("America/New_York")
             values = [getattr(row, name) for name in levels]
-            shown = [_f(v, 5) if isinstance(v, float) else str(v) for v in values]
+            shown = [_cell(v) for v in values]
             lines.append("| " + " | ".join([f"{t:%Y-%m-%d %H:%M}", f"{local:%a %H:%M}", row.direction or "–", *shown])
                          + " |")
         lines.append("")

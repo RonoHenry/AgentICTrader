@@ -145,13 +145,14 @@ def simulated_frame(instrument: str, times: pd.DatetimeIndex, normals: np.ndarra
                              typical_spread=spread, stop_slippage=spread / 4)
 
 
-def research_data(frames: dict, slices: dict):
-    """The research tables for simulated frames: market features and labels (no engine)."""
+def research_data(frames: dict, slices: dict, pairs: tuple = ()):
+    """The research tables for simulated frames: market features, SMT partners and labels (no engine)."""
     from algo_research.dataset import ResearchData
     from algo_research.features.market import market_features
+    from algo_research.features.partner import partner_features
     from algo_research.labels import build_labels
 
-    markets = {i: market_features(f, build_grid(f, slices)) for i, f in frames.items()}
+    markets = partner_features({i: market_features(f, build_grid(f, slices)) for i, f in frames.items()}, pairs)
     labels = [build_labels(frames[i], m) for i, m in markets.items()]
     return ResearchData(frames=frames, features=pd.concat(markets.values(), ignore_index=True),
                         labels=pd.concat(labels, ignore_index=True))

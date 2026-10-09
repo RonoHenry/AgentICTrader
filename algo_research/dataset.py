@@ -5,7 +5,8 @@
 - ``frames``: each instrument's M1 and calendar bars (frame.py), for races
   and the shuffled-path baseline;
 - ``features``: one row per instrument and M15 close of the slices, the
-  market features (Req 3) and the daily anticipation (Req 4);
+  market features (Req 3), the daily anticipation (Req 4) and the SMT
+  partner's facts at the same t (Req 16, joined after the cache);
 - ``labels``: the same rows, what happened after t (Req 6), in their own
   table: events and filters never see it.
 
@@ -36,6 +37,7 @@ from algo_research.config import ResearchConfig
 from algo_research.features.anticipation import anticipation_key, daily_anticipation, join_anticipation
 from algo_research.features.cache import LABEL_SOURCES, MARKET_SOURCES, ParquetCache, cache_key, code_fingerprint
 from algo_research.features.market import market_features
+from algo_research.features.partner import partner_features
 from algo_research.frame import InstrumentFrame, build_grid, frame_from_data, slices_of
 from algo_research.labels import build_labels
 from algo_research.snapshot import Snapshot
@@ -93,6 +95,7 @@ def build_dataset(snapshot: Snapshot, cfg: ResearchConfig, specs: InstrumentSpec
     started = time.perf_counter()
     tables = _with_anticipation(snapshot, list(markets.values()), strategy, cache, workers, summary)
     summary["timings"]["anticipation"] = time.perf_counter() - started
+    tables = list(partner_features(dict(zip(markets, tables)), cfg.smt.pairs).values())   # after the cache
     features = pd.concat(tables, ignore_index=True) if tables else pd.DataFrame()
     label_table = pd.concat(labels, ignore_index=True) if labels else pd.DataFrame()
     return ResearchData(frames=frames, features=features, labels=label_table, summary=summary)

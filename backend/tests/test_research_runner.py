@@ -368,3 +368,24 @@ def test_crt_race_ends_at_c3s_close_and_draws_keep_its_duration():
     draws = result.extra["draw_races"]
     assert len(draws) == 6 and (draws["outcome"] == "TIMEOUT").all()               # Tuesday to Friday, same slots
     assert ((draws["exit_time"] - draws["t"]) == pd.Timedelta(minutes=60)).all()
+
+
+def test_build_dataset_adds_the_partner_columns(repo, data_dirs):
+    # Requirement 16.2 (update 2026-10c): every instrument's table, null without a pair.
+    from agent.broker_profiles import load_profile
+    from algo_research.config import SmtSection, load_research_config
+    from algo_research.dataset import build_dataset
+    from algo_research.features.cache import ParquetCache
+    from algo_research.features.partner import PARTNER_COLUMNS
+    from algo_research.snapshot import load_snapshot
+
+    cfg = load_research_config(root=repo)
+    snapshot = load_snapshot(data_dirs["snapshots_dir"] / cfg.snapshot)
+    build = lambda c: build_dataset(snapshot, c, load_profile(c.profile).specs(), c.strategy(repo),   # noqa: E731
+                                    ParquetCache(data_dirs["cache_dir"]), workers=1).features
+    alone = build(cfg)
+    assert alone[list(PARTNER_COLUMNS)].isna().all().all()
+    together = build(cfg.model_copy(update={"smt": SmtSection(pairs=(("EURUSD", "XAUUSD"),))}))
+    assert set(together["partner"]) == {"EURUSD", "XAUUSD"}
+    eur = together[together["instrument"] == "EURUSD"]
+    assert eur["partner_asia_low_raided"].notna().sum() > 100

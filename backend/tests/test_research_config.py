@@ -134,3 +134,24 @@ def test_slice_of_boundaries(tmp_path):
     assert cfg.slice_period("confirm") == (confirm_start, holdout)
     with pytest.raises(ValueError, match="slice"):
         cfg.slice_period("holdout")
+
+
+# ── SMT pairs (Requirement 16.1, update 2026-10c) ───────────────────────────
+
+def test_smt_pairs(tmp_path):
+    assert load_research_config().smt.pairs == (("EURUSD", "GBPUSD"),)            # AR-D12
+    assert load_research_config(root=write_root(tmp_path / "none")).smt.pairs == ()
+    paired = RESEARCH + '\n[smt]\npairs = [["eurusd", "XAUUSD"]]\n'
+    smt = load_research_config(root=write_root(tmp_path / "ok", paired)).smt
+    assert smt.pairs == (("EURUSD", "XAUUSD"),)
+    assert smt.partners == {"EURUSD": "XAUUSD", "XAUUSD": "EURUSD"}
+
+
+@pytest.mark.parametrize("pairs, message", [
+    ('[["EURUSD", "GBPUSD"]]', "GBPUSD"),                                       # not an instrument here
+    ('[["EURUSD", "XAUUSD"], ["XAUUSD", "EURUSD"]]', "two pairs"),
+    ('[["EURUSD", "EURUSD"]]', "itself"),
+])
+def test_smt_pairs_refused(tmp_path, pairs, message):
+    with pytest.raises(ValueError, match=message):
+        load_research_config(root=write_root(tmp_path, RESEARCH + f"\n[smt]\npairs = {pairs}\n"))
