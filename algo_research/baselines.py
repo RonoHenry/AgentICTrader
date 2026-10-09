@@ -74,7 +74,9 @@ def random_time_draws(features: pd.DataFrame, events: pd.DataFrame, k: int,
         chosen = np.sort(rng.choice(pool, size=min(k, len(pool)), replace=False)) if len(pool) else pool
         available[i] = len(chosen)
         rows.extend((i, int(labels[position]), direction) for position in chosen)
-    return RandomTimeDraws(pd.DataFrame(rows, columns=["event", "row", "direction"]), available)
+    table = pd.DataFrame(rows, columns=["event", "row", "direction"])
+    table = table.astype({"event": np.int64, "row": np.int64, "direction": object})
+    return RandomTimeDraws(table, available)
 
 
 def rescale_orders(features: pd.DataFrame, events: pd.DataFrame, trades: pd.DataFrame, draws: pd.DataFrame,

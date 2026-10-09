@@ -176,7 +176,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
   - **253c. REFACTOR**
   - **Validates: Requirements 10.1–10.6, 13.3**
 
-- [ ] 254. Runner, ledger, reports and CLI
+- [x] 254. Runner, ledger, reports and CLI
   - **254a. RED** (`backend/tests/test_research_runner.py`, with a temporary git repository in `tmp_path`)
     - Property 11:
       - `run` refuses an uncommitted hypothesis file, a modified one, uncommitted changes in `algo_research/`, and an id already in the ledger under another hash;

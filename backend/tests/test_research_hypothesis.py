@@ -291,3 +291,8 @@ def test_filter_names_forbidden_label_columns():
 
 def test_filter_reports_the_columns_it_reads():
     assert compile_filter("close > 1 and w1_trend == 'UP'", COLUMNS).columns == {"close", "w1_trend"}
+
+
+def test_baseline_judges_only_its_statistics():
+    with pytest.raises(HypothesisError, match="coin_flip judges only"):
+        parse_hypothesis(replace(H002, '{ stat = "mean_net_r" }', '{ stat = "mean_net_r", versus = "coin_flip" }'))
