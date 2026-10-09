@@ -285,6 +285,7 @@ Property 1 compares the vectorised table with a slow reference that rebuilds eac
   - R = |entry − stop| on the executed entry (the backtester's definition, task 201).
   - Gross R is measured on bid prices, net R on executed prices.
   - Commission per lot per side is converted to R per lot (both scale with lots, so no sizing is needed).
+- **`win_rate` and timeouts:** each race scores 1 at the target, 0 at the stop, and at a TIMEOUT its coin-flip value from the exit price, the chance a driftless path would still have reached the target first. `win_rate` is the mean score. Under no drift its expectation is the `coin_flip` baseline exactly (Property 6), so races cut short by the D1 close neither win nor lose by fiat. Counting timeouts as losses would put every condition below the coin flip and hide real edges. The report still shows the TARGET / STOP / TIMEOUT counts.
 - **Implementation:** one NumPy slice per race and `argmax` on the boolean hit arrays. Target: 50,000 races in under 30 s.
 - **Property 5:** on random paths and orders, the outcome, exit time and exit price equal those from stepping `FillModel` with the same MARKET `SimOrder`.
 
@@ -359,6 +360,14 @@ require = [
 
 - **Label expressions:** label columns appear only in `measure`, never in `event` or `where`. They are parsed by the same AST whitelist, over label columns.
 - **Hash:** the sha256 of the file's bytes with line endings normalised.
+- **Parameter lists (Req 8.5)** are written as their own table, so a parameter that is itself a list (the raid `window`) isn't mistaken for one:
+
+  ```toml
+  [vary]                                   # one test per value; each counts in the ledger
+  key = "event.params.at"
+  values = ["05:00", "09:00"]
+  # names = [...]                          # needed when the values are tables, e.g. H004's two measures
+  ```
 
 ### Baselines (`algo_research/baselines.py`)
 

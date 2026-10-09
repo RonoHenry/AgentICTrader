@@ -120,7 +120,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
 
 ### C. Questions, baselines and statistics
 
-- [ ] 251. Hypothesis schema, events and filters
+- [x] 251. Hypothesis schema, events and filters
   - **251a. RED** (`backend/tests/test_research_hypothesis.py`, `backend/tests/test_research_events.py`)
     - **Schema:**
       - the design's H002 example loads;
