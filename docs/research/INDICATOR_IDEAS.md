@@ -83,11 +83,13 @@ Where the day's extreme forms, against the same days with their M15 bars shuffle
 
 The false move of the day, the up day's low or the down day's high, forms in New York's morning more often than chance. It forms in the indicator's "manipulation" quarter only at chance. It forms during Asia less often than a random path would put it there. This is where the H004 timing excess lives.
 
+**Caveat: this may be volatility, not manipulation.** The shuffled path moves each M15 bar to a random slot, so it also spreads New York's morning volatility over the whole day. A quarter that simply moves more will hold more extremes than shuffled days, with no behaviour behind it. A baseline that keeps each slot's volatility and randomises only the direction of its moves (`sign_flip`, first proposed for H004) separates the two. It should exist before H007 or H004 is pre-registered.
+
 ## What it suggests
 
 1. **The pattern doesn't pick the direction.** The C1/C2 sweep is a coin flip on its own on every timeframe. None of the biases the lab can compute changes that: the weekly trend, the engine's anticipation, the previous day, the side of the open, or the higher-timeframe sweep. That agrees with the C3 test and the hindsight split by the day's direction: the missing piece is still a better call on direction, and nothing tested here provides it.
 2. **Two weak hints are worth one confirmation each:** the H4 sweep with SMT, and the H4 sweep in the direction of the last D1 sweep. Both are about +4–5 points with intervals that touch zero on this small slice. The confirmation slice has about twice the trades.
-3. **Timing is real, but later than the indicator says.** The day's false move tends to complete in the 06:00–12:00 New York quarter. For entries, that argues for waiting through London rather than fading the first London sweep.
+3. **Timing: later than the indicator says, if it is timing at all.** The day's false move completes in the 06:00–12:00 New York quarter more often than on shuffled days. Before it argues for waiting through London rather than fading the first London sweep, a volatility-preserving baseline has to rule out plain New York-morning volatility (section 5).
 4. **H1 is too small for the spread.** Even a perfect coin flip loses about 0.15–0.2R a trade there after costs.
 
 ## Proposed for pre-registration (drafts, uncommitted)
@@ -99,6 +101,10 @@ The pass rules are the defaults (AR-D4): the lower bound of each comparison abov
 | `H007-quarter-timing.toml` | Up days' low and down days' high in 06:00–12:00 vs shuffled (2 tests) | PASS: +0.059 [+0.018, +0.103] and +0.064 [+0.013, +0.120] |
 | `H008-crt-h4-smt.toml` | H4 sweep with SMT reaches C1's other side: vs coin, random times, net R > 0 | FAIL: +0.054 [−0.006, +0.113]; net +0.02R |
 | `H009-crt-fractal-h4-d1.toml` | H4 sweep in the direction of the last D1 sweep: same rules | FAIL: +0.039 [−0.031, +0.113]; net +0.06R |
+
+Before these are committed:
+- **H007 needs the `sign_flip` baseline** (section 5's caveat); against shuffled paths alone, a pass could be volatility.
+- **The random-time baseline needs its fix.** It excludes every date with an event, so events that fire most days get few or no draws: H1 `crt` had none ("NaN" above, so the coin flip is the comparison there), and the H4 numbers rest on fewer draws than the 20 asked for. It should exclude only the event's own date, and return INSUFFICIENT when most events lack their draws. H008 and H009 require it.
 
 Not built (AR-D15): IC-CISD, the C3/C4 entry zones, and the London and New York session levels. They decide where to enter once the direction is known, and the direction is what's still missing.
 
