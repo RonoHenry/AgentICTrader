@@ -20,7 +20,7 @@ from hypothesis import strategies as st
 from algo_research.events import EVENTS, EventError, run_event
 from algo_research.features.market import market_features
 from algo_research.frame import InstrumentFrame, build_grid, frame_from_data
-from tests.research_fixtures import Path, grid_for, ny
+from tests.research_fixtures import Path, crt_path, grid_for, ny
 from tests.test_backtest_signals import data_for
 
 
@@ -145,7 +145,43 @@ def test_daily_fires_once_per_date_at_the_last_close():
     assert result.rows["direction"].isna().all()
 
 
+# ── crt (Requirement 15, update 2026-10c) ────────────────────────────────────
+
+def test_crt_fires_at_c2s_close_with_its_levels_and_limit():
+    rows = features(crt_path())
+    h4 = run_event(rows, "crt", {"tf": "H4"}).rows
+    assert times(run_event(rows, "crt", {"tf": "H4"})) == [ny(2026, 1, 5, 9, 0)]
+    event = h4.iloc[0]
+    assert event["direction"] == "LONG"
+    assert (event["c2_extreme"], event["c1_opposite"]) == (1.0940, 1.1050)    # stop and target (AR-D13)
+    assert event["limit"] == pd.Timestamp(ny(2026, 1, 5, 13, 0))              # C3's close
+
+    h1 = run_event(rows, "crt", {"tf": "H1"}).rows
+    assert list(zip([t.to_pydatetime() for t in h1["t"]], h1["direction"])) == [
+        (ny(2026, 1, 5, 3, 0), "SHORT"), (ny(2026, 1, 5, 4, 0), "LONG"),
+        (ny(2026, 1, 5, 6, 0), "SHORT"), (ny(2026, 1, 5, 7, 0), "LONG")]
+    short = h1.iloc[2]
+    assert short["c2_extreme"] == 1.1020 and short["c1_opposite"] == pytest.approx(1.0999)
+    assert list(h1["limit"]) == [pd.Timestamp(ny(2026, 1, 5, h, 0)) for h in (4, 5, 7, 8)]
+
+
+@pytest.mark.parametrize("sweep_at, fires_at", [(10, ny(2026, 1, 9, 13, 0)), (14, None)])
+def test_crt_no_event_for_a_c2_closing_friday_at_17(sweep_at, fires_at):
+    # Friday's 13:00 H4 closes at 17:00, which opens Saturday's candle: no row, no C3 before the weekend.
+    path = Path(ny(2026, 1, 4, 17), ny(2026, 1, 9, 17), base=1.1000)
+    path.bar(ny(2026, 1, 9, sweep_at, 0), lo=1.0990)                  # C2 sweeps the candle before and closes back
+    rows = features(path, date(2026, 1, 5), date(2026, 1, 10))
+    assert times(run_event(rows, "crt", {"tf": "H4"})) == ([fires_at] if fires_at else [])
+
+
+def test_crt_parameters_validated():
+    with pytest.raises(EventError, match="tf"):
+        run_event(features(crt_path()), "crt", {"tf": "M15"})
+
+
 def test_registry_lists_levels_and_direction():
+    assert EVENTS["crt"].levels == ("c2_extreme", "c1_opposite")
+    assert EVENTS["crt"].limit and not EVENTS["asia_raid_reclaim"].limit
     assert EVENTS["asia_raid_reclaim"].levels == ("raid_extreme", "asia_opposite")
     assert EVENTS["level_open"].levels == ("level",)
     assert EVENTS["daily"].directional({}) is False
@@ -172,7 +208,8 @@ def _truncated(frame: InstrumentFrame, t: pd.Timestamp) -> InstrumentFrame:
 
 CASES = [("anchor", {"at": "09:00", "direction_from": "side_midnight_open"}),
          ("asia_raid_reclaim", {"window": ["00:00", "16:00"], "reclaim_within": 8}),
-         ("level_open", {"level": "pdl", "at": "05:00"})]
+         ("level_open", {"level": "pdl", "at": "05:00"}),
+         ("crt", {"tf": "H1"}), ("crt", {"tf": "H4"})]
 
 
 def test_fixture_events_exist():

@@ -21,8 +21,11 @@ Measures and their statistics:
 | ``move`` | mean_move_atr of a label ``column``, signed by the event's direction | labels |
 
 What the checks enforce:
-- ``where`` reads feature columns only; ``of`` / ``given`` read label columns
-  only (Req 6.1, 9.3);
+- ``where`` reads feature columns, and the event's own direction, levels and
+  attributes (Req 9.5); ``of`` / ``given`` read label columns only (Req 6.1,
+  9.3);
+- ``trade.time_limit = "event"`` only with an event that gives each row a
+  limit (Req 15.3);
 - candle labels (``day_dir``, ``day_*_final``, ``day_*_h4``) only with the
   ``daily`` event: asked at 09:00, the whole candle partly restates the past
   (Req 6.2);
@@ -32,7 +35,7 @@ What the checks enforce:
   use, or ``best_naive`` when naive rules are;
 - ``[vary]`` lists a few values for one parameter, each one test (Req 8.5).
 
-Validates: Requirements 6.2, 8.1, 8.5 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 6.2, 8.1, 8.5, 9.5, 15.3 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -48,7 +51,7 @@ from typing import Any, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt, PrivateAttr, ValidationError, model_validator
 
 from algo_research.config import REPO_ROOT
-from algo_research.events import EVENTS, FEATURE_NAMES
+from algo_research.events import EVENTS, FEATURE_NAMES, Event
 from algo_research.features.market import COLUMNS
 from algo_research.filters import FilterError, compile_filter
 from algo_research.labels import CANDLE_LABELS, FORWARD_LABELS, LABEL_COLUMNS
@@ -65,6 +68,7 @@ __all__ = [
     "find_hypothesis",
     "load_hypothesis",
     "parse_hypothesis",
+    "where_columns",
 ]
 
 HYPOTHESES_DIR = REPO_ROOT / "config" / "research" / "hypotheses"
@@ -119,7 +123,7 @@ class TradeSection(_Section):
     direction: Literal["event", "LONG", "SHORT"] = "event"
     stop: LevelRef
     target: LevelRef
-    time_limit: Union[Literal["day_close"], TimeLimit] = "day_close"
+    time_limit: Union[Literal["day_close", "event"], TimeLimit] = "day_close"   # event: the event's own limit
 
 
 class MeasureSection(_Section):
@@ -230,7 +234,7 @@ def _problems(h: Hypothesis) -> list[str]:
     directional = event.directional(h.event.params)
     labels = {name: "a label column" for name in LABEL_COLUMNS}
     try:
-        compile_filter(h.event.where, FEATURE_NAMES, forbidden=labels)
+        compile_filter(h.event.where, where_columns(event), forbidden=labels)
     except FilterError as exc:
         problems.append(f"event.where: {exc}")
 
@@ -239,7 +243,7 @@ def _problems(h: Hypothesis) -> list[str]:
         if h.trade is None:
             problems.append("trade: a race measure needs a [trade] table: direction, stop, target, time_limit")
         else:
-            problems.extend(_trade_problems(h.trade, event.levels, directional))
+            problems.extend(_trade_problems(h.trade, event, directional))
     elif h.trade is not None:
         problems.append(f"trade: only race measures have a [trade]; this measure is {kind}")
     if kind in ("direction", "move") and not directional:
@@ -290,16 +294,24 @@ def _problems(h: Hypothesis) -> list[str]:
     return problems
 
 
-def _trade_problems(trade: TradeSection, levels: tuple[str, ...], directional: bool) -> list[str]:
+def where_columns(event: Event) -> frozenset[str]:
+    """What an event's ``where`` may read: the features and the event's own columns (Req 9.5)."""
+    return FEATURE_NAMES | frozenset(event.columns)
+
+
+def _trade_problems(trade: TradeSection, event: Event, directional: bool) -> list[str]:
     problems = []
     if trade.direction == "event" and not directional:
         problems.append("trade.direction: the event has no direction; set LONG or SHORT")
-    names = set(levels) | _PRICE_FEATURES
+    if trade.time_limit == "event" and not event.limit:
+        problems.append(f"trade.time_limit: the event {event.name} has no time limit of its own; "
+                        f"use day_close or {{ minutes = ... }}")
+    names = set(event.levels) | _PRICE_FEATURES
     for side in ("stop", "target"):
         ref: LevelRef = getattr(trade, side)
         if ref.kind == "level":
             if ref.name not in names:
-                problems.append(f"trade.{side}.name: {ref.name!r} is not one of the event's levels {list(levels)} "
+                problems.append(f"trade.{side}.name: {ref.name!r} is not one of the event's levels {list(event.levels)} "
                                 f"or a price feature")
             if ref.value is not None:
                 problems.append(f"trade.{side}.value: a level stop or target takes a name, not a value")

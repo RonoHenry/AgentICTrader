@@ -347,3 +347,24 @@ def test_random_time_draws_without_atr_are_skipped_not_raced(repo, data_dirs):
     assert result.skipped["draw_null_level"] == 2
     assert result.extra["draw_races"]["outcome"].isna().all()                  # none was raced
     assert result.table["n:random_time:win_rate"].sum() == 0
+
+
+def test_crt_race_ends_at_c3s_close_and_draws_keep_its_duration():
+    # Update 2026-10c: time_limit = "event", and `where` over the event's direction (Req 9.5, 15.3).
+    from algo_research.hypothesis import parse_hypothesis
+    from algo_research.runner import RunSettings, run_test
+    from tests.research_fixtures import crt_path, ny, research_data
+    from tests.test_research_hypothesis import CRT
+
+    frame = crt_path(start=ny(2025, 12, 7, 17), end=ny(2026, 1, 9, 17)).frame()   # four weeks: atr_d1 is known
+    data = research_data({"EURUSD": frame}, {"explore": (date(2026, 1, 5), date(2026, 1, 10))})
+    [test] = parse_hypothesis(CRT.replace('where = ""', '''where = "direction == 'LONG'"''')).tests()
+    result = run_test(test, data, "explore", {}, seed=1, settings=RunSettings(resamples=200, random_time_draws=3))
+    assert [t.to_pydatetime() for t in result.events["t"]] == [ny(2026, 1, 5, 4, 0), ny(2026, 1, 5, 7, 0)]
+    assert result.skipped["where_false"] == 2                                      # the two SHORT events
+    races = result.races
+    assert list(races["outcome"]) == ["TIMEOUT", "TIMEOUT"]                         # the 04:00 race's stop came at 06:10
+    assert list(races["exit_time"]) == [pd.Timestamp(ny(2026, 1, 5, h, 0)) for h in (5, 8)]   # C3's close
+    draws = result.extra["draw_races"]
+    assert len(draws) == 6 and (draws["outcome"] == "TIMEOUT").all()               # Tuesday to Friday, same slots
+    assert ((draws["exit_time"] - draws["t"]) == pd.Timedelta(minutes=60)).all()

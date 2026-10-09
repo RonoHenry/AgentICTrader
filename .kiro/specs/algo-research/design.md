@@ -726,6 +726,24 @@ where = "(direction == 'LONG' and w1_trend == 'UP') or (direction == 'SHORT' and
 
 `day_high_q` and `day_low_q` hold the quarter of the M1 bar that made the candle's high and low. The quarter comes from its New York open time: `0` for 17:00–00:00, `1` for 00:00–06:00, `2` for 06:00–12:00 and `3` for 12:00–17:00 (AR-D14). They are candle labels, so only the `daily` event reads them (Req 6.2). The shuffled-path baseline recomputes them from each slot's quarter, as it does `h4_index`.
 
+### Measured on the real tables (task 263c, 2026-10-09)
+
+`crt` events over the four instruments:
+
+| `tf` | Exploration slice | Confirmation slice | Per instrument-day | LONG share |
+|---|---|---|---|---|
+| H1 | 4,020 | 8,105 | 7.7 (of 24 candles) | 50% |
+| H4 | 884 | 1,855 | 1.7 (of 6) | 50% |
+| D1 | 122 | 254 | 0.24 | 50% |
+
+The real build without the cache (`build --no-cache`) took 200 s:
+- market features 8.7 s, with the 18 new columns;
+- labels 1.6 s;
+- anticipation 69 s;
+- loading and checking the snapshot, the rest.
+
+With the cache warm, a hypothesis loads its tables in about 3 s.
+
 ### Exploration plan (task 266)
 
 On the exploration slice only, before anything is pre-registered:

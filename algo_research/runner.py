@@ -3,8 +3,8 @@
 ``run_test()`` is the core that ``explore`` and ``run`` share (cli.py). On
 one slice of the research tables it:
 
-1. runs the event, then the ``where`` filter (rows reading a null feature
-   are skipped and counted);
+1. runs the event, then the ``where`` filter over its features and its own
+   columns (rows reading a null value are skipped and counted);
 2. measures each event (Requirement 8, design "Measures"):
    - ``race``: a race per event (races.py): ``win_rate`` (the mean score),
      ``mean_net_r``, ``mean_gross_r``;
@@ -39,9 +39,9 @@ from algo_research.baselines import (
     stratified,
 )
 from algo_research.dataset import ResearchData
-from algo_research.events import FEATURE_NAMES, run_event
+from algo_research.events import EVENTS, run_event
 from algo_research.filters import compile_filter
-from algo_research.hypothesis import LEVEL_ALIASES, STATS, Hypothesis, Test
+from algo_research.hypothesis import LEVEL_ALIASES, STATS, Hypothesis, Test, where_columns
 from algo_research.labels import LABEL_COLUMNS
 from algo_research.races import RaceCosts, run_races
 from algo_research.stats import Bootstrap, Outcome, Rule, breakdowns, decide, evaluate_rule, point, series_table
@@ -91,7 +91,8 @@ def run_test(test: Test, data: ResearchData, slice_name: str, costs: Mapping[str
     event = run_event(features, h.event.name, h.event.params)
     events, skipped = event.rows, dict(event.skipped)
     if h.event.where:
-        mask, null = compile_filter(h.event.where, FEATURE_NAMES).evaluate(features.loc[events["row"]])
+        mask, null = compile_filter(h.event.where, where_columns(EVENTS[h.event.name])).evaluate(
+            _where_rows(features, events, EVENTS[h.event.name]))
         skipped["where_null"] = int(null.sum())
         skipped["where_false"] = int((~mask & ~null).sum())
         events = events[mask].reset_index(drop=True)
@@ -121,6 +122,14 @@ def run_test(test: Test, data: ResearchData, slice_name: str, costs: Mapping[str
         n_events=n_events, n_dates=n_dates, races=extra.get("races"), draws_available=extra.get("available"),
         extra=extra,
     )
+
+
+def _where_rows(features: pd.DataFrame, events: pd.DataFrame, event) -> pd.DataFrame:
+    """Each event's feature row with the event's own columns laid over it (Req 9.5)."""
+    rows = features.loc[events["row"]].reset_index(drop=True)
+    for column in event.columns:
+        rows[column] = events[column].to_numpy()
+    return rows
 
 
 def _baseline_names(h: Hypothesis) -> list[str]:
@@ -159,8 +168,10 @@ def _race(h, events, features, labels, data, costs, seed, settings, skipped):
     target = level(trade.target, stop=stop)
     valid = np.isfinite(stop) & np.isfinite(target) & np.isfinite(sign)
     skipped["null_level"] = int((~valid).sum())
+    limits = (pd.DatetimeIndex(events["limit"]) if trade.time_limit == "event"
+              else race_limits(rows, trade.time_limit))
     orders = pd.DataFrame({"t": pd.DatetimeIndex(events["t"]), "direction": direction, "stop": stop,
-                           "target": target, "limit": race_limits(rows, trade.time_limit)}, index=events.index)
+                           "target": target, "limit": limits}, index=events.index)
     races = _run(orders[valid], events["instrument"][valid], data, costs)
     races = races.reindex(events.index)
     races.loc[~valid, "outcome"] = "SKIPPED"
@@ -176,7 +187,7 @@ def _race(h, events, features, labels, data, costs, seed, settings, skipped):
     if "random_time" in h.baselines.use:
         live = events[valid]
         draws = random_time_draws(features, live, settings.random_time_draws, np.random.default_rng([seed, 1]))
-        drawn = rescale_orders(features, live, orders.loc[valid, ["stop", "target"]].reset_index(drop=True),
+        drawn = rescale_orders(features, live, orders.loc[valid, ["stop", "target", "limit"]].reset_index(drop=True),
                                draws.rows, trade.time_limit)
         priced = (np.isfinite(drawn["stop"]) & np.isfinite(drawn["target"])).to_numpy()   # rows without atr_d1
         skipped["draw_null_level"] = int((~priced).sum())

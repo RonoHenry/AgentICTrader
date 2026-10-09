@@ -262,7 +262,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
 
 These come after 257 and don't wait for 258–262: they explore only, and pre-register nothing without the user.
 
-- [ ] 263. Candle ranges, the `crt` event and filters over event columns
+- [x] 263. Candle ranges, the `crt` event and filters over event columns
   - **263a. RED** (`test_research_features.py`, `test_research_events.py`, `test_research_hypothesis.py`, `test_research_runner.py`)
     - `crt_<tf>_*` on hand-made paths:
       - a low sweep closed back inside is +1, a high sweep −1;

@@ -31,7 +31,7 @@ from liquidity_engine.utils.candle_utils import calculate_atr
 from liquidity_engine.utils.time_utils import get_killzone, ny_time_in_day, trading_day_open
 from services.market_data.as_of_view import aggregate
 from services.market_data.strategy_calendar import StrategyCalendar
-from tests.research_fixtures import MIN, Path, grid_for, ny
+from tests.research_fixtures import MIN, Path, crt_path, grid_for, ny
 from tests.test_backtest_signals import data_for
 
 UTC = timezone.utc
@@ -170,6 +170,51 @@ def test_null_without_history():
     # ATR(14) needs 15 closed bars: 14 true ranges.
     assert null(at(f, ny(2026, 1, 4, 20, 30))["atr_m15"])        # 14 closed M15 bars
     assert not null(at(f, ny(2026, 1, 4, 20, 45))["atr_m15"])    # 15
+
+
+# ── candle ranges: C1 and C2 (Requirement 15, update 2026-10c) ──────────────
+
+def test_crt_side_and_ranges():
+    f = features_of(crt_path(), date(2026, 1, 5), date(2026, 1, 6))
+    row = at(f, ny(2026, 1, 5, 9, 0))                                # the 05:00 H4 candle (C2) just closed
+    assert row["crt_h4_at"] == pd.Timestamp(ny(2026, 1, 5, 9, 0))
+    assert (row["crt_h4_c1_high"], row["crt_h4_c1_low"]) == (1.1050, 1.0950)
+    assert (row["crt_h4_c2_high"], row["crt_h4_c2_low"]) == (1.1020, 1.0940)
+    assert row["crt_h4_side"] == 1                                    # C1's low swept, closed back above it
+    later = at(f, ny(2026, 1, 5, 12, 45))                            # the same C2 until the next H4 closes
+    assert (later["crt_h4_at"], later["crt_h4_side"]) == (pd.Timestamp(ny(2026, 1, 5, 9, 0)), 1)
+    assert at(f, ny(2026, 1, 5, 5, 0))["crt_h4_side"] == 0           # the 01:00 candle swept both sides
+    sides = [at(f, ny(2026, 1, 5, h, 0))["crt_h1_side"] for h in range(3, 9)]
+    assert sides == [-1, 1, 0, -1, 1, 0]
+    assert at(f, ny(2026, 1, 5, 7, 0))["crt_h1_c1_high"] == 1.1020
+
+
+def test_crt_side_needs_the_close_back_inside():
+    path = Path(ny(2026, 1, 4, 17), ny(2026, 1, 6, 17), base=1.1000)
+    path.bar(ny(2026, 1, 5, 2, 0), h=1.1050).bar(ny(2026, 1, 5, 3, 0), lo=1.0950)
+    path.level(ny(2026, 1, 5, 8, 0), ny(2026, 1, 5, 9, 0), 1.0930)     # C2 ends below C1's low
+    f = features_of(path, date(2026, 1, 5), date(2026, 1, 6))
+    row = at(f, ny(2026, 1, 5, 9, 0))
+    assert row["crt_h4_c2_low"] == pytest.approx(1.0929) and row["crt_h4_side"] == 0
+
+
+def test_crt_c1_is_the_previous_bar_with_data():
+    path = Path(ny(2026, 1, 2, 9), ny(2026, 1, 5, 17))                # Friday 09:00 to Monday
+    path.bar(ny(2026, 1, 2, 14, 0), h=1.1070)                         # Friday's last H4 candle
+    f = features_of(path, date(2026, 1, 5), date(2026, 1, 6))
+    first = at(f, ny(2026, 1, 4, 17, 15))                             # Sunday's open: C2 is Friday's last H4
+    assert first["crt_h4_at"] == pd.Timestamp(ny(2026, 1, 2, 17, 0))
+    assert first["crt_h4_c2_high"] == 1.1070
+    row = at(f, ny(2026, 1, 4, 21, 0))                                # Monday's first H4 has closed
+    assert row["crt_h4_c1_high"] == 1.1070
+
+
+def test_crt_null_without_c1():
+    f = features_of(crt_path(), date(2026, 1, 5), date(2026, 1, 7))
+    for name in ("crt_h4_at", "crt_h4_side", "crt_h4_c1_high", "crt_h4_c2_low"):
+        assert null(at(f, ny(2026, 1, 4, 17, 15))[name]), name       # no H4 candle closed yet
+    assert null(at(f, ny(2026, 1, 4, 21, 0))["crt_h4_side"])          # C2 but no C1
+    assert null(at(f, ny(2026, 1, 5, 17, 15))["crt_d1_side"])         # Monday's D1 has no C1 in the data
 
 
 def test_columns_are_documented():

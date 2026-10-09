@@ -95,6 +95,18 @@ def grid_for(frame: InstrumentFrame, first: date, end: date):
     return build_grid(frame, {"explore": (first, end)})
 
 
+def crt_path(start: datetime = ny(2026, 1, 4, 17), end: datetime = ny(2026, 1, 6, 17)) -> Path:
+    """Monday 2026-01-05 at 1.1000 (bars 1.0999-1.1001), with C2 sweeps of C1 (update 2026-10c):
+    - H4: the 01:00 candle (C1) spans 1.0950-1.1050; the 05:00 one (C2) dips to 1.0940 and
+      closes back at 1.1000, LONG at 09:00. At 05:00 the 01:00 candle swept both sides of 21:00's.
+    - H1: 02:00 takes 1.1050 (SHORT at 03:00), 03:00 dips to 1.0950 (LONG at 04:00), 05:00 takes
+      1.1020 (SHORT at 06:00), 06:00 dips to 1.0940 (LONG at 07:00)."""
+    path = Path(start, end, base=1.1000)
+    path.bar(ny(2026, 1, 5, 2, 0), h=1.1050).bar(ny(2026, 1, 5, 3, 0), lo=1.0950)
+    path.bar(ny(2026, 1, 5, 5, 30), h=1.1020).bar(ny(2026, 1, 5, 6, 10), lo=1.0940)
+    return path
+
+
 # ── simulated markets (self-check, task 255) ─────────────────────────────────
 
 #: Volatility by New York hour, relative: quiet at the rollover and in Asia,

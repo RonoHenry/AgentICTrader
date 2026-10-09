@@ -12,14 +12,21 @@ fires at most once per instrument, trading date and direction (Req 9.4).
 | ``asia_raid_reclaim`` | the first M15 close back inside the Asian range, within ``reclaim_within`` closes of a raid of one side in ``window``, the other side untaken | LONG after a low raid, SHORT after a high raid | ``raid_extreme``, ``asia_opposite`` |
 | ``level_open`` | at ``at``, when ``level`` is untaken | toward the level | ``level``, ``level_name`` |
 | ``daily`` | the candle's last M15 close | none | - |
+| ``crt`` | the M15 close equal to C2's close on ``tf`` (H1, H4, D1), when C2 swept one side of C1 and closed back inside | LONG after C1's low was swept, SHORT after its high | ``c2_extreme``, ``c1_opposite``; its own ``limit``: C3's close |
 
 Rows an event can't use (no direction, no trend, a level already taken) are
 skipped and counted in ``EventResult.skipped``.
 
+Beyond its levels, an event may carry attributes (``Event.attributes``). A
+hypothesis's ``where`` may read the event's direction, levels and attributes
+as well as the features (Req 9.5): all are computed from the event's row.
+An event with ``Event.limit`` gives each row its own race time limit
+(``trade.time_limit = "event"``).
+
     result = run_event(features, "asia_raid_reclaim", {"window": ["01:00", "09:00"], "reclaim_within": 4})
     result.rows, result.skipped
 
-Validates: Requirements 9.1, 9.2, 9.4 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 9.1, 9.2, 9.4, 9.5, 15.2 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -33,6 +40,8 @@ from pydantic import BaseModel, ConfigDict, Field, PositiveInt, ValidationError,
 
 from algo_research.features.anticipation import ANTICIPATION_COLUMNS
 from algo_research.features.market import COLUMNS
+from algo_research.frame import close_times
+from liquidity_engine.models import Timeframe
 
 __all__ = ["EVENTS", "EVENT_COLUMNS", "Event", "EventError", "EventResult", "direction_of", "run_event"]
 
@@ -115,6 +124,10 @@ class DailyParams(_Params):
     pass
 
 
+class CrtParams(_Params):
+    tf: Literal["H1", "H4", "D1"]
+
+
 @dataclass(frozen=True)
 class Event:
     name: str
@@ -122,9 +135,21 @@ class Event:
     run: Callable[[pd.DataFrame, Any], EventResult]
     levels: tuple[str, ...] = ()
     directional: Callable[[Mapping[str, Any]], bool] = lambda params: True
+    attributes: tuple[str, ...] = ()                     # further columns `where` may read (Req 9.5)
+    limit: bool = False                                  # its rows carry a race time limit, ``limit``
 
     def parse(self, params: Mapping[str, Any]) -> _Params:
         return self.params(**params)
+
+    @property
+    def columns(self) -> tuple[str, ...]:
+        """The event's own columns that `where` may read, besides the features."""
+        return ("direction", *self.levels, *self.attributes)
+
+    @property
+    def output(self) -> tuple[str, ...]:
+        """Every column of its rows."""
+        return (*EVENT_COLUMNS, *self.levels, *self.attributes, *(("limit",) if self.limit else ()))
 
 
 def direction_of(values: pd.Series) -> np.ndarray:
@@ -217,6 +242,20 @@ def _daily(features: pd.DataFrame, p: DailyParams) -> EventResult:
     return EventResult(_rows(features, (features["t"] == last).to_numpy(), None))
 
 
+def _crt(features: pd.DataFrame, p: CrtParams) -> EventResult:
+    name, tf = p.tf.lower(), Timeframe(p.tf)
+    t = pd.DatetimeIndex(features["t"])
+    side = features[f"crt_{name}_side"].to_numpy(dtype=float)
+    fires = (pd.DatetimeIndex(features[f"crt_{name}_at"]) == t) & np.isin(side, (1.0, -1.0))
+    long = side == 1.0
+    column = lambda which: features[f"crt_{name}_{which}"].to_numpy(dtype=float)         # noqa: E731
+    rows = _rows(features, fires, np.where(long, "LONG", "SHORT").astype(object),
+                 c2_extreme=np.where(long, column("c2_low"), column("c2_high")),
+                 c1_opposite=np.where(long, column("c1_high"), column("c1_low")))
+    rows["limit"] = close_times(pd.DatetimeIndex(rows["t"]), tf)       # C3 opens at C2's close
+    return EventResult(rows)
+
+
 EVENTS: dict[str, Event] = {
     "anchor": Event("anchor", AnchorParams, _anchor,
                     directional=lambda params: params.get("direction_from") is not None),
@@ -224,6 +263,7 @@ EVENTS: dict[str, Event] = {
                                levels=("raid_extreme", "asia_opposite")),
     "level_open": Event("level_open", LevelOpenParams, _level_open, levels=("level",)),
     "daily": Event("daily", DailyParams, _daily, directional=lambda params: False),
+    "crt": Event("crt", CrtParams, _crt, levels=("c2_extreme", "c1_opposite"), limit=True),
 }
 
 
@@ -237,5 +277,5 @@ def run_event(features: pd.DataFrame, name: str, params: Mapping[str, Any]) -> E
         fields = ", ".join(".".join(str(p) for p in e["loc"]) or name for e in exc.errors())
         raise EventError(f"event {name}: invalid parameter(s) {fields}: {exc.errors()[0]['msg']}") from None
     if features.empty:
-        return EventResult(pd.DataFrame(columns=[*EVENT_COLUMNS, *event.levels]))
+        return EventResult(pd.DataFrame(columns=list(event.output)))
     return event.run(features, parsed)

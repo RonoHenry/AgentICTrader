@@ -16,6 +16,7 @@ import pytest
 from algo_research.baselines import (
     coin_flip,
     naive_direction,
+    race_limits,
     random_time_draws,
     rescale_orders,
     shuffled_path,
@@ -103,6 +104,23 @@ def test_rescale_orders_keeps_the_atr_distances():
     assert orders["limit"].iloc[0] == pd.Timestamp(first.date(), tz="America/New_York") + pd.Timedelta(hours=17)
     orders = rescale_orders(features, events, trades, draws, time_limit={"minutes": 90})
     assert list(orders["limit"]) == [t + pd.Timedelta(minutes=90) for t in features.loc[[5, 6], "t"]]
+
+
+def test_rescale_orders_keeps_the_events_own_duration():
+    # time_limit = "event" (update 2026-10c): each draw keeps its event's limit - t from its own t.
+    features = grid()
+    events = events_at(features, [0, 1])
+    t0, t1 = features.loc[0, "t"], features.loc[1, "t"]
+    trades = pd.DataFrame({"stop": [0.99, 0.99], "target": [1.02, 1.02],
+                           "limit": [t0 + pd.Timedelta(minutes=60), t1 + pd.Timedelta(minutes=240)]},
+                          index=events.index)
+    draws = pd.DataFrame({"event": [0, 1, 1], "row": [5, 6, 7], "direction": ["LONG"] * 3})
+    orders = rescale_orders(features, events, trades, draws, time_limit="event")
+    drawn = features.loc[[5, 6, 7], "t"].tolist()
+    assert list(orders["limit"]) == [drawn[0] + pd.Timedelta(minutes=60), drawn[1] + pd.Timedelta(minutes=240),
+                                     drawn[2] + pd.Timedelta(minutes=240)]
+    with pytest.raises(ValueError, match="event"):
+        race_limits(features.loc[[0]], "event")                       # the event's rows carry it, not the calendar
 
 
 # ── naive rules ─────────────────────────────────────────────────────────────

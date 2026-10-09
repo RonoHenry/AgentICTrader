@@ -20,7 +20,12 @@ How it's computed, per instrument, without a loop over rows:
   week) beyond the level, known once that index is below k;
 - previous candles by ``searchsorted`` on the calendar bars' close times.
 
-Validates: Requirements 2.4, 3.1-3.4 (.kiro/specs/algo-research/requirements.md)
+Update 2026-10c adds the candle ranges of the user's Fractal + POI indicator:
+for H1, H4 and D1, C2 (the last candle closed by t) and C1 (the bar before it,
+so Monday's first H4 follows Friday's last), and whether C2 swept one side of
+C1 and closed back inside (``crt_<tf>_side``).
+
+Validates: Requirements 2.4, 3.1-3.4, 15.1 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -32,7 +37,7 @@ import pandas as pd
 from algo_research.frame import InstrumentFrame, calendar_columns, ny_instant, period_bounds
 from liquidity_engine.models import Timeframe
 
-__all__ = ["COLUMNS", "Column", "market_features"]
+__all__ = ["COLUMNS", "CRT_TIMEFRAMES", "Column", "market_features"]
 
 
 @dataclass(frozen=True)
@@ -92,6 +97,21 @@ COLUMNS: dict[str, Column] = {
     "typical_spread": Column("the spec's default_spread", "price", "always"),
     "spread_to_atr": Column("typical_spread / atr_d1", "ratio", "17:00 New York"),
 }
+
+#: Candle-range timeframes (update 2026-10c, Requirement 15): C2 is the last candle closed by t, C1 the one before.
+CRT_TIMEFRAMES = {"h1": Timeframe.H1, "h4": Timeframe.H4, "d1": Timeframe.D1}
+for _name, _tf in CRT_TIMEFRAMES.items():
+    _c2 = f"the last {_tf.value} candle closed by t (C2)"
+    COLUMNS[f"crt_{_name}_at"] = Column(f"close time of {_c2}", "UTC time", "its close")
+    COLUMNS[f"crt_{_name}_c1_high"] = Column(f"high of the {_tf.value} candle before C2 (C1); null without one",
+                                             "price", "C2's close")
+    COLUMNS[f"crt_{_name}_c1_low"] = Column(f"low of the {_tf.value} candle before C2 (C1); null without one",
+                                            "price", "C2's close")
+    COLUMNS[f"crt_{_name}_c2_high"] = Column(f"high of {_c2}", "price", "its close")
+    COLUMNS[f"crt_{_name}_c2_low"] = Column(f"low of {_c2}", "price", "its close")
+    COLUMNS[f"crt_{_name}_side"] = Column(
+        "+1 when C2's low < C1's low, its high <= C1's high and its close > C1's low (C1's low swept, closed "
+        "back inside); -1 mirrored; else 0. Null without C1", "-1, 0, 1", "C2's close")
 
 _MINUTE = 60 * 1_000_000_000
 _NAT = np.iinfo(np.int64).min
@@ -196,7 +216,29 @@ def market_features(frame: InstrumentFrame, grid: pd.DataFrame) -> pd.DataFrame:
     out["atr_m15"] = _atr(frame.bars[Timeframe.M15], _last_closed(frame.bars[Timeframe.M15], gt) + 1)
     out["typical_spread"] = frame.typical_spread
     out["spread_to_atr"] = frame.typical_spread / out["atr_d1"].to_numpy()
+
+    # ── candle ranges: C1 and C2 (update 2026-10c) ───────────────────────
+    for name, tf in CRT_TIMEFRAMES.items():
+        _candle_range(out, name, frame.bars[tf], gt)
     return out[list(COLUMNS)]
+
+
+def _candle_range(out: pd.DataFrame, name: str, bars: pd.DataFrame, gt: np.ndarray) -> None:
+    """The crt_<name>_* columns: C2, the last bar closed by each t, and C1, the bar before it."""
+    j = _last_closed(bars, gt)
+    has_c2, has_c1 = j >= 0, j >= 1
+    high, low, close = (bars[c].to_numpy(dtype=float) for c in ("high", "low", "close"))
+    closes = _ns(bars["close_time"]) if len(bars) else np.array([], dtype=np.int64)
+    c1_high, c1_low = _take(high, j - 1, has_c1), _take(low, j - 1, has_c1)
+    c2_high, c2_low, c2_close = _take(high, j, has_c2), _take(low, j, has_c2), _take(close, j, has_c2)
+    with np.errstate(invalid="ignore"):
+        low_swept, high_swept = c2_low < c1_low, c2_high > c1_high
+        side = np.where(low_swept & ~high_swept & (c2_close > c1_low), 1.0,
+                        np.where(high_swept & ~low_swept & (c2_close < c1_high), -1.0, 0.0))
+    out[f"crt_{name}_at"] = _times(_take_int(closes, j, has_c2))
+    out[f"crt_{name}_c1_high"], out[f"crt_{name}_c1_low"] = c1_high, c1_low
+    out[f"crt_{name}_c2_high"], out[f"crt_{name}_c2_low"] = c2_high, c2_low
+    out[f"crt_{name}_side"] = np.where(has_c1, side, np.nan)
 
 
 # ── helpers ────────────────────────────────────────────────────────────────

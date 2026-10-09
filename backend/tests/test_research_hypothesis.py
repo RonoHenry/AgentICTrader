@@ -183,6 +183,52 @@ def test_where_reads_features_only():
         parse_hypothesis(replace(H002, 'where = ""', 'where = "no_such_column > 0"'))
 
 
+CRT = '''
+id = "H907"
+title = "Fixture: a C2 sweep of C1 reaches C1's other side before C3 closes"
+statement = "After an H1 candle sweeps the one before it and closes back inside, price reaches the other side first."
+family = "fixture"
+created = 2026-10-10
+
+[event]
+name = "crt"
+params = { tf = "H1" }
+where = ""
+
+[measure]
+kind = "race"
+
+[trade]
+stop = { kind = "level", name = "c2_extreme" }
+target = { kind = "level", name = "c1_opposite" }
+time_limit = "event"
+
+[baselines]
+use = ["coin_flip", "random_time"]
+
+[pass]
+min_events = 1
+min_days = 1
+require = [{ stat = "win_rate", versus = "coin_flip" }]
+'''
+
+WITH_TREND = "(direction == 'LONG' and w1_trend == 'UP') or (direction == 'SHORT' and w1_trend == 'DOWN')"
+
+
+def test_where_reads_the_events_direction_and_levels():
+    # Requirement 9.5 (update 2026-10c): a direction-relative filter, written once for both sides.
+    assert parse_hypothesis(replace(CRT, 'where = ""', f'where = "{WITH_TREND}"')).event.where == WITH_TREND
+    assert parse_hypothesis(replace(CRT, 'where = ""', 'where = "c1_opposite > c2_extreme"'))
+    with pytest.raises(HypothesisError, match="raid_extreme"):         # another event's level
+        parse_hypothesis(replace(CRT, 'where = ""', 'where = "raid_extreme > 0"'))
+
+
+def test_the_event_time_limit_needs_an_event_that_has_one():
+    assert parse_hypothesis(CRT).trade.time_limit == "event"
+    with pytest.raises(HypothesisError, match="time_limit.*asia_raid_reclaim"):
+        parse_hypothesis(replace(H002, 'time_limit = "day_close"', 'time_limit = "event"'))
+
+
 def test_level_hit_alias_resolves_per_row():
     h = parse_hypothesis('''
 id = "H003"

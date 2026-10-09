@@ -8,7 +8,7 @@ count, which the day bootstrap (stats.py) pairs with the event's own value.
 | Baseline | Measures | Per event |
 |---|---|---|
 | ``coin_flip`` | race | ``p_coin``: a driftless path's chance of the target first, from the closing-side price at entry. Analytic. |
-| ``random_time`` | race, direction, move | K draws: same instrument and New York 15-minute slot, other trading dates of the same slice with no event for that instrument. Draws keep the event's direction, and its stop and target distances in ``atr_d1`` units, rescaled by the drawn row's ``atr_d1``. |
+| ``random_time`` | race, direction, move | K draws: same instrument and New York 15-minute slot, other trading dates of the same slice with no event for that instrument. Draws keep the event's direction, and its stop and target distances in ``atr_d1`` units, rescaled by the drawn row's ``atr_d1``; with the event's own time limit, its duration. |
 | ``naive:<rule>`` | direction | ``always_long``, ``prev_day_dir``, ``w1_trend``, ``side_d1_open`` or ``side_midnight_open`` on the event's row. An abstaining rule scores 0.5. |
 | ``stratified`` | rate | The rate among the slice's rows in the same decile of distance to the level (in ``atr_d1``, deciles over those rows) and the same New York hour, for the event's cell. |
 | ``shuffled_path`` | rate (timing) | Each date's M15 bars in shuffled order, the open and close kept, the statistic recomputed; averaged over the shuffles. |
@@ -83,7 +83,8 @@ def rescale_orders(features: pd.DataFrame, events: pd.DataFrame, trades: pd.Data
                    time_limit: Union[str, Mapping[str, int]]) -> pd.DataFrame:
     """Race orders for the draws: each event's stop and target distances from its
     row's close, in its row's atr_d1, laid off the drawn row's close in the drawn
-    row's atr_d1."""
+    row's atr_d1. With ``time_limit = "event"``, ``trades`` has each event's
+    ``limit`` and a draw keeps its duration from its own t."""
     event_rows = features.loc[events["row"].to_numpy()]
     close_e = event_rows["close"].to_numpy(dtype=float)
     atr_e = event_rows["atr_d1"].to_numpy(dtype=float)
@@ -93,15 +94,22 @@ def rescale_orders(features: pd.DataFrame, events: pd.DataFrame, trades: pd.Data
     which = draws["event"].to_numpy()
     close_d, atr_d = drawn["close"].to_numpy(dtype=float), drawn["atr_d1"].to_numpy(dtype=float)
     t = pd.DatetimeIndex(drawn["t"])
+    if time_limit == "event":                      # the event's own limit: keep its duration
+        duration = (pd.DatetimeIndex(trades["limit"]) - pd.DatetimeIndex(event_rows["t"])).to_numpy()
+        limit = t + pd.to_timedelta(duration[which])
+    else:
+        limit = race_limits(drawn, time_limit)
     return pd.DataFrame({
         "t": t, "direction": draws["direction"].to_numpy(),
         "stop": close_d + stop_atr[which] * atr_d, "target": close_d + target_atr[which] * atr_d,
-        "limit": race_limits(drawn, time_limit),
+        "limit": limit,
     }, index=draws.index)
 
 
 def race_limits(rows: pd.DataFrame, time_limit: Union[str, Mapping[str, int]]) -> pd.DatetimeIndex:
     """A race's time limit at each row: its D1 close (17:00 New York), or t + minutes."""
+    if time_limit == "event":
+        raise ValueError("time_limit 'event': each limit comes from the event's rows, not from the calendar")
     if time_limit == "day_close":
         return ny_instant(pd.DatetimeIndex(rows["trading_date"]) + pd.Timedelta(days=1), 17 * 60)
     minutes = time_limit["minutes"] if isinstance(time_limit, Mapping) else time_limit.minutes
