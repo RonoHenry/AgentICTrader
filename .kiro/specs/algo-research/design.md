@@ -612,6 +612,18 @@ Measured so far (this machine, synthetic 18-month M1 of one instrument, 786,420 
 |---|---|---|
 | Market features, 37,824 rows | 0.7 s | 247 |
 | Races, 50,000 with 16-hour limits | 0.6 s (about 89,000 races/s) | 250 |
+| Property 8: 200 simulated worlds x 2 hypotheses, null and planted, 12 processes | 68 s | 255 |
+
+**Self-check (Property 8, task 255).** 200 simulated worlds of 120 trading dates; a planted world replaces the rest of the candle after a day's first event, with probability q, by a straight path in the event's direction.
+
+| Hypothesis | Events per world | Null worlds passing | Planted worlds passing | Interval covers the planted value |
+|---|---|---|---|---|
+| Race: `asia_raid_reclaim`, win rate vs coin flip (q = 0.5) | ~32 | 4 / 200 (2.0%) | 198 / 200 | 200 / 200 |
+| Direction: `anchor` 09:00 by the last H4 candle, accuracy vs best naive rule (q = 0.8) | ~120 | 0 / 200 | 200 / 200 | 197 / 200 |
+
+- Unbiased: under the null, win rate minus coin flip averaged +0.006 (sd 0.07 per world). In planted worlds the measured win rate matched the planted expectation (0.430 vs 0.426).
+- Sample size is the limit. With q = 0.3 the race edge is about +0.20 in win rate over ~32 events, and only ~70% of worlds passed (60-world diagnostic). An Asian-raid question on the real data has roughly 4 instruments x 250 confirmation dates x ~0.27 events a day, about 270 events, so it can resolve an edge about a third that size.
+- Against the best of five naive rules the direction test is conservative: no null world passed.
 
 ---
 

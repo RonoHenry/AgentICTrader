@@ -190,7 +190,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
   - **254c. REFACTOR**
   - **Validates: Requirements 8.2–8.4, 12.1–12.4, 13.1**
 
-- [ ] 255. Self-validation
+- [x] 255. Self-validation
   - **255a. RED** (`backend/tests/test_research_selfcheck.py`)
     - **A seeded world generator:**
       - the FX calendar: Sunday 17:00 to Friday 17:00 New York;

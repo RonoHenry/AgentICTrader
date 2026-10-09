@@ -321,3 +321,29 @@ def test_ledger_md_counts_per_family_and_expected_passes(repo, data_dirs, capsys
     assert "Expected by chance if nothing is there: at most **0.075**" in text
     assert "[H901.md](reports/H901.md)" in text
     assert render_ledger_md([]).count("No official test") == 1
+
+
+def test_random_time_draws_without_atr_are_skipped_not_raced(repo, data_dirs):
+    # A drawn row with no atr_d1 can't take the event's distances: it is counted, never raced with a NaN stop.
+    from agent.broker_profiles import load_profile
+    from algo_research.config import load_research_config
+    from algo_research.dataset import build_dataset
+    from algo_research.features.cache import ParquetCache
+    from algo_research.hypothesis import parse_hypothesis
+    from algo_research.runner import RunSettings, run_test
+    from algo_research.snapshot import load_snapshot
+
+    cfg = load_research_config(root=repo)
+    snapshot = load_snapshot(data_dirs["snapshots_dir"] / cfg.snapshot)
+    data = build_dataset(snapshot, cfg, load_profile(cfg.profile).specs(), cfg.strategy(repo),
+                         ParquetCache(data_dirs["cache_dir"]), workers=1)
+    thursday = data.features["trading_date"].dt.date == date(2026, 10, 1)
+    data.features.loc[thursday, "atr_d1"] = float("nan")
+    [test] = parse_hypothesis(RACE.replace('params = { at = "09:00", direction_from = "prev_h4_dir" }',
+                                           'params = { at = "09:00", direction_from = "prev_h4_dir" }\n'
+                                           'where = "weekday == 2"')).tests()
+    result = run_test(test, data, "confirm", {}, seed=1, settings=RunSettings(resamples=200, random_time_draws=2))
+    assert len(result.events) == 2 and list(result.draws_available) == [1, 1]     # Thursday is the only other date
+    assert result.skipped["draw_null_level"] == 2
+    assert result.extra["draw_races"]["outcome"].isna().all()                  # none was raced
+    assert result.table["n:random_time:win_rate"].sum() == 0

@@ -1,0 +1,34 @@
+# The golden research run's hypothesis (task 255): a fixed question on fixed synthetic data.
+# Its report and ledger row must be byte-identical on every run (Requirement 14.3).
+id = "H990"
+title = "Golden: an Asian range raid, reclaimed, runs to the other side"
+statement = """
+After London trades through one side of the Asian range and an M15 bar closes back inside,
+price reaches the range's other side before the raid's extreme. Synthetic data: no edge.
+"""
+family = "golden"
+created = 2026-10-10
+
+[event]
+name = "asia_raid_reclaim"
+params = { window = ["00:00", "12:00"], reclaim_within = 4 }
+
+[measure]
+kind = "race"
+
+[trade]
+stop = { kind = "level", name = "raid_extreme" }
+target = { kind = "level", name = "asia_opposite" }
+time_limit = "day_close"
+
+[baselines]
+use = ["coin_flip", "random_time"]
+
+[pass]
+min_events = 10
+min_days = 5
+require = [
+  { stat = "win_rate", versus = "coin_flip" },
+  { stat = "win_rate", versus = "random_time" },
+  { stat = "mean_net_r" },
+]

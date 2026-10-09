@@ -178,11 +178,17 @@ def _race(h, events, features, labels, data, costs, seed, settings, skipped):
         draws = random_time_draws(features, live, settings.random_time_draws, np.random.default_rng([seed, 1]))
         drawn = rescale_orders(features, live, orders.loc[valid, ["stop", "target"]].reset_index(drop=True),
                                draws.rows, trade.time_limit)
-        drawn_races = _run(drawn, features.loc[draws.rows["row"], "instrument"].reset_index(drop=True), data, costs)
-        done = drawn_races["outcome"].isin(["TARGET", "STOP", "TIMEOUT"]).to_numpy()
+        priced = (np.isfinite(drawn["stop"]) & np.isfinite(drawn["target"])).to_numpy()   # rows without atr_d1
+        skipped["draw_null_level"] = int((~priced).sum())
+        instruments = features.loc[draws.rows["row"], "instrument"].reset_index(drop=True)
+        drawn_races = _run(drawn[priced], instruments[priced], data, costs)
+        done = drawn_races["outcome"].isin(["TARGET", "STOP", "TIMEOUT"]).reindex(drawn.index, fill_value=False)
+        drawn_races = drawn_races.reindex(drawn.index)
+        done = done.to_numpy(dtype=bool)
         event_of = live.index.to_numpy()[draws.rows["event"].to_numpy()]
         for stat, column in (("win_rate", "score"), ("mean_net_r", "net_r"), ("mean_gross_r", "gross_r")):
-            series[f"random_time:{stat}"] = _per_event(event_of, np.where(done, drawn_races[column], 0.0),
+            values = drawn_races[column].to_numpy(dtype=float)
+            series[f"random_time:{stat}"] = _per_event(event_of, np.where(done, values, 0.0),
                                                        done.astype(float), events.index)
         available = np.zeros(len(events), dtype=int)
         available[np.flatnonzero(valid)] = draws.available
@@ -197,7 +203,8 @@ def _run(orders: pd.DataFrame, instruments: pd.Series, data: ResearchData, costs
         mine = orders[(instruments == instrument).to_numpy()]
         parts.append(run_races(data.frames[instrument], mine, costs.get(instrument)))
     if not parts:
-        return pd.DataFrame(columns=["outcome", "score", "net_r", "gross_r", "p_coin"], index=orders.index)
+        empty = pd.DataFrame(np.nan, columns=["score", "net_r", "gross_r", "p_coin"], index=orders.index)
+        return empty.assign(outcome=pd.Series(None, index=orders.index, dtype=object))
     return pd.concat(parts).reindex(orders.index)
 
 
