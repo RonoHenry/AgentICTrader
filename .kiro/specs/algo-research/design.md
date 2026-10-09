@@ -597,6 +597,13 @@ To be filled at the checkpoint (task 256) and the first real build (task 257):
 - races per second;
 - one hypothesis run end to end.
 
+Measured so far (this machine, synthetic 18-month M1 of one instrument, 786,420 bars):
+
+| What | Time | Task |
+|---|---|---|
+| Market features, 37,824 rows | 0.7 s | 247 |
+| Races, 50,000 with 16-hour limits | 0.6 s (about 89,000 races/s) | 250 |
+
 ---
 
 ## Requirement Traceability

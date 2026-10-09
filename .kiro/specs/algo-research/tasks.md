@@ -103,7 +103,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
   - **249c. REFACTOR**
   - **Validates: Requirements 6.1–6.4**
 
-- [ ] 250. Race engine
+- [x] 250. Race engine
   - **250a. RED** (`backend/tests/test_research_races.py`)
     - Known cases:
       - LONG and SHORT to the target and to the stop;
