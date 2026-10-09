@@ -91,7 +91,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
   - **248c. REFACTOR**
   - **Validates: Requirements 4.1–4.4**
 
-- [ ] 249. Labels
+- [x] 249. Labels
   - **249a. RED** (`backend/tests/test_research_labels.py`)
     - `test_rem_move_to_last_m1_before_17_00` — including a Friday and both DST changes.
     - `test_forward_horizons`

@@ -6,7 +6,8 @@
   and the shuffled-path baseline;
 - ``features``: one row per instrument and M15 close of the slices, the
   market features (Req 3) and the daily anticipation (Req 4);
-- ``labels``: the same rows, what happened after t (Req 6).
+- ``labels``: the same rows, what happened after t (Req 6), in their own
+  table: events and filters never see it.
 
 Each table is cached per instrument (features/cache.py) under a key over the
 instrument's data fingerprint, the code that computes it and its settings.
@@ -33,9 +34,10 @@ from algo_backtester.cache import engine_code_fingerprint
 from algo_backtester.data import InstrumentData
 from algo_research.config import ResearchConfig
 from algo_research.features.anticipation import anticipation_key, daily_anticipation, join_anticipation
-from algo_research.features.cache import MARKET_SOURCES, ParquetCache, cache_key, code_fingerprint
+from algo_research.features.cache import LABEL_SOURCES, MARKET_SOURCES, ParquetCache, cache_key, code_fingerprint
 from algo_research.features.market import market_features
 from algo_research.frame import InstrumentFrame, build_grid, frame_from_data, slices_of
+from algo_research.labels import build_labels
 from algo_research.snapshot import Snapshot
 
 __all__ = ["ResearchData", "build_dataset", "build_frames"]
@@ -65,30 +67,35 @@ def build_dataset(snapshot: Snapshot, cfg: ResearchConfig, specs: InstrumentSpec
     frames = build_frames(snapshot, specs)
     summary["timings"]["frames"] = time.perf_counter() - started
 
-    slices = slices_of(cfg)
-    market_code = code_fingerprint(MARKET_SOURCES)
-    tables = []
+    slices = {name: [d.isoformat() for d in bounds] for name, bounds in slices_of(cfg).items()}
+    codes = {"market": code_fingerprint(MARKET_SOURCES), "labels": code_fingerprint(LABEL_SOURCES)}
+
+    def cached(kind: str, instrument: str, compute) -> pd.DataFrame:
+        key = cache_key(kind, instrument, snapshot.manifest["data"][instrument]["sha256"], codes[kind], slices,
+                        frames[instrument].typical_spread)
+        table = cache.load(kind, key) if cache else None
+        if table is not None:
+            summary["cache_hits"].append(f"{kind}:{instrument}")
+            return table
+        table = compute()
+        return cache.store(kind, key, table) if cache else table
+
     started = time.perf_counter()
-    for instrument, frame in frames.items():
-        key = cache_key("market", instrument, snapshot.manifest["data"][instrument]["sha256"], market_code,
-                        {name: [d.isoformat() for d in bounds] for name, bounds in slices.items()},
-                        frame.typical_spread)
-        table = cache.load("market", key) if cache else None
-        if table is None:
-            table = market_features(frame, build_grid(frame, slices))
-            if cache:
-                cache.store("market", key, table)
-        else:
-            summary["cache_hits"].append(f"market:{instrument}")
-        summary["rows"][instrument] = len(table)
-        tables.append(table)
+    markets = {i: cached("market", i, lambda f=f: market_features(f, build_grid(f, slices_of(cfg))))
+               for i, f in frames.items()}
+    summary["rows"] = {i: len(t) for i, t in markets.items()}
     summary["timings"]["market"] = time.perf_counter() - started
 
     started = time.perf_counter()
-    tables = _with_anticipation(snapshot, tables, strategy, cache, workers, summary)
+    labels = [cached("labels", i, lambda i=i: build_labels(frames[i], markets[i])) for i in frames]
+    summary["timings"]["labels"] = time.perf_counter() - started
+
+    started = time.perf_counter()
+    tables = _with_anticipation(snapshot, list(markets.values()), strategy, cache, workers, summary)
     summary["timings"]["anticipation"] = time.perf_counter() - started
     features = pd.concat(tables, ignore_index=True) if tables else pd.DataFrame()
-    return ResearchData(frames=frames, features=features, summary=summary)
+    label_table = pd.concat(labels, ignore_index=True) if labels else pd.DataFrame()
+    return ResearchData(frames=frames, features=features, labels=label_table, summary=summary)
 
 
 def _with_anticipation(snapshot: Snapshot, markets: list[pd.DataFrame], strategy: StrategyConfig,

@@ -31,7 +31,7 @@ import pandas as pd
 
 from algo_research.config import REPO_ROOT
 
-__all__ = ["CACHE_DIR", "MARKET_SOURCES", "ParquetCache", "cache_key", "code_fingerprint"]
+__all__ = ["CACHE_DIR", "LABEL_SOURCES", "MARKET_SOURCES", "ParquetCache", "cache_key", "code_fingerprint"]
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,9 @@ MARKET_SOURCES = (
     "services/market_data/strategy_calendar.py",
     "services/market_data/mt5_clock.py",
 )
+
+# Labels read the market features (close, levels, ATR) as reference points.
+LABEL_SOURCES = (*MARKET_SOURCES, "algo_research/labels.py")
 
 
 def code_fingerprint(patterns: Iterable[str], root: Path = REPO_ROOT) -> str:
