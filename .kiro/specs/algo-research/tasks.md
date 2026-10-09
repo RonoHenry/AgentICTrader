@@ -161,7 +161,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
   - **252c. REFACTOR**
   - **Validates: Requirements 11.1–11.5**
 
-- [ ] 253. Baselines
+- [x] 253. Baselines
   - **253a. RED** (`backend/tests/test_research_baselines.py`)
     - `coin_flip` on known geometry, LONG and SHORT.
     - `random_time`:
