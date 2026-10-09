@@ -25,7 +25,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
 
 ### A. Foundations
 
-- [ ] 244. Package, `ResearchConfig` and slices
+- [x] 244. Package, `ResearchConfig` and slices
   - **244a. RED** (`backend/tests/test_research_config.py`)
     - `test_loads_research_toml_defaults` — profile, study, instruments, slices, bootstrap and baseline settings.
     - `test_slices_must_be_contiguous_and_end_at_holdout` — a gap, an overlap, or a confirm end other than the study's `holdout_start` raises, naming the slice.

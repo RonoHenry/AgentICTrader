@@ -30,6 +30,7 @@ tzdata; sys_platform == "win32"                # zoneinfo has no system tz datab
 # ── DATA PROCESSING ──────────────────────────────────────
 numpy>=1.26.0
 pandas>=2.1.0
+pyarrow>=14.0.0      # Parquet: AlgoResearch snapshots and caches (already installed with MLflow)
 python-dateutil>=2.8.2
 pytz>=2024.1
 openpyxl>=3.1.0

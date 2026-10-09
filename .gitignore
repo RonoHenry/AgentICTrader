@@ -87,3 +87,5 @@ data/*.err
 .coverage
 coverage.xml
 .tox/
+# AlgoResearch snapshots, caches and explore drafts (AR-D8); hypotheses, reports and the ledger are committed
+data/research/
