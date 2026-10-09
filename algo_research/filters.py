@@ -171,8 +171,11 @@ def _compare(op: str, left: Any, right: Any) -> np.ndarray:
 
 def _bools(value: Any) -> np.ndarray:
     if isinstance(value, pd.Series):
-        if value.dtype == object or str(value.dtype) == "boolean":
-            return value.fillna(False).astype(bool).to_numpy()
+        if str(value.dtype) == "boolean":
+            return value.fillna(False).to_numpy(dtype=bool)
+        if value.dtype == object:
+            return value.map(lambda v: bool(v) if v is not None and v is not pd.NA and v == v else False).to_numpy(
+                dtype=bool)
         return value.to_numpy(dtype=bool)
     return np.asarray(value, dtype=bool)
 
@@ -184,7 +187,7 @@ def _as_mask(value: Any, rows: pd.DataFrame, text: str) -> np.ndarray:
         if value.dtype == bool or str(value.dtype) == "boolean":
             return value.fillna(False).astype(bool).to_numpy()
         if value.dtype == object and value.dropna().map(lambda v: isinstance(v, (bool, np.bool_))).all():
-            return value.fillna(False).astype(bool).to_numpy()
+            return value.astype("boolean").fillna(False).to_numpy(dtype=bool)    # None: null, counted apart
         raise FilterError(f"{text!r}: column {value.name} is not true/false; compare it with a value")
     if isinstance(value, bool):
         return np.full(len(rows), value)
