@@ -614,6 +614,22 @@ Measured so far (this machine, synthetic 18-month M1 of one instrument, 786,420 
 | Races, 50,000 with 16-hour limits | 0.6 s (about 89,000 races/s) | 250 |
 | Property 8: 200 simulated worlds x 2 hypotheses, null and planted, 12 processes | 68 s | 255 |
 
+**Checkpoint (task 256), a full-size synthetic snapshot:** one instrument, a random walk of M1 from 2024-05 (warm-up) to the hold-out start, 799,140 rows. It goes through the real code path (export, load with the fingerprint check, build, a run) on a quiet machine. A first attempt under load took about 4x longer.
+
+| Step | One instrument | Four instruments (estimate) | Limit (Req 14.4) |
+|---|---|---|---|
+| Snapshot export, from memory (the store adds its query time) | 10.4 s | ~45 s | – |
+| Load: `load_instrument` on the snapshot with the fingerprint check | 10.1 s | ~40 s | – |
+| Build: frames 0.7 s, market features 0.7 s, labels 0.2 s, anticipation 17.4 s (390 days, ~45 ms each) | 19.0 s | ~40 s load + ~25 s (one process per instrument) | 10 min |
+| Build again, from the cache | 0.8 s | ~4 s | – |
+| One race hypothesis, 85 events, 20 random-time draws each | 0.1 s | ~45 s with the load | 2 min |
+
+The full suite at the checkpoint: root 845 passed; backend 2,157 passed, 9 skipped (one of them Property 8, run separately with `-m slow`). The only failures are the 27 task-39 RED tests (`test_live_validation.py`), as before.
+
+**Checkpoint review: changed before real data.**
+- The grid had a row at Friday 17:00 New York every week. That close opens Saturday's candle, which has no bars, so those rows were empty: they would have added an empty `daily` event per week and padded the 17:00 random-time pools. Trading dates that fall on a Saturday now have no rows. This comes from the calendar, not the data; checking the data for an empty candle would read the future and broke Property 1.
+- Random-time draws on rows without `atr_d1` (the first weeks of history) are now skipped and counted (`draw_null_level`); before, they were raced with a NaN stop (task 255).
+
 **Self-check (Property 8, task 255).** 200 simulated worlds of 120 trading dates; a planted world replaces the rest of the candle after a day's first event, with probability q, by a straight path in the event's direction.
 
 | Hypothesis | Events per world | Null worlds passing | Planted worlds passing | Interval covers the planted value |

@@ -176,3 +176,16 @@ def test_property_3_calendar_parity(instants):
         assert row["trading_date"].date() == d1, t
         assert row["h4_index"] == h4, t
         assert row["weekday"] == ((d1 - w1).days - 1) % 7 == d1.weekday(), t
+
+
+def test_grid_drops_closes_that_open_an_empty_candle():
+    # Friday 17:00 New York closes the week's last M15 bar but opens Saturday's candle, which has no bars:
+    # a row there would describe nothing. A weekday 17:00 opens a candle that trades, and stays.
+    from tests.research_fixtures import Path as M1Path
+
+    frame = M1Path(ny(2026, 1, 4, 17), ny(2026, 1, 13, 17)).frame()
+    grid = build_grid(frame, {"explore": (date(2026, 1, 5), date(2026, 1, 14))})
+    times = [t.to_pydatetime() for t in grid["t"]]
+    assert ny(2026, 1, 9, 17, 0) not in times
+    assert all(d.weekday() < 5 for d in grid["trading_date"].dt.date)
+    assert ny(2026, 1, 7, 17, 0) in times and ny(2026, 1, 11, 17, 15) in times

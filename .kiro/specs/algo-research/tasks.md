@@ -204,7 +204,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
   - **255c. REFACTOR**
   - **Validates: Requirements 14.1–14.3**
 
-- [ ] 256. Checkpoint
+- [x] 256. Checkpoint
   - **Suite:** the full suite is green apart from the task-39 RED tests, with the `slow` research tests run once.
   - **Speed:** build and run times on the fixtures, recorded in design.md → Measured Performance.
   - **Review:** anything to change before real data is used.

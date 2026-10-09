@@ -28,7 +28,10 @@ The decision grid (``build_grid``) is the close of every M15 bar of the
 calendar that holds M1 bars, within the research slices: the moments Phase A
 evaluates the engine (AR-D2). A row belongs to the D1 candle containing its
 t, as in the engine: the row at 17:00 New York, the close of the old candle's
-last M15 bar, is the first instant of the new candle.
+last M15 bar, is the first instant of the new candle. Friday 17:00 opens
+Saturday's candle, which FX and gold never trade, so trading dates that fall
+on a Saturday have no rows (a calendar fact: the grid reads nothing after t).
+A 24/7 venue would need this rule revisited.
 
 ``frame_from_arrays()`` builds the same frames from plain arrays, with the
 calendar bars aggregated here; the self-check's simulated markets use it.
@@ -262,7 +265,10 @@ def build_grid(frame: InstrumentFrame, slices: Mapping[str, tuple[date, date]]) 
     for name, (first, end) in slices.items():
         names[(dates >= np.datetime64(first)) & (dates < np.datetime64(end))] = name
     grid["slice"] = names
-    return grid[grid["slice"].notna()].reset_index(drop=True)
+    # Friday 17:00 opens Saturday's candle, which FX and gold never trade: known from the calendar,
+    # not from the data, so the grid reads nothing after t (Property 1).
+    trading = grid["weekday"].to_numpy() != 5
+    return grid[grid["slice"].notna().to_numpy() & trading].reset_index(drop=True)
 
 
 def slices_of(cfg) -> dict[str, tuple[date, date]]:
