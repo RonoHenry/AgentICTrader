@@ -21,13 +21,18 @@ Validates: Requirements 3.5 (.kiro/specs/algo-research/requirements.md)
 from __future__ import annotations
 
 import time
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from typing import Optional
 
 import pandas as pd
 
 from agent.instruments import InstrumentSpecs
+from agent.strategy_config import StrategyConfig
+from algo_backtester.cache import engine_code_fingerprint
+from algo_backtester.data import InstrumentData
 from algo_research.config import ResearchConfig
+from algo_research.features.anticipation import anticipation_key, daily_anticipation, join_anticipation
 from algo_research.features.cache import MARKET_SOURCES, ParquetCache, cache_key, code_fingerprint
 from algo_research.features.market import market_features
 from algo_research.frame import InstrumentFrame, build_grid, frame_from_data, slices_of
@@ -49,11 +54,13 @@ def build_frames(snapshot: Snapshot, specs: InstrumentSpecs) -> dict[str, Instru
             for i, data in snapshot.data.items()}
 
 
-def build_dataset(snapshot: Snapshot, cfg: ResearchConfig, specs: InstrumentSpecs,
-                  cache: Optional[ParquetCache] = None) -> ResearchData:
-    """Frames and the feature table for every instrument of ``snapshot``."""
+def build_dataset(snapshot: Snapshot, cfg: ResearchConfig, specs: InstrumentSpecs, strategy: StrategyConfig,
+                  cache: Optional[ParquetCache] = None, workers: Optional[int] = None) -> ResearchData:
+    """Frames and the feature table for every instrument of ``snapshot``.
+    ``strategy`` is the StrategyConfig the engine runs with (Phase A's);
+    ``workers`` the processes for the anticipation (1: this process)."""
     _check_period(snapshot, cfg)
-    summary: dict = {"timings": {}, "cache_hits": [], "rows": {}}
+    summary: dict = {"timings": {}, "cache_hits": [], "rows": {}, "engine_errors": []}
     started = time.perf_counter()
     frames = build_frames(snapshot, specs)
     summary["timings"]["frames"] = time.perf_counter() - started
@@ -76,8 +83,45 @@ def build_dataset(snapshot: Snapshot, cfg: ResearchConfig, specs: InstrumentSpec
         summary["rows"][instrument] = len(table)
         tables.append(table)
     summary["timings"]["market"] = time.perf_counter() - started
+
+    started = time.perf_counter()
+    tables = _with_anticipation(snapshot, tables, strategy, cache, workers, summary)
+    summary["timings"]["anticipation"] = time.perf_counter() - started
     features = pd.concat(tables, ignore_index=True) if tables else pd.DataFrame()
     return ResearchData(frames=frames, features=features, summary=summary)
+
+
+def _with_anticipation(snapshot: Snapshot, markets: list[pd.DataFrame], strategy: StrategyConfig,
+                       cache: Optional[ParquetCache], workers: Optional[int], summary: dict) -> list[pd.DataFrame]:
+    """Each instrument's market table with the engine's daily anticipation (Req 4),
+    computed in one process per instrument unless cached."""
+    engine_fp = engine_code_fingerprint()
+    instruments = list(snapshot.data)
+    keys, dailies = {}, {}
+    for instrument, market in zip(instruments, markets):
+        dates = sorted(pd.Timestamp(d).date().isoformat() for d in market["trading_date"].unique())
+        keys[instrument] = anticipation_key(instrument, snapshot.manifest["data"][instrument]["sha256"], engine_fp,
+                                            strategy, dates)
+        daily = cache.load("anticipation", keys[instrument]) if cache else None
+        if daily is not None:
+            dailies[instrument] = daily
+            summary["cache_hits"].append(f"anticipation:{instrument}")
+    todo = [(i, m) for i, m in zip(instruments, markets) if i not in dailies]
+    if workers == 1 or len(todo) <= 1:
+        computed = {i: daily_anticipation(snapshot.data[i], m, strategy) for i, m in todo}
+    else:
+        with ProcessPoolExecutor(max_workers=min(workers or len(todo), len(todo))) as pool:
+            futures = {i: pool.submit(_anticipation_worker, snapshot.data[i], m, strategy) for i, m in todo}
+            computed = {i: future.result() for i, future in futures.items()}
+    for instrument, (daily, _) in computed.items():
+        dailies[instrument] = cache.store("anticipation", keys[instrument], daily) if cache else daily
+    for instrument in instruments:
+        summary["engine_errors"].extend(dailies[instrument]["error"].dropna())
+    return [join_anticipation(m, dailies[i]) for i, m in zip(instruments, markets)]
+
+
+def _anticipation_worker(data: InstrumentData, market: pd.DataFrame, strategy: StrategyConfig):
+    return daily_anticipation(data, market, strategy)
 
 
 def _check_period(snapshot: Snapshot, cfg: ResearchConfig) -> None:

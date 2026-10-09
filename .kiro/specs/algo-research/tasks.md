@@ -80,7 +80,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal or a decision from 
   - **247c. REFACTOR** — time the build on the fixtures.
   - **Validates: Requirements 2.4, 3.1–3.5**
 
-- [ ] 248. Daily anticipation from the engine
+- [x] 248. Daily anticipation from the engine
   - **248a. RED** (`backend/tests/test_research_anticipation.py`, golden-week fixture)
     - `test_one_engine_call_per_instrument_day_at_17_15` — a call-count spy.
     - `test_anticipation_equals_profile_at_any_t_in_the_candle` — liquidity-engine Property 35, checked on the fixture's days.

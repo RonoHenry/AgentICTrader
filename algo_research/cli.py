@@ -49,6 +49,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
     build = commands.add_parser("build", help="build the feature and label tables from the snapshot (cached)")
     build.add_argument("--no-cache", action="store_true", help="recompute every table instead of using the cache")
+    build.add_argument("--workers", type=int, help="processes for the engine passes (default: one per instrument)")
     return parser.parse_args(argv)
 
 
@@ -63,7 +64,7 @@ def main(argv: Optional[Sequence[str]] = None, source_factory: Optional[SourceFa
         if args.command == "snapshot":
             return _snapshot(args, cfg, source_factory or _store, root, snapshots_dir)
         if args.command == "build":
-            return _build(args, cfg, snapshots_dir, cache_dir)
+            return _build(args, cfg, root, snapshots_dir, cache_dir)
     except (HoldoutError, SnapshotError) as exc:
         print(f"refused: {exc}")
         return 2
@@ -104,13 +105,14 @@ def _snapshot(args: argparse.Namespace, cfg, source_factory: SourceFactory, root
     return 0
 
 
-def _build(args: argparse.Namespace, cfg: ResearchConfig, snapshots_dir: Path, cache_dir: Path) -> int:
+def _build(args: argparse.Namespace, cfg: ResearchConfig, root: Path, snapshots_dir: Path, cache_dir: Path) -> int:
     started = time.perf_counter()
     print(f"loading snapshot {cfg.snapshot} ({', '.join(cfg.instruments)}), checking fingerprints...")
     snapshot = load_snapshot(snapshots_dir / cfg.snapshot, cfg.instruments)
     loaded = time.perf_counter() - started
     specs = load_profile(cfg.profile).specs()
-    data = build_dataset(snapshot, cfg, specs, None if args.no_cache else ParquetCache(cache_dir))
+    data = build_dataset(snapshot, cfg, specs, cfg.strategy(root), None if args.no_cache else ParquetCache(cache_dir),
+                         workers=args.workers)
     summary = data.summary
     for instrument, entry in snapshot.manifest["data"].items():
         if instrument in data.frames:
@@ -120,5 +122,9 @@ def _build(args: argparse.Namespace, cfg: ResearchConfig, snapshots_dir: Path, c
     print("timings: " + ", ".join(f"{name} {seconds:.1f}s" for name, seconds in timings.items()))
     if summary["cache_hits"]:
         print(f"from the cache: {', '.join(summary['cache_hits'])}")
+    errors = summary["engine_errors"]
+    print(f"engine: {len(errors)} day(s) without an anticipation (left null)")
+    for message in errors[:20]:
+        print(f"  - {message}")
     print(f"built in {time.perf_counter() - started:.1f}s")
     return 0

@@ -293,4 +293,5 @@ def test_build_command_builds_and_caches_market_features(tmp_path, capsys):
     assert list(table.columns) == list(COLUMNS) and len(table) > 100
 
     assert main(["build"], **dirs) == 0                                   # served from the cache
-    assert "from the cache: market:EURUSD, market:XAUUSD" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "from the cache: market:EURUSD, market:XAUUSD, anticipation:EURUSD, anticipation:XAUUSD" in out
