@@ -459,6 +459,19 @@ These replace the timing drafts and reframe bias before any pre-registration (25
   - **Validates: Requirement 21.3**
 
 - [ ] 274. Redraft the first batch **(user review)**
+  - **Drafted and explored 2026-10-10; waiting for the user's review.**
+    - **Drafts, uncommitted:** `H001-bias-draw-delivered.toml`, `H003-bias-objective-touch.toml` and `H010-side-of-open-at-0500.toml`. The old H001 and H003 drafts were replaced; they were never pre-registered. H004 and H007 carry a WITHDRAWN header and are left for the user.
+    - **Exploration slice (not evidence):**
+
+      | Test | Verdict | Against the rule's baselines |
+      |---|---|---|
+      | H001, bullish → draw above | PASS | +0.146 [+0.052, +0.240] vs complement; +0.072 [+0.012, +0.132] vs stratified |
+      | H001, bearish → draw below | FAIL | +0.143 [+0.047, +0.238] vs complement; −0.056 [−0.123, +0.009] vs stratified |
+      | H003 (stop at the touch's low) | INSUFFICIENT (69 events) | win rate −0.039 vs coin flip [−0.056, −0.021]; net −0.93R |
+      | H010 | PASS | +0.097 [+0.027, +0.165] vs stratified |
+
+    - **H003's stop.** With stops of 0.5× and 1× the session's normal H4 range (scratch copies, not drafts), H003 stays negative: win rate 6–8 points below the coin flip, net −0.40R and −0.27R, and no better than its complement. After the touch, price tends to continue rather than reverse, without the user's step-3 signature (stage 2).
+    - **The rollover distorts H001's bearish test.** Of the draws below taken before the open's first close, 92% (36 of 39) were taken at the 17:00–17:14 rollover: the bid dips as the spread blows out (task 273). None of the draws above were. A price-basis fix should come before pre-registration.
   - Redraft H001 and H003, and draft H010, from design.md → "The redrafted first batch". The files stay uncommitted.
   - Mark H004 and H007 as withdrawn (AR-D21), leaving the files for the user.
   - `explore` the redrafts on the exploration slice and report the numbers.
