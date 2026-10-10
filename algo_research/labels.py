@@ -25,7 +25,7 @@ Two kinds:
   happened, so hypothesis validation accepts candle labels only with the
   ``daily`` event (Req 6.2); direction questions use ``rem_move``.
 
-Validates: Requirements 6.1-6.4, 17.1 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 6.1-6.4, 17.1, 18.2 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -36,8 +36,8 @@ import pandas as pd
 
 from algo_research.frame import InstrumentFrame, daily_quarter, ny_instant
 
-__all__ = ["CANDLE_LABELS", "FORWARD_LABELS", "LABEL_COLUMNS", "LEVELS", "Label", "build_labels",
-           "candle_labels", "forward_labels"]
+__all__ = ["CANDLE_LABELS", "DRAW_LABELS", "DRAW_LEVELS", "FORWARD_LABELS", "LABEL_COLUMNS", "LEVELS",
+           "LEVEL_PRICE", "Label", "build_labels", "candle_labels", "draw_labels", "forward_labels"]
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,19 @@ for _level in LEVELS:
         f"isn't known at t", "bool")
     FORWARD_LABELS[f"{_level}_hit_at"] = Label(f"close of the first such bar", "UTC time")
 
+#: The engine's draws (update 2026-10e): labelled once the anticipation is joined (draw_labels).
+DRAW_LEVELS = ("ant_draw_above", "ant_draw_below")
+#: A level's price column in the feature table.
+LEVEL_PRICE = {**{level: level for level in LEVELS}, **{level: f"{level}_price" for level in DRAW_LEVELS}}
+
+DRAW_LABELS: dict[str, Label] = {}
+for _level in DRAW_LEVELS:
+    _side = "high > " if _level == "ant_draw_above" else "low < "
+    DRAW_LABELS[f"{_level}_hit_after"] = Label(
+        f"an M1 bar opening at or after t, before the D1 close, has {_side}{_level}_price; null when the draw "
+        f"isn't known at t", "bool")
+    DRAW_LABELS[f"{_level}_hit_at"] = Label("close of the first such bar", "UTC time")
+
 CANDLE_LABELS: dict[str, Label] = {
     "day_dir": Label("sign of the candle's final close - its open (d1_open)", "-1, 0, 1"),
     "day_high_final": Label("the candle's high", "price"),
@@ -77,7 +90,7 @@ CANDLE_LABELS: dict[str, Label] = {
     "day_low_q": Label("daily quarter (New York) of the M1 bar that made the low, the earliest on a tie", "0-3"),
 }
 
-LABEL_COLUMNS: dict[str, Label] = {**FORWARD_LABELS, **CANDLE_LABELS}
+LABEL_COLUMNS: dict[str, Label] = {**FORWARD_LABELS, **DRAW_LABELS, **CANDLE_LABELS}
 
 _MINUTE = 60 * 1_000_000_000
 _HOUR = 60 * _MINUTE
@@ -85,12 +98,13 @@ _NAT = np.iinfo(np.int64).min
 
 
 def build_labels(frame: InstrumentFrame, features: pd.DataFrame) -> pd.DataFrame:
-    """Forward and candle labels for ``features``' rows (one instrument), same index."""
+    """Forward and candle labels for ``features``' rows (one instrument), same index.
+    The draws' labels come later, from the joined anticipation (draw_labels)."""
     forward = forward_labels(frame, features)
     days = candle_labels(frame)
     candle = features[["trading_date"]].merge(days, on="trading_date", how="left", validate="many_to_one")
     candle.index = features.index
-    return pd.concat([forward, candle[list(CANDLE_LABELS)]], axis=1)[list(LABEL_COLUMNS)]
+    return pd.concat([forward, candle[list(CANDLE_LABELS)]], axis=1)[[*FORWARD_LABELS, *CANDLE_LABELS]]
 
 
 def forward_labels(frame: InstrumentFrame, features: pd.DataFrame) -> pd.DataFrame:
@@ -132,11 +146,34 @@ def forward_labels(frame: InstrumentFrame, features: pd.DataFrame) -> pd.DataFra
     return out[list(FORWARD_LABELS)]
 
 
-def _level_hits(features: pd.DataFrame, level: str, m1_dates: np.ndarray, prices: np.ndarray, above: bool,
+def draw_labels(frame: InstrumentFrame, features: pd.DataFrame) -> pd.DataFrame:
+    """``DRAW_LABELS`` for ``features``' rows of one instrument (the anticipation joined), same index:
+    whether, and when, each engine draw trades after t, before the D1 close (Req 18.2)."""
+    out = pd.DataFrame(index=features.index)
+    a = frame.arrays
+    mt, high, low = a["time"], a["high"], a["low"]
+    if len(mt) == 0 or features.empty:
+        for name in DRAW_LABELS:
+            out[name] = np.nan
+        return out
+    k = np.searchsorted(mt, pd.DatetimeIndex(features["t"]).as_unit("ns").asi8, "left")
+    dates = pd.DatetimeIndex(features["trading_date"])
+    e = np.searchsorted(mt, ny_instant(dates + pd.Timedelta(days=1), 17 * 60).as_unit("ns").asi8, "left")
+    m1_dates = frame.m1["trading_date"].to_numpy(dtype="datetime64[ns]")
+    for level in DRAW_LEVELS:
+        above = level == "ant_draw_above"
+        hit_after, hit_at = _level_hits(features, LEVEL_PRICE[level], m1_dates, high if above else low, above,
+                                        mt, k, e)
+        out[f"{level}_hit_after"] = hit_after
+        out[f"{level}_hit_at"] = hit_at
+    return out[list(DRAW_LABELS)]
+
+
+def _level_hits(features: pd.DataFrame, column: str, m1_dates: np.ndarray, prices: np.ndarray, above: bool,
                 mt: np.ndarray, k: np.ndarray, e: np.ndarray) -> tuple[pd.Series, pd.DatetimeIndex]:
-    """Whether, and when, a bar in [k, e) trades beyond each row's level."""
+    """Whether, and when, a bar in [k, e) trades beyond each row's level (its price ``column``)."""
     n = len(mt)
-    values = features[level].to_numpy(dtype=float)
+    values = features[column].to_numpy(dtype=float)
     known = ~np.isnan(values)
     # The level is the same on every row of a candle where it is known; spread it over the candle's bars.
     per_date = pd.Series(values[known], index=features["trading_date"].to_numpy(dtype="datetime64[ns]")[known])

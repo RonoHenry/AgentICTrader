@@ -8,7 +8,7 @@ fires at most once per instrument, trading date and direction (Req 9.4).
 
 | Event | Fires | Direction | Levels |
 |---|---|---|---|
-| ``anchor`` | the M15 close at ``at`` (New York) | from ``direction_from``, or none | - |
+| ``anchor`` | the M15 close at ``at`` (New York), or with ``at = "open"`` each candle's first close with its D1 open known | from ``direction_from``, a fixed ``direction``, or none | with ``level = "draw"``: the engine's draw on its side, ``level``, ``level_name`` (update 2026-10e) |
 | ``asia_raid_reclaim`` | the first M15 close back inside the Asian range, within ``reclaim_within`` closes of a raid of one side in ``window``, the other side untaken | LONG after a low raid, SHORT after a high raid | ``raid_extreme``, ``asia_opposite`` |
 | ``level_open`` | at ``at``, when ``level`` is untaken | toward the level | ``level``, ``level_name`` |
 | ``daily`` | the candle's last M15 close | none | - |
@@ -31,7 +31,7 @@ An event with ``Event.limit`` gives each row its own race time limit
     result = run_event(features, "asia_raid_reclaim", {"window": ["01:00", "09:00"], "reclaim_within": 4})
     result.rows, result.skipped
 
-Validates: Requirements 9.1, 9.2, 9.4, 9.5, 15.2, 16.3 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 9.1, 9.2, 9.4, 9.5, 15.2, 16.3, 18.3 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -41,9 +41,10 @@ from typing import Any, Callable, Literal, Mapping, Optional
 
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field, PositiveInt, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, ValidationError, field_validator, model_validator
 
 from algo_research.features.anticipation import ANTICIPATION_COLUMNS
+from algo_research.features.draws import DRAW_COLUMNS
 from algo_research.features.market import COLUMNS
 from algo_research.features.partner import PARTNER_COLUMNS
 from algo_research.frame import close_times
@@ -52,7 +53,8 @@ from liquidity_engine.models import Timeframe
 __all__ = ["EVENTS", "EVENT_COLUMNS", "Event", "EventError", "EventResult", "direction_of", "run_event"]
 
 EVENT_COLUMNS = ("row", "t", "instrument", "trading_date", "direction")
-FEATURE_NAMES = frozenset(COLUMNS) | frozenset(ANTICIPATION_COLUMNS) | frozenset(PARTNER_COLUMNS)
+FEATURE_NAMES = (frozenset(COLUMNS) | frozenset(ANTICIPATION_COLUMNS) | frozenset(DRAW_COLUMNS)
+                 | frozenset(PARTNER_COLUMNS))
 
 _LONG = {"UP", "BULLISH", "LONG"}
 _SHORT = {"DOWN", "BEARISH", "SHORT"}
@@ -89,11 +91,21 @@ class _Params(BaseModel):
 class AnchorParams(_Params):
     at: str
     direction_from: Optional[str] = None                 # a feature column
+    direction: Optional[Literal["LONG", "SHORT"]] = None # or a fixed direction (update 2026-10e)
+    level: Optional[Literal["draw"]] = None              # the engine's draw on each row's side (Req 18.3)
 
     @field_validator("at")
     @classmethod
     def _at(cls, value: str) -> str:
-        return _m15(value)
+        return value if value == "open" else _m15(value)
+
+    @model_validator(mode="after")
+    def _direction(self) -> "AnchorParams":
+        if self.direction is not None and self.direction_from is not None:
+            raise ValueError("give a fixed direction or direction_from, not both")
+        if self.level is not None and self.direction is None and self.direction_from is None:
+            raise ValueError("level = \"draw\" needs a direction (or direction_from): the draw is on its side")
+        return self
 
     @field_validator("direction_from")
     @classmethod
@@ -191,13 +203,40 @@ def _rows(features: pd.DataFrame, picked: np.ndarray, direction, **levels) -> pd
     return out
 
 
+def _anchor_times(features: pd.DataFrame, at: str) -> np.ndarray:
+    """The rows at ``at`` (New York), or with ``at = "open"`` each candle's first M15 close with its
+    D1 open known: 17:15 for FX, after the daily break for gold, when the anticipation is known."""
+    if at != "open":
+        return features["ny_minute"].to_numpy() == _minutes(at)
+    t = features["t"].where(features["d1_open"].notna())
+    first = t.groupby([features["instrument"], features["trading_date"]]).transform("min")
+    return (features["t"] == first).to_numpy()
+
+
 def _anchor(features: pd.DataFrame, p: AnchorParams) -> EventResult:
-    at = features["ny_minute"].to_numpy() == _minutes(p.at)
-    if p.direction_from is None:
+    at = _anchor_times(features, p.at)
+    if p.direction_from is not None:
+        direction = direction_of(features[p.direction_from])
+    elif p.direction is not None:
+        direction = np.full(len(features), p.direction, dtype=object)
+    else:
         return EventResult(_rows(features, at, None))
-    direction = direction_of(features[p.direction_from])
     has = direction != None                               # noqa: E711 - an object array
-    return EventResult(_rows(features, at & has, direction), {"no_direction": int((at & ~has).sum())})
+    skipped = {"no_direction": int((at & ~has).sum())} if p.direction_from is not None else {}
+    if p.level is None:
+        return EventResult(_rows(features, at & has, direction), skipped)
+    # The engine's draw on each row's side (Req 18.3): above for LONG, below for SHORT.
+    long = direction == "LONG"
+    name = np.where(long, "ant_draw_above", "ant_draw_below").astype(object)
+    price = np.where(long, features["ant_draw_above_price"].to_numpy(dtype=float),
+                     features["ant_draw_below_price"].to_numpy(dtype=float))
+    taken = np.where(long, features["ant_draw_above_taken_at"].notna().to_numpy(),
+                     features["ant_draw_below_taken_at"].notna().to_numpy())
+    known = ~np.isnan(price)
+    base = at & has
+    skipped.update({k: v for k, v in (("no_level", int((base & ~known).sum())),
+                                      ("taken", int((base & known & taken).sum()))) if v})
+    return EventResult(_rows(features, base & known & ~taken, direction, level=price, level_name=name), skipped)
 
 
 def _asia_raid_reclaim(features: pd.DataFrame, p: AsiaRaidReclaimParams) -> EventResult:
@@ -278,7 +317,8 @@ def _crt(features: pd.DataFrame, p: CrtParams) -> EventResult:
 
 EVENTS: dict[str, Event] = {
     "anchor": Event("anchor", AnchorParams, _anchor,
-                    directional=lambda params: params.get("direction_from") is not None),
+                    directional=lambda params: params.get("direction_from") is not None
+                    or params.get("direction") is not None),
     "asia_raid_reclaim": Event("asia_raid_reclaim", AsiaRaidReclaimParams, _asia_raid_reclaim,
                                levels=("raid_extreme", "asia_opposite"), attributes=("smt",)),
     "level_open": Event("level_open", LevelOpenParams, _level_open, levels=("level",)),

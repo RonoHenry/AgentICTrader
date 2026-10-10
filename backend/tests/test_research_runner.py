@@ -336,6 +336,22 @@ def test_sign_flip_rate_per_real_up_day_from_its_own_flips(repo, data_dirs):
     assert "sign_flip" in result.baselines and result.outcomes[0].versus == "sign_flip"
 
 
+def test_build_dataset_adds_the_engine_draws(repo, data_dirs):
+    # Update 2026-10e (Req 18): the draws' taken-at features and labels, built after the anticipation.
+    from algo_research.hypothesis import parse_hypothesis
+    from algo_research.labels import DRAW_LABELS
+    from algo_research.runner import RunSettings, run_test
+    from tests.test_research_draws import H001
+
+    data, costs = fixture_data(repo, data_dirs)
+    assert {"ant_draw_above_taken_at", "ant_draw_below_taken_at"} <= set(data.features.columns)
+    assert set(DRAW_LABELS) <= set(data.labels.columns) and data.labels.index.equals(data.features.index)
+    unfiltered = "\n".join(line for line in H001.splitlines() if not line.startswith("where"))
+    [test] = parse_hypothesis(unfiltered).tests()
+    result = run_test(test, data, "confirm", costs, seed=1, settings=RunSettings(resamples=200))
+    assert result.n_events > 0 and "stratified" in result.baselines
+
+
 # ── reports ─────────────────────────────────────────────────────────────────
 
 def test_report_has_every_section(repo, data_dirs, capsys):

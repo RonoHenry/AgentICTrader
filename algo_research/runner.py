@@ -43,7 +43,7 @@ from algo_research.dataset import ResearchData
 from algo_research.events import EVENTS, run_event
 from algo_research.filters import compile_filter
 from algo_research.hypothesis import LEVEL_ALIASES, STATS, Hypothesis, Test, where_columns
-from algo_research.labels import LABEL_COLUMNS
+from algo_research.labels import DRAW_LEVELS, LABEL_COLUMNS
 from algo_research.races import RaceCosts, run_races
 from algo_research.stats import Bootstrap, Outcome, Rule, breakdowns, decide, evaluate_rule, point, series_table
 
@@ -339,7 +339,7 @@ def _rate(h, events, features, labels, data, costs, seed, settings, skipped):
     series = {"rate": ((of_mask & given_mask & ~null).astype(float), counts)}
     if "stratified" in h.baselines.use:
         level = h.event.params.get("level")
-        candidates = ("pdh", "pdl") if level == "trend" else (level,)
+        candidates = ("pdh", "pdl") if level == "trend" else DRAW_LEVELS if level == "draw" else (level,)
         sums, n = stratified(features, labels, events, candidates)
         series["stratified:rate"] = (sums, n * counts)                     # only where the event itself counts
     if "shuffled_path" in h.baselines.use:

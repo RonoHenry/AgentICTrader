@@ -10,7 +10,7 @@ count, which the day bootstrap (stats.py) pairs with the event's own value.
 | ``coin_flip`` | race | ``p_coin``: a driftless path's chance of the target first, from the closing-side price at entry. Analytic. |
 | ``random_time`` | race, direction, move | K draws: same instrument and New York 15-minute slot, other trading dates of the same slice (only the event's own date excluded). Draws keep the event's direction, and its stop and target distances in ``atr_d1`` units, rescaled by the drawn row's ``atr_d1``; with the event's own time limit, its duration. |
 | ``naive:<rule>`` | direction | ``always_long``, ``prev_day_dir``, ``w1_trend``, ``side_d1_open`` or ``side_midnight_open`` on the event's row. An abstaining rule scores 0.5. |
-| ``stratified`` | rate | The rate among the slice's rows in the same decile of distance to the level (in ``atr_d1``, deciles over those rows) and the same New York hour, for the event's cell. |
+| ``stratified`` | rate | The rate among the slice's rows in the same decile of distance to the level (in ``atr_d1``, deciles over those rows) and the same New York hour, for the event's cell. The pool: PDH/PDL (or the event's level), or both engine draws (update 2026-10e). |
 | ``shuffled_path`` | rate (timing) | Each date's M15 bars in shuffled order, the open and close kept, the statistic recomputed; averaged over the shuffles. |
 | ``sign_flip`` | rate (timing) | Each date's M15 bars in place, each one's direction flipped at random (a flipped bar is mirrored), the statistic recomputed; averaged over the flips. The day's volatility stays where it was (update 2026-10d). |
 
@@ -42,6 +42,7 @@ import pandas as pd
 from algo_research.events import direction_of
 from algo_research.filters import Filter
 from algo_research.frame import InstrumentFrame, calendar_columns, daily_quarter, ny_instant
+from algo_research.labels import LEVEL_PRICE
 from liquidity_engine.models import Timeframe
 
 __all__ = ["NAIVE", "RandomTimeDraws", "coin_flip", "naive_direction", "random_time_draws", "rescale_orders",
@@ -144,7 +145,7 @@ def stratified(features: pd.DataFrame, labels: pd.DataFrame, events: pd.DataFram
     event's cell of distance decile (in atr_d1) and New York hour."""
     pool = []
     for level in candidates:
-        price = features[level].to_numpy(dtype=float)
+        price = features[LEVEL_PRICE.get(level, level)].to_numpy(dtype=float)
         atr = features["atr_d1"].to_numpy(dtype=float)
         hit = labels[f"{level}_hit_after"]
         ok = (~np.isnan(price) & ~np.isnan(atr) & features[f"{level}_taken_at"].isna().to_numpy()

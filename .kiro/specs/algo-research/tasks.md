@@ -350,7 +350,22 @@ Both come before any pre-registration (258, 266): H001 needs the random-time fix
 
 These replace the timing drafts and reframe bias before any pre-registration (258, 266). Task 274 ends with the user's review of the redrafted hypotheses.
 
-- [ ] 269. The engine's draws as levels
+- [x] 269. The engine's draws as levels
+  - **Done 2026-10-10.**
+    - **The code:** `features/draws.py` (taken-at), `labels.draw_labels` (`DRAW_LABELS`, joined into `LABEL_COLUMNS`), and `anchor` with `level = "draw"`, a fixed `direction` and `at = "open"`. `stratified` pools both draws. `dataset.py` adds the draws after the anticipation join, and keeps the label table in `LABEL_COLUMNS` order.
+    - **Tests:** in `test_research_draws.py`, plus the dataset check in `test_research_runner.py`.
+    - **"Beyond", not "at or beyond":** a draw counts as taken or hit only when price trades beyond it, as PDH and PDL are and as the engine's own `untaken` check works. Requirements 18 and 19 are worded to match.
+    - **`at = "open"` was added on the way:** gold pauses after 17:00 New York, so its first close is 18:15. A fixed 17:15 anchor would have dropped gold from H001.
+    - **269c, exploration slice, from each candle's open:**
+
+      | Instrument | Draw above reached | Distance (ATR) | Draw below reached | Distance (ATR) | Bias-side draw reached |
+      |---|---|---|---|---|---|
+      | EURUSD | 0.602 | 0.33 | 0.500 | 0.25 | 0.570 |
+      | GBPUSD | 0.656 | 0.36 | 0.504 | 0.24 | 0.646 |
+      | USDJPY | 0.594 | 0.31 | 0.609 | 0.22 | 0.773 |
+      | XAUUSD | 0.694 | 0.21 | 0.496 | 0.34 | 0.680 |
+
+      The draws are close, so they're reached often. The bias side tends to be the nearer draw (LE-D10), which is why H001 compares with a distance-matched (`stratified`) and an against-bias (`complement`) baseline before reading anything into these rates.
   - **269a. RED** (`test_research_features.py`, `test_research_labels.py`, `test_research_events.py`, `test_research_baselines.py`, `test_research_hypothesis.py`)
     - `ant_draw_*_taken_at` on hand-made candles: the first M1 bar at or beyond the draw; null before it and before the anticipation is known. Property 1 covers them.
     - `ant_draw_*_hit_after`/`_hit_at`: strictly after t and before the D1 close. Property 2 covers them.

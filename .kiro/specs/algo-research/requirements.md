@@ -392,9 +392,9 @@ H001 and H003 are redrafted, and H004 and H007 are withdrawn. None of them was e
 
 #### Acceptance Criteria
 
-1. EACH row SHALL carry `ant_draw_above_taken_at` and `ant_draw_below_taken_at`: the close of the first M1 bar in the current D1 candle that traded at or beyond the engine's draw above (below) the open. They are known at that close, and null before it (Property 1).
-2. THE forward labels SHALL include `ant_draw_above_hit_after`/`_hit_at` and `ant_draw_below_hit_after`/`_hit_at`: whether, and when, an M1 bar opening at or after t and before the D1 close trades at or beyond the draw (Property 2).
-3. THE `anchor` event SHALL accept `level = "draw"`. Each row then carries the engine's draw on its direction's side as `level` (the draw above for LONG, below for SHORT), with `level_name`, so a rate measure can read `level_hit_after`. Rows whose level is unknown or already taken SHALL be skipped and counted. `anchor` SHALL also accept a fixed `direction` (LONG or SHORT) instead of `direction_from`, so "the draw above on bullish-bias days" can be compared with "the draw above on the other days" (`where` plus `complement`).
+1. EACH row SHALL carry `ant_draw_above_taken_at` and `ant_draw_below_taken_at`: the close of the first M1 bar in the current D1 candle that traded beyond the engine's draw above (below) the open: a high above it (a low below it), as PDH and PDL are taken. They are known at that close, and null before it (Property 1).
+2. THE forward labels SHALL include `ant_draw_above_hit_after`/`_hit_at` and `ant_draw_below_hit_after`/`_hit_at`: whether, and when, an M1 bar opening at or after t and before the D1 close trades beyond the draw (Property 2).
+3. THE `anchor` event SHALL accept `level = "draw"`. Each row then carries the engine's draw on its direction's side as `level` (the draw above for LONG, below for SHORT), with `level_name`, so a rate measure can read `level_hit_after`. Rows whose level is unknown or already taken SHALL be skipped and counted. `anchor` SHALL also accept `at = "open"`, each candle's first M15 close with its D1 open known (17:15 for FX, after gold's daily break), and a fixed `direction` (LONG or SHORT) instead of `direction_from`, so "the draw above on bullish-bias days" can be compared with "the draw above on the other days" (`where` plus `complement`).
 4. THE `stratified` baseline SHALL accept the engine's draws. Its pool is both draws on every row of the slice where they are known and untaken, bucketed by distance decile (in `atr_d1`) and New York hour.
 
 ### Requirement 19: The Objective-Touch Event
@@ -403,10 +403,10 @@ H001 and H003 are redrafted, and H004 and H007 are withdrawn. None of them was e
 
 #### Acceptance Criteria
 
-1. THE `objective_touch` event SHALL fire, per instrument and D1 candle and per side, at the first M15 close inside `window` (default 01:00–13:00 New York) after an M1 bar has traded at or below `ant_draw_below_price`.
+1. THE `objective_touch` event SHALL fire, per instrument and D1 candle and per side, at the first M15 close inside `window` (default 01:00–13:00 New York) after an M1 bar has traded below `ant_draw_below_price`.
    - It fires only while the draw above is still untaken.
    - Its direction is LONG.
-   - Mirrored: at or above `ant_draw_above_price`, with the draw below untaken, it is SHORT.
+   - Mirrored: above `ant_draw_above_price`, with the draw below untaken, it is SHORT.
 2. ITS levels SHALL be:
    - `objective`, the touched draw;
    - `touch_extreme`, the furthest price beyond the objective from the touch to the event's close;

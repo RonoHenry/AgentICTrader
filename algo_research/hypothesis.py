@@ -267,9 +267,12 @@ def _problems(h: Hypothesis) -> list[str]:
         if baseline not in allowed:
             problems.append(f"baselines.use: {baseline!r} doesn't fit a {kind} measure; use {list(allowed)}")
     if "stratified" in h.baselines.use:
-        if h.event.name != "level_open":
-            problems.append("baselines.use: stratified buckets by the distance to the event's level: use level_open")
-        if h.measure.of not in ("level_hit_after", *(f"{lv}_hit_after" for lv in ("pdh", "pdl", "pwh", "pwl")))                or h.measure.given:
+        draws = _draw_anchor(h)
+        if h.event.name != "level_open" and not draws:
+            problems.append("baselines.use: stratified buckets by the distance to the event's level: use level_open, "
+                            "or anchor with level = \"draw\"")
+        levels = ("ant_draw_above", "ant_draw_below") if draws else ("pdh", "pdl", "pwh", "pwl")
+        if h.measure.of not in ("level_hit_after", *(f"{lv}_hit_after" for lv in levels)) or h.measure.given:
             problems.append("baselines.use: stratified compares the rate the event's level trades: "
                             "of = \"level_hit_after\", with no given")
     for redrawn in REDRAWN_DAYS:
@@ -330,9 +333,14 @@ def _trade_problems(trade: TradeSection, event: Event, directional: bool) -> lis
     return problems
 
 
+def _draw_anchor(h: Hypothesis) -> bool:
+    """An anchor event on the engine's draws (Req 18.3)."""
+    return h.event.name == "anchor" and h.event.params.get("level") == "draw"
+
+
 def _label_names(h: Hypothesis) -> set[str]:
     names = set(LABEL_COLUMNS)
-    if h.event.name == "level_open":
+    if h.event.name == "level_open" or _draw_anchor(h):
         names |= set(LEVEL_ALIASES)
     return names
 

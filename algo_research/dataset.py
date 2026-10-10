@@ -18,7 +18,7 @@ order; the feature and label tables share their index (the row id).
     data = build_dataset(snapshot, cfg, specs, ParquetCache.default())
     data.features, data.frames["EURUSD"], data.summary
 
-Validates: Requirements 3.5 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 3.5, 18 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -36,10 +36,11 @@ from algo_backtester.data import InstrumentData
 from algo_research.config import ResearchConfig
 from algo_research.features.anticipation import anticipation_key, daily_anticipation, join_anticipation
 from algo_research.features.cache import LABEL_SOURCES, MARKET_SOURCES, ParquetCache, cache_key, code_fingerprint
+from algo_research.features.draws import draw_taken_at
 from algo_research.features.market import market_features
 from algo_research.features.partner import partner_features
 from algo_research.frame import InstrumentFrame, build_grid, frame_from_data, slices_of
-from algo_research.labels import build_labels
+from algo_research.labels import LABEL_COLUMNS, build_labels, draw_labels
 from algo_research.snapshot import Snapshot
 
 __all__ = ["ResearchData", "build_dataset", "build_frames"]
@@ -95,6 +96,14 @@ def build_dataset(snapshot: Snapshot, cfg: ResearchConfig, specs: InstrumentSpec
     started = time.perf_counter()
     tables = _with_anticipation(snapshot, list(markets.values()), strategy, cache, workers, summary)
     summary["timings"]["anticipation"] = time.perf_counter() - started
+
+    # The engine's draws as levels (Req 18): from the joined anticipation, so not cached with the market.
+    started = time.perf_counter()
+    for n, instrument in enumerate(markets):
+        tables[n] = pd.concat([tables[n], draw_taken_at(frames[instrument], tables[n])], axis=1)
+        drawn = draw_labels(frames[instrument], tables[n]).set_axis(labels[n].index)
+        labels[n] = pd.concat([labels[n], drawn], axis=1)[list(LABEL_COLUMNS)]
+    summary["timings"]["draws"] = time.perf_counter() - started
     tables = list(partner_features(dict(zip(markets, tables)), cfg.smt.pairs).values())   # after the cache
     features = pd.concat(tables, ignore_index=True) if tables else pd.DataFrame()
     label_table = pd.concat(labels, ignore_index=True) if labels else pd.DataFrame()

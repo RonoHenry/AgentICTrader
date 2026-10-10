@@ -23,6 +23,8 @@ from algo_research.features.market import market_features
 from algo_research.frame import InstrumentFrame, build_grid, frame_from_data
 from algo_research.labels import (
     CANDLE_LABELS,
+    DRAW_LABELS,
+    DRAW_LEVELS,
     FORWARD_LABELS,
     LABEL_COLUMNS,
     LEVELS,
@@ -53,13 +55,16 @@ def null(value) -> bool:
 
 
 def test_label_columns_are_documented():
-    assert set(LABEL_COLUMNS) == set(FORWARD_LABELS) | set(CANDLE_LABELS)
+    # Update 2026-10e (Req 18.2): the engine's draws are labelled too, once the anticipation is joined.
+    assert set(LABEL_COLUMNS) == set(FORWARD_LABELS) | set(DRAW_LABELS) | set(CANDLE_LABELS)
     for name, doc in LABEL_COLUMNS.items():
         assert doc.definition and doc.unit, name
     assert {"day_dir", "day_high_final", "day_low_final", "day_high_h4", "day_low_h4", "day_high_q",
             "day_low_q"} == set(CANDLE_LABELS)
     for level in LEVELS:
         assert f"{level}_hit_after" in FORWARD_LABELS and f"{level}_hit_at" in FORWARD_LABELS
+    for level in DRAW_LEVELS:
+        assert f"{level}_hit_after" in DRAW_LABELS and f"{level}_hit_at" in DRAW_LABELS
 
 
 @pytest.mark.parametrize("day", [date(2026, 1, 9), date(2026, 3, 9), date(2026, 11, 2)])   # a Friday; both DST changes
