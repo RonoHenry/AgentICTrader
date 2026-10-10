@@ -367,6 +367,84 @@ Requirement 10 changes:
    - Each event is compared with its own date's flips, conditioned the same way: for "lows of up days", over the flips in which that day closes up.
 8. **Starved baselines.** WHEN a pass rule compares with `random_time` AND the measured events average fewer than K/2 draws, the verdict SHALL be INSUFFICIENT, and the report SHALL say why.
 
+## Update 2026-10e: Bias as Delivery, and Session Volatility
+
+On 2026-10-10 the user corrected three of the first drafts (H001, H003, H004, H007):
+- **Bias is not a forecast of the close.** "We do not need to predict the close. We just need to identify bias and capitalize on that." Bias is also fractal: a bullish day can sit in a bearish month, and a bullish H4 looks bearish on M5–M1 while it seeks sell-side liquidity.
+- **The method is a sequence, and it is probabilistic.** "Trading is a game of probabilities." With a bullish bias:
+  1. find the sell-side objectives below the open (PD arrays, liquidity), using the regular and true day opens and the intraday price action;
+  2. wait for price to go lower first and reach one;
+  3. only there, look for the algorithmic signatures (the user's model), and go long toward buy-side.
+- **Time works through volatility.** Highs and lows sit in the sessions that carry most of the range, and which sessions depends on the asset: Asian pairs often make the day's extremes in the first two H4 candles. "Volatility varies across sessions of the trading day", so it belongs in AlgoResearch and in AgenticTrader.
+
+The 2026-10d results agree. The timing excess vanished against `sign_flip`: the extremes cluster where the market moves most.
+
+So this update:
+- measures bias by what the candle **delivers**: is the engine's draw on the bias side reached?
+- tests the sequence as a race, with a control on the days the bias disagreed;
+- makes session volatility a feature set and a descriptive per-instrument profile.
+
+H001 and H003 are redrafted, and H004 and H007 are withdrawn. None of them was ever pre-registered.
+
+### Requirement 18: The Engine's Draws as Levels
+
+**User Story:** As the user, I want to know whether the objective my bias points to gets delivered, so that bias is judged the way I trade it, not by the close.
+
+#### Acceptance Criteria
+
+1. EACH row SHALL carry `ant_draw_above_taken_at` and `ant_draw_below_taken_at`: the close of the first M1 bar in the current D1 candle that traded at or beyond the engine's draw above (below) the open. They are known at that close, and null before it (Property 1).
+2. THE forward labels SHALL include `ant_draw_above_hit_after`/`_hit_at` and `ant_draw_below_hit_after`/`_hit_at`: whether, and when, an M1 bar opening at or after t and before the D1 close trades at or beyond the draw (Property 2).
+3. THE `anchor` event SHALL accept `level = "draw"`. Each row then carries the engine's draw on its direction's side as `level` (the draw above for LONG, below for SHORT), with `level_name`, so a rate measure can read `level_hit_after`. Rows whose level is unknown or already taken SHALL be skipped and counted. `anchor` SHALL also accept a fixed `direction` (LONG or SHORT) instead of `direction_from`, so "the draw above on bullish-bias days" can be compared with "the draw above on the other days" (`where` plus `complement`).
+4. THE `stratified` baseline SHALL accept the engine's draws. Its pool is both draws on every row of the slice where they are known and untaken, bucketed by distance decile (in `atr_d1`) and New York hour.
+
+### Requirement 19: The Objective-Touch Event
+
+**User Story:** As the user, I want "price went lower first into a sell-side objective below the open" as an event, so that the second step of my sequence is measured on its own, before the algorithmic signature is added.
+
+#### Acceptance Criteria
+
+1. THE `objective_touch` event SHALL fire, per instrument and D1 candle and per side, at the first M15 close inside `window` (default 01:00–13:00 New York) after an M1 bar has traded at or below `ant_draw_below_price`.
+   - It fires only while the draw above is still untaken.
+   - Its direction is LONG.
+   - Mirrored: at or above `ant_draw_above_price`, with the draw below untaken, it is SHORT.
+2. ITS levels SHALL be:
+   - `objective`, the touched draw;
+   - `touch_extreme`, the furthest price beyond the objective from the touch to the event's close;
+   - `draw_opposite`, the other draw.
+3. ITS attribute `with_bias` SHALL be true when the engine's anticipated direction equals the event's direction, and false when it is the opposite. It is null when the anticipation is NEUTRAL or missing.
+4. ALL of it SHALL be known at the event's t (Property 1).
+
+### Requirement 20: The Complement Baseline
+
+**User Story:** As the researcher, I want the same event measured where my condition does not hold, so that "with the bias" is compared with "against the bias" on the same footing.
+
+#### Acceptance Criteria
+
+1. **Complement** (race, rate, direction, move): the event's rows where the hypothesis's `where` is false, measured exactly as the event rows are. Rows where `where` is null are in neither group.
+2. A hypothesis SHALL use `complement` only with a non-empty `where`.
+3. COMPLEMENT rows SHALL enter the date bootstrap like the event rows, resampled by trading date. They are reported with their own counts and their own breakdown by instrument.
+4. THE same baseline SHALL serve any twin comparison: in a time window against outside it (`where = "in_window"`), with SMT against without, and so on.
+
+### Requirement 21: Session Volatility
+
+**User Story:** As the user, I want each instrument's normal volatility per session, and whether today is running hotter or colder, so that stops, targets and activity follow when that market actually moves.
+
+#### Acceptance Criteria
+
+1. EACH row SHALL carry, from the previous 20 trading dates of the same instrument only (known at t):
+   - `slot_range_norm`: the median range of M15 bars in this New York 15-minute slot;
+   - `h4_range_norm`: the median full range of this H4 candle (by `h4_index`);
+   - `h4_range_so_far_norm`: the median range of this H4 candle from its open up to the same minute;
+   - `h4_range_ratio`: the current H4 candle's range so far ÷ `h4_range_so_far_norm`. Above 1 means hotter than normal.
+2. A race's stop and target MAY be `{ kind = "h4_range", value = k }`: k × `h4_range_norm` from the entry's closing-side price.
+3. `python -m algo_research profile` SHALL write `docs/research/VOLATILITY_PROFILE.md` from the exploration slice. Per instrument, it holds:
+   - the median range of each H4 candle, and its share of the day's range;
+   - the hour of the day's high and of its low;
+   - the same split by weekday.
+
+   It is descriptive, with no verdict and no ledger row.
+4. Features that lack 20 prior dates SHALL be null (Req 2.4).
+
 ## Open Decisions
 
 Proposed defaults apply unless the user changes them at review.
@@ -390,3 +468,8 @@ Proposed defaults apply unless the user changes them at review.
 | AR-D15 | Not built now (update 2026-10c) | IC-CISD, the C3/C4 entry zones and the London and New York session levels. They refine entries; the earlier results place the edge in direction and timing, which these updates test. |
 | AR-D16 | Random-time pool (update 2026-10d) | Exclude only the event's own date. The alternative, excluding other events' rows, would starve events that fire every day again. |
 | AR-D17 | Timing baseline (update 2026-10d) | `sign_flip` is required for any timing claim before pre-registration. `shuffled_path` stays, as the weaker null that reproduces the 2026-10-08 statistic. |
+| AR-D18 | Bias, measured (update 2026-10e) | Bias is right when the engine's draw on the bias side is reached within the D1 candle after t; the close doesn't decide. User 2026-10-10: "We do not need to predict the close." |
+| AR-D19 | Bias controls (update 2026-10e) | Two controls. `stratified`: an engine draw at the same distance and hour is reached anyway. `complement`: the same event where the bias disagreed. A bias earns its place only by beating both. |
+| AR-D20 | Normal volatility (update 2026-10e) | The median over the previous 20 trading dates, per instrument and slot: robust to news spikes, and about a month of memory. The "so far" norm is time-matched, so a ratio early in an H4 candle isn't biased low. |
+| AR-D21 | Timing claims (update 2026-10e) | H004 and H007 are withdrawn before pre-registration. Time of day enters through the volatility features, the per-instrument profile, and `where` filters with `complement` twins. |
+| AR-D22 | Fractal frames (update 2026-10e) | Still deferred. The engine anticipates D1 candles only (Requirement 21 of liquidity-engine, stage 1). H001 and H003 test the D1 frame; the same tests apply to an H4 frame once the engine builds one. |

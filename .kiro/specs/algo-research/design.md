@@ -379,6 +379,7 @@ require = [
 | `stratified` | rate | The unconditional rate among rows of the slice in the same decile of distance to the level (in `atr_d1`) and the same New York hour, averaged over the event rows' cells. |
 | `shuffled_path` | rate (timing) | For each trading date, permute its M15 close-to-close moves while keeping its open and close, rebuild the path, and recompute the statistic. Averaged over 200 shuffles. Removes the arcsine artefact: an up day tends to show its low early even at random. |
 | `sign_flip` | rate (timing) | For each trading date, flip each M15 bar's direction at random: a flipped bar's move changes sign and its high and low swap roles. Every bar keeps its slot and its size, so the day's volatility stays where it was (update 2026-10d). Each event is compared with its own date's flips, conditioned the same way. The same number of draws as `shuffled_path`. |
+| `complement` | race, rate, direction, move | The event's rows where `where` is false, measured as the event rows are; null rows are in neither group (update 2026-10e). Complement rows join the series table with zero counts in the event's own series, so the date bootstrap pairs them by trading date. |
 
 **Seed:** one per hypothesis, from the first 8 bytes of its sha256. Draws are reproducible, so a rerun reproduces its result exactly (Property 9).
 
@@ -783,6 +784,85 @@ down' = down if s = +1 else −up      # the bar's low below it
 - **Per event:** the runner keeps the real days where the measure's `given` holds. For each such day it takes the share of that day's flips where `of` and `given` hold, divided by the share where `given` holds. It then compares the real rate with the mean of those per-day rates. Each real up day is paired with the same day's own volatility shape.
 - **Why it matters:** on a day whose bars are large only in the 01:00–13:00 window, the flips keep the extremes in that window, while a shuffle scatters them. A timing claim must beat the flip to say anything about when price turns.
 
+## Update 2026-10e: Bias as Delivery, and Session Volatility
+
+Requirements 18–21; decisions AR-D18 to AR-D22.
+
+### The engine's draws as levels (`dataset.py`, `labels.py`, `events.py`, `baselines.py`)
+
+- **Taken-at features.** `ant_draw_above_taken_at` and `ant_draw_below_taken_at` are computed in `dataset.py` after the anticipation is joined. They use the market features' taken-at logic:
+  - within the D1 candle, the close of the first M1 bar whose high is at or above the draw above (low at or below the draw below);
+  - at a row t, that time if it is at or before t, and null otherwise.
+- **Labels.** `LEVELS` gains `ant_draw_above` (above) and `ant_draw_below` (below), read from their `_price` columns through a level-to-column map. Labels are therefore built from the joined features.
+- **`anchor`:**
+  - `level = "draw"` sets `level` and `level_name` to the draw on each row's side;
+  - the fixed `direction = "LONG" | "SHORT"` is exclusive with `direction_from`;
+  - rows with an unknown or already-taken level are skipped as `no_level` / `taken`.
+- **`stratified`.** When the event's `level_name` is an engine draw, the pool is both draws on every row of the slice where they are known and untaken, with `ant_draw_*_hit_after` as the outcome. Otherwise the pool is PDH/PDL/PWH/PWL as before. The schema accepts `stratified` with `level_open`, or with `anchor` and `level = "draw"`.
+
+### The `objective_touch` event (`events.py`)
+
+Per instrument, trading date and side, on the rows of the candle inside `window`:
+
+| | LONG (sell-side objective below the open) | SHORT (mirror) |
+|---|---|---|
+| Touch | `ant_draw_below_taken_at` is known and falls inside the window | `ant_draw_above_taken_at` |
+| Fires at | the first M15 close at or after the touch | the same |
+| Requires | `ant_draw_above_taken_at` still null at t | `ant_draw_below_taken_at` null |
+| `objective` | `ant_draw_below_price` | `ant_draw_above_price` |
+| `touch_extreme` | `day_low` at t | `day_high` at t |
+| `draw_opposite` | `ant_draw_above_price` | `ant_draw_below_price` |
+| `with_bias` | `ant_direction == BULLISH` | `ant_direction == BEARISH` |
+
+- **Why `touch_extreme` is the day's low so far:** no bar before the touch traded at or below the draw, so the candle's low so far is the low since the touch.
+- **`with_bias`** is null when the anticipation is NEUTRAL or missing. Those rows fall in neither `where` group.
+
+### The `complement` baseline (`runner.py`, `report.py`)
+
+1. The runner keeps the event table from before `where`.
+2. It evaluates `where` on that table: true rows are the events, false rows are the complement, and null rows are dropped.
+3. The measure function runs once on the union, and its per-row series split into `<stat>` (event rows) and `complement:<stat>` (complement rows).
+   - Both live in one series table, keyed by trading date and instrument.
+   - Each row counts in only one of the two.
+4. The bootstrap resamples dates, so a date's events and its complement rows move together.
+5. Random-time draws and other baselines are computed for the event rows only.
+6. The report's Sample section adds the complement's row and date counts. Its stability section adds the complement's rate per instrument.
+
+### Session volatility (`features/volatility.py`)
+
+All values are computed per instrument from the calendar's M15 bars, each indexed by trading date, slot (the New York minute of the bar's close) and `h4_index`.
+
+| Column | Definition |
+|---|---|
+| `slot_range_norm` | median of `high − low` of the M15 bar in this slot, over the previous 20 trading dates that have one |
+| `h4_range_norm` | median full range of the H4 candle with this `h4_index`, over the previous 20 trading dates |
+| `h4_range_so_far_norm` | median range of the same H4 candle from its open through its k-th M15 bar (k = this row's position in its H4 candle), over the previous 20 trading dates |
+| `h4_range_ratio` | the current H4 candle's range through this M15 close ÷ `h4_range_so_far_norm` |
+
+- **Implementation:** pivot to (trading date × slot) tables, then a rolling median over 20 rows, shifted by one date so that only earlier dates count. Fewer than 20 earlier dates gives null.
+- **Trade geometry:** `{ kind = "h4_range", value = k }` puts the stop or target at k × `h4_range_norm` from the entry's closing-side price. Random-time draws still rescale by `atr_d1` (Req 10.2).
+
+### The volatility profile (`profile.py`, `python -m algo_research profile`)
+
+`docs/research/VOLATILITY_PROFILE.md`, from the exploration slice, holds per instrument:
+- the median range per H4 candle (17:00, 21:00, 01:00, 05:00, 09:00, 13:00), and its median share of the day's range;
+- the share of days whose high, and whose low, formed in each hour (24 bins, New York time);
+- the median day range by weekday, and the H4 candle of the high and of the low by weekday.
+
+It is descriptive only, with no verdict and no ledger row. It records the inputs (snapshot, code commit) like a report.
+
+### The redrafted first batch (task 274)
+
+| Id | Question | Event | Measure | Baselines | Proposed rules |
+|---|---|---|---|---|---|
+| H001 | Does the engine's bias pick the side whose draw gets delivered? Two tests, LONG and SHORT | `anchor` at 17:15 (the bias as known at the open), fixed `direction`, `level = "draw"`; `where = "ant_direction == 'BULLISH'"` (BEARISH for SHORT) | `rate` of `level_hit_after` | `complement` (the same draw on the other days), `stratified` | rate above both |
+| H003 | With the bias, does a long from the sell-side objective below the open reach the buy-side draw first? Mirrored | `objective_touch` (01:00–13:00); `where = "with_bias"` | `race`: stop `touch_extreme`, target `draw_opposite`, limit at the D1 close | `coin_flip`, `random_time`, `complement` | win rate above the complement and the coin flip; mean net R > 0 |
+| H010 | At 05:00, does price's side of the D1 open pick the draw that gets delivered? (The 56% lead from the exploration slice) | `anchor` at 05:00, `direction_from = "side_d1_open"`, `level = "draw"` | `rate` of `level_hit_after` | `stratified` | rate above it |
+
+- **Defaults:** at least 100 events on 60 trading dates (AR-D4).
+- **Withdrawn:** H004 and H007 (AR-D21).
+- **Later, in stage 2:** the user's step 3, the algorithmic signature at the objective. That is H003 with the engine's setup sequence required at the touch.
+
 ## Requirement Traceability
 
 | Requirement | Components | Properties | Tasks |
@@ -798,6 +878,10 @@ down' = down if s = +1 else −up      # the bar's low below it
 | 9 Events and filters | `events.py`, `filters.py` | 1 | 251 |
 | 10 Baselines | `baselines.py` | 6 | 253 |
 | 10.2 (amended), 10.7, 10.8 Baseline corrections | `baselines.py`, `runner.py`, `hypothesis.py`, `report.py` | 6 | 267, 268 |
+| 18 Engine draws as levels | `dataset.py`, `labels.py`, `events.py`, `baselines.py`, `hypothesis.py` | 1, 2 | 269 |
+| 19 Objective touch | `events.py` | 1 | 270 |
+| 20 Complement | `runner.py`, `report.py`, `hypothesis.py` | 7, 9 | 271 |
+| 21 Session volatility | `features/volatility.py`, `races.py`, `profile.py`, `cli.py` | 1 | 272, 273 |
 | 11 Statistics | `stats.py` | 7 | 252 |
 | 12 Ledger and reports | `ledger.py`, `report.py` | 9 | 254 |
 | 13 Out-of-sample | `config.py`, `cli.py` | 10, 11 | 244, 254 |

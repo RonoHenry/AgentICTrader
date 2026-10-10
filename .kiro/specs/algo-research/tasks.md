@@ -346,6 +346,74 @@ Both come before any pre-registration (258, 266): H001 needs the random-time fix
   - **268c. REFACTOR** — `explore` the H004 and H007 drafts with `sign_flip` added (without editing the drafts: a scratch copy). Record how much of the timing excess survives it.
   - **Validates: Requirement 10.7**
 
+### H. Update 2026-10e: bias as delivery, and session volatility
+
+These replace the timing drafts and reframe bias before any pre-registration (258, 266). Task 274 ends with the user's review of the redrafted hypotheses.
+
+- [ ] 269. The engine's draws as levels
+  - **269a. RED** (`test_research_features.py`, `test_research_labels.py`, `test_research_events.py`, `test_research_baselines.py`, `test_research_hypothesis.py`)
+    - `ant_draw_*_taken_at` on hand-made candles: the first M1 bar at or beyond the draw; null before it and before the anticipation is known. Property 1 covers them.
+    - `ant_draw_*_hit_after`/`_hit_at`: strictly after t and before the D1 close. Property 2 covers them.
+    - `anchor` with `level = "draw"`: LONG takes the draw above and SHORT the draw below; unknown levels are skipped as `no_level` and taken ones as `taken`.
+    - `anchor` with a fixed `direction`; `direction` together with `direction_from` is refused.
+    - `stratified` pools both engine draws when the event's level is one. The schema accepts it with `anchor` and `level = "draw"`.
+  - **269b. GREEN** — `dataset.py`, `labels.py`, `events.py`, `baselines.py`, `hypothesis.py`.
+  - **269c. REFACTOR** — rebuild the real tables, and record how often each draw is hit per instrument (exploration slice).
+  - **Validates: Requirement 18**
+
+- [ ] 270. The `objective_touch` event
+  - **270a. RED** (`test_research_events.py`)
+    - On hand-made candles, LONG and SHORT:
+      - the touch inside and outside the window;
+      - no event once the opposite draw is taken;
+      - at most one event per side per candle;
+      - `touch_extreme` is the low (high) since the touch;
+      - `objective`, `draw_opposite` and `with_bias` (true, false, null).
+    - Property 1 holds with `objective_touch` added.
+  - **270b. GREEN** — `events.py`.
+  - **270c. REFACTOR** — event counts per instrument and side, with and against the bias, on the real tables.
+  - **Validates: Requirement 19**
+
+- [ ] 271. The `complement` baseline
+  - **271a. RED** (`test_research_runner.py`, `test_research_hypothesis.py`, `test_research_stats.py`)
+    - `complement` without `where` is refused.
+    - Complement rows are the `where`-false rows; null rows are in neither group.
+    - The complement is measured like the events: a race, a rate, a direction.
+    - Each row counts in one series only, and the date bootstrap pairs them by date.
+    - Property 7 still holds with complement rows.
+    - The report shows the complement's counts and its rate per instrument.
+  - **271b. GREEN** — `runner.py`, `hypothesis.py`, `report.py`.
+  - **271c. REFACTOR** — re-run the golden research run, unchanged since it has no complement.
+  - **Validates: Requirement 20**
+
+- [ ] 272. Session-volatility features and the `h4_range` geometry
+  - **272a. RED** (`test_research_volatility.py`, `test_research_races.py`)
+    - On a hand-made 25-date instrument:
+      - the four norms equal medians over the previous 20 dates only, never the current one;
+      - null with fewer than 20 earlier dates;
+      - `h4_range_ratio` time-matched within the H4 candle.
+    - Property 1 covers the new columns.
+    - `{ kind = "h4_range", value = k }` puts the stop or target at k × `h4_range_norm` from the closing-side entry.
+  - **272b. GREEN** — `features/volatility.py`, `dataset.py`, `hypothesis.py`, `runner.py`.
+  - **272c. REFACTOR** — build time on the real tables.
+  - **Validates: Requirements 21.1, 21.2, 21.4**
+
+- [ ] 273. The volatility profile
+  - **273a. RED** (`test_research_profile.py`) — on a hand-made two-instrument data set:
+    - the per-H4 median ranges and shares;
+    - the hour of the high and of the low;
+    - the weekday split;
+    - the command writes the file and touches no ledger.
+  - **273b. GREEN** — `profile.py`, `cli.py`.
+  - **273c. REFACTOR** — write `docs/research/VOLATILITY_PROFILE.md` from the real exploration slice, and commit it.
+  - **Validates: Requirement 21.3**
+
+- [ ] 274. Redraft the first batch **(user review)**
+  - Redraft H001 and H003, and draft H010, from design.md → "The redrafted first batch". The files stay uncommitted.
+  - Mark H004 and H007 as withdrawn (AR-D21), leaving the files for the user.
+  - `explore` the redrafts on the exploration slice and report the numbers.
+  - The user confirms each file's rules. The commit is the pre-registration, and then task 259 runs them on the confirmation slice.
+
 ---
 
 ## Task Dependency Graph
@@ -413,6 +481,12 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
       "tasks": ["267", "268"],
       "description": "Update 2026-10d: random-time pool and the sign_flip baseline, before any pre-registration (258, 266)",
       "dependencies": ["Self-Validation and Checkpoint"]
+    },
+    {
+      "name": "Bias as Delivery and Session Volatility",
+      "tasks": ["269", "270", "271", "272", "273", "274"],
+      "description": "Update 2026-10e: engine draws as levels, objective touch, complement baseline, session volatility, profile; then the redrafted batch (270 needs 269; 274 needs 269-273)",
+      "dependencies": ["Baseline Corrections"]
     }
   ]
 }
