@@ -1,6 +1,6 @@
 # H990: Golden: an Asian range raid, reclaimed, runs to the other side
 
-- **FAIL** · win_rate 0.1613 [0.0385, 0.2857] · coin_flip 0.1712, random_time 0.1447 · 31 events on 19 dates (confirm slice)
+- **FAIL** · win_rate 0.1613 [0.0385, 0.2857] · coin_flip 0.1712, random_time 0.1724 · 31 events on 19 dates (confirm slice)
 
 ## The question as registered
 
@@ -48,18 +48,18 @@ require = [
 ### Sample
 
 - Events: 31 fired, 31 measured, on 19 trading dates.
-- Skipped: draw_null_level 63.
+- Skipped: draw_null_level 68.
 - By instrument: EURUSD 15, XAUUSD 16.
 - By year: 2025 31.
 - By weekday: Mon 7, Tue 4, Wed 6, Thu 8, Fri 6.
-- Random-time draws per event: 0 to 5; 16 event(s) had fewer than the most.
+- Random-time draws per event: 5 to 5; 0 event(s) had fewer than the most.
 
 ### Results
 
 | Statistic | Versus | Value | Baseline | Tested [95% interval] | Rule | Result |
 |---|---|---|---|---|---|---|
 | win_rate | coin_flip | 0.1613 | 0.1712 | difference -0.0099 [-0.1136, 0.1001] | lower bound > 0 | fail |
-| win_rate | random_time | 0.1613 | 0.1447 | difference 0.0166 [-0.0960, 0.1430] | lower bound > 0 | fail |
+| win_rate | random_time | 0.1613 | 0.1724 | difference -0.0111 [-0.1616, 0.1212] | lower bound > 0 | fail |
 | mean_net_r | – | -0.7330 | – | value -0.7330 [-1.0429, -0.3979] | lower bound > 0 | fail |
 
 Every statistic of the measure, alone:

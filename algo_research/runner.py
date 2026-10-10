@@ -36,6 +36,7 @@ from algo_research.baselines import (
     random_time_draws,
     rescale_orders,
     shuffled_path,
+    sign_flip,
     stratified,
 )
 from algo_research.dataset import ResearchData
@@ -114,14 +115,28 @@ def run_test(test: Test, data: ResearchData, slice_name: str, costs: Mapping[str
     if h.naive_rules and f"n:naive:{h.naive_rules[0]}:{main}" in table:
         baselines["best_naive"] = max(point(table, f"naive:{r}:{main}") for r in h.naive_rules)
     primary = next((rule for rule in rules if rule.versus), rules[0])
+    verdict = decide(n_events, n_dates, h.pass_.min_events, h.pass_.min_days, outcomes)
+    starved = _starved(h, measured, extra.get("available"), settings.random_time_draws)
+    if starved is not None:
+        verdict = "INSUFFICIENT"
+        extra["starved"] = starved
     return TestResult(
         label=test.label, test=test, slice=slice_name, seed=seed, events=events, skipped=skipped, table=table,
         outcomes=outcomes, stats=stats, baselines=baselines,
         breakdowns=breakdowns(table, primary) if len(table) else {},
-        verdict=decide(n_events, n_dates, h.pass_.min_events, h.pass_.min_days, outcomes),
+        verdict=verdict,
         n_events=n_events, n_dates=n_dates, races=extra.get("races"), draws_available=extra.get("available"),
         extra=extra,
     )
+
+
+def _starved(h: Hypothesis, measured: np.ndarray, available: Optional[np.ndarray], k: int) -> Optional[tuple]:
+    """(mean draws per measured event, K) when a pass rule compares with random_time
+    and its draws average under K/2: too few to judge by (Req 10.8). None otherwise."""
+    if available is None or not any(r.versus == "random_time" for r in h.pass_.require):
+        return None
+    mean = float(available[measured].mean()) if measured.any() else 0.0
+    return (mean, k) if mean < k / 2 else None
 
 
 def _where_rows(features: pd.DataFrame, events: pd.DataFrame, event) -> pd.DataFrame:
@@ -332,4 +347,12 @@ def _rate(h, events, features, labels, data, costs, seed, settings, skipped):
                                 np.random.default_rng([seed, 2]))
         keep = ~null
         series["shuffled_path:rate"] = (np.where(keep, sums, 0.0), np.where(keep, n, 0.0))
+    if "sign_flip" in h.baselines.use:
+        # Each real day where `given` holds, against its own flips' rate of `of` given `given` (Req 10.7):
+        # a flip can change the day's direction, so the flips are conditioned the same way the day is.
+        sums, n = sign_flip(data.frames, events, of, given if h.measure.given else None, settings.shuffles,
+                            np.random.default_rng([seed, 3]))
+        keep = given_mask & ~null & (n > 0)
+        rate = np.divide(sums, n, out=np.zeros_like(sums), where=n > 0)
+        series["sign_flip:rate"] = (np.where(keep, rate, 0.0), keep.astype(float))
     return series, {}

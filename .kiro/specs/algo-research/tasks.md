@@ -297,6 +297,55 @@ These come after 257 and don't wait for 258–262: they explore only, and pre-re
   - Write `docs/research/INDICATOR_IDEAS.md`: the exploration numbers, labelled as exploration, and what they suggest.
   - Draft H007 onward for what shows promise, uncommitted. The user confirms the pass rules before the pre-registration commit.
 
+
+### G. Update 2026-10d: baseline corrections
+
+Both come before any pre-registration (258, 266): H001 needs the random-time fix, and H004/H007 need `sign_flip`.
+
+- [x] 267. Random-time draws exclude only the event's own date; a starved baseline is INSUFFICIENT
+  - **Done 2026-10-10.**
+    - **The pool:** `random_time_draws` drops only the event's own date. A starved rule gives INSUFFICIENT, and the report's Sample section says why.
+    - **A report bug fixed on the way:** the draws line used `min(initial=0)`, so it always printed 0 as the minimum. It now prints the true range.
+    - **The golden run, re-baselined:** all 31 events now get their 5 draws (16 used to get fewer). The random-time win rate moved from 0.1447 to 0.1724, next to the coin flip's 0.1712. The verdict is still FAIL.
+    - **Re-explored, exploration slice:**
+      - H001's random time is now 0.515 at 05:00 and 0.510 at 09:00, from 20 draws per event; it used to read 0.671 and 0.369 from 0–2 draws.
+      - H002's win rate minus random time is now −0.001; it was −0.017.
+      - No verdict changed.
+  - **267a. RED** (`test_research_baselines.py`, `test_research_runner.py`)
+    - `test_random_time_draws_same_instrument_slot_and_slice_never_the_events_own_date` replaces the "never event dates" test. Other events' dates may be drawn; the event's own date never is.
+    - `test_random_time_daily_event_still_gets_k_draws` — an event on every date gets K draws each.
+    - `test_random_time_starved_rule_is_insufficient` — a rule against `random_time` with fewer than K/2 draws per event on average gives INSUFFICIENT, and the report says why.
+  - **267b. GREEN** — `baselines.random_time_draws`, `runner.run_test`, `report.py`.
+    - Re-baseline the golden research run: its random-time pool changes.
+  - **267c. REFACTOR** — re-`explore` H001 and H002 on the exploration slice; note the new random-time values.
+  - **Validates: Requirements 10.2 (amended), 10.8**
+
+- [x] 268. The `sign_flip` baseline
+  - **Done 2026-10-10.**
+    - **The baseline:** `sign_flip` and `_path_labels(..., signs=)`. A flipped bar is mirrored and keeps its slot. The schema accepts it beside `shuffled_path`, for daily rate measures only. The runner pairs each real day where `given` holds with that day's own conditional flip rate.
+    - **The key test:** on a random walk whose moves are big only from 01:00 to 13:00, `sign_flip` matches the real statistic, while `shuffled_path` sits more than 3 SE below it. That gap is the false timing edge a shuffle creates.
+    - **268c, exploration slice, copies of the H004 and H007 drafts with `sign_flip` added:**
+
+      | Claim | Real | vs `shuffled_path` | vs `sign_flip` |
+      |---|---|---|---|
+      | H004, lows of up days in the 01/05/09 H4 candles | 0.337 | +0.081 [+0.024, +0.137] | −0.065 [−0.126, −0.006] |
+      | H004, highs of down days | 0.402 | +0.104 [+0.038, +0.170] | −0.024 [−0.089, +0.043] |
+      | H007, lows of up days in the 06:00–12:00 quarter | 0.159 | +0.060 [+0.018, +0.105] | −0.031 [−0.076, +0.016] |
+      | H007, highs of down days | 0.184 | +0.062 [+0.011, +0.119] | −0.019 [−0.067, +0.034] |
+
+      **Every timing excess disappears against `sign_flip`.** The extremes cluster in those windows because the market moves most there, not because it turns there. Lows of up days even fall *outside* the 01/05/09 H4 candles more often than a volatility-matched walk would put them (exploration only).
+  - **268a. RED** (`test_research_baselines.py`, `test_research_hypothesis.py`, `test_research_runner.py`)
+    - `test_unflipped_path_gives_back_the_candle_labels`
+    - `test_sign_flip_keeps_each_bar_in_its_slot_and_size` — a flipped bar's move changes sign, and its high and low swap.
+    - `test_sign_flip_keeps_volatility_where_it_was` — on a day whose bars are large only in the 01:00–13:00 window, the flips keep the low of up days there far more often than the shuffles do.
+    - `test_sign_flip_matches_the_real_statistic_on_a_random_walk`
+    - `test_sign_flip_reproducible_by_seed`
+    - The schema accepts `sign_flip` for rate measures on the `daily` event, under the same label rules as `shuffled_path`, and refuses it elsewhere.
+    - The runner gives `sign_flip:rate` per real day where `given` holds, from that day's flips.
+  - **268b. GREEN** — `baselines.sign_flip`, `hypothesis.py`, `runner._rate`.
+  - **268c. REFACTOR** — `explore` the H004 and H007 drafts with `sign_flip` added (without editing the drafts: a scratch copy). Record how much of the timing excess survives it.
+  - **Validates: Requirement 10.7**
+
 ---
 
 ## Task Dependency Graph
@@ -357,6 +406,12 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
       "name": "Indicator Ideas",
       "tasks": ["263", "264", "265", "266"],
       "description": "Update 2026-10c: candle ranges and crt, SMT, daily quarters, then exploration (264 needs 263; 266 needs 263-265)",
+      "dependencies": ["Self-Validation and Checkpoint"]
+    },
+    {
+      "name": "Baseline Corrections",
+      "tasks": ["267", "268"],
+      "description": "Update 2026-10d: random-time pool and the sign_flip baseline, before any pre-registration (258, 266)",
       "dependencies": ["Self-Validation and Checkpoint"]
     }
   ]

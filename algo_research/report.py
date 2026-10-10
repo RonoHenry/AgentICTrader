@@ -103,9 +103,13 @@ def _sample(r: TestResult) -> list[str]:
              f"- By year: {_counts(pd.Series(dates.year)) if len(events) else '–'}.",
              f"- By weekday: {', '.join(f'{d} {n}' for d, n in weekdays.value_counts().reindex(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']).dropna().astype(int).items()) or '–'}."]
     if r.draws_available is not None and len(r.draws_available):
-        short = int((r.draws_available < r.draws_available.max(initial=0)).sum())
-        lines.append(f"- Random-time draws per event: {int(r.draws_available.min(initial=0))} to "
-                     f"{int(r.draws_available.max(initial=0))}; {short} event(s) had fewer than the most.")
+        low, high = int(r.draws_available.min()), int(r.draws_available.max())
+        short = int((r.draws_available < high).sum())
+        lines.append(f"- Random-time draws per event: {low} to {high}; {short} event(s) had fewer than the most.")
+    if r.extra.get("starved"):
+        mean, k = r.extra["starved"]
+        lines.append(f"- **Random-time baseline starved:** {mean:.1f} draws per event on average, below K/2 = "
+                     f"{k / 2:g}. Too few to judge by, so the verdict is INSUFFICIENT (Req 10.8).")
     return lines + [""]
 
 

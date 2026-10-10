@@ -217,7 +217,7 @@ Recorded so they are not silently forgotten, and not bolted on mid-implementatio
 #### Acceptance Criteria
 
 1. **Coin flip** (races): over the events, the mean of (bid at entry − stop) ÷ (target − stop) for LONG, mirrored for SHORT. That is a driftless path's chance of reaching the target first.
-2. **Random time** (races, direction, moves): for each event, K draws (default 20) from the same instrument and New York 15-minute slot, on other trading dates of the same slice that have no event for that instrument.
+2. **Random time** (races, direction, moves): for each event, K draws (default 20) from the same instrument and New York 15-minute slot, on other trading dates of the same slice that have no event for that instrument. *Amended by update 2026-10d: only the event's own trading date is excluded.*
    - The draws take the event's direction.
    - They take the event's stop and target distances in units of `atr_d1`, rescaled by the drawn row's `atr_d1`.
 
@@ -350,6 +350,23 @@ Requirement 9 gains:
 
 ---
 
+## Update 2026-10d: Baseline Corrections
+
+On 2026-10-09 the first explore runs showed two baseline problems:
+- **Starved random-time draws.** The random-time baseline excluded every date with an event. H001's `anchor` event fires on every date, so each event got 0–2 draws instead of 20, and the baseline read 67% at 05:00 and 37% at 09:00. No verdict changed: H001's rule compares with the naive rules.
+- **Timing measured against the wrong null.** The H4 timing result (lows of up days +8 points over `shuffled_path`) may be volatility, not timing. Shuffling a day's M15 bars spreads the London and New York volatility over the day. Even a random walk makes its extremes where it moves most, so `shuffled_path` overstates a timing effect.
+
+Requirement 10 changes:
+
+2. **Random time (amended).** The draws come from the same instrument, New York 15-minute slot and slice, on any trading date except the event's own.
+   - Other event dates are allowed. They make the baseline more like the event, so a pass gets harder, never easier.
+   - An event that fires every day still gets its K draws.
+7. **Sign flip** (timing statistics). The statistic is recomputed after flipping each M15 bar's direction at random, averaged over the same number of draws as `shuffled_path`.
+   - Each bar keeps its time slot and its size. A flipped bar is mirrored: its move changes sign, and its high and low swap roles.
+   - The day's volatility therefore stays where it was, while direction is random. A timing effect that beats `sign_flip` is about when the turns happen, not when the moves are big.
+   - Each event is compared with its own date's flips, conditioned the same way: for "lows of up days", over the flips in which that day closes up.
+8. **Starved baselines.** WHEN a pass rule compares with `random_time` AND the measured events average fewer than K/2 draws, the verdict SHALL be INSUFFICIENT, and the report SHALL say why.
+
 ## Open Decisions
 
 Proposed defaults apply unless the user changes them at review.
@@ -371,3 +388,5 @@ Proposed defaults apply unless the user changes them at review.
 | AR-D13 | The `crt` trade (update 2026-10c) | Entry at C3's open (the first M1 bar at or after C2's close), stop at C2's sweep extreme, target C1's other side, limit C3's close: the geometry of the 2026-10-09 C3 test, so the lab reproduces that result before a bias is added. |
 | AR-D14 | Quarter 0 (update 2026-10c) | 17:00–00:00, the rollover hour included (the indicator's first quarter starts 18:00). The trading day opens at 17:00 and every hour belongs to one quarter. |
 | AR-D15 | Not built now (update 2026-10c) | IC-CISD, the C3/C4 entry zones and the London and New York session levels. They refine entries; the earlier results place the edge in direction and timing, which these updates test. |
+| AR-D16 | Random-time pool (update 2026-10d) | Exclude only the event's own date. The alternative, excluding other events' rows, would starve events that fire every day again. |
+| AR-D17 | Timing baseline (update 2026-10d) | `sign_flip` is required for any timing claim before pre-registration. `shuffled_path` stays, as the weaker null that reproduces the 2026-10-08 statistic. |

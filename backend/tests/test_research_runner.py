@@ -279,6 +279,63 @@ def test_run_reads_only_the_confirmation_slice_and_explore_only_exploration(repo
     assert set(rows["slice"]) == {"confirm"} and set(rows["trading_date"].dt.date) == {date(2026, 10, 1)}
 
 
+def fixture_data(repo: Path, data_dirs: dict):
+    """The built fixture dataset and its race costs, for calling run_test directly."""
+    from agent.broker_profiles import load_profile
+    from algo_research.config import load_research_config
+    from algo_research.dataset import build_dataset
+    from algo_research.features.cache import ParquetCache
+    from algo_research.races import RaceCosts
+    from algo_research.snapshot import load_snapshot
+
+    cfg = load_research_config(root=repo)
+    snapshot = load_snapshot(data_dirs["snapshots_dir"] / cfg.snapshot)
+    specs = load_profile(cfg.profile).specs()
+    data = build_dataset(snapshot, cfg, specs, cfg.strategy(repo), ParquetCache(data_dirs["cache_dir"]), workers=1)
+    return data, {i: RaceCosts.from_spec(specs[i], "USD") for i in data.frames}
+
+
+def test_random_time_starved_rule_is_insufficient(repo, data_dirs):
+    # Update 2026-10d (Req 10.8): a rule against random_time with fewer than K/2 draws per event on average
+    # can't be judged. The confirm slice has two dates, so each 05:00 event draws at most the other one.
+    from algo_research.hypothesis import parse_hypothesis
+    from algo_research.report import _sample
+    from algo_research.runner import RunSettings, run_test
+
+    data, costs = fixture_data(repo, data_dirs)
+    test = parse_hypothesis(DIRECTION).tests()[0]                        # anchor at 05:00: an event every date
+
+    starved = run_test(test, data, "confirm", costs, seed=1, settings=RunSettings(resamples=200, random_time_draws=3))
+    assert starved.n_events > 0
+    assert starved.draws_available.max() <= 1                            # the one other date
+    assert starved.verdict == "INSUFFICIENT"
+    assert "starved" in "\n".join(_sample(starved))                      # the report says why
+
+    enough = run_test(test, data, "confirm", costs, seed=1, settings=RunSettings(resamples=200, random_time_draws=1))
+    assert enough.draws_available.min() == 1
+    assert "starved" not in "\n".join(_sample(enough))
+    assert "Random-time draws per event: 1 to 1; 0 event(s)" in "\n".join(_sample(enough))   # the true minimum
+
+
+def test_sign_flip_rate_per_real_up_day_from_its_own_flips(repo, data_dirs):
+    # Update 2026-10d (Req 10.7): each real day where `given` holds is paired with its own flips' rate.
+    from algo_research.hypothesis import parse_hypothesis
+    from algo_research.runner import RunSettings, run_test
+
+    data, costs = fixture_data(repo, data_dirs)
+    text = DAILY.replace('use = ["shuffled_path"]', 'use = ["shuffled_path", "sign_flip"]')                 .replace('versus = "shuffled_path"', 'versus = "sign_flip"').replace("day_dir == 1", "day_dir != 0")
+    [test] = parse_hypothesis(text).tests()
+    result = run_test(test, data, "confirm", costs, seed=1, settings=RunSettings(resamples=200, shuffles=20))
+    table = result.table
+    real_days = (table["n:rate"] > 0).to_numpy()
+    flip_days = (table["n:sign_flip:rate"] > 0).to_numpy()
+    assert real_days.any() and (flip_days <= real_days).all()            # only where the real condition holds
+    assert set(table.loc[flip_days, "n:sign_flip:rate"]) == {1.0}        # one conditional rate per day
+    rates = table.loc[flip_days, "sum:sign_flip:rate"]
+    assert ((rates >= 0) & (rates <= 1)).all()
+    assert "sign_flip" in result.baselines and result.outcomes[0].versus == "sign_flip"
+
+
 # ── reports ─────────────────────────────────────────────────────────────────
 
 def test_report_has_every_section(repo, data_dirs, capsys):
