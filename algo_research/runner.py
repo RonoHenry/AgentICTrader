@@ -114,14 +114,28 @@ def run_test(test: Test, data: ResearchData, slice_name: str, costs: Mapping[str
     if h.naive_rules and f"n:naive:{h.naive_rules[0]}:{main}" in table:
         baselines["best_naive"] = max(point(table, f"naive:{r}:{main}") for r in h.naive_rules)
     primary = next((rule for rule in rules if rule.versus), rules[0])
+    verdict = decide(n_events, n_dates, h.pass_.min_events, h.pass_.min_days, outcomes)
+    starved = _starved(h, measured, extra.get("available"), settings.random_time_draws)
+    if starved is not None:
+        verdict = "INSUFFICIENT"
+        extra["starved"] = starved
     return TestResult(
         label=test.label, test=test, slice=slice_name, seed=seed, events=events, skipped=skipped, table=table,
         outcomes=outcomes, stats=stats, baselines=baselines,
         breakdowns=breakdowns(table, primary) if len(table) else {},
-        verdict=decide(n_events, n_dates, h.pass_.min_events, h.pass_.min_days, outcomes),
+        verdict=verdict,
         n_events=n_events, n_dates=n_dates, races=extra.get("races"), draws_available=extra.get("available"),
         extra=extra,
     )
+
+
+def _starved(h: Hypothesis, measured: np.ndarray, available: Optional[np.ndarray], k: int) -> Optional[tuple]:
+    """(mean draws per measured event, K) when a pass rule compares with random_time
+    and its draws average under K/2: too few to judge by (Req 10.8). None otherwise."""
+    if available is None or not any(r.versus == "random_time" for r in h.pass_.require):
+        return None
+    mean = float(available[measured].mean()) if measured.any() else 0.0
+    return (mean, k) if mean < k / 2 else None
 
 
 def _where_rows(features: pd.DataFrame, events: pd.DataFrame, event) -> pd.DataFrame:

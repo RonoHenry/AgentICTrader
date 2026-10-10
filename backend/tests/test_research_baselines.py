@@ -57,23 +57,41 @@ def test_coin_flip_skips_rejected_races():
 
 # ── random time ─────────────────────────────────────────────────────────────
 
-def test_random_time_draws_same_instrument_slot_and_slice_never_event_dates():
-    features = grid()
-    events = events_at(features, [features.index[(features["instrument"] == "EURUSD") & (features["ny_minute"] == 540)
-                                                 & (features["trading_date"] == pd.Timestamp(2025, 7, 20))][0],
-                                  features.index[(features["instrument"] == "EURUSD") & (features["ny_minute"] == 555)
-                                                 & (features["trading_date"] == pd.Timestamp(2025, 7, 25))][0]])
-    draws = random_time_draws(features, events, k=20, rng=np.random.default_rng(1))
-    assert list(draws.available) == [20, 20]
+def eurusd_row(features: pd.DataFrame, minute: int, day: date) -> int:
+    return features.index[(features["instrument"] == "EURUSD") & (features["ny_minute"] == minute)
+                          & (features["trading_date"] == pd.Timestamp(day))][0]
+
+
+def test_random_time_draws_same_instrument_slot_and_slice_never_the_events_own_date():
+    # Update 2026-10d (Req 10.2 amended): only the event's own date is excluded; other events' dates may be drawn.
+    features = grid()                                            # confirm: 30 dates per slot
+    own = [date(2025, 7, 20), date(2025, 7, 25)]
+    events = events_at(features, [eurusd_row(features, 540, own[0]), eurusd_row(features, 540, own[1])])
+    draws = random_time_draws(features, events, k=40, rng=np.random.default_rng(1))
+    assert list(draws.available) == [29, 29]                     # every other confirm date, no more
     drawn = features.loc[draws.rows["row"]]
     for event, part in drawn.groupby(draws.rows["event"].to_numpy()):
         source = features.loc[events["row"].iloc[event]]
         assert (part["instrument"] == source["instrument"]).all()
         assert (part["ny_minute"] == source["ny_minute"]).all()
         assert (part["slice"] == "confirm").all()
-        assert len(part) == 20 and part.index.is_unique
-    # Never on a date with an event for that instrument.
-    assert not set(drawn["trading_date"]) & {pd.Timestamp(2025, 7, 20), pd.Timestamp(2025, 7, 25)}
+        assert part.index.is_unique
+        dates = set(part["trading_date"])
+        assert pd.Timestamp(own[event]) not in dates                     # never its own date
+        assert pd.Timestamp(own[1 - event]) in dates                     # the other event's date is allowed
+
+
+def test_random_time_daily_event_still_gets_k_draws():
+    # An event on every date (H001's anchor) used to leave no pool: 0-2 draws instead of K.
+    features = grid()
+    rows = features.index[(features["instrument"] == "EURUSD") & (features["ny_minute"] == 540)
+                          & (features["slice"] == "confirm")]
+    events = events_at(features, list(rows))
+    draws = random_time_draws(features, events, k=20, rng=np.random.default_rng(2))
+    assert (draws.available == 20).all()
+    drawn = features.loc[draws.rows["row"]]
+    own = events["trading_date"].to_numpy()[draws.rows["event"].to_numpy()]
+    assert (drawn["trading_date"].to_numpy() != own).all()
 
 
 def test_random_time_reproducible_and_reports_short_pools():

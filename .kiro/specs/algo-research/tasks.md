@@ -302,7 +302,15 @@ These come after 257 and don't wait for 258–262: they explore only, and pre-re
 
 Both come before any pre-registration (258, 266): H001 needs the random-time fix, and H004/H007 need `sign_flip`.
 
-- [ ] 267. Random-time draws exclude only the event's own date; a starved baseline is INSUFFICIENT
+- [x] 267. Random-time draws exclude only the event's own date; a starved baseline is INSUFFICIENT
+  - **Done 2026-10-10.**
+    - **The pool:** `random_time_draws` drops only the event's own date. A starved rule gives INSUFFICIENT, and the report's Sample section says why.
+    - **A report bug fixed on the way:** the draws line used `min(initial=0)`, so it always printed 0 as the minimum. It now prints the true range.
+    - **The golden run, re-baselined:** all 31 events now get their 5 draws (16 used to get fewer). The random-time win rate moved from 0.1447 to 0.1724, next to the coin flip's 0.1712. The verdict is still FAIL.
+    - **Re-explored, exploration slice:**
+      - H001's random time is now 0.515 at 05:00 and 0.510 at 09:00, from 20 draws per event; it used to read 0.671 and 0.369 from 0–2 draws.
+      - H002's win rate minus random time is now −0.001; it was −0.017.
+      - No verdict changed.
   - **267a. RED** (`test_research_baselines.py`, `test_research_runner.py`)
     - `test_random_time_draws_same_instrument_slot_and_slice_never_the_events_own_date` replaces the "never event dates" test. Other events' dates may be drawn; the event's own date never is.
     - `test_random_time_daily_event_still_gets_k_draws` — an event on every date gets K draws each.

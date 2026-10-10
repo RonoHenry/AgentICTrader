@@ -279,6 +279,38 @@ def test_run_reads_only_the_confirmation_slice_and_explore_only_exploration(repo
     assert set(rows["slice"]) == {"confirm"} and set(rows["trading_date"].dt.date) == {date(2026, 10, 1)}
 
 
+def test_random_time_starved_rule_is_insufficient(repo, data_dirs):
+    # Update 2026-10d (Req 10.8): a rule against random_time with fewer than K/2 draws per event on average
+    # can't be judged. The confirm slice has two dates, so each 05:00 event draws at most the other one.
+    from agent.broker_profiles import load_profile
+    from algo_research.config import load_research_config
+    from algo_research.dataset import build_dataset
+    from algo_research.features.cache import ParquetCache
+    from algo_research.hypothesis import parse_hypothesis
+    from algo_research.races import RaceCosts
+    from algo_research.report import _sample
+    from algo_research.runner import RunSettings, run_test
+    from algo_research.snapshot import load_snapshot
+
+    cfg = load_research_config(root=repo)
+    snapshot = load_snapshot(data_dirs["snapshots_dir"] / cfg.snapshot)
+    specs = load_profile(cfg.profile).specs()
+    data = build_dataset(snapshot, cfg, specs, cfg.strategy(repo), ParquetCache(data_dirs["cache_dir"]), workers=1)
+    costs = {i: RaceCosts.from_spec(specs[i], "USD") for i in data.frames}
+    test = parse_hypothesis(DIRECTION).tests()[0]                        # anchor at 05:00: an event every date
+
+    starved = run_test(test, data, "confirm", costs, seed=1, settings=RunSettings(resamples=200, random_time_draws=3))
+    assert starved.n_events > 0
+    assert starved.draws_available.max() <= 1                            # the one other date
+    assert starved.verdict == "INSUFFICIENT"
+    assert "starved" in "\n".join(_sample(starved))                      # the report says why
+
+    enough = run_test(test, data, "confirm", costs, seed=1, settings=RunSettings(resamples=200, random_time_draws=1))
+    assert enough.draws_available.min() == 1
+    assert "starved" not in "\n".join(_sample(enough))
+    assert "Random-time draws per event: 1 to 1; 0 event(s)" in "\n".join(_sample(enough))   # the true minimum
+
+
 # ── reports ─────────────────────────────────────────────────────────────────
 
 def test_report_has_every_section(repo, data_dirs, capsys):

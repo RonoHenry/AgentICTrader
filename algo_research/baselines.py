@@ -8,7 +8,7 @@ count, which the day bootstrap (stats.py) pairs with the event's own value.
 | Baseline | Measures | Per event |
 |---|---|---|
 | ``coin_flip`` | race | ``p_coin``: a driftless path's chance of the target first, from the closing-side price at entry. Analytic. |
-| ``random_time`` | race, direction, move | K draws: same instrument and New York 15-minute slot, other trading dates of the same slice with no event for that instrument. Draws keep the event's direction, and its stop and target distances in ``atr_d1`` units, rescaled by the drawn row's ``atr_d1``; with the event's own time limit, its duration. |
+| ``random_time`` | race, direction, move | K draws: same instrument and New York 15-minute slot, other trading dates of the same slice (only the event's own date excluded). Draws keep the event's direction, and its stop and target distances in ``atr_d1`` units, rescaled by the drawn row's ``atr_d1``; with the event's own time limit, its duration. |
 | ``naive:<rule>`` | direction | ``always_long``, ``prev_day_dir``, ``w1_trend``, ``side_d1_open`` or ``side_midnight_open`` on the event's row. An abstaining rule scores 0.5. |
 | ``stratified`` | rate | The rate among the slice's rows in the same decile of distance to the level (in ``atr_d1``, deciles over those rows) and the same New York hour, for the event's cell. |
 | ``shuffled_path`` | rate (timing) | Each date's M15 bars in shuffled order, the open and close kept, the statistic recomputed; averaged over the shuffles. |
@@ -59,19 +59,18 @@ class RandomTimeDraws:
 def random_time_draws(features: pd.DataFrame, events: pd.DataFrame, k: int,
                       rng: np.random.Generator) -> RandomTimeDraws:
     """K feature rows per event from the same instrument, New York 15-minute slot
-    and slice, on trading dates without an event for that instrument."""
+    and slice, on any trading date but the event's own. Other events' dates stay
+    in the pool: they make the baseline more like the event, so a pass only gets
+    harder, and an event that fires every day keeps its K draws (update 2026-10d)."""
     slot = features[["instrument", "ny_minute", "slice"]].reset_index(drop=True)
     pools = slot.groupby(["instrument", "ny_minute", "slice"]).indices         # positions per slot
     labels = features.index.to_numpy()
     dates = features["trading_date"].to_numpy(dtype="datetime64[ns]")
-    event_dates: dict[str, np.ndarray] = {
-        instrument: np.unique(part.to_numpy(dtype="datetime64[ns]"))
-        for instrument, part in events.groupby("instrument")["trading_date"]}
     rows, available = [], np.zeros(len(events), dtype=int)
     for i, (row, direction) in enumerate(zip(events["row"].to_numpy(), events["direction"].to_numpy())):
         source = features.loc[row]
         pool = pools.get((source["instrument"], source["ny_minute"], source["slice"]), np.array([], dtype=int))
-        pool = pool[~np.isin(dates[pool], event_dates.get(source["instrument"], []))]
+        pool = pool[dates[pool] != np.datetime64(pd.Timestamp(source["trading_date"]), "ns")]
         chosen = np.sort(rng.choice(pool, size=min(k, len(pool)), replace=False)) if len(pool) else pool
         available[i] = len(chosen)
         rows.extend((i, int(labels[position]), direction) for position in chosen)
