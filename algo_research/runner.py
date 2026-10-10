@@ -36,6 +36,7 @@ from algo_research.baselines import (
     random_time_draws,
     rescale_orders,
     shuffled_path,
+    sign_flip,
     stratified,
 )
 from algo_research.dataset import ResearchData
@@ -346,4 +347,12 @@ def _rate(h, events, features, labels, data, costs, seed, settings, skipped):
                                 np.random.default_rng([seed, 2]))
         keep = ~null
         series["shuffled_path:rate"] = (np.where(keep, sums, 0.0), np.where(keep, n, 0.0))
+    if "sign_flip" in h.baselines.use:
+        # Each real day where `given` holds, against its own flips' rate of `of` given `given` (Req 10.7):
+        # a flip can change the day's direction, so the flips are conditioned the same way the day is.
+        sums, n = sign_flip(data.frames, events, of, given if h.measure.given else None, settings.shuffles,
+                            np.random.default_rng([seed, 3]))
+        keep = given_mask & ~null & (n > 0)
+        rate = np.divide(sums, n, out=np.zeros_like(sums), where=n > 0)
+        series["sign_flip:rate"] = (np.where(keep, rate, 0.0), keep.astype(float))
     return series, {}

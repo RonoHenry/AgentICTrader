@@ -84,11 +84,14 @@ BASELINES = {
     "race": ("coin_flip", "random_time"),
     "direction": ("random_time", *(f"naive:{r}" for r in NAIVE_RULES)),
     "move": ("random_time",),
-    "rate": ("stratified", "shuffled_path"),
+    "rate": ("stratified", "shuffled_path", "sign_flip"),
 }
 #: Baselines that judge only some statistics; the others judge every statistic of their measures.
-BASELINE_STATS = {"coin_flip": ("win_rate",), "stratified": ("rate",), "shuffled_path": ("rate",)}
-#: Candle labels the shuffled-path baseline recomputes from each shuffled day.
+BASELINE_STATS = {"coin_flip": ("win_rate",), "stratified": ("rate",), "shuffled_path": ("rate",),
+                  "sign_flip": ("rate",)}
+#: Baselines that rebuild whole days from their M15 bars: the shuffle, and the flip (update 2026-10d).
+REDRAWN_DAYS = ("shuffled_path", "sign_flip")
+#: Candle labels the shuffled-path and sign-flip baselines recompute from each redrawn day.
 SHUFFLE_LABELS = frozenset(CANDLE_LABELS)
 LEVEL_ALIASES = ("level_hit_after", "level_hit_at")
 _PRICE_FEATURES = frozenset(name for name, column in COLUMNS.items() if column.unit == "price")
@@ -269,12 +272,14 @@ def _problems(h: Hypothesis) -> list[str]:
         if h.measure.of not in ("level_hit_after", *(f"{lv}_hit_after" for lv in ("pdh", "pdl", "pwh", "pwl")))                or h.measure.given:
             problems.append("baselines.use: stratified compares the rate the event's level trades: "
                             "of = \"level_hit_after\", with no given")
-    if "shuffled_path" in h.baselines.use:
+    for redrawn in REDRAWN_DAYS:
+        if redrawn not in h.baselines.use:
+            continue
         if h.event.name != "daily":
-            problems.append("baselines.use: shuffled_path recomputes whole days: use the daily event")
+            problems.append(f"baselines.use: {redrawn} recomputes whole days: use the daily event")
         read = _label_columns(h)
         if not read <= SHUFFLE_LABELS:
-            problems.append(f"baselines.use: shuffled_path recomputes only {sorted(SHUFFLE_LABELS)}, "
+            problems.append(f"baselines.use: {redrawn} recomputes only {sorted(SHUFFLE_LABELS)}, "
                             f"not {sorted(read - SHUFFLE_LABELS)}")
 
     for i, rule in enumerate(h.pass_.require):

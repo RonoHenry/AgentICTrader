@@ -247,3 +247,111 @@ def test_shuffled_path_matches_the_real_statistic_on_a_random_walk(of):
     shuffled = sums.sum() / counts.sum()
     se = np.sqrt(real * (1 - real) / mask.sum())
     assert abs(real - shuffled) < 3 * se, (real, shuffled, se)
+
+
+# ── sign flip (update 2026-10d, Req 10.7) ───────────────────────────────────
+
+def shaped_walk_frame(days: int = 300, seed: int = 7, quiet: float = 0.00002, busy: float = 0.0004):
+    """A random walk whose M1 moves are large only 01:00-13:00 New York: volatility with no timing in it."""
+    path = Path(ny(2025, 9, 7, 17), ny(2025, 9, 7, 17) + timedelta(days=days * 7 // 5 + 2))
+    times = pd.DatetimeIndex(path.times)
+    hour = (times if times.tz is not None else times.tz_localize("UTC")).tz_convert("America/New_York").hour
+    sigma = np.where((hour >= 1) & (hour < 13), busy, quiet)
+    rng = np.random.default_rng(seed)
+    closes = 1.1 + np.cumsum(rng.normal(0, 1, len(times)) * sigma)
+    opens = np.concatenate([[1.1], closes[:-1]])
+    return frame_from_arrays("EURUSD", times, opens, np.maximum(opens, closes) + sigma / 4,
+                             np.minimum(opens, closes) - sigma / 4, closes, spread=np.full(len(times), 0.0001),
+                             typical_spread=0.0001, stop_slippage=0.0)
+
+
+def whole_weekdays(frame) -> pd.DataFrame:
+    days = candle_labels(frame)
+    return days[days["trading_date"].dt.weekday < 5].iloc[1:-1]
+
+
+def test_unflipped_path_gives_back_the_candle_labels():
+    from algo_research.baselines import _m15_days, _path_labels
+
+    frame = walk_frame(days=20)
+    days = candle_labels(frame).set_index("trading_date")
+    for day, bars in _m15_days(frame).items():
+        if day not in days.index or day.weekday() >= 5:
+            continue
+        identity = np.arange(len(bars))[None, :]
+        got = _path_labels(bars, identity, signs=np.ones_like(identity)).iloc[0]
+        want = days.loc[day]
+        for name in ("day_dir", "day_high_h4", "day_low_h4", "day_high_q", "day_low_q"):
+            assert got[name] == want[name], (day, name)
+        assert got["day_high_final"] == pytest.approx(want["day_high_final"])
+        assert got["day_low_final"] == pytest.approx(want["day_low_final"])
+
+
+def test_sign_flip_keeps_each_bar_in_its_slot_and_size():
+    from algo_research.baselines import _path_labels
+
+    # From an open of 1.0: a bar up 0.1 (high +0.15, low -0.05), then a bar down 0.1 (high +0.02, low -0.12).
+    bars = pd.DataFrame({"open": [1.0, 1.1], "high": [1.15, 1.12], "low": [0.95, 0.98], "close": [1.1, 1.0],
+                         "h4_index": [2, 4], "quarter": [1, 2]})
+    flipped = _path_labels(bars, np.array([[0, 1]]), signs=np.array([[-1, 1]])).iloc[0]
+    # The first bar is mirrored: down 0.1 to 0.9, its high 0.05 above its start and its low 0.15 below.
+    # The second keeps its own move from there: down to 0.8, high 0.92, low 0.78. Each stays in its slot.
+    assert flipped["day_high_final"] == pytest.approx(1.05) and flipped["day_high_h4"] == 2
+    assert flipped["day_low_final"] == pytest.approx(0.78) and flipped["day_low_h4"] == 4
+    assert flipped["day_dir"] == -1
+
+
+def test_sign_flip_keeps_volatility_where_it_was():
+    # Big moves only 01:00-13:00: even a random walk makes its extremes there. The flips keep that and agree
+    # with the real statistic; the shuffles scatter the big bars over the day, so they understate it, and a
+    # timing claim tested against them would look like an edge where there is none.
+    from algo_research.baselines import sign_flip
+
+    frame = shaped_walk_frame()
+    days = whole_weekdays(frame)
+    events = pd.DataFrame({"instrument": "EURUSD", "trading_date": days["trading_date"].to_numpy()})
+    of = compile_filter("day_low_h4 in [2, 3, 4]", CANDLE_LABELS)
+    given = compile_filter("day_dir == 1", CANDLE_LABELS)
+    flip_sums, flip_counts = sign_flip({"EURUSD": frame}, events, of=of, given=given, flips=100,
+                                       rng=np.random.default_rng(3))
+    shuf_sums, shuf_counts = shuffled_path({"EURUSD": frame}, events, of=of, given=given, shuffles=100,
+                                           rng=np.random.default_rng(3))
+    mask, _ = given.evaluate(days)
+    hits, _ = of.evaluate(days)
+    real = (hits & mask).sum() / mask.sum()
+    se = np.sqrt(real * (1 - real) / mask.sum())
+    flipped, shuffled = flip_sums.sum() / flip_counts.sum(), shuf_sums.sum() / shuf_counts.sum()
+    assert abs(real - flipped) < 3 * se, (real, flipped, se)
+    assert shuffled < real - 3 * se, (real, shuffled, se)
+
+
+@pytest.mark.parametrize("of", ["day_low_h4 in [2, 3, 4]", "day_low_q == 1"])
+def test_sign_flip_matches_the_real_statistic_on_a_random_walk(of):
+    from algo_research.baselines import sign_flip
+
+    frame = walk_frame(days=300)
+    days = whole_weekdays(frame)
+    events = pd.DataFrame({"instrument": "EURUSD", "trading_date": days["trading_date"].to_numpy()})
+    of = compile_filter(of, CANDLE_LABELS)
+    given = compile_filter("day_dir == 1", CANDLE_LABELS)
+    sums, counts = sign_flip({"EURUSD": frame}, events, of=of, given=given, flips=100, rng=np.random.default_rng(2))
+    mask, _ = given.evaluate(days)
+    hits, _ = of.evaluate(days)
+    real = (hits & mask).sum() / mask.sum()
+    se = np.sqrt(real * (1 - real) / mask.sum())
+    assert abs(real - sums.sum() / counts.sum()) < 3 * se
+
+
+def test_sign_flip_reproducible_by_seed():
+    from algo_research.baselines import sign_flip
+
+    frame = walk_frame(days=10)
+    days = candle_labels(frame)
+    events = pd.DataFrame({"instrument": "EURUSD", "trading_date": days["trading_date"]})
+    of = compile_filter("day_low_h4 in [2, 3, 4]", CANDLE_LABELS)
+    given = compile_filter("day_dir == 1", CANDLE_LABELS)
+    run = lambda seed: sign_flip({"EURUSD": frame}, events, of=of, given=given, flips=50,  # noqa: E731
+                                 rng=np.random.default_rng(seed))
+    (a, na), (b, nb), (c, _) = run(9), run(9), run(10)
+    assert np.array_equal(a, b) and np.array_equal(na, nb)
+    assert not np.array_equal(a, c)

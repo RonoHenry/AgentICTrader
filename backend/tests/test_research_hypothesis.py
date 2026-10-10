@@ -355,3 +355,35 @@ def test_a_bare_column_of_true_false_and_none_is_a_condition():
         negated, _ = compile_filter("not smt", {"smt"}).evaluate(rows)
     assert list(mask) == [True, False, False, True] and list(null) == [False, False, True, False]
     assert list(negated) == [False, True, False, False]
+
+
+TIMING = '''
+id = "H004"
+title = "Lows of up days form in the 01/05/09 H4 candles"
+statement = "On up days the low forms in the 01:00, 05:00 or 09:00 H4 candle more often than sign-flipped paths."
+family = "replication"
+created = 2026-10-10
+
+[event]
+name = "daily"
+
+[measure]
+kind = "rate"
+of = "day_low_h4 in [2, 3, 4]"
+given = "day_dir == 1"
+
+[baselines]
+use = ["shuffled_path", "sign_flip"]
+
+[pass]
+require = [{ stat = "rate", versus = "sign_flip" }]
+'''
+
+
+def test_sign_flip_is_a_timing_baseline_for_daily_rate_measures():
+    # Update 2026-10d (Req 10.7): like shuffled_path, it rebuilds whole days and their candle labels.
+    assert "sign_flip" in parse_hypothesis(TIMING).baselines.use
+    with pytest.raises(HypothesisError, match="sign_flip.*daily"):
+        parse_hypothesis(replace(TIMING, 'name = "daily"', 'name = "anchor"\nparams = { at = "09:00" }'))
+    with pytest.raises(HypothesisError, match="sign_flip"):
+        parse_hypothesis(replace(H002, 'use = ["coin_flip", "random_time"]', 'use = ["coin_flip", "sign_flip"]'))

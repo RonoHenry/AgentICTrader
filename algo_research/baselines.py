@@ -12,16 +12,24 @@ count, which the day bootstrap (stats.py) pairs with the event's own value.
 | ``naive:<rule>`` | direction | ``always_long``, ``prev_day_dir``, ``w1_trend``, ``side_d1_open`` or ``side_midnight_open`` on the event's row. An abstaining rule scores 0.5. |
 | ``stratified`` | rate | The rate among the slice's rows in the same decile of distance to the level (in ``atr_d1``, deciles over those rows) and the same New York hour, for the event's cell. |
 | ``shuffled_path`` | rate (timing) | Each date's M15 bars in shuffled order, the open and close kept, the statistic recomputed; averaged over the shuffles. |
+| ``sign_flip`` | rate (timing) | Each date's M15 bars in place, each one's direction flipped at random (a flipped bar is mirrored), the statistic recomputed; averaged over the flips. The day's volatility stays where it was (update 2026-10d). |
 
 The shuffle moves whole M15 bars: each keeps its move from the previous close
 and its high and low relative to it, and takes the time slot (and so the H4
 candle and the daily quarter) it lands in. Unshuffled, it gives back the
 candle labels exactly.
 
+The flip keeps every bar in its slot and flips its direction: the move changes
+sign, and the high and low swap roles (a mirror image). Big moves stay where the
+market made them, so a timing claim that beats the flip is about when price
+turns, not when it moves most: even a random walk makes its extremes where it
+moves most, and a shuffle spreads those moves over the day. Unflipped, it gives
+back the candle labels exactly.
+
 Draws are reproducible: their generator is seeded from the hypothesis hash
 (stats.seed_from) by the caller (Req 10.6).
 
-Validates: Requirements 10.1-10.6, 13.3, 17.2 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 10.1-10.8, 13.3, 17.2 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -37,7 +45,7 @@ from algo_research.frame import InstrumentFrame, calendar_columns, daily_quarter
 from liquidity_engine.models import Timeframe
 
 __all__ = ["NAIVE", "RandomTimeDraws", "coin_flip", "naive_direction", "random_time_draws", "rescale_orders",
-           "shuffled_path", "stratified"]
+           "shuffled_path", "sign_flip", "stratified"]
 
 NAIVE = ("always_long", "prev_day_dir", "w1_trend", "side_d1_open", "side_midnight_open")
 
@@ -175,14 +183,25 @@ def shuffled_path(frames: Mapping[str, InstrumentFrame], events: pd.DataFrame, o
     """Per event (an instrument and trading date): over ``shuffles`` shuffles of the
     date's M15 bars, the share where ``given`` and ``of`` hold (sum) and where
     ``given`` holds (count), both averaged over the shuffles."""
+    return _redrawn(frames, events, of, given, lambda bars: _shuffled_labels(bars, shuffles, rng))
+
+
+def sign_flip(frames: Mapping[str, InstrumentFrame], events: pd.DataFrame, of: Filter, given: Optional[Filter],
+              flips: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    """As ``shuffled_path``, over ``flips`` draws of the date's M15 bars kept in place,
+    each one's direction flipped at random (Req 10.7)."""
+    return _redrawn(frames, events, of, given, lambda bars: _flipped_labels(bars, flips, rng))
+
+
+def _redrawn(frames, events, of, given, draw) -> tuple[np.ndarray, np.ndarray]:
     by_day = {i: _m15_days(frame) for i, frame in frames.items()}
     sums, counts = np.zeros(len(events)), np.zeros(len(events))
     for i, (instrument, day) in enumerate(zip(events["instrument"], events["trading_date"])):
         bars = by_day[instrument].get(pd.Timestamp(day))
         if bars is None:
             continue
-        labels = _shuffled_labels(bars, shuffles, rng)
-        held = given.evaluate(labels)[0] if given is not None and given.tree is not None else np.ones(shuffles, bool)
+        labels = draw(bars)
+        held = given.evaluate(labels)[0] if given is not None and given.tree is not None else np.ones(len(labels), bool)
         hits = of.evaluate(labels)[0]
         sums[i], counts[i] = (hits & held).mean(), held.mean()
     return sums, counts
@@ -201,16 +220,26 @@ def _shuffled_labels(bars: pd.DataFrame, shuffles: int, rng: np.random.Generator
     return _path_labels(bars, order)
 
 
-def _path_labels(bars: pd.DataFrame, order: np.ndarray) -> pd.DataFrame:
-    """The candle labels of the date's M15 moves taken in each row's ``order``; the identity
-    order gives back the real day."""
+def _flipped_labels(bars: pd.DataFrame, flips: int, rng: np.random.Generator) -> pd.DataFrame:
+    order = np.tile(np.arange(len(bars)), (flips, 1))
+    return _path_labels(bars, order, signs=rng.choice(np.array([-1, 1]), size=order.shape))
+
+
+def _path_labels(bars: pd.DataFrame, order: np.ndarray, signs: Optional[np.ndarray] = None) -> pd.DataFrame:
+    """The candle labels of the date's M15 moves taken in each row's ``order``, each
+    move mirrored where ``signs`` is -1 (its move changes sign, its high and low swap
+    roles); the identity order with no flips gives back the real day."""
     o = bars["open"].to_numpy()
     h, l, c = (bars[name].to_numpy() for name in ("high", "low", "close"))
     previous = np.concatenate([[o[0]], c[:-1]])
     move, up, down = c - previous, h - previous, l - previous
-    level_after = o[0] + np.cumsum(move[order], axis=1)
+    move, up, down = move[order], up[order], down[order]
+    if signs is not None:
+        flipped = signs < 0
+        move, up, down = np.where(flipped, -move, move), np.where(flipped, -down, up), np.where(flipped, -up, down)
+    level_after = o[0] + np.cumsum(move, axis=1)
     level_before = np.concatenate([np.full((len(order), 1), o[0]), level_after[:, :-1]], axis=1)
-    highs, lows = level_before + up[order], level_before + down[order]
+    highs, lows = level_before + up, level_before + down
     # A slot keeps its time, and so its H4 candle and its daily quarter.
     h4, quarter = bars["h4_index"].to_numpy(), bars["quarter"].to_numpy()
     high_at, low_at = highs.argmax(axis=1), lows.argmin(axis=1)
