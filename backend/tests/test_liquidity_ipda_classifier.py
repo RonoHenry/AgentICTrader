@@ -108,23 +108,30 @@ class TestCRTPhaseClassification:
 
 
 class TestCISDCascadeMapping:
+    """Each trigger maps to a *list* of acceptable confirmation timeframes —
+    matches the canonical TTrades "Swing Confirmation" chart (Weekly->H4,
+    Daily->H1, H4->M15, H1->M5, M30->M3, M15->M1), but deliberately allows
+    more than one candidate per trigger since price doesn't respect a
+    single rigid pairing (H4 in particular is confirmed on M15 or M30
+    depending on how the range delivers)."""
+
     def test_cisd_cascade_mn1_maps_to_d1(self):
-        assert IPDAClassifier.CISD_CASCADE[Timeframe.MN1] == Timeframe.D1
+        assert IPDAClassifier.CISD_CASCADE[Timeframe.MN1] == [Timeframe.D1]
 
     def test_cisd_cascade_w1_maps_to_h4(self):
-        assert IPDAClassifier.CISD_CASCADE[Timeframe.W1] == Timeframe.H4
+        assert IPDAClassifier.CISD_CASCADE[Timeframe.W1] == [Timeframe.H4]
 
     def test_cisd_cascade_d1_maps_to_h1(self):
-        assert IPDAClassifier.CISD_CASCADE[Timeframe.D1] == Timeframe.H1
+        assert IPDAClassifier.CISD_CASCADE[Timeframe.D1] == [Timeframe.H1]
 
-    def test_cisd_cascade_h4_maps_to_m15(self):
-        assert IPDAClassifier.CISD_CASCADE[Timeframe.H4] == Timeframe.M15
+    def test_cisd_cascade_h4_accepts_m15_or_m30(self):
+        assert IPDAClassifier.CISD_CASCADE[Timeframe.H4] == [Timeframe.M15, Timeframe.M30]
 
     def test_cisd_cascade_m30_maps_to_m3(self):
-        assert IPDAClassifier.CISD_CASCADE[Timeframe.M30] == Timeframe.M3
+        assert IPDAClassifier.CISD_CASCADE[Timeframe.M30] == [Timeframe.M3]
 
     def test_cisd_cascade_m15_maps_to_m1(self):
-        assert IPDAClassifier.CISD_CASCADE[Timeframe.M15] == Timeframe.M1
+        assert IPDAClassifier.CISD_CASCADE[Timeframe.M15] == [Timeframe.M1]
 
 
 class TestCISDCascadeValidation:
@@ -178,6 +185,42 @@ class TestCISDCascadeValidation:
         status = IPDAClassifier().validate_cisd_cascade(candles_by_tf, Timeframe.D1)
         assert status.cascade_valid is False
         assert status.cascade_chain == []
+
+    def test_h4_cascade_confirms_on_m30_alone(self):
+        # Only M30 supplied, no M15 — must still validate since H4 accepts
+        # either as a confirmation candidate.
+        candles_by_tf = {
+            Timeframe.H4: self._bearish_cisd_candles(Timeframe.H4),
+            Timeframe.M30: self._bearish_cisd_candles(Timeframe.M30),
+        }
+        status = IPDAClassifier().validate_cisd_cascade(candles_by_tf, Timeframe.H4)
+        assert status.cascade_valid is True
+
+    def test_h4_cascade_confirms_on_m15_alone(self):
+        candles_by_tf = {
+            Timeframe.H4: self._bearish_cisd_candles(Timeframe.H4),
+            Timeframe.M15: self._bearish_cisd_candles(Timeframe.M15),
+        }
+        status = IPDAClassifier().validate_cisd_cascade(candles_by_tf, Timeframe.H4)
+        assert status.cascade_valid is True
+
+    def test_h4_cascade_falls_back_to_second_candidate(self):
+        # M15 supplied but unconfirmed, M30 supplied and confirmed — the
+        # cascade should still validate via the M30 candidate rather than
+        # giving up after the first (unconfirmed) one.
+        unconfirmed_m15 = [
+            mk(1.00, 1.01, 0.99, 1.005, 0, tf=Timeframe.M15),
+            mk(1.005, 1.02, 1.00, 1.015, 1, tf=Timeframe.M15),
+            mk(1.015, 1.03, 1.01, 1.025, 2, tf=Timeframe.M15),
+            mk(1.03, 1.04, 0.90, 0.95, 3, tf=Timeframe.M15),  # monotonic run -> no swing prerequisite
+        ]
+        candles_by_tf = {
+            Timeframe.H4: self._bearish_cisd_candles(Timeframe.H4),
+            Timeframe.M15: unconfirmed_m15,
+            Timeframe.M30: self._bearish_cisd_candles(Timeframe.M30),
+        }
+        status = IPDAClassifier().validate_cisd_cascade(candles_by_tf, Timeframe.H4)
+        assert status.cascade_valid is True
 
     def test_crt_phases_keyed_by_timeframe_value(self):
         candles_by_tf = {

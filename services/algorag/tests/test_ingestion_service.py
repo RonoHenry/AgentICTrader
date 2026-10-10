@@ -13,7 +13,8 @@ Task 7.2 – Implement duplicate detection
 
 All Qdrant calls are mocked — no live instance required.
 Integration tests that require a real Qdrant instance are marked
-@pytest.mark.integration and are skipped by default.
+@pytest.mark.infrastructure (and @pytest.mark.integration); deselect them with
+-m "not infrastructure".
 
 Requirements: FR-RAG-1 (Historical Setup Storage), FR-RAG-7 (Real-Time Ingestion)
 """
@@ -648,6 +649,22 @@ class TestBuildPointFromSetup:
         point = build_point_from_setup(setup, make_embedding())
         assert point.payload["instrument"] == "GBPUSD"
 
+    def test_payload_instrument_none_is_empty_string(self) -> None:
+        """An explicit None instrument is stored as "", not the literal "NONE"."""
+        setup = make_enriched_setup(instrument=None)
+        point = build_point_from_setup(setup, make_embedding())
+        assert point.payload["instrument"] == ""
+
+    @pytest.mark.parametrize("missing_trade_id", [None, ""])
+    def test_null_or_empty_trade_id_gets_generated_uuid(self, missing_trade_id) -> None:
+        """A None/empty trade_id is replaced by a generated UUID4 string, and
+        the point ID is uuid5 of that generated trade_id."""
+        setup = make_enriched_setup(trade_id=missing_trade_id)
+        point = build_point_from_setup(setup, make_embedding())
+        generated = point.payload["trade_id"]
+        assert uuid.UUID(generated).version == 4
+        assert point.id == str(uuid.uuid5(uuid.NAMESPACE_DNS, generated))
+
     def test_payload_trade_id_preserved(self) -> None:
         """trade_id is preserved exactly in the payload."""
         setup = make_enriched_setup(trade_id="TRD-PRESERVE-001")
@@ -675,6 +692,7 @@ class TestBuildPointFromSetup:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.infrastructure  # needs a live Qdrant server on localhost:6333
 @pytest.mark.integration
 class TestIngestionServiceIntegration:
     """

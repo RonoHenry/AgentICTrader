@@ -3,6 +3,7 @@ services:
   # ── TIME-SERIES DATABASE ──────────────────────────────────
   timescaledb:
     image: timescale/timescaledb:latest-pg15
+    restart: unless-stopped  # paper-trader writes here continuously
     environment:
       POSTGRES_DB: ${DB_NAME:-agentictrader}
       POSTGRES_USER: ${DB_USER:-agentictrader}
@@ -262,6 +263,32 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+
+  # ── PAPER TRADER (live crypto forward test, runs unattended) ─
+  # The ICT agent on live Binance candles with paper fills, re-evaluated at
+  # every entry-timeframe bar close. Paper trades, the heartbeat and logs
+  # land in ../data on the host. Restarts itself on crash or reboot.
+  paper-trader:
+    build:
+      context: ..
+      dockerfile: docker/paper-trader/Dockerfile
+    restart: unless-stopped
+    environment:
+      - TIMESCALE_URL=postgresql://${DB_USER:-agentictrader}:${DB_PASSWORD:-changeme}@timescaledb:5432/${DB_NAME:-agentictrader}
+      - INSTRUMENTS=${PAPER_INSTRUMENTS:-BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,DOGEUSDT}
+      - ENTRY_TIMEFRAME=${PAPER_ENTRY_TIMEFRAME:-M5}
+      - VISUAL_MODEL_URL=http://visual-model:8005
+      - ALGORAG_URL=http://algorag:8003
+    volumes:
+      - ../data:/app/data
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
 
 # NOTE: the legacy Django backend (backend/) is intentionally not containerized —
 # its manage.py has been an empty stub since the project's initial commit and it

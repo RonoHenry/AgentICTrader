@@ -1,10 +1,43 @@
 """
 Root conftest.py — shared fixtures available across all services and tests.
 """
+import os
+
+# Several test files (ml/inference/test_model_versioning*.py,
+# ml/models/confluence_scorer/train.py's MLflowTracker, and others) construct
+# MLflow tracking/registry objects with a default http://localhost:5000 URI
+# and no test mocking. With no MLflow server running locally, MLflow's client
+# falls through to its deprecated local filesystem store ("./mlruns"), which
+# newer MLflow versions guard behind a hard exception unless this flag is set.
+# Once one test hits that exception, MLflow's cached tracking-URI resolution
+# stays corrupted for the rest of the pytest process, cascading into ~30+
+# unrelated failures in later-collected files that pass individually but fail
+# only when run as part of the full suite. Setting this here (module import
+# time, before any test collection) makes the fallback path actually work
+# instead of raising, which is the correct behaviour for local/CI runs
+# without a real MLflow server. See memory: test_suite_isolation_bug.md.
+os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
+
+# Without an MLflow server, MLflow's REST client retries a refused connection
+# 7 times with exponential backoff (~5 minutes per call). Tests that reach
+# http://localhost:5000 unmocked should fail fast instead. Export these
+# variables to override (e.g. when running against a real MLflow server).
+os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "0")
+os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "10")
+
 import pytest
 import numpy as np
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
+
+from hypothesis import settings as hypothesis_settings
+
+# Hypothesis fails any example that runs longer than 200 ms by default. That
+# is a slowness detector, not a correctness check, and under machine load it
+# flakes (seen 2026-10-05: 369 ms on the first run, 187 ms on the retry, so
+# reported as "unreliable"). No property test here asserts speed; disable it.
+hypothesis_settings.register_profile("agentictrader", deadline=None)
+hypothesis_settings.load_profile("agentictrader")
 
 
 # ── MARKET DATA FIXTURES ──────────────────────────────────────────────────────

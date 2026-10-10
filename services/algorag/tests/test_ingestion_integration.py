@@ -7,11 +7,18 @@ Task 7.3: Write integration tests for ingestion
 - Test ingestion performance (< 1s per setup)
 - Requirements: FR-RAG-7, NFR-RAG-1
 
-These tests require a live Qdrant instance and are marked with @pytest.mark.integration.
-Run with: pytest -m integration services/algorag/tests/test_ingestion_integration.py -v
+Tests that need a live Qdrant server (localhost:6333) are marked
+@pytest.mark.infrastructure (and @pytest.mark.integration) and are deselected
+by -m "not infrastructure". Run them with a Qdrant server up:
+    pytest -m infrastructure services/algorag/tests/test_ingestion_integration.py -v
 
-Performance tests use @pytest.mark.performance for optional execution.
-Run with: pytest -m "integration and performance" -v --tb=short
+TestIngestionErrorHandling exercises IngestionService's own validation and
+error tracking. It does not depend on server behaviour, so it runs against
+qdrant-client's embedded in-memory mode (location=":memory:") and needs no
+infrastructure.
+
+Performance tests also carry @pytest.mark.performance:
+    pytest -m "infrastructure and performance" -v --tb=short
 """
 
 from __future__ import annotations
@@ -30,10 +37,11 @@ import random
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Tuple
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import numpy as np
 import pytest
+from qdrant_client import AsyncQdrantClient
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
 from services.algorag.config import QdrantConfig
@@ -135,11 +143,51 @@ def generate_test_dataset(count: int) -> List[Tuple[Dict[str, Any], List[float]]
     return dataset
 
 
+class InMemoryQdrantClientWrapper(QdrantClientWrapper):
+    """QdrantClientWrapper backed by qdrant-client's embedded local mode.
+
+    Every wrapper method (ensure_collection, upsert, count, delete_collection,
+    close) runs unchanged against a real, in-process Qdrant implementation, so
+    no server is needed. Payload indexes are accepted but have no effect in
+    local mode, which does not matter for these tests.
+    """
+
+    def get_client(self) -> AsyncQdrantClient:
+        if self._client is None:
+            self._client = AsyncQdrantClient(location=":memory:")
+        return self._client
+
+
+def make_in_memory_service(suffix: str, batch_size: int = 50) -> IngestionService:
+    config = make_test_config(suffix)
+    return IngestionService(
+        wrapper=InMemoryQdrantClientWrapper(config=config),
+        config=config,
+        batch_size=batch_size,
+    )
+
+
 @pytest.fixture
-def test_service() -> IngestionService:
-    """Create test ingestion service with unique collection."""
-    config = make_test_config("fixture")
-    return IngestionService(config=config, batch_size=50)  # Reasonable batch size
+def in_memory_service() -> IngestionService:
+    """Ingestion service backed by an in-process Qdrant (no server required)."""
+    return make_in_memory_service("in_memory")
+
+
+@pytest.fixture(params=["in_memory", pytest.param("live", marks=pytest.mark.infrastructure)])
+def make_service(request: pytest.FixtureRequest):
+    """Factory for IngestionServices, run once per backend.
+
+    Correctness tests (counts, batching, duplicate handling) don't depend on a
+    real server, so they always run against in-process Qdrant and additionally
+    against the live server when infrastructure tests are selected.
+    """
+    def _make(suffix: str, **kwargs: Any) -> IngestionService:
+        config = make_test_config(suffix)
+        if request.param == "in_memory":
+            kwargs["wrapper"] = InMemoryQdrantClientWrapper(config=config)
+        return IngestionService(config=config, **kwargs)
+
+    return _make
 
 
 # ---------------------------------------------------------------------------
@@ -152,10 +200,11 @@ class TestLargeScaleIngestion:
     """Test ingestion of large batches (100+ setups) to validate scalability."""
 
     @pytest.mark.asyncio
-    async def test_ingest_100_setups_succeeds(self, test_service: IngestionService) -> None:
+    async def test_ingest_100_setups_succeeds(self, make_service) -> None:
         """Ingest exactly 100 setups and verify all are stored correctly."""
+        test_service = make_service("fixture", batch_size=50)
         dataset = generate_test_dataset(100)
-        
+
         try:
             # Ensure collection exists
             await test_service._wrapper.ensure_collection()
@@ -181,10 +230,9 @@ class TestLargeScaleIngestion:
             await test_service._wrapper.close()
 
     @pytest.mark.asyncio  
-    async def test_ingest_250_setups_with_batching(self) -> None:
+    async def test_ingest_250_setups_with_batching(self, make_service) -> None:
         """Test ingestion of 250 setups with automatic batching."""
-        config = make_test_config("batch_250")
-        service = IngestionService(config=config, batch_size=75)  # Force multiple batches
+        service = make_service("batch_250", batch_size=75)  # Force multiple batches
         dataset = generate_test_dataset(250)
         
         try:
@@ -206,10 +254,9 @@ class TestLargeScaleIngestion:
             await service._wrapper.close()
 
     @pytest.mark.asyncio
-    async def test_ingest_500_mixed_instruments(self) -> None:
+    async def test_ingest_500_mixed_instruments(self, make_service) -> None:
         """Test ingestion of 500 setups across multiple instruments."""
-        config = make_test_config("mixed_500")
-        service = IngestionService(config=config, batch_size=100)
+        service = make_service("mixed_500", batch_size=100)
         
         # Create dataset with known distribution
         instruments = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "US500"]
@@ -246,52 +293,63 @@ class TestLargeScaleIngestion:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.integration
 class TestIngestionErrorHandling:
-    """Test ingestion behavior under various error conditions."""
+    """Test ingestion behavior under various error conditions.
+
+    Runs against the in-memory Qdrant (see InMemoryQdrantClientWrapper), with
+    no infrastructure marker.
+    """
 
     @pytest.mark.asyncio
-    async def test_invalid_embedding_dimensions_rejected_early(self, test_service: IngestionService) -> None:
+    async def test_invalid_embedding_dimensions_rejected_early(self, in_memory_service: IngestionService) -> None:
         """Invalid embedding dimensions should be rejected before any network calls."""
         setup = make_test_enriched_setup("BAD-DIM-001")
         bad_embedding = [0.0] * 256  # Wrong dimension
-        
+        wrapper = in_memory_service._wrapper
+
         try:
-            await test_service._wrapper.ensure_collection()
-            
+            await wrapper.ensure_collection()
+            upsert_spy = AsyncMock(wraps=wrapper.upsert)
+            wrapper.upsert = upsert_spy
+
             with pytest.raises(ValueError, match="528-dimensional"):
-                await test_service.ingest_batch([(setup, bad_embedding)])
-                
-            # Verify no data was stored
-            count = await test_service._wrapper.count() 
+                await in_memory_service.ingest_batch([(setup, bad_embedding)])
+
+            # Rejected before any upsert was attempted, and nothing was stored
+            upsert_spy.assert_not_awaited()
+            count = await wrapper.count()
             assert count == 0
-            
+
         finally:
-            await test_service._wrapper.delete_collection()
-            await test_service._wrapper.close()
+            await wrapper.delete_collection()
+            await wrapper.close()
 
     @pytest.mark.asyncio
-    async def test_mixed_valid_invalid_embeddings_fails_fast(self, test_service: IngestionService) -> None:
+    async def test_mixed_valid_invalid_embeddings_fails_fast(self, in_memory_service: IngestionService) -> None:
         """Batch with mix of valid/invalid embeddings fails before any ingestion."""
         dataset = [
             (make_test_enriched_setup("VALID-001"), make_test_embedding(1)),
             (make_test_enriched_setup("INVALID-002"), [0.0] * 100),  # Bad dimension
             (make_test_enriched_setup("VALID-003"), make_test_embedding(3)),
         ]
-        
+        wrapper = in_memory_service._wrapper
+
         try:
-            await test_service._wrapper.ensure_collection()
-            
+            await wrapper.ensure_collection()
+            upsert_spy = AsyncMock(wraps=wrapper.upsert)
+            wrapper.upsert = upsert_spy
+
             with pytest.raises(ValueError, match="528-dimensional"):
-                await test_service.ingest_batch(dataset)
-                
-            # Verify no partial ingestion occurred
-            count = await test_service._wrapper.count()
+                await in_memory_service.ingest_batch(dataset)
+
+            # Verify no partial ingestion occurred (VALID-001 precedes the bad item)
+            upsert_spy.assert_not_awaited()
+            count = await wrapper.count()
             assert count == 0
-            
+
         finally:
-            await test_service._wrapper.delete_collection()
-            await test_service._wrapper.close()
+            await wrapper.delete_collection()
+            await wrapper.close()
 
     @pytest.mark.asyncio
     async def test_qdrant_connection_failure_raises_service_error(self) -> None:
@@ -313,67 +371,87 @@ class TestIngestionErrorHandling:
     @pytest.mark.asyncio
     async def test_partial_batch_failures_tracked_in_result(self) -> None:
         """When using small batches, individual batch failures should be tracked."""
-        config = make_test_config("partial_failure")
-        service = IngestionService(config=config, batch_size=25)  # Small batches
-        
+        service = make_in_memory_service("partial_failure", batch_size=25)  # Small batches
+
         try:
             await service._wrapper.ensure_collection()
-            
+
             # Create dataset
             dataset = generate_test_dataset(100)
-            
+
             # Mock wrapper to fail on specific batch calls
             original_upsert = service._wrapper.upsert
             call_count = 0
-            
+
             async def failing_upsert(*args, **kwargs):
                 nonlocal call_count
                 call_count += 1
                 if call_count == 2:  # Fail the second batch
                     raise QdrantConnectionError("Simulated batch failure")
                 return await original_upsert(*args, **kwargs)
-            
+
             service._wrapper.upsert = failing_upsert
-            
+
             result = await service.ingest_batch(dataset)
-            
+
             # Should have partial success
             assert result.total == 100
             assert result.successful == 75  # 3 successful batches of 25 each
             assert result.failed == 25      # 1 failed batch of 25
             assert len(result.errors) == 25
             assert result.skipped == 0
-            
+
+            # The failed batch is exactly the second slice of 25 (TEST-00025..TEST-00049)
+            assert [trade_id for trade_id, _ in result.errors] == [
+                f"TEST-{i:05d}" for i in range(25, 50)
+            ]
+            assert all(msg == "Simulated batch failure" for _, msg in result.errors)
+
+            # Only the three successful batches reached the store
+            assert await service._wrapper.count() == 75
+
         finally:
             await service._wrapper.delete_collection()
             await service._wrapper.close()
 
     @pytest.mark.asyncio
-    async def test_malformed_setup_data_handles_gracefully(self, test_service: IngestionService) -> None:
+    async def test_malformed_setup_data_handles_gracefully(self, in_memory_service: IngestionService) -> None:
         """Malformed setup data should be handled gracefully without crashing."""
         malformed_setups = [
             # Missing required fields
             ({"trade_id": "MALFORMED-001"}, make_test_embedding(1)),
-            # Invalid data types  
+            # Invalid data types
             ({"trade_id": "MALFORMED-002", "entry_price": "not_a_number"}, make_test_embedding(2)),
             # None values
             ({"trade_id": None, "instrument": None}, make_test_embedding(3)),
         ]
-        
+        wrapper = in_memory_service._wrapper
+
         try:
-            await test_service._wrapper.ensure_collection()
-            
+            await wrapper.ensure_collection()
+
             # Should not crash, even with malformed data
-            result = await test_service.ingest_batch(malformed_setups)
-            
+            result = await in_memory_service.ingest_batch(malformed_setups)
+
             assert result.total == 3
             # All should succeed (build_point_from_setup handles missing fields)
             assert result.successful == 3
             assert result.failed == 0
-            
+            assert await wrapper.count() == 3
+
+            # The None-valued setup is stored with a generated trade_id and an
+            # empty instrument (not the literal string "NONE").
+            stored = await wrapper.get_client().retrieve(
+                collection_name=wrapper._config.collection,
+                ids=[result.ingested_ids[2]],
+            )
+            payload = stored[0].payload
+            assert payload["trade_id"]
+            assert payload["instrument"] == ""
+
         finally:
-            await test_service._wrapper.delete_collection()
-            await test_service._wrapper.close()
+            await wrapper.delete_collection()
+            await wrapper.close()
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +459,7 @@ class TestIngestionErrorHandling:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.infrastructure  # needs a live Qdrant server
 @pytest.mark.integration
 @pytest.mark.performance
 class TestIngestionPerformance:
@@ -528,15 +607,14 @@ class TestIngestionPerformance:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.integration  
+@pytest.mark.integration
 class TestDuplicateHandlingIntegration:
-    """Test duplicate detection and handling with live Qdrant."""
+    """Test duplicate detection and handling against Qdrant."""
 
     @pytest.mark.asyncio
-    async def test_duplicate_trade_ids_upsert_correctly(self) -> None:
+    async def test_duplicate_trade_ids_upsert_correctly(self, make_service) -> None:
         """Duplicate trade_ids should upsert (update) existing records."""
-        config = make_test_config("duplicate_upsert")
-        service = IngestionService(config=config, duplicate_strategy=DuplicateStrategy.UPSERT)
+        service = make_service("duplicate_upsert", duplicate_strategy=DuplicateStrategy.UPSERT)
         
         try:
             await service._wrapper.ensure_collection()
@@ -565,10 +643,9 @@ class TestDuplicateHandlingIntegration:
             await service._wrapper.close()
 
     @pytest.mark.asyncio
-    async def test_skip_strategy_prevents_network_calls(self) -> None:
+    async def test_skip_strategy_prevents_network_calls(self, make_service) -> None:
         """SKIP strategy should prevent redundant network calls for known trade_ids."""
-        config = make_test_config("skip_strategy")
-        service = IngestionService(config=config, duplicate_strategy=DuplicateStrategy.SKIP)
+        service = make_service("skip_strategy", duplicate_strategy=DuplicateStrategy.SKIP)
         
         try:
             await service._wrapper.ensure_collection()
@@ -600,6 +677,7 @@ class TestDuplicateHandlingIntegration:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.infrastructure  # needs a live Qdrant server
 @pytest.mark.integration
 @pytest.mark.performance
 class TestRealTimeIngestionSimulation:

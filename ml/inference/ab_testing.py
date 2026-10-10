@@ -29,6 +29,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
 
+import numpy as np
+
 from ml.inference.model_versioning import ModelVersionRegistry, ModelVersion
 from ml.inference.feature_flags import get_feature_flags
 
@@ -130,6 +132,34 @@ class TrafficSplitter:
         }
 
 
+class VariantInferenceRegistry:
+    """
+    Registry adapter that lets ``InferenceEngine`` score with an A/B variant.
+
+    ``InferenceEngine`` drives its registry through ``predict_regime``,
+    ``predict_patterns`` and ``predict_confidence`` (the interface of
+    ``ml.inference.main.ModelRegistry``). ``ModelVersionRegistry`` only loads
+    model objects and has none of those methods, so it cannot be handed to the
+    engine directly. This adapter delegates regime and pattern inference to the
+    shared inference registry and computes the confidence score with the
+    Confluence Scorer variant the A/B test selected for the user.
+    """
+
+    def __init__(self, base_registry: Any, confluence_model: Any):
+        self._base_registry = base_registry
+        self._confluence_model = confluence_model
+
+    def predict_regime(self, X: np.ndarray) -> str:
+        return self._base_registry.predict_regime(X)
+
+    def predict_patterns(self, X: np.ndarray, threshold: float = 0.5) -> List[str]:
+        return self._base_registry.predict_patterns(X, threshold=threshold)
+
+    def predict_confidence(self, X: np.ndarray) -> float:
+        proba = np.asarray(self._confluence_model.predict_proba(X), dtype=float)
+        return float(proba[0, 1])
+
+
 class ABTestingFramework:
     """
     Complete A/B testing framework for ML model variants.
@@ -142,7 +172,8 @@ class ABTestingFramework:
         self, 
         split_ratio: float = 0.5,
         feature_flag_key: str = "confluence_scorer_ab_test",
-        tracking_uri: Optional[str] = None
+        tracking_uri: Optional[str] = None,
+        inference_registry: Optional[Any] = None,
     ):
         """
         Initialize A/B testing framework.
@@ -151,6 +182,10 @@ class ABTestingFramework:
             split_ratio: Fraction of traffic for variant B
             feature_flag_key: Feature flag key to enable/disable A/B test
             tracking_uri: MLflow tracking URI for model loading
+            inference_registry: Optional ``ml.inference.main.ModelRegistry``
+                supplying the regime/pattern models used by
+                ``predict_with_ab_testing``. Created from ``tracking_uri``
+                and loaded on first prediction when not provided.
         """
         self.split_ratio = split_ratio
         self.feature_flag_key = feature_flag_key
@@ -158,6 +193,7 @@ class ABTestingFramework:
         # Initialize components
         self.model_registry = ModelVersionRegistry(tracking_uri)
         self.traffic_splitter = TrafficSplitter(split_ratio)
+        self._inference_registry = inference_registry
         
         # Metrics storage
         self._variant_metrics: Dict[ModelVersion, VariantMetrics] = {
@@ -339,13 +375,11 @@ class ABTestingFramework:
         # Import here to avoid circular dependency
         from ml.inference.main import InferenceEngine
         
-        # Create inference engine with the selected model version
-        # This is a simplified approach - in production, you'd want to create
-        # a version-aware inference engine
-        engine = InferenceEngine(self.model_registry)
-        
-        # Override the model in the engine's registry for this prediction
-        engine.registry._model_cache[("confluence-scorer", model_version)] = model
+        # Regime/pattern models come from the shared inference registry; the
+        # confidence score comes from the variant selected for this user.
+        engine = InferenceEngine(
+            VariantInferenceRegistry(self._get_inference_registry(), model)
+        )
         
         try:
             # Run prediction
@@ -380,6 +414,16 @@ class ABTestingFramework:
             logger.error(f"Prediction failed for user {user_id}: {e}")
             raise
     
+    def _get_inference_registry(self) -> Any:
+        """Return the regime/pattern model registry, loading it on first use."""
+        if self._inference_registry is None:
+            from ml.inference.main import ModelRegistry
+
+            self._inference_registry = ModelRegistry(self.model_registry.tracking_uri)
+        if not self._inference_registry.loaded:
+            self._inference_registry.load()
+        return self._inference_registry
+
     def _is_feature_flag_enabled(self, user_id: Optional[str] = None) -> bool:
         """
         Check if A/B test feature flag is enabled.

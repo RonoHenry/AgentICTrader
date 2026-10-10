@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -23,7 +23,11 @@ class Timeframe(str, Enum):
     M15 = "M15"
     M30 = "M30"
     H1 = "H1"
+    H3 = "H3"
     H4 = "H4"
+    H6 = "H6"
+    H8 = "H8"
+    H12 = "H12"
     D1 = "D1"
     W1 = "W1"
     MN1 = "MN1"
@@ -65,6 +69,10 @@ class LiquiditySource(str, Enum):
     SESSION_HIGH = "SESSION_HIGH"
     SESSION_LOW = "SESSION_LOW"
     TRENDLINE = "TRENDLINE"
+    SWING_HIGH = "SWING_HIGH"      # a swing high on any timeframe: buy stops rest above it (Requirement 18.1)
+    SWING_LOW = "SWING_LOW"        # a swing low: sell stops rest below it
+    ASIA_HIGH = "ASIA_HIGH"        # the Asian range, 20:00-00:00 New York (Requirement 20.2)
+    ASIA_LOW = "ASIA_LOW"
 
 
 class CRTPhase(str, Enum):
@@ -373,6 +381,25 @@ class OTEZone(BaseModel):
     displacement_leg_low: float
 
 
+class SDProjection(BaseModel):
+    """Standard Deviation projection targets beyond a displacement leg.
+
+    Anchored on the same leg/direction convention as OTEZone (see
+    liquidity_engine/ote/calculator.py's module docstring): anchor_0 is the
+    "0%" fib point (swing_high for bullish, swing_low for bearish — where
+    retracement measurement starts), anchor_1 is the "100%" point (the
+    opposite extreme). Targets project *beyond* anchor_0, in the direction
+    away from anchor_1 — i.e. the continuation direction once the leg's own
+    retracement (OTE) completes. ``targets`` keys are the SD multiples
+    TTrades charts as 1/-1, 2/-2, 2.5/-2.5, 4/-4, 4.5/-4.5 — stored here as
+    positive multiples since the sign in TTrades' own UI only encodes "past
+    the 0 anchor," not a separate direction.
+    """
+    anchor_0: float
+    anchor_1: float
+    targets: Dict[float, float]
+
+
 class UnicornPattern(BaseModel):
     """UNICORN pattern - overlapping Breaker Block and FVG."""
     breaker_array_id: str
@@ -400,7 +427,21 @@ class SetupGradeDetail(BaseModel):
     # Additional fields
     grade_reason: str
     suggested_entry: Optional[float] = None
+    # Behind the protected swing's wick, by 10% of its bar's range (Requirement
+    # 18.11); None without a setup sequence. The body variant is the same rule
+    # on the bar's body extreme (StrategyConfig.stop_mode = BODY).
     suggested_stop: Optional[float] = None
+    protected_swing_body_stop: Optional[float] = None
+    counter_trend: bool = False                 # entry array against the D1 bias: capped at B (18.13)
+    # The entry array's own range and direction (the setup sequence's array
+    # when there is one).
+    entry_array_high: Optional[float] = None
+    entry_array_low: Optional[float] = None
+    entry_array_direction: Optional[BiasDirection] = None
+    # The selected entry array's array_id. It is derived from the array's own
+    # content, so it stays the same while the same array stays selected and
+    # gives the setup a stable identity (agent.order_intent.setup_id_for).
+    entry_array_id: Optional[str] = None
 
 
 class FractalCandleStep(BaseModel):
@@ -420,6 +461,80 @@ class FractalModelResult(BaseModel):
     price_above_equilibrium: bool
 
 
+class LiquidityPool(BaseModel):
+    """Resting liquidity a raid can take (Requirement 18.1-18.2): buy stops
+    above a swing high or previous-period high (BSL), sell stops below a low
+    (SSL)."""
+    side: LiquidityType
+    source: LiquiditySource      # SWING_HIGH / SWING_LOW, PDH / PDL / PWH / PWL / PMH / PML, or ASIA_HIGH / ASIA_LOW
+    timeframe: Timeframe         # the pool's weight: a higher-timeframe swing holds more
+    price: float
+    formed_at: datetime          # the swing bar, or the previous period's bar
+    known_at: datetime           # the first moment it existed: the open of the bar after its confirming bar
+
+
+class LiquidityRaid(BaseModel):
+    """The first trade beyond an intact pool, on the entry array's timeframe (Requirement 18.3)."""
+    pool: LiquidityPool
+    raided_at: datetime          # open time of the bar that traded beyond the pool
+    reclaimed_at: datetime       # open time of the first bar, from the raid on, that closed back beyond it
+
+
+class ProtectedSwing(BaseModel):
+    """The swing the setup's displacement originated from (Requirement 18.5);
+    the stop goes behind it."""
+    candle_at: datetime
+    wick: float                  # its extreme: the low of a bullish setup's protected bar
+    body: float                  # its body extreme: min(open, close) for a bullish setup
+    candle_range: float          # high - low, the stop buffer's base
+
+
+class SetupSequence(BaseModel):
+    """Raid -> change in state of delivery -> PD array (Requirement 18.4): the
+    setup the grader trades."""
+    entry_array_id: str
+    direction: BiasDirection     # the entry array's: BULLISH after a sell-side raid
+    raid: LiquidityRaid
+    cisd_at: datetime            # violation candle of the first CISD in this direction after the raid
+    protected_swing: ProtectedSwing
+    leg_extreme: float           # far end of the setup leg from the protected wick (Requirement 18.6)
+
+
+class Objective(BaseModel):
+    """Where price is drawn (Requirement 21.3): resting liquidity beyond a swing or
+    the previous day/week extreme (POOL), or an inefficiency to rebalance (FVG)."""
+    kind: Literal["POOL", "FVG"]
+    source: str                  # SWING_HIGH / SWING_LOW / PDH / PDL / PWH / PWL, or FVG
+    timeframe: Timeframe
+    price: float                 # the pool's price, or the gap's near edge
+    direction: BiasDirection     # the way price moves to reach it: BULLISH for an objective above
+    formed_at: datetime          # the bar that made it
+
+
+class CandleProfile(BaseModel):
+    """How the frame candle is anticipated to form (Requirement 21). Everything but
+    midnight_open depends only on bars closed by the frame open (Property 35)."""
+    frame_tf: Timeframe          # D1 in stage 1
+    open_time: datetime          # the candle's open: 17:00 New York
+    frame_open: float
+    midnight_open: Optional[float] = None    # the first bar at or after 00:00 New York; recorded only (LE-D11)
+    trend: BiasDirection         # LE-D15; NEUTRAL = not trending
+    direction: BiasDirection     # the anticipated direction; NEUTRAL = none
+    draw: Optional[Objective] = None
+    draw_above: Optional[Objective] = None
+    draw_below: Optional[Objective] = None
+    # What the candle has done by t (Requirement 22).
+    false_move_taken: bool       # traded beyond frame_open against the direction (below it for bullish)
+    asia_raided: bool            # the Asian pool on the false-move side has been raided
+    candle_low: float
+    candle_low_at: datetime
+    candle_high: float
+    candle_high_at: datetime
+    in_window: bool              # t is in the manipulation window, 01:00-13:00 New York (LE-D11)
+    raid_in_window: bool         # the setup sequence's raid bar opened in this candle's window
+    weekday: int                 # the trading day (17:00 boundary): 0 = Monday
+
+
 class LiquidityMap(BaseModel):
     """Complete liquidity analysis output."""
     analyzed_at: datetime
@@ -436,6 +551,9 @@ class LiquidityMap(BaseModel):
     setup_grade: Optional[SetupGradeDetail]
     swing_structure: Dict[str, SwingStructureResult] = {}    # Keyed by Timeframe.value
     fractal_model: Optional[FractalModelResult] = None
+    sd_projection: Optional[SDProjection] = None
+    setup_sequence: Optional[SetupSequence] = None          # Requirement 18.8
+    candle_profile: Optional[CandleProfile] = None          # Requirement 21
 
     def get_bias(self, timeframe: Timeframe) -> Optional[HTFBias]:
         """Get HTF bias for a specific timeframe."""
@@ -496,6 +614,11 @@ class LiquidityMap(BaseModel):
                 f"- OTE zone: {self.ote_zone.ote_low}-{self.ote_zone.ote_high} "
                 f"(golden level {self.ote_zone.golden_level})"
             )
+        if self.sd_projection is not None:
+            targets_str = ", ".join(
+                f"{level}={price:.5f}" for level, price in sorted(self.sd_projection.targets.items())
+            )
+            lines.append(f"- SD projection targets: {targets_str}")
         if self.setup_grade is not None:
             lines.append(
                 f"- Setup grade: {self.setup_grade.grade.value} "

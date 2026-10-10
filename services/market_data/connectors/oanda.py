@@ -112,6 +112,10 @@ class OANDAConnector(BaseConnector):
         instruments:  List of normalised instrument symbols to subscribe to.
                       Defaults to all 12 :data:`SUPPORTED_INSTRUMENTS`.
         max_retries:  Maximum number of reconnection attempts (default 5).
+        reconnect_on_close: Reopen the stream after the server closes it
+                      cleanly (default True — OANDA closes long-lived streams
+                      routinely). Pass False to return from :meth:`run`
+                      after a single stream instead.
     """
 
     def __init__(
@@ -121,12 +125,14 @@ class OANDAConnector(BaseConnector):
         on_tick: Optional[TickCallback] = None,
         instruments: Optional[list[str]] = None,
         max_retries: int = _DEFAULT_MAX_RETRIES,
+        reconnect_on_close: bool = True,
     ) -> None:
         super().__init__(on_tick=on_tick)
         self._account_id = account_id
         self._access_token = access_token
         self._instruments = instruments or SUPPORTED_INSTRUMENTS
         self._max_retries = max_retries
+        self._reconnect_on_close = reconnect_on_close
         self._stop_requested = False
 
     # ------------------------------------------------------------------
@@ -138,7 +144,10 @@ class OANDAConnector(BaseConnector):
 
         Reconnects with exponential backoff on :exc:`ConnectionClosed` or
         :exc:`OSError`.  Raises :exc:`OANDAConnectorError` after
-        ``max_retries`` consecutive failures.
+        ``max_retries`` consecutive failures.  When the server closes the
+        stream cleanly, reconnects after ``_BACKOFF_BASE`` seconds (the delay
+        keeps an immediately-closing stream from becoming a busy loop) unless
+        ``reconnect_on_close=False``.  Returns once :meth:`stop` is called.
 
         Raises:
             OANDAConnectorError: When max retries are exhausted.
@@ -149,8 +158,14 @@ class OANDAConnector(BaseConnector):
         while not self._stop_requested:
             try:
                 await self._connect_and_stream()
-                # Stream ended cleanly — reset retry counter.
+                if self._stop_requested or not self._reconnect_on_close:
+                    return
+                # A clean close is not a failure, so the retry budget resets.
                 attempt = 0
+                logger.info(
+                    "OANDA stream closed by server — reconnecting in %ds", _BACKOFF_BASE
+                )
+                await asyncio.sleep(_BACKOFF_BASE)
             except (websockets.exceptions.ConnectionClosed, OSError) as exc:
                 if attempt >= self._max_retries:
                     raise OANDAConnectorError(

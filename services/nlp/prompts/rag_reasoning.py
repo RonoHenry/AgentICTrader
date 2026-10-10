@@ -10,13 +10,14 @@ Usage:
 """
 from __future__ import annotations
 
-from typing import List, Dict, Any
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 
 class RAGPromptTemplate:
     """Builds RAG-enhanced prompts for trade reasoning."""
     
-    def build_reasoning_prompt(self, setup: Dict[str, Any], similar_setups: List[Dict[str, Any]]) -> str:
+    def build_reasoning_prompt(self, setup: Dict[str, Any], similar_setups: List[Any]) -> str:
         """
         Build a prompt that includes similar historical setups for context.
         
@@ -140,63 +141,128 @@ Entry: {entry}, SL: {sl}, TP: {tp}
 Swing High: {swing_high}, Swing Low: {swing_low}
 FVG Present: {fvg_present}"""
     
-    def _build_historical_section(self, similar_setups: List[Dict[str, Any]]) -> str:
+    def _build_historical_section(self, similar_setups: List[Any]) -> str:
         """Build the historical similar setups section."""
         if not similar_setups:
             return "HISTORICAL CONTEXT:\nNo similar historical setups found."
-        
+
         section_lines = ["SIMILAR HISTORICAL SETUPS:"]
-        
+
         for i, similar in enumerate(similar_setups[:3], 1):  # Limit to top 3
-            setup_data = similar.get("setup", {})
-            similarity = similar.get("similarity_score", 0.0)
-            final_score = similar.get("final_score", 0.0)
-            
-            trade_id = setup_data.get("trade_id", "Unknown")
-            timestamp = setup_data.get("timestamp", "")
-            narrative = setup_data.get("narrative", "No description available")
-            outcome = setup_data.get("outcome_result", "UNKNOWN")
-            r_multiple = setup_data.get("outcome_r_multiple", 0.0)
-            
-            # Format timestamp for readability
-            formatted_date = "Unknown date"
-            if timestamp:
-                try:
-                    from datetime import datetime
-                    dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-                    formatted_date = dt.strftime("%Y-%m-%d %H:%M")
-                except:
-                    formatted_date = timestamp
-            
+            fields = normalize_similar_setup(similar)
+            similarity = to_float(fields.get("similarity_score")) or 0.0
+
+            trade_id = fields.get("trade_id") or "Unknown"
+            timestamp = fields.get("timestamp") or ""
+            narrative = fields.get("narrative") or "No description available"
+            outcome = fields.get("outcome_result") or "UNKNOWN"
+            r_multiple = to_float(fields.get("outcome_r_multiple"))
+            r_label = f"{r_multiple:.1f}R" if r_multiple is not None else "N/A"
+
             section_lines.append(
-                f"{i}. [{trade_id}] {formatted_date} ({similarity:.0%} similarity)\n"
+                f"{i}. [{trade_id}] {_format_timestamp(timestamp)} ({similarity:.0%} similarity)\n"
                 f"   Setup: {narrative}\n"
-                f"   Outcome: {outcome} ({r_multiple:.1f}R)"
+                f"   Outcome: {outcome} ({r_label})"
             )
-        
+
         return "\n".join(section_lines)
 
 
-def format_similar_setups_for_template(similar_setups: List[Dict[str, Any]]) -> str:
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+
+def normalize_similar_setup(item: Any) -> Dict[str, Any]:
+    """Flatten one retrieved similar setup into a single dict of fields.
+
+    The AlgoRAG ``POST /rag/retrieve`` contract
+    (``services/algorag/models.py::SimilarSetup``) returns every similar setup
+    FLAT -- ``trade_id``, ``timestamp``, ``narrative``, ``outcome_result``,
+    ``outcome_r_multiple``, ``similarity_score`` and ``final_score`` are all
+    top-level keys. An older in-repo shape nests the trade fields under a
+    ``"setup"`` key with the scores beside it. Formatters that only read the
+    nested shape silently drop the trade id, narrative and outcome of real
+    AlgoRAG results, so every formatter goes through this function, which
+    accepts both shapes (plus pydantic models such as the agent's
+    ``SimilarSetup``). Top-level keys win over nested ones.
     """
-    Format similar setups for template-based reasoning (no LLM).
-    
+    if hasattr(item, "model_dump"):
+        item = item.model_dump()
+    if not isinstance(item, dict):
+        return {}
+    nested = item.get("setup")
+    fields: Dict[str, Any] = dict(nested) if isinstance(nested, dict) else {}
+    fields.update({k: v for k, v in item.items() if k != "setup"})
+    return fields
+
+
+def to_float(value: Any) -> Optional[float]:
+    """``float(value)``, or None when *value* is missing or not numeric."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_timestamp(timestamp: Any) -> str:
+    """Render an ISO string or datetime as ``YYYY-MM-DD HH:MM``."""
+    if not timestamp:
+        return "Unknown date"
+    if isinstance(timestamp, datetime):
+        return timestamp.strftime("%Y-%m-%d %H:%M")
+    try:
+        return datetime.fromisoformat(str(timestamp).replace("Z", "+00:00")).strftime(
+            "%Y-%m-%d %H:%M"
+        )
+    except ValueError:
+        return str(timestamp)
+
+
+def format_similar_setups_for_template(
+    similar_setups: List[Any],
+    rag_metrics: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    Format similar setups as a one-sentence precedent for template-based
+    reasoning (no LLM).
+
+    Uses AlgoRAG's own ``rag_metrics`` aggregate when it is present and
+    non-empty (``sample_size > 0``) -- the same numbers the Confluence Scorer
+    consumes, so the reasoning and the score never disagree. Otherwise the
+    aggregate is derived from *similar_setups* directly: win rate over all
+    setups, average R over the setups whose R-multiple is known (a missing
+    R-multiple is not counted as 0R).
+
     Args:
-        similar_setups: List of similar setups from RAG
-        
+        similar_setups: Similar setups from AlgoRAG (flat or nested shape,
+            see :func:`normalize_similar_setup`).
+        rag_metrics: Optional AlgoRAG ``rag_metrics`` dict.
+
     Returns:
-        Formatted string for inclusion in template reasoning
+        ``"Historical precedent: N similar setups with X% win rate and Y.YR
+        average outcome."``, or ``""`` when there are no similar setups.
     """
     if not similar_setups:
         return ""
-    
-    setup_count = len(similar_setups)
-    wins = sum(1 for s in similar_setups if s.get("setup", {}).get("outcome_result") == "WIN")
-    win_rate = wins / setup_count if setup_count > 0 else 0.0
-    
-    avg_r = sum(s.get("setup", {}).get("outcome_r_multiple", 0.0) for s in similar_setups) / setup_count
-    
+
+    metrics = rag_metrics or {}
+    sample_size = metrics.get("sample_size")
+    win_rate = to_float(metrics.get("win_rate_similar"))
+    avg_r = to_float(metrics.get("avg_r_multiple_similar"))
+
+    if not (isinstance(sample_size, int) and sample_size > 0 and win_rate is not None and avg_r is not None):
+        fields = [normalize_similar_setup(s) for s in similar_setups]
+        sample_size = len(fields)
+        wins = sum(1 for f in fields if f.get("outcome_result") == "WIN")
+        win_rate = wins / sample_size
+        r_values = [r for r in (to_float(f.get("outcome_r_multiple")) for f in fields) if r is not None]
+        avg_r = sum(r_values) / len(r_values) if r_values else None
+
+    avg_text = f"{avg_r:.1f}R average outcome" if avg_r is not None else "an unknown average outcome"
     return (
-        f"Historical precedent: {setup_count} similar setups with {win_rate:.0%} win rate "
-        f"and {avg_r:.1f}R average outcome."
+        f"Historical precedent: {sample_size} similar setups with {win_rate:.0%} win rate "
+        f"and {avg_text}."
     )

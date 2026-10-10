@@ -13,6 +13,7 @@ from liquidity_engine.detectors.internal import PDArrayDetector
 from liquidity_engine.detectors.structure import SwingStructureClassifier
 from liquidity_engine.engine import LiquidityMappingEngine
 from liquidity_engine.fractal.candle_model import FractalModelTracker
+from liquidity_engine.grader.sequence import SetupSequenceDetector
 from liquidity_engine.grader.setup_grader import SetupGrader
 from liquidity_engine.ipda.classifier import IPDAClassifier
 from liquidity_engine.models import (
@@ -25,6 +26,7 @@ from liquidity_engine.models import (
     Timeframe,
 )
 from liquidity_engine.ote.calculator import OTECalculator
+from liquidity_engine.profile.candle_profile import CandleProfileAnalyzer
 from liquidity_engine.unicorn.detector import UnicornDetector
 
 _BASE = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -194,6 +196,8 @@ class TestSubComponentOrder:
         monkeypatch.setattr(IPDAClassifier, "validate_cisd_cascade", record("IPDAClassifier", IPDAClassifier.validate_cisd_cascade))
         monkeypatch.setattr(OTECalculator, "calculate", record("OTECalculator", OTECalculator.calculate))
         monkeypatch.setattr(UnicornDetector, "detect", record("UnicornDetector", UnicornDetector.detect))
+        monkeypatch.setattr(SetupSequenceDetector, "detect", record("SetupSequenceDetector", SetupSequenceDetector.detect))
+        monkeypatch.setattr(CandleProfileAnalyzer, "analyze", record("CandleProfileAnalyzer", CandleProfileAnalyzer.analyze))
         monkeypatch.setattr(SetupGrader, "grade", record("SetupGrader", SetupGrader.grade))
 
         LiquidityMappingEngine().analyze(build_candles_by_tf(), "EURUSD", d1_ts(20))
@@ -206,9 +210,40 @@ class TestSubComponentOrder:
         expected = [
             "HTFBiasClassifier", "LiquidityLevelDetector", "SwingStructureClassifier",
             "PDArrayDetector", "FractalModelTracker", "IPDAClassifier", "OTECalculator",
-            "UnicornDetector", "SetupGrader",
+            "UnicornDetector", "SetupSequenceDetector", "CandleProfileAnalyzer",  # Requirement 1.5, amended 2026-10(b)
+            "SetupGrader",
         ]
         assert first_seen == expected
+
+
+class TestSetupSequenceOnMap:
+    def test_engine_records_the_setup_sequence(self):
+        # Requirement 18.8: the map carries the detector's sequence over the engine's own PD arrays.
+        from tests.test_liquidity_sequence import BULLISH_ROWS, series
+
+        candles_by_tf = {Timeframe.D1: bullish_d1(), Timeframe.W1: bullish_w1(), Timeframe.M15: series(BULLISH_ROWS)}
+        result = LiquidityMappingEngine().analyze(candles_by_tf, "EURUSD", d1_ts(20))
+        assert result.setup_sequence is not None
+        assert result.setup_sequence == SetupSequenceDetector().detect(candles_by_tf, result.pd_arrays)
+        assert result.setup_sequence.raid.raided_at == datetime(2024, 1, 2, 7, 45, tzinfo=timezone.utc)
+
+    def test_engine_passes_the_analysis_time_to_the_detector(self, monkeypatch):
+        # Requirement 20.2: the Asian pools depend on when the analysis runs.
+        seen = {}
+        original = SetupSequenceDetector.detect
+
+        def spy(self, candles_by_tf, pd_arrays, as_of=None):
+            seen["as_of"] = as_of
+            return original(self, candles_by_tf, pd_arrays, as_of=as_of)
+
+        monkeypatch.setattr(SetupSequenceDetector, "detect", spy)
+        LiquidityMappingEngine().analyze(sequence_window(), "EURUSD", d1_ts(20))
+        assert seen["as_of"] == d1_ts(20)
+
+    def test_no_sequence_without_entry_arrays(self):
+        result = LiquidityMappingEngine().analyze(
+            {Timeframe.D1: bullish_d1(), Timeframe.W1: bullish_w1()}, "EURUSD", d1_ts(20))
+        assert result.setup_sequence is None
 
 
 class TestFractalModelSeeding:
@@ -277,28 +312,102 @@ class TestDrawOnLiquidity:
             assert result.draw_on_liquidity.level_id in {lvl.level_id for lvl in result.liquidity_levels}
 
 
-class TestSweepDetection:
-    def test_sweep_detected_true_when_price_through_level(self):
-        engine = LiquidityMappingEngine()
-        draw = LiquidityLevel(
-            level_id="lvl", liquidity_type=LiquidityType.BSL, source=LiquiditySource.PDH,
-            price=110.0, timeframe=Timeframe.M5, formed_at=m5_ts(0), strength_score=0.5, touch_count=1,
-        )
-        candles_by_tf = {
-            Timeframe.M5: [mk(109.0, 111.0, 108.5, 110.5, m5_ts(1), Timeframe.M5)]
-        }
-        assert engine._detect_sweep(candles_by_tf, draw) is True
+def sequence_window() -> Dict[Timeframe, List[Candle]]:
+    """The hand-checked bullish raid sequence of test_liquidity_sequence on M15, with HTF context."""
+    from tests.test_liquidity_sequence import BULLISH_ROWS, series
 
-    def test_sweep_detected_false_when_price_not_through(self):
-        engine = LiquidityMappingEngine()
-        draw = LiquidityLevel(
-            level_id="lvl", liquidity_type=LiquidityType.BSL, source=LiquiditySource.PDH,
-            price=110.0, timeframe=Timeframe.M5, formed_at=m5_ts(0), strength_score=0.5, touch_count=1,
+    return {Timeframe.D1: bullish_d1(), Timeframe.W1: bullish_w1(), Timeframe.M15: series(BULLISH_ROWS)}
+
+
+class TestSweepAndSetupLeg:
+    """Requirement 13.4 (superseded 2026-10): sweep_detected means a raid sequence exists.
+    Requirement 18.15: the SD projection is anchored on the setup leg."""
+
+    def test_sweep_detected_means_setup_sequence(self):
+        result = LiquidityMappingEngine().analyze(sequence_window(), "EURUSD", d1_ts(20))
+        assert result.sweep_detected is True and result.setup_sequence is not None
+        assert result.setup_grade.liquidity_sweep_confirmed is True
+        assert result.setup_grade.entry_array_id == result.setup_sequence.entry_array_id
+        bare = LiquidityMappingEngine().analyze(build_candles_by_tf(), "EURUSD", d1_ts(20))
+        assert bare.sweep_detected is (bare.setup_sequence is not None)
+
+    def test_sd_projection_anchored_on_setup_leg(self):
+        result = LiquidityMappingEngine().analyze(sequence_window(), "EURUSD", d1_ts(20))
+        sd = result.sd_projection
+        # Protected wick 99.6 (the raid bar), leg extreme 102.3: a 2.7 leg projected upward.
+        assert (sd.anchor_0, sd.anchor_1) == (102.3, 99.6)
+        assert sd.targets[2.0] == pytest.approx(102.3 + 2 * 2.7)
+
+    def test_sd_projection_none_without_sequence(self):
+        result = LiquidityMappingEngine().analyze(
+            {Timeframe.D1: bullish_d1(), Timeframe.W1: bullish_w1()}, "EURUSD", d1_ts(20))
+        assert result.setup_sequence is None and result.sd_projection is None
+
+
+class TestSweptLevels:
+    """Requirement 13.5 (amended 2026-10): a level is swept once a bar of any
+    timeframe, opening after the level formed, trades beyond it; the draw on
+    liquidity is chosen among untouched levels only (13.1)."""
+
+    def _level(self, liquidity_type: LiquidityType, price: float, formed_at: datetime) -> LiquidityLevel:
+        return LiquidityLevel(
+            level_id=f"lvl-{liquidity_type.value}-{price}", liquidity_type=liquidity_type,
+            source=LiquiditySource.PDH if liquidity_type == LiquidityType.BSL else LiquiditySource.PDL,
+            price=price, timeframe=Timeframe.D1, formed_at=formed_at, strength_score=0.5, touch_count=1,
         )
+
+    def test_level_marked_swept_when_later_bar_trades_beyond(self):
+        bsl = self._level(LiquidityType.BSL, 110.0, m5_ts(0))
+        ssl = self._level(LiquidityType.SSL, 100.0, m5_ts(0))
+        candles_by_tf = {Timeframe.M5: [mk(105.0, 110.5, 104.0, 106.0, m5_ts(1), Timeframe.M5),
+                                         mk(106.0, 107.0, 101.0, 102.0, m5_ts(2), Timeframe.M5)]}
+        marked = LiquidityMappingEngine()._mark_swept_levels(candles_by_tf, [bsl, ssl])
+        assert (marked[0].swept, marked[0].swept_at) == (True, m5_ts(1))
+        assert (marked[1].swept, marked[1].swept_at) == (False, None)          # 101 never went below 100
+
+    def test_level_not_swept_by_bars_of_its_own_period(self):
+        # A previous-day high forms at that day's open; its own day's bars reach it but never beyond it,
+        # and bars opening at or before formed_at don't count.
+        pdh = self._level(LiquidityType.BSL, 110.0, d1_ts(1))
         candles_by_tf = {
-            Timeframe.M5: [mk(108.0, 109.5, 107.5, 109.0, m5_ts(1), Timeframe.M5)]
+            Timeframe.H1: [mk(108.0, 112.0, 107.0, 109.0, d1_ts(1), Timeframe.H1),            # opens at formed_at
+                           mk(109.0, 110.0, 108.0, 109.5, d1_ts(1) + timedelta(hours=5), Timeframe.H1)],
+            Timeframe.D1: [mk(100.0, 115.0, 99.0, 101.0, d1_ts(0), Timeframe.D1)],             # before it formed
         }
-        assert engine._detect_sweep(candles_by_tf, draw) is False
+        [marked] = LiquidityMappingEngine()._mark_swept_levels(candles_by_tf, [pdh])
+        assert marked.swept is False and marked.swept_at is None
+
+    def test_swept_at_is_earliest_breaching_bar(self):
+        ssl = self._level(LiquidityType.SSL, 100.0, d1_ts(0))
+        candles_by_tf = {
+            Timeframe.M5: [mk(101.0, 102.0, 99.0, 101.5, d1_ts(2), Timeframe.M5)],
+            Timeframe.H1: [mk(101.0, 101.5, 100.5, 101.0, d1_ts(1), Timeframe.H1),
+                           mk(101.0, 101.2, 99.5, 100.8, d1_ts(1) + timedelta(hours=3), Timeframe.H1)],
+        }
+        [marked] = LiquidityMappingEngine()._mark_swept_levels(candles_by_tf, [ssl])
+        assert marked.swept_at == d1_ts(1) + timedelta(hours=3)
+
+    def test_draw_on_liquidity_never_swept(self):
+        # The fixture's last D1 and W1 bars trade above the previous day's and week's highs.
+        result = LiquidityMappingEngine().analyze(build_candles_by_tf(), "EURUSD", d1_ts(20))
+        by_source = {lvl.source: lvl for lvl in result.liquidity_levels}
+        assert (by_source[LiquiditySource.PDH].swept, by_source[LiquiditySource.PDH].swept_at) == (True, d1_ts(9))
+        assert (by_source[LiquiditySource.PWH].swept, by_source[LiquiditySource.PWH].swept_at) == (True, w1_ts(3))
+        assert result.draw_on_liquidity is None or not result.draw_on_liquidity.swept
+
+    @settings(max_examples=100, deadline=None)
+    @given(st.lists(st.tuples(st.floats(90, 120, allow_nan=False), st.floats(0, 5, allow_nan=False),
+                              st.floats(0, 5, allow_nan=False)), min_size=1, max_size=30),
+           st.floats(90, 120, allow_nan=False), st.integers(0, 30), st.booleans())
+    def test_property_swept_iff_breached(self, bars, price, formed_index, is_bsl):
+        """Property 34: swept exactly when some bar opening after formed_at traded beyond the price."""
+        candles = [mk(mid, mid + up, mid - down, mid, m5_ts(i), Timeframe.M5) for i, (mid, up, down) in enumerate(bars)]
+        level = self._level(LiquidityType.BSL if is_bsl else LiquidityType.SSL, price, m5_ts(formed_index))
+        [marked] = LiquidityMappingEngine()._mark_swept_levels({Timeframe.M5: candles}, [level])
+        breaches = [c.timestamp for c in candles if c.timestamp > level.formed_at
+                    and (c.high > price if is_bsl else c.low < price)]
+        assert marked.swept == bool(breaches)
+        assert marked.swept_at == (min(breaches) if breaches else None)
 
 
 class TestEngineProperties:

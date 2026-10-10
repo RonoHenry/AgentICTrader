@@ -25,13 +25,19 @@ from ml.algorag.client import AlgoRAGClient, AlgoRAGError
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+#
+# Times are 08:15/08:20 UTC on 2024-03-15. US daylight saving time began on
+# 2024-03-10, so New York is UTC-4: 08:20 UTC is 04:20 New York time, inside
+# the London killzone (02:00-05:00 NY), which matches the setup's
+# "LONDON_KILLZONE" label. (The original 09:20 UTC was 05:20 New York time,
+# after the killzone, so TimeWindowClassifier classified it as OFF_HOURS.)
 
 @pytest.fixture 
 def sample_candles():
     """Sample OHLCV candles for testing."""
     return [
         {
-            "time": datetime(2024, 3, 15, 9, 15, tzinfo=timezone.utc),
+            "time": datetime(2024, 3, 15, 8, 15, tzinfo=timezone.utc),
             "open": 1.0850,
             "high": 1.0875, 
             "low": 1.0845,
@@ -39,7 +45,7 @@ def sample_candles():
             "volume": 1000,
         },
         {
-            "time": datetime(2024, 3, 15, 9, 20, tzinfo=timezone.utc),
+            "time": datetime(2024, 3, 15, 8, 20, tzinfo=timezone.utc),
             "open": 1.0870,
             "high": 1.0885,
             "low": 1.0865, 
@@ -54,7 +60,7 @@ def sample_setup():
     """Sample trading setup."""
     return {
         "instrument": "EURUSD",
-        "timestamp": datetime(2024, 3, 15, 9, 20, tzinfo=timezone.utc),
+        "timestamp": datetime(2024, 3, 15, 8, 20, tzinfo=timezone.utc),
         "direction": "BULLISH",
         "time_window": "LONDON_KILLZONE",
         "narrative": "Price swept Asian low and broke above order block",
@@ -78,6 +84,45 @@ def rag_response():
     }
 
 
+# ── Expected traditional features for the fixtures above ─────────────────────
+#
+# ConfluenceFeatureExtractor has no HTF feed yet. It builds a placeholder HTF
+# candle from the last candle (open*0.999, high*1.001, low*0.998, close kept)
+# and uses the last close as the current price (sample_setup has no
+# current_price). For the last candle O=1.0870 H=1.0885 L=1.0865 C=1.0880:
+#   HTF high = 1.0885 * 1.001 = 1.0895885
+#   HTF low  = 1.0865 * 0.998 = 1.0843270
+#   HTF open = 1.0870 * 0.999 = 1.0859130
+#   range    = 1.0895885 - 1.0843270 = 0.0052615
+# The price 1.0880 is inside the range and nearer the high:
+#   high proximity = (1.0895885 - 1.0880) / range = 0.0015885 / 0.0052615 = 30.19 %
+#   low proximity  = (1.0880 - 1.0843270) / range = 0.0036730 / 0.0052615 = 69.81 %
+#   (inside the range the two add up to 100 %)
+#   body           = |1.0880 - 1.0859130| / range = 0.0020870 / 0.0052615 = 39.67 %
+#   close position = (1.0880 - 1.0843270) / range = 0.6981 (stored as a 0-1 ratio)
+# 04:20 New York time is LONDON_KILLZONE: weight 0.9, phase MANIPULATION.
+# BOS, CHoCH, FVG and sweep detection need at least 3 candles, so with 2
+# candles all four flags are False.
+EXPECTED_HTF_HIGH_PROXIMITY_PCT = 100 * 15885 / 52615
+EXPECTED_HTF_LOW_PROXIMITY_PCT = 100 * 36730 / 52615
+EXPECTED_HTF_BODY_PCT = 100 * 20870 / 52615
+EXPECTED_HTF_CLOSE_POSITION = 36730 / 52615
+
+
+def assert_expected_traditional_features(features):
+    """Check the 10 traditional features against the hand-derived values."""
+    assert features.htf_high_proximity_pct == pytest.approx(EXPECTED_HTF_HIGH_PROXIMITY_PCT, rel=1e-9)
+    assert features.htf_low_proximity_pct == pytest.approx(EXPECTED_HTF_LOW_PROXIMITY_PCT, rel=1e-9)
+    assert features.htf_body_pct == pytest.approx(EXPECTED_HTF_BODY_PCT, rel=1e-9)
+    assert features.htf_close_position == pytest.approx(EXPECTED_HTF_CLOSE_POSITION, rel=1e-9)
+    assert features.time_window_weight == 0.9
+    assert features.narrative_phase == "MANIPULATION"
+    assert features.bos_detected is False
+    assert features.choch_detected is False
+    assert features.fvg_present is False
+    assert features.liquidity_sweep is False
+
+
 # ── Task 16.3: Integration Tests ──────────────────────────────────────────────
 
 class TestFeatureExtractionWithRAG:
@@ -98,11 +143,9 @@ class TestFeatureExtractionWithRAG:
         # Extract features
         features = await extractor.extract_features(sample_candles, sample_setup)
         
-        # Verify traditional features are present
+        # Verify traditional features (derivation above the test classes)
         assert isinstance(features, ConfluenceFeatures)
-        assert features.htf_high_proximity_pct == 15.0  # From mock implementation
-        assert features.time_window_weight == 0.9
-        assert features.narrative_phase == "MANIPULATION"
+        assert_expected_traditional_features(features)
         
         # Verify RAG features are populated
         assert features.avg_r_multiple == 3.5
@@ -161,9 +204,8 @@ class TestRAGFallbackScenarios:
         extractor = ConfluenceFeatureExtractor(rag_client=None)
         features = await extractor.extract_features(sample_candles, sample_setup)
         
-        # Traditional features should work
-        assert features.htf_high_proximity_pct == 15.0
-        assert features.time_window_weight == 0.9
+        # Traditional features should be unaffected by the missing RAG client
+        assert_expected_traditional_features(features)
         
         # RAG features should be zeros
         assert features.avg_r_multiple == 0.0
@@ -243,8 +285,28 @@ class TestModelPredictionWithRAG:
         # Verify feature vector is correct shape for model
         assert feature_vector.shape == (14,)  # Expected input shape
         assert not np.isnan(feature_vector).any()  # No NaN values
-        assert np.all(feature_vector >= -1)  # Reasonable value ranges
-        assert np.all(feature_vector <= 10)   # Reasonable value ranges
+        
+        # Per-index ranges documented in ConfluenceFeatures.to_array()
+        assert np.all((0.0 <= feature_vector[0:3]) & (feature_vector[0:3] <= 100.0))  # [0-2] HTF percentages
+        assert np.all((0.0 <= feature_vector[3:5]) & (feature_vector[3:5] <= 1.0))    # [3] close position, [4] time weight
+        assert feature_vector[5] in {0, 1, 2, 3, 4, 5}                                # [5] narrative phase code
+        assert np.all(np.isin(feature_vector[6:10], [0, 1]))                          # [6-9] structure flags
+        assert 0.0 <= feature_vector[10] <= 10.0                                      # [10] avg R-multiple
+        assert np.all((0.0 <= feature_vector[11:14]) & (feature_vector[11:14] <= 1.0))  # [11-13] RAG ratios
+        
+        # Exact values: traditional features derived above, RAG features from
+        # rag_response (sample_size 12 normalised by /100 -> 0.12)
+        expected_vector = np.array([
+            EXPECTED_HTF_HIGH_PROXIMITY_PCT,
+            EXPECTED_HTF_LOW_PROXIMITY_PCT,
+            EXPECTED_HTF_BODY_PCT,
+            EXPECTED_HTF_CLOSE_POSITION,
+            0.9,   # LONDON_KILLZONE weight
+            1,     # MANIPULATION
+            0, 0, 0, 0,  # BOS, CHoCH, FVG, sweep (need >= 3 candles)
+            3.5, 0.8, 0.12, 0.94,
+        ])
+        np.testing.assert_allclose(feature_vector, expected_vector, rtol=1e-9, atol=0)
         
         # Verify mock prediction worked
         assert probabilities.shape == (1, 2)

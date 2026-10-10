@@ -40,11 +40,15 @@ _INTRADAY_PRIORITY: List[Timeframe] = [
 ]
 
 # Relative weight [0.0, 1.0] of each timeframe when scoring level significance.
-_TIMEFRAME_WEIGHT: Dict[Timeframe, float] = {
+TIMEFRAME_WEIGHT: Dict[Timeframe, float] = {
     Timeframe.MN1: 1.0,
     Timeframe.W1: 0.9,
     Timeframe.D1: 0.8,
+    Timeframe.H12: 0.75,
+    Timeframe.H8: 0.7,
+    Timeframe.H6: 0.65,
     Timeframe.H4: 0.6,
+    Timeframe.H3: 0.55,
     Timeframe.H1: 0.5,
     Timeframe.M30: 0.4,
     Timeframe.M15: 0.3,
@@ -183,7 +187,7 @@ class LiquidityLevelDetector:
 
     def _score_level(self, level: LiquidityLevel, candles: List[Candle]) -> float:
         touch_component = min(level.touch_count / 5.0, 1.0) * 0.3
-        tf_component = _TIMEFRAME_WEIGHT.get(level.timeframe, 0.5) * 0.4
+        tf_component = TIMEFRAME_WEIGHT.get(level.timeframe, 0.5) * 0.4
         recency_component = self._recency_factor(level, candles) * 0.3
         return max(0.0, min(1.0, touch_component + tf_component + recency_component))
 

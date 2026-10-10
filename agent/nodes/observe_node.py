@@ -14,6 +14,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
+from agent.clock import Clock, wall_clock
 from agent.state import AgentState, DecisionAction, Direction, TradePlan
 from liquidity_engine import LiquidityMappingEngine
 from liquidity_engine.models import Candle, LiquidityMap, Timeframe
@@ -100,17 +101,21 @@ def _build_liquidity_context(
         return None, None
 
 
-def observe_node(message: Dict[str, Any]) -> AgentState:
+def observe_node(message: Dict[str, Any], clock: Optional[Clock] = None) -> AgentState:
     """Validate and ingest a Kafka setup message into AgentState.
 
     Args:
         message: Raw Kafka message dict with setup data.  Must contain at
             minimum: setup_id, instrument, timeframe, detected_at.
+        clock: Source of "now" for the staleness check (default: the wall
+            clock). A backtest passes its simulated time.
 
     Returns:
         AgentState populated from the message.  If the setup is stale,
         the returned state has ``error`` set and ``decision=SKIP``.
     """
+    now = (clock or wall_clock)()
+
     # Parse detected_at  accept ISO-format string or datetime
     detected_at_raw = message.get("detected_at")
     if isinstance(detected_at_raw, str):
@@ -123,9 +128,8 @@ def observe_node(message: Dict[str, Any]) -> AgentState:
         if detected_at.tzinfo is None:
             detected_at = detected_at.replace(tzinfo=timezone.utc)
     else:
-        detected_at = datetime.now(tz=timezone.utc)
+        detected_at = now
 
-    now = datetime.now(tz=timezone.utc)
     age_seconds = (now - detected_at).total_seconds()
 
     # Build base state fields

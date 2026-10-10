@@ -5,7 +5,7 @@ Pure and stateless.
 """
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from liquidity_engine.models import PDArray, PDArrayType, UnicornPattern
 
@@ -17,13 +17,16 @@ class UnicornDetector:
         self, pd_arrays: List[PDArray], overlap_tolerance_pct: float = 0.001
     ) -> Optional[UnicornPattern]:
         breakers = [a for a in pd_arrays if a.array_type == PDArrayType.BREAKER]
-        fvgs = [a for a in pd_arrays if a.array_type == PDArrayType.FVG]
+        # FVGs pair only with a breaker of the same timeframe and direction; grouped
+        # in their original order, so the candidates (and ties) come out as before.
+        fvgs: Dict[tuple, List[PDArray]] = {}
+        for array in pd_arrays:
+            if array.array_type == PDArrayType.FVG:
+                fvgs.setdefault((array.timeframe, array.direction), []).append(array)
 
         candidates: List[UnicornPattern] = []
         for breaker in breakers:
-            for fvg in fvgs:
-                if breaker.direction != fvg.direction or breaker.timeframe != fvg.timeframe:
-                    continue
+            for fvg in fvgs.get((breaker.timeframe, breaker.direction), ()):
                 if not self._arrays_overlap(breaker, fvg, overlap_tolerance_pct):
                     continue
                 overlap_low, overlap_high = self._compute_overlap(breaker, fvg, overlap_tolerance_pct)

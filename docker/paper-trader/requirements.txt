@@ -1,0 +1,15 @@
+# Only what scripts/run_live_agent.py (--feed binance) and
+# scripts/load_historical_data_binance.py import — not the root requirements.
+# MLflow is deliberately absent: agent/nodes/learn_node.py tolerates it missing.
+aiohttp==3.8.5
+asyncpg==0.31.0
+fakeredis==2.35.1
+fastapi==0.138.0
+httpx==0.28.1
+pydantic==2.13.4
+python-dateutil==2.8.2
+python-decouple==3.8
+redis==7.4.0
+requests==2.33.1
+tzdata==2026.1
+uvicorn==0.49.0

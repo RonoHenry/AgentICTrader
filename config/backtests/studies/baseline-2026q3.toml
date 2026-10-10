@@ -1,0 +1,4 @@
+# Study 'baseline-2026q3'. The hold-out is set once, when the study is first used (Req 7.2, D7):
+# runs reaching into it are refused unless they are the final validation run.
+holdout_start = 2026-07-07
+created_from_data_end = 2026-10-07

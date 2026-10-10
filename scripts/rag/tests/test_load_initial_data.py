@@ -33,6 +33,7 @@ if _WORKSPACE_ROOT not in sys.path:
 from scripts.rag.load_initial_data import (
     DataLoadingError,
     DataQualityReport,
+    EmbeddingGenerator,
     InitialDataLoader,
     LoadingProgress,
 )
@@ -50,8 +51,12 @@ class TestInitialDataLoader(IsolatedAsyncioTestCase):
         self.mock_db.trade_journal = self.mock_trade_collection
 
         self.mock_enricher = MagicMock()
+        # generate_embedding and ingest_batch are coroutines in production
+        # (EmbeddingGenerator, IngestionService); the loader awaits them.
         self.mock_embedding_gen = MagicMock()
+        self.mock_embedding_gen.generate_embedding = AsyncMock()
         self.mock_ingestion_service = MagicMock()
+        self.mock_ingestion_service.ingest_batch = AsyncMock()
         self.mock_qdrant_wrapper = MagicMock()
 
         self.loader = InitialDataLoader(
@@ -379,7 +384,8 @@ class TestInitialDataLoader(IsolatedAsyncioTestCase):
 
     async def test_error_handling_enrichment_failures(self):
         """RED: Test error handling when enrichment fails for some trades."""
-        trades = [self.sample_trade.copy() for _ in range(5)]
+        # Distinct trade_ids, so "fail on the 2nd trade" fails exactly one.
+        trades = [{**self.sample_trade, "trade_id": f"TRD-{i:03d}"} for i in range(5)]
         
         # Mock enricher to fail on 2nd trade
         def mock_enrich_with_failure(trade, candles, htf_candles):
@@ -531,6 +537,61 @@ class TestInitialDataLoader(IsolatedAsyncioTestCase):
             # Cleanup test file
             if output_path.exists():
                 output_path.unlink()
+
+
+class TestEmbeddingGenerator:
+    """The loader's default embedder must hand MultiModalEmbedder a real EnrichedSetup."""
+
+    @pytest.mark.asyncio
+    async def test_generate_embedding_delegates_to_multi_modal_embedder(self):
+        import numpy as np
+
+        setup = EnrichedSetup(
+            trade_id="TRD-EMB-001",
+            timestamp=datetime.now(timezone.utc),
+            instrument="EURUSD",
+            direction="BUY",
+            entry_price=1.0850,
+            exit_price=1.0895,
+            stop_loss=1.0800,
+            take_profit=1.0950,
+            r_multiple=2.5,
+            outcome_result="WIN",
+            htf_timeframe="H1",
+            htf_open=1.0840,
+            htf_high=1.0900,
+            htf_low=1.0820,
+            htf_open_bias="BULLISH",
+            htf_high_proximity_pct=0.25,
+            htf_low_proximity_pct=0.75,
+            htf_body_pct=0.40,
+            htf_close_position=0.60,
+            bos_detected=True,
+            choch_detected=False,
+            fvg_present=True,
+            liquidity_sweep=False,
+            swing_high_distance=15.0,
+            swing_low_distance=8.0,
+            htf_trend_bias="BULLISH",
+            time_window="LONDON_KILLZONE",
+            narrative_phase="MANIPULATION",
+            time_window_weight=0.8,
+            is_killzone=True,
+            narrative="Price swept Asian low before rejecting from premium zone",
+            confluence_count=5,
+        )
+        embedder = MagicMock()
+        embedder.embed_and_validate.return_value = np.full(528, 0.5, dtype=np.float32)
+
+        result = await EmbeddingGenerator(embedder=embedder).generate_embedding(
+            setup.model_dump()
+        )
+
+        (passed_setup,), _ = embedder.embed_and_validate.call_args
+        assert isinstance(passed_setup, EnrichedSetup)
+        assert passed_setup == setup  # dict round-trip loses nothing
+        assert isinstance(result, list) and len(result) == 528
+        assert result[0] == pytest.approx(0.5)
 
 
 class TestDataQualityReport:

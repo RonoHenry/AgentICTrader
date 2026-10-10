@@ -12,9 +12,9 @@ Validates: Requirements FR-6
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
+from agent.clock import Clock, wall_clock
 from agent.state import AgentState
 
 # Top-level import so patch("agent.nodes.learn_node.MLflowTracker") works in tests.
@@ -78,6 +78,7 @@ def trigger_retraining_if_needed(outcome_count: int) -> None:
 def learn_node(
     state: AgentState,
     trade_journal_collection: Any,
+    clock: Optional[Clock] = None,
 ) -> AgentState:
     """Log the trade outcome to MongoDB trade_journal.
 
@@ -154,7 +155,7 @@ def learn_node(
             state.close_time.isoformat() if state.close_time is not None else None
         ),
         # Metadata
-        "logged_at": datetime.now(tz=timezone.utc).isoformat(),
+        "logged_at": (clock or wall_clock)().isoformat(),
         "mode": state.mode.value,
     }
 

@@ -19,9 +19,9 @@ Validates: Requirements FR-6 (Phase 4 Task 39)
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any, Optional
 
+from agent.clock import Clock, wall_clock
 from agent.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,7 @@ def log_agent_decision(
     state: AgentState,
     agent_decisions_collection: Any,
     user_id: str = "default",
+    clock: Optional[Clock] = None,
 ) -> AgentState:
     """Log one audit-trail document to MongoDB agent_decisions.
 
@@ -68,7 +69,7 @@ def log_agent_decision(
         "setup_id": state.setup_id,
         "user_id": user_id,
         "mode": state.mode.value,
-        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        "timestamp": (clock or wall_clock)().isoformat(),
         # Input context — everything the decision was based on
         "input_context": {
             "instrument": state.instrument,

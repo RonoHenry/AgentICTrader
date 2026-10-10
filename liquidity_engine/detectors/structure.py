@@ -14,6 +14,7 @@ ever sees it. Pure and stateless: the classifier never mutates its inputs.
 """
 from __future__ import annotations
 
+from bisect import bisect_right
 from typing import Dict, List, Optional
 
 from liquidity_engine.models import (
@@ -41,7 +42,15 @@ class SwingStructureClassifier:
     def classify(
         self, candles_by_tf: Dict[Timeframe, List[Candle]]
     ) -> Dict[Timeframe, SwingStructureResult]:
-        return {tf: self._classify_single(tf, candles) for tf, candles in candles_by_tf.items()}
+        # _break_confirmed is asked about the same swing three or four times
+        # (marking, tier promotion, event classification), each a full scan.
+        # Its answer depends only on (candles, side, price, time), so it is
+        # memoised for the duration of this call only; outputs are unchanged.
+        self._break_cache: Optional[dict] = {}
+        try:
+            return {tf: self._classify_single(tf, candles) for tf, candles in candles_by_tf.items()}
+        finally:
+            self._break_cache = None
 
     def _classify_single(self, tf: Timeframe, candles: List[Candle]) -> SwingStructureResult:
         short_term = self._seed_short_term(candles)
@@ -95,9 +104,18 @@ class SwingStructureClassifier:
         """Return the first candle after `swing.formed_at` whose close breaks the swing level."""
         if swing is None:
             return None
-        for candle in candles:
-            if candle.timestamp <= swing.formed_at:
-                continue
+        cache = getattr(self, "_break_cache", None)
+        if cache is None:
+            return self._scan_for_break(swing, candles)
+        key = (id(candles), swing.is_high, swing.price, swing.formed_at)
+        if key not in cache:
+            cache[key] = self._scan_for_break(swing, candles)
+        return cache[key]
+
+    @staticmethod
+    def _scan_for_break(swing: SwingPoint, candles: List[Candle]) -> Optional[Candle]:
+        # Candles are oldest first: start after the swing's own bar.
+        for candle in candles[bisect_right(candles, swing.formed_at, key=_open_time):]:
             if swing.is_high and candle.close > swing.price:
                 return candle
             if not swing.is_high and candle.close < swing.price:
@@ -124,11 +142,10 @@ class SwingStructureClassifier:
 
         ordered = sorted(swings, key=lambda s: s.formed_at)
         promoted: List[SwingPoint] = []
-        for i, swing in enumerate(ordered):
-            preceding_opposite = next(
-                (prior for prior in reversed(ordered[:i]) if prior.is_high != swing.is_high),
-                None,
-            )
+        last: Dict[bool, SwingPoint] = {}                 # the latest swing so far, per side (is_high)
+        for swing in ordered:
+            preceding_opposite = last.get(not swing.is_high)
+            last[swing.is_high] = swing
             if self._break_confirmed(preceding_opposite, candles) is not None:
                 promoted.append(
                     SwingPoint(
@@ -177,3 +194,7 @@ class SwingStructureClassifier:
                 )
             )
         return events
+
+
+def _open_time(candle: Candle):
+    return candle.timestamp

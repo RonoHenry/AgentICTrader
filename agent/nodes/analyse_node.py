@@ -75,8 +75,54 @@ def _call_visual_model_if_graded(state: AgentState, visual_model_client: Any) ->
     }
 
 
+def _call_algorag_if_graded(state: AgentState, algorag_client: Any) -> dict:
+    """Grade-gated services/algorag call.
+
+    Same B-or-better bar as the visual model call (_VISUAL_GATE_GRADES) —
+    retrieving "similar historical setups" for a setup that hasn't even
+    cleared the grader is wasted work with nothing to condition on.
+    """
+    if algorag_client is None:
+        return {}
+    setup_grade = state.liquidity_map.setup_grade if state.liquidity_map is not None else None
+    if setup_grade is None or setup_grade.grade.value not in _VISUAL_GATE_GRADES:
+        return {}
+
+    narrative_parts = [state.instrument]
+    if state.direction is not None:
+        narrative_parts.append(_DIRECTION_TO_BIAS.get(state.direction, state.direction.value))
+    if state.patterns:
+        narrative_parts.append(", ".join(p.type for p in state.patterns))
+    narrative = " — ".join(narrative_parts)
+
+    htf_bias_entry = (
+        state.liquidity_map.htf_bias.get(state.timeframe) if state.liquidity_map else None
+    )
+    htf_open_bias = (
+        htf_bias_entry.direction.value
+        if htf_bias_entry is not None and hasattr(htf_bias_entry, "direction")
+        else None
+    )
+
+    result = algorag_client.retrieve(
+        instrument=state.instrument,
+        timestamp=state.detected_at,
+        narrative=narrative,
+        time_window=state.time_window,
+        htf_open_bias=htf_open_bias,
+    )
+
+    return {
+        "similar_setups": result.similar_setups,
+        "rag_modifier": result.rag_modifier,
+    }
+
+
 def analyse_node(
-    state: AgentState, redis_client: Any = None, visual_model_client: Any = None
+    state: AgentState,
+    redis_client: Any = None,
+    visual_model_client: Any = None,
+    algorag_client: Any = None,
 ) -> AgentState:
     """Enrich AgentState with sentiment, calendar, and visual-model data.
 
@@ -90,10 +136,15 @@ def analyse_node(
                               agent/visual_model_client.py). When None, the
                               visual layer is skipped entirely and behaviour
                               is identical to before this integration existed.
+        algorag_client:       Optional synchronous client exposing
+                              ``retrieve(...)`` (see agent/algorag_client.py).
+                              When None, the AlgoRAG layer is skipped
+                              entirely and behaviour is unchanged.
 
     Returns:
         Updated AgentState with sentiment_score, sentiment_aligned,
-        calendar_clear, visual_* fields, and adjusted final_confidence.
+        calendar_clear, visual_* fields, similar_setups/rag_modifier, and
+        adjusted final_confidence.
     """
     updates: dict = {}
 
@@ -145,6 +196,13 @@ def analyse_node(
 
     visual_modifier = visual_updates.get("visual_modifier") or 0.0
     adjusted_confidence = max(0.0, min(1.0, adjusted_confidence + visual_modifier))
+
+    # ── 2c. Grade-gated AlgoRAG enrichment ──────────────────────────────────
+    algorag_updates = _call_algorag_if_graded(state, algorag_client)
+    updates.update(algorag_updates)
+
+    rag_modifier = algorag_updates.get("rag_modifier") or 0.0
+    adjusted_confidence = max(0.0, min(1.0, adjusted_confidence + rag_modifier))
 
     updates["final_confidence"] = adjusted_confidence
 

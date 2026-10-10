@@ -596,6 +596,302 @@ All other tasks are unchanged in content; numbers shifted to keep the sequence c
 
 ---
 
+## Update 2026-10: Setup Sequence, Protected-Swing Stop, Counter-Trend Cap (tasks 227–233)
+
+Requirements 13.4, 13.5, 18 and 19; design section "Update 2026-10"; decisions LE-D1 to LE-D8.
+- Numbered after algo-backtester task 226.
+- Each task that changes engine output regenerates, in its own commit:
+  - the engine-window fixtures (`UPDATE_ENGINE_WINDOWS=1 pytest tests/test_liquidity_engine_perf.py`);
+  - the golden journal (`UPDATE_GOLDEN=1 pytest tests/test_backtest_golden.py`).
+
+- [x] 227. Spec update 2026-10
+  - requirements.md: 1.5, 9.5, 9.8, 9.12, 13.4 and 13.5 amended. New Requirements 18 and 19, Properties 29–34, decisions LE-D1 to LE-D8, and the deferred list.
+  - design.md: section "Update 2026-10".
+  - The user decided the rules on 2026-10-02 and answered the open questions on 2026-10-07: the sweep is a gate; all pools can be raided; no fixed raid window; SD targets at 2–2.5 SD.
+
+- [x] 228. Mark swept levels; draw on liquidity from untouched pools (Req 13.5, Property 34)
+  - **Done 2026-10-07, committed with task 230.** `_mark_swept_levels` uses bisect per timeframe and stops at the earliest breach.
+  - **Lands together with task 230 (one commit).** On its own it leaves the old sweep check (the draw on liquidity already traded through) unable ever to fire. The golden week then has no orders at all until 230 replaces that check.
+  - **228a. RED** (`backend/tests/test_liquidity_engine.py`)
+    - `test_level_marked_swept_when_later_bar_trades_beyond`
+    - `test_level_not_swept_by_bars_of_its_own_period`
+    - `test_swept_at_is_earliest_breaching_bar`
+    - `test_draw_on_liquidity_never_swept`
+    - `test_property_swept_iff_breached` (Property 34)
+  - **228b. GREEN**
+    - `LiquidityMappingEngine._mark_swept_levels`, run before `_find_draw_on_liquidity`.
+    - `UPDATE_ENGINE_WINDOWS` added to `test_liquidity_engine_perf.py`. Re-baseline the fixtures and the golden journal.
+  - **228c. REFACTOR**
+
+- [x] 229. `SetupSequenceDetector` (`liquidity_engine/grader/sequence.py`; Req 18.1–18.8, Properties 32, 33)
+  - **Done 2026-10-07.**
+    - The detector and models are in. The engine records `setup_sequence` between `UnicornDetector` and `SetupGrader`; grading doesn't use it yet, and the golden journal is unchanged.
+    - `TIMEFRAME_WEIGHT` in `detectors/external.py` is now public: it weights raids too.
+    - The engine-window fixtures were re-baselined for the new field (`UPDATE_ENGINE_WINDOWS`, added to `test_liquidity_engine_perf.py`).
+    - About 1 in 6 random walks yields a sequence, so properties 32 and 33 are exercised.
+    - **Cost:** +5 to 15 ms per `analyze()` on the four fixture windows (54–88 ms with the detector, against 49–73 ms without). Most of it is the CISD pass over each prefix.
+  - **229a. RED** (`backend/tests/test_liquidity_sequence.py`, synthetic candles)
+    - `test_raid_reclaim_cisd_then_array_forms_bullish_sequence`
+    - `test_bearish_sequence_mirrors`
+    - `test_no_sequence_without_reclaim`
+    - `test_no_sequence_without_cisd_after_raid`
+    - `test_no_sequence_when_array_formed_before_raid`
+    - `test_no_sequence_when_protected_swing_broken`
+    - `test_pool_taken_before_raid_bar_is_not_raided`
+    - `test_swing_is_not_a_pool_until_confirmed` (no lookahead)
+    - `test_htf_swing_and_previous_day_low_are_pools`
+    - `test_protected_swing_is_extreme_from_raid_to_array`
+    - `test_most_recent_raid_wins_then_pool_weight`
+    - `test_selection_order_across_arrays`
+    - `test_property_no_lookahead` (Property 33)
+    - `test_property_raid_integrity` (Property 32)
+  - **229b. GREEN**
+    - Models: `LiquiditySource.SWING_HIGH` / `SWING_LOW`, `LiquidityPool`, `LiquidityRaid`, `ProtectedSwing`, `SetupSequence`, `LiquidityMap.setup_sequence`.
+    - The detector.
+    - The engine sets `setup_sequence`; grading is unchanged in this task.
+    - Re-baseline the engine-window fixtures (new field). The golden journal is unchanged.
+  - **229c. REFACTOR**
+
+- [x] 230. Grade from the setup sequence (Req 9.5, 9.8, 13.4, 18.9–18.16; Properties 29–31)
+  - **Done 2026-10-07, together with 228.**
+    - **Code:**
+      - The grader takes the entry array from the sequence and gates on it.
+      - It records the wick and body stops (10% buffer of the protected bar's range) and caps counter-trend setups at B, recorded as `SetupGradeDetail.counter_trend`.
+      - The grade reason names the raid, the protected swing, the gate and the cap.
+      - The engine sets `sweep_detected = setup_sequence is not None` and projects SD from the setup leg. `_detect_sweep` is removed.
+    - **Tests:**
+      - `full_liquidity_map` builds a sequence on the strongest entry array unless one is given. The old target-side sweep and array-edge stop tests are rewritten.
+      - Property 31 was too strict: a protected bar without range gets no buffer, and wick = body gives equal stops. It now reads ≤, and is strict when the bar has a range.
+    - **Re-baselined:**
+      - the engine-window fixtures;
+      - the golden journal;
+      - the pinned runner message (`EURUSD_M5_message.json`, refreshed by `UPDATE_GOLDEN=1`; it encoded the old grader).
+    - **Golden week:** 7 orders, against the baseline's sub-spread ones.
+      - Stops are 13–79 pips (were 0.6–3.5), and R:R runs 3.3–11 (was always 5.0).
+      - A stopped trade costs about −1.005R net (spread about 0.005R).
+      - Two counter-trend shorts were capped at B.
+  - **230a. RED** (`test_liquidity_grader.py`, `test_liquidity_engine.py`)
+    - `test_no_trade_without_setup_sequence`
+    - `test_entry_array_is_the_sequence_array`
+    - `test_sweep_condition_follows_setup_sequence`
+    - `test_stop_behind_protected_swing_wick_with_buffer`
+    - `test_body_stop_recorded`
+    - `test_stop_placement_valid_requires_stop_beyond_array`
+    - `test_counter_trend_capped_at_b`
+    - `test_aligned_setup_not_capped`
+    - `test_grade_reason_names_raid_and_protected_swing`
+    - `test_grade_reason_names_gate_and_cap`
+    - `test_sd_projection_anchored_on_setup_leg`
+    - `test_sd_projection_none_without_sequence`
+    - `test_property_sweep_gate` (Property 29)
+    - `test_property_counter_trend_cap` (Property 30)
+    - `test_property_protected_swing_ordering` (Property 31)
+    - Rewrite the tests built on superseded 9.12 and 13.4.
+  - **230b. GREEN** — grader and engine as designed. Re-baseline the fixtures and the golden journal.
+  - **230c. REFACTOR**
+
+- [x] 231. Order derivation and report (Req 19)
+  - **Done 2026-10-07.**
+    - **Code:**
+      - `build_order_intent` trades the sequence's direction and takes the stop from `cfg.stop_mode`. A stop not beyond the entry is `NoTrade` `INVALID_STOP`, journaled as its own decision so task 233 can count it.
+      - A tradeable grade without a sequence raises: the grader never produces one.
+      - `TradeContext` records the raid and the protected swing.
+    - **Report:**
+      - The M15 chart draws the raided pool (a dotted line from where it formed to the raid) and rings the protected swing's wick.
+      - Their labels stack on the entry side, clear of the position tool's labels.
+      - A window starts 8 bars before the raid when that is earlier than its usual start.
+      - Checked in headless Chrome on the golden week: a SHORT TP and a LONG stop-out.
+    - **Re-baselined:**
+      - the golden journal: 8 EXECUTE, 17 RR_BELOW_MIN, no INVALID_STOP;
+      - the pinned runner message: TP1 is now 2.0 SD, R:R 5.92 (was 7.07).
+  - **231a. RED**
+    - In `test_backtest_order_intent.py`:
+      - `test_stop_mode_wick_uses_suggested_stop`
+      - `test_stop_mode_body_uses_body_stop`
+      - `test_direction_from_setup_sequence`
+      - `test_invalid_stop_is_no_trade`
+      - `test_default_tp_levels`
+    - Strategy config: `stop_mode` is validated and in the fingerprint; `--variant stop_body` loads from `base.toml`.
+    - `test_backtest_signals.py`: `test_trade_context_records_raid_and_protected_swing`.
+  - **231b. GREEN**
+    - `StrategyConfig.stop_mode` and the `tp_levels` default (2.0, 2.5).
+    - `build_order_intent`, and `NoTradeReason` `INVALID_STOP`.
+    - `TradeContext.swept_level` / `protected_swing`, and the report draws both.
+    - `[variants.stop_body]` in `config/backtests/base.toml`.
+    - Re-baseline the golden journal.
+  - **231c. REFACTOR** — check the chart in headless Chrome.
+
+- [x] 232. Checkpoint
+  - **Done 2026-10-07.**
+    - **Suite:** root 844 + 1 flaky, backend 1892. The only failures are the 27 task-39 RED tests and `test_mocked_ensure_collection_completes_under_5ms`, an algorag wall-clock assert that passes 3/3 alone.
+    - **Speed:** `analyze()` takes 39–42 ms per M15 window and 45–57 ms per M5 window (median of 30, engine-window fixtures).
+      - `SetupSequenceDetector` is 3.5–5.8 ms of that, about 10%.
+      - Well within Requirement 1.7's 500 ms. Task 199's 33 ms was per Phase A close on stored data; task 233's run times give the like-for-like figure.
+    - **Live impact:** the paper-trader image (built 2026-10-06) bakes in the code. It keeps trading the old grader until the image is rebuilt and the container restarted, which needs the user's OK.
+  - Full suite green, apart from the task-39 RED tests.
+  - Measure `analyze()` per M15 close on the engine-window fixtures, against task 199's 33 ms.
+  - **Live impact:** the paper-trader container runs the new grader only after a restart, which needs the user's OK.
+
+- [x] 233. Measure against the baseline **(user review)**
+  - **Done 2026-10-08.** Write-up: `docs/backtests/SETUP_SEQUENCE.md`.
+    - **Result:** both runs fail the pass mark (1 of 5):
+      - WICK `ec4876ba87a1`: −0.16R (CI −0.33 to +0.01), PF 0.79, DD 100R;
+      - BODY `475491a89d91`: −0.01R (CI −0.20 to +0.18), PF 0.98, DD 44R;
+      - baseline: −0.54R, PF 0.45, DD 117R.
+    - **Fixed:** costs 1.14R → 0.07/0.14R; fills 15% → 55%; no sub-spread stops in WICK.
+    - **Where it loses:** R:R 10+ (3% hit rate in both runs) and counter-trend setups.
+    - **Alignment:** only today's D1 candle separates results; BOS/CHoCH structure alignment doesn't.
+    - **Gaps:** BODY needs a minimum stop (10 sub-spread trades, −19R); swap isn't modelled.
+    - **Next variants proposed** in the write-up.
+    - **User review of the two reports:** requested 2026-10-08.
+  - Run `config/backtests/base.toml` (stop `WICK`) and `--variant stop_body` on study `baseline-2026q3`. Compare each with the baseline run `5d241691c701`.
+  - Write `docs/backtests/SETUP_SEQUENCE.md` with:
+    - the pass-mark table per run;
+    - counts: gated, `RR_BELOW_MIN`, `INVALID_STOP`, never filled;
+    - stops against the spread;
+    - observations.
+  - The user reviews trades in `report.html`.
+
+---
+
+## Update 2026-10b: Candle Anticipation (tasks 234–243)
+
+Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D15.
+- Numbered after task 233.
+- Each task that changes engine output regenerates, in its own commit, the engine-window fixtures and the golden journal (as in tasks 227–233).
+- Tasks 238 and 240 also change algo-backtester code (the journal decisions, the fill model and the instrument specs). They are tracked here because this update's measurement depends on them.
+
+- [x] 234. Spec update 2026-10b
+  - requirements.md: Requirements 20–25, Properties 35–39, decisions LE-D9 to LE-D15, deferred list.
+  - design.md: section "Update 2026-10b", with the hindsight diagnostic and the market-timing statistics.
+  - The user described the method on 2026-10-08:
+    - anticipate how the next candle forms; a bullish candle makes its false move lower first;
+    - two objectives: liquidity and inefficiencies; nearest is realistic, further only when trending;
+    - time anchors: the 01:00, 05:00 and 09:00 H4 candles, New York time, the 17:00 open blended with midnight;
+    - the Asian range raid;
+    - H1, M30 and M15 liquidity.
+  - LE-D15 (the trend definition) confirmed by the user on 2026-10-08.
+  - LE-D16 added the same day: swap belongs to the account. The user may run swap and swap-free accounts at once.
+
+- [x] 235. Intraday timeframes and Asian pools (Req 20; Property 39)
+  - **Done 2026-10-08.**
+    - `context_tfs` adds H1, M30 and M15; `timeframes` lists each once.
+    - The M30 window is 100 bars, not 200: about 50 hours, M15's span. The golden week has no native M30 for a longer warm-up. Req 20.1 amended.
+    - Asian pools come from the current day's 20:00–23:00 New York H1 bars, known at midnight. The engine passes the analysis time to `SetupSequenceDetector`.
+    - **Golden journal:** the same decisions (8 EXECUTE, 17 RR_BELOW_MIN); reasons now name H1 raids. The engine windows are unchanged (they have no H1).
+    - **Speed (235c):** per M15 close on the golden week, 35 ms went to 109 ms with the new timeframes. Output-preserving speedups bring it to about 60 ms (old timeframes: 26 ms):
+      - cached uuid5 ids;
+      - bisect starts for the break, fill and violation scans;
+      - faster swing finders;
+      - unicorn pairs grouped by timeframe;
+      - raids sorted once.
+  - **235a. RED**
+    - `test_backtest_strategy_config.py`: the defaults include H1, M30 and M15 with their counts; `timeframes` has no duplicates.
+    - `test_liquidity_sequence.py`:
+      - Asian pools come from the 20:00–23:00 New York H1 bars, known at 00:00;
+      - there are none before 00:00 (Property 39);
+      - none when the session has no bars;
+      - an `ASIA_LOW` raid can start a bullish sequence.
+  - **235b. GREEN** — the config defaults, the `LiquiditySource` values and the pools.
+    - Re-baseline the engine windows and the golden journal.
+  - **235c. REFACTOR** — measure `analyze()` per M15 close with the extra timeframes.
+
+- [x] 236. CandleProfileAnalyzer: frame, objectives, trend, anticipation (Req 21; Properties 35, 36)
+  - **Done 2026-10-08.** `liquidity_engine/profile/candle_profile.py`; `LiquidityMap.candle_profile`. The engine runs it after `SetupSequenceDetector`.
+    - `Objective` also records `direction` (the way price moves to reach it) and `formed_at`. Each objective counts on its own side only: pools above and bearish FVGs above the open, their mirrors below.
+    - Not trending and equally near on both sides gives `NEUTRAL`.
+    - **Golden week:** 274 of 277 closes carry a profile. The other 3 are the 17:00 closes themselves, before the candle's first bar has closed. Each day reads as a bearish W1 trend drawn to the previous day's low.
+    - **Engine windows:** re-baselined with `candle_profile: null`, otherwise unchanged. Their D1 bars are the broker's UTC days, so no bar opens at 17:00 New York.
+  - **236a. RED** (`test_liquidity_profile.py`):
+    - **Frame:** `frame_open` and `midnight_open`.
+    - **Objectives:**
+      - untaken pools and unfilled FVGs only, from bars before the open;
+      - the nearest objective on each side, with ties going to the higher timeframe.
+    - **Trend:** the W1 closure rule.
+    - **Direction:**
+      - trending: the trend, with the W1 objective as the draw;
+      - not trending: toward the nearer objective;
+      - `NEUTRAL` with no objective.
+    - **Properties:** 35 (no lookahead: equal at every `t` in the candle) and 36 (ordering) with Hypothesis.
+  - **236b. GREEN** — `liquidity_engine/profile/`, the models, and `LiquidityMap.candle_profile`.
+    - The engine calls the analyzer after `SetupSequenceDetector`.
+  - **236c. REFACTOR**
+
+- [x] 237. False move, manipulation window, weekday (Req 22)
+  - **Done 2026-10-08.**
+    - `CandleProfile` gains `false_move_taken`, `asia_raided`, the candle's low and high so far (from the finest timeframe's bars, the earliest bar on a tie), `in_window`, `raid_in_window` and `weekday`.
+    - The window is [01:00, 13:00) New York, tested on both sides of DST: `in_window` is about t, `raid_in_window` about the raid bar's open.
+    - No direction means no false move and no Asian raid. The Asian range is `sequence.asian_pools`, shared with the setup sequence.
+    - The golden journal and the engine windows are unchanged.
+  - **237a. RED**
+    - `false_move_taken`, `asia_raided` and the candle's low and high so far;
+    - `in_window` and `raid_in_window` at the window's edges (01:00 and 13:00 New York, DST on both sides);
+    - `weekday` on the 17:00 boundary (Sunday 17:00 is Monday).
+  - **237b. GREEN**
+  - **237c. REFACTOR**
+
+- [x] 238. Order policy and variants (Req 23; Properties 37, 38)
+  - **Done 2026-10-08.**
+    - `StrategyConfig` gains `bias_mode`, `require_false_move`, `time_window`, `require_htf_poi`, `target_mode` and `min_stop_spreads`. All are off by default, so the golden journal is unchanged.
+    - **Check order:** `build_order_intent` checks the candle policy after the grade gates, in the order the reasons are listed. Then the stop (`INVALID_STOP`, then `STOP_TOO_TIGHT`), then the targets and `min_rr`.
+    - `OWN_DECISION_REASONS` is what the journal records as its own decision.
+    - **Spread:** `generate_all(..., spreads=)` and the live runner pass each instrument's spec spread. The cache key includes it only while `min_stop_spreads` is on.
+    - **Variants:** `anticipation`, `anticipation_body` and `anticipation_poi` are in `base.toml`.
+  - **238a. RED** (`test_backtest_order_intent.py`, `test_backtest_strategy_config.py`, `test_backtest_simulation.py`):
+    - **Reasons:** each `NoTrade` reason and the order of the checks.
+    - **Targets:** `NEAREST` takes the nearer of SD 2.0 and the draw, and falls back to SD when the draw doesn't lie beyond the entry.
+    - **Minimum stop:** `STOP_TOO_TIGHT` with `typical_spread`; `ValueError` without it.
+    - **Config:** the new fields are validated and in the fingerprint.
+    - **Journal:** each reason gets its own decision.
+    - **Properties:** 37 and 38 with Hypothesis.
+  - **238b. GREEN**
+    - The `StrategyConfig` fields, `build_order_intent`, `NoTradeReason`, and `simulation._decide`.
+    - Phase A and the live runner pass `typical_spread`.
+    - The `anticipation`, `anticipation_body` and `anticipation_poi` variants in `config/backtests/base.toml`.
+  - **238c. REFACTOR**
+
+- [x] 239. Recording and report (Req 24)
+  - **Done 2026-10-08.**
+    - `TradeContext.candle_profile` holds the opens, trend, direction, the draws (above, below and chosen), the false-move facts and the weekday. It defaults to `None` for older records.
+    - The M15 chart draws the D1 open (solid) and the draw (dashed) from the candle's 17:00 open, labelled in the right margin. The info panel spells out the profile.
+    - **Checked in headless Chrome on the golden run.** A first version referenced `last` before it was defined and broke the page script; it was caught here and fixed. Labels by the line start collided with the raid labels, so they moved to the margin.
+  - **239a. RED** — `TradeContext.candle_profile`, and the report script draws the frame open and the draw.
+  - **239b. GREEN**
+  - **239c. REFACTOR** — check the chart in headless Chrome.
+
+- [ ] 240. Swap in the cost model (Req 25.1; algo-backtester code)
+  - **240a. RED**
+    - **Export:** the exporter reads the swap fields; old spec files load with zero swap.
+    - **Fill model:** swap is charged per rollover held through, triple on the rollover day, converted to account currency; `cost_r_swap` is in the journal.
+    - **Modes:** an unsupported `swap_mode` raises.
+    - **Accounts:** a profile with `swap_free = true` loads zero swap (LE-D16).
+  - **240b. GREEN**
+    - Re-export `config/instruments/exness-standard.toml` from the MT5 terminal, logged in to the swap account (MT5 must be open).
+    - Add `config/brokers/exness-standard-swapfree.toml`.
+  - **240c. REFACTOR** — re-price `ec4876ba87a1` and `475491a89d91` with swap from the Phase A cache, and note the difference.
+
+- [ ] 241. Checkpoint
+  - **Suite:** the full suite is green apart from the task-39 RED tests.
+  - **Speed:** `analyze()` time against task 232.
+  - **Live impact:** the paper trader's configuration (entry timeframe, instruments) differs from the backtest. Aligning it is a separate decision for the user, and needs a container rebuild.
+
+- [ ] 242. Measure candle anticipation **(user review)**
+  - Run `base.toml` (the new reference) and the `anticipation`, `anticipation_body` and `anticipation_poi` variants on study `baseline-2026q3`.
+  - Compare each with the reference, `ec4876ba87a1` and `475491a89d91`.
+  - Write `docs/backtests/CANDLE_ANTICIPATION.md` with:
+    - the pass-mark table;
+    - `NoTrade` counts per reason;
+    - the breakdowns by weekday and by `midnight_open` side;
+    - stops against the spread;
+    - swap's share of costs, and each run's result without swap (the swap-free account, LE-D16).
+  - The hold-out stays unused. The user reviews the trades in `report.html`.
+
+- [ ] 243. Decide the next step with the user
+  - **If a variant passes:** ablations (one rule removed at a time), then the hold-out `--final` run once the user agrees the version is final.
+  - **If none passes:** use the breakdowns to choose between the deferred items (lower frames, trade management, premium/discount, the economic calendar).
+
+---
+
 ## Task Dependency Graph
 
 The Liquidity Engine tasks follow a strict dependency hierarchy from foundational models to advanced analytics. Dependencies are denoted as `prerequisite → dependent`.
@@ -655,6 +951,18 @@ The Liquidity Engine tasks follow a strict dependency hierarchy from foundationa
       "tasks": ["162"],
       "description": "Optional FastAPI microservice wrapper",
       "dependencies": ["Final Integration"]
+    },
+    {
+      "name": "Setup Sequence Update (2026-10)",
+      "tasks": ["227", "228", "229", "230", "231", "232", "233"],
+      "description": "Opposite-side raid sequence, protected-swing stop, counter-trend cap; measured against the algo-backtester baseline",
+      "dependencies": ["Final Integration"]
+    },
+    {
+      "name": "Candle Anticipation Update (2026-10b)",
+      "tasks": ["234", "235", "236", "237", "238", "239", "240", "241", "242", "243"],
+      "description": "Power of 3 candle profile: anticipated D1 direction from W1 and the nearest objectives, false move, manipulation window, Asian and intraday pools, swap and minimum stop; measured against the setup-sequence runs",
+      "dependencies": ["Setup Sequence Update (2026-10)"]
     }
   ]
 }

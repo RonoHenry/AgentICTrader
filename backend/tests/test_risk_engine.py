@@ -395,6 +395,52 @@ class TestValidateEndpoint:
         expected_size = (equity * 0.01) / sl_pips  # 5.0
         assert abs(data["position_size"] - expected_size) < 1e-9
 
+    def test_validate_approves_returns_broker_agnostic_risk_amount(self, client_with_clean_exposure):
+        """Test: /validate also returns risk_amount = equity * RISK_PER_TRADE,
+        independent of position_size's OANDA-unit sl_pips division — lot-based
+        brokers (MT5BrokerAdapter) need this money figure, not position_size,
+        to size correctly.
+
+        **Validates: Requirements FR-7**
+        """
+        client, redis_client = client_with_clean_exposure
+        equity = 10000.0
+        seed_exposure(redis_client, "user1", daily_dd_pct=0.0, weekly_dd_pct=0.0,
+                      open_trades=0, equity=equity)
+
+        response = client.post("/validate", json={
+            "user_id": "user1",
+            "instrument": "EURUSD",
+            "confidence": 0.80,
+            "sl_distance_pips": 20.0,
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["approved"] is True
+        assert abs(data["risk_amount"] - (equity * RISK_PER_TRADE)) < 1e-9
+
+    def test_validate_rejects_returns_no_risk_amount(self, client_with_clean_exposure):
+        """Test: risk_amount is None when validate rejects — mirrors position_size.
+
+        **Validates: Requirements FR-7**
+        """
+        client, redis_client = client_with_clean_exposure
+        seed_exposure(redis_client, "user1", daily_dd_pct=0.0, weekly_dd_pct=0.0,
+                      open_trades=0, equity=10000.0)
+
+        response = client.post("/validate", json={
+            "user_id": "user1",
+            "instrument": "EURUSD",
+            "confidence": 0.40,  # below CONFIDENCE_FLOOR
+            "sl_distance_pips": 20.0,
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["approved"] is False
+        assert data["risk_amount"] is None
+
     def test_validate_approves_with_equity_override(self, client_with_clean_exposure):
         """Test: /validate uses equity from request body when provided.
 
@@ -548,6 +594,122 @@ class TestExposureEndpoint:
         """
         response = client.get("/exposure")
         assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests — RiskEngine.increment_open_trades
+# ---------------------------------------------------------------------------
+
+class TestIncrementOpenTrades:
+    """increment_open_trades has no HTTP route — it's called in-process by
+    agent/nodes/execute_node.py after every successful fill. Without it,
+    check 6 in validate() (concurrent trades limit) never reflects trades
+    this engine itself approved.
+
+    **Validates: Requirements FR-7**
+    """
+
+    def test_increments_open_trades_by_one(self, fake_redis):
+        seed_exposure(fake_redis, "user1", open_trades=1, equity=10000.0)
+        engine = RiskEngine(redis_client=fake_redis)
+
+        engine.increment_open_trades("user1")
+
+        assert engine.get_exposure("user1").open_trades == 2
+
+    def test_increments_from_zero_when_no_exposure_seeded(self, fake_redis):
+        engine = RiskEngine(redis_client=fake_redis)
+
+        engine.increment_open_trades("brand_new_user")
+
+        assert engine.get_exposure("brand_new_user").open_trades == 1
+
+    def test_repeated_increments_accumulate(self, fake_redis):
+        seed_exposure(fake_redis, "user1", open_trades=0, equity=10000.0)
+        engine = RiskEngine(redis_client=fake_redis)
+
+        engine.increment_open_trades("user1")
+        engine.increment_open_trades("user1")
+        engine.increment_open_trades("user1")
+
+        assert engine.get_exposure("user1").open_trades == 3
+
+    def test_increment_feeds_back_into_concurrent_trades_gate(self, client_with_clean_exposure):
+        """End-to-end: three increments should be enough to trip the
+        MAX_CONCURRENT_TRADES gate on the next /validate call."""
+        client, redis_client = client_with_clean_exposure
+        seed_exposure(redis_client, "user1", open_trades=0, equity=10000.0)
+        engine = RiskEngine(redis_client=redis_client)
+
+        for _ in range(MAX_CONCURRENT_TRADES):
+            engine.increment_open_trades("user1")
+
+        response = client.post("/validate", json={
+            "user_id": "user1",
+            "instrument": "EURUSD",
+            "confidence": 0.80,
+            "sl_distance_pips": 20.0,
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["approved"] is False
+        assert "concurrent trades" in data["reason"]
+
+    def test_does_not_raise_when_redis_is_none(self):
+        """Never raises — this runs after the broker order is already placed,
+        so a bookkeeping failure must not surface as an execute_node error."""
+        engine = RiskEngine(redis_client=None)
+
+        engine.increment_open_trades("user1")  # must not raise
+
+
+class TestDecrementOpenTrades:
+    """decrement_open_trades frees a concurrent-trades slot when a trade closes;
+    without it the MAX_CONCURRENT_TRADES gate only ever counts up.
+
+    **Validates: Requirements FR-7**
+    """
+
+    def test_decrements_open_trades_by_one(self, fake_redis):
+        seed_exposure(fake_redis, "user1", open_trades=2, equity=10000.0)
+        engine = RiskEngine(redis_client=fake_redis)
+
+        engine.decrement_open_trades("user1")
+
+        assert engine.get_exposure("user1").open_trades == 1
+
+    def test_floors_at_zero(self, fake_redis):
+        seed_exposure(fake_redis, "user1", open_trades=0, equity=10000.0)
+        engine = RiskEngine(redis_client=fake_redis)
+
+        engine.decrement_open_trades("user1")
+
+        assert engine.get_exposure("user1").open_trades == 0
+
+    def test_frees_the_concurrent_trades_gate(self, client_with_clean_exposure):
+        client, redis_client = client_with_clean_exposure
+        seed_exposure(redis_client, "user1", open_trades=0, equity=10000.0)
+        engine = RiskEngine(redis_client=redis_client)
+
+        for _ in range(MAX_CONCURRENT_TRADES):
+            engine.increment_open_trades("user1")
+        engine.decrement_open_trades("user1")
+
+        response = client.post("/validate", json={
+            "user_id": "user1",
+            "instrument": "EURUSD",
+            "confidence": 0.80,
+            "sl_distance_pips": 20.0,
+        })
+
+        assert response.status_code == 200
+        assert response.json()["approved"] is True
+
+    def test_does_not_raise_when_redis_is_none(self):
+        engine = RiskEngine(redis_client=None)
+
+        engine.decrement_open_trades("user1")  # must not raise
 
 
 # ---------------------------------------------------------------------------

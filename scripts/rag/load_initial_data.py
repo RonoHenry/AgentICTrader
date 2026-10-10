@@ -47,9 +47,9 @@ if _WORKSPACE_ROOT not in sys.path:
     sys.path.insert(0, _WORKSPACE_ROOT)
 
 from ml.features.htf_projections import HTFProjectionExtractor
+from scripts.rag.utils.multi_modal_embedder import MultiModalEmbedder
 from scripts.rag.utils.setup_enricher import EnrichedSetup, SetupEnricher
 from services.algorag.config import settings
-from services.algorag.embedding_models import EmbeddingGenerator
 from services.algorag.ingestion_service import (
     BatchIngestionResult,
     IngestionService,
@@ -62,6 +62,24 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+class EmbeddingGenerator:
+    """Async adapter from an enriched-setup dict to its 528-dim ingestion vector.
+
+    Delegates to MultiModalEmbedder, the same component embedders and seeded
+    projection that services/algorag/embedding_generation.py uses at query
+    time, so stored setups and live queries share one embedding space.
+    """
+
+    def __init__(self, embedder: Optional[MultiModalEmbedder] = None) -> None:
+        self._embedder = embedder or MultiModalEmbedder()
+
+    async def generate_embedding(self, setup: Dict[str, Any]) -> List[float]:
+        enriched = EnrichedSetup.model_validate(setup)
+        # SBERT inference is CPU-bound; keep it off the event loop.
+        vector = await asyncio.to_thread(self._embedder.embed_and_validate, enriched)
+        return vector.tolist()
 
 
 # ---------------------------------------------------------------------------

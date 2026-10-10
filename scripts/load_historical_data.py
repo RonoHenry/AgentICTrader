@@ -64,10 +64,15 @@ TIMEFRAME_MAPPING = {
 # Timeframe durations in seconds (for gap detection)
 TIMEFRAME_DURATIONS = {
     "M1": 60,
+    "M3": 180,
     "M5": 300,
     "M15": 900,
     "H1": 3600,
+    "H3": 10800,
     "H4": 14400,
+    "H6": 21600,
+    "H8": 28800,
+    "H12": 43200,
     "D1": 86400,
     "W1": 604800,
 }
@@ -93,7 +98,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("load_historical_data.log"),
+        logging.FileHandler("load_historical_data.log", encoding="utf-8"),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -114,6 +119,8 @@ class Candle:
     volume: int
     complete: bool
     source: str = "oanda"
+    # Recorded spread in price units (MT5 bars carry one; OANDA's don't).
+    spread: Optional[Decimal] = None
 
     def validate_ohlc(self) -> bool:
         """Validate OHLC integrity: high >= open/close/low, low <= open/close/high."""
@@ -381,8 +388,10 @@ class TimescaleDBLoader:
 
     async def connect(self) -> None:
         """Create database connection pool."""
+        # .env holds the SQLAlchemy form (postgresql+asyncpg://); asyncpg
+        # itself only accepts postgresql:// or postgres://.
         self.pool = await asyncpg.create_pool(
-            self.connection_string,
+            self.connection_string.replace("postgresql+asyncpg://", "postgresql://", 1),
             min_size=5,
             max_size=20,
         )
@@ -398,6 +407,7 @@ class TimescaleDBLoader:
         self,
         instrument: str,
         timeframe: str,
+        source: str = "oanda",
     ) -> Optional[datetime]:
         """
         Get the timestamp of the last loaded candle for resuming.
@@ -405,6 +415,7 @@ class TimescaleDBLoader:
         Args:
             instrument: Platform instrument name
             timeframe: Platform timeframe
+            source: Only consider rows written by this loader
 
         Returns:
             Last candle timestamp or None if no data exists
@@ -415,11 +426,11 @@ class TimescaleDBLoader:
         query = """
             SELECT MAX(time) as last_time
             FROM candles
-            WHERE instrument = $1 AND timeframe = $2 AND source = 'oanda'
+            WHERE instrument = $1 AND timeframe = $2 AND source = $3
         """
 
         async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(query, instrument, timeframe)
+            row = await conn.fetchrow(query, instrument, timeframe, source)
             return row["last_time"] if row and row["last_time"] else None
 
     async def load_candles(
@@ -458,6 +469,7 @@ class TimescaleDBLoader:
                 low = EXCLUDED.low,
                 close = EXCLUDED.close,
                 volume = EXCLUDED.volume,
+                spread = EXCLUDED.spread,
                 complete = EXCLUDED.complete,
                 source = EXCLUDED.source
         """
@@ -490,7 +502,7 @@ class TimescaleDBLoader:
                         candle.low,
                         candle.close,
                         candle.volume,
-                        None,  # spread (not available in historical data)
+                        candle.spread,
                         candle.complete,
                         candle.source,
                     ))

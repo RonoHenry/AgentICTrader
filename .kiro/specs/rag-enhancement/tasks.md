@@ -183,7 +183,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - Generate data quality report
     - _Requirements: FR-RAG-1_
   
-  - [ ]* 8.2 Write validation tests for initial data
+  - [x]* 8.2 Write validation tests for initial data
     - Test data quality (< 5% errors)
     - Test embedding quality (no NaN, correct dimensions)
     - Test retrieval works on loaded data
@@ -240,7 +240,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - **REFACTOR**: Add statistical validation (min sample size = 3)
     - _Requirements: FR-RAG-4_
   
-  - [ ]* 11.2 Write unit tests for metrics computation
+  - [x]* 11.2 Write unit tests for metrics computation
     - Test metrics with various result sets (0, 1, 5, 10 results)
     - Test edge cases (all losses, all wins, mixed outcomes)
     - Test numerical stability (division by zero, NaN handling)
@@ -253,7 +253,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - **REFACTOR**: Add rate limiting and authentication
     - _Requirements: FR-RAG-7_
   
-  - [ ]* 12.2 Write integration tests for ingestion endpoint
+  - [x]* 12.2 Write integration tests for ingestion endpoint
     - Test successful ingestion
     - Test validation errors (missing fields, invalid embedding)
     - Test duplicate handling
@@ -286,7 +286,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - Implement connection pooling and timeout handling
     - _Requirements: FR-RAG-5, NFR-RAG-3_
   
-  - [ ]* 15.2 Write unit tests for AlgoRAG client
+  - [x]* 15.2 Write unit tests for AlgoRAG client
     - Test successful retrieval
     - Test retry logic on failures
     - Test timeout handling
@@ -306,7 +306,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - **REFACTOR**: Add feature importance analysis for RAG features
     - _Requirements: FR-RAG-5_
   
-  - [ ]* 16.3 Write integration tests for augmented scorer
+  - [x]* 16.3 Write integration tests for augmented scorer
     - Test feature extraction with RAG client
     - Test fallback when RAG unavailable (use zeros for RAG features)
     - Test model prediction with RAG features
@@ -351,7 +351,7 @@ This implementation plan breaks down the **AlgoRAG** feature into discrete, test
     - **REFACTOR**: Add fallback to template-based reasoning if RAG fails
     - _Requirements: FR-RAG-6, NFR-RAG-3_
   
-  - [ ]* 19.3 Write integration tests for RAG-grounded reasoning
+  - [x]* 19.3 Write integration tests for RAG-grounded reasoning
     - Test reasoning with RAG examples
     - Test fallback when RAG unavailable
     - Test prompt formatting with 0, 1, 3, 5 examples

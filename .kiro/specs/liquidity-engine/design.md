@@ -1257,3 +1257,269 @@ class LiquidityMap(BaseModel):
 **Validates: Requirements 4.15**
 
 ---
+
+## Update 2026-10: Setup Sequence (Requirements 18–19)
+
+The 2026-10 update replaces three hollow parts of grading with the user's rules (decisions LE-D1 to LE-D8 in `requirements.md`):
+- the target-side "sweep";
+- the entry-array-edge stop;
+- strongest-type entry-array selection.
+
+The baseline these changes are measured against is `docs/backtests/BASELINE.md`.
+
+### Pipeline
+
+```
+LiquidityLevelDetector -> mark swept levels (13.5) -> _find_draw_on_liquidity (untouched pools only)
+... PDArrayDetector ... UnicornDetector
+SetupSequenceDetector(candles_by_tf, pd_arrays, previous-period levels) -> LiquidityMap.setup_sequence
+SetupGrader (reads setup_sequence) -> SD projection on the setup leg
+```
+
+`sweep_detected = setup_sequence is not None`. `_detect_sweep` is removed.
+
+### SetupSequenceDetector (`liquidity_engine/grader/sequence.py`)
+
+Pure and stateless; it reads only the candles passed in. For each timeframe that holds an entry-eligible array, per `analyze()` call:
+
+1. **Pools.**
+   - Swing highs and lows (lookback 2) on every timeframe. `known_at` is the open of the bar at index `i + 3`; swings without that bar are skipped.
+   - Previous day, week and month high and low. `known_at` is the open of the period's last bar.
+
+   Each pool records its side, source, timeframe, price, `formed_at` and `known_at`.
+2. **Raids**, per pool:
+   - On the entry timeframe: the first bar opening at or after `known_at` that trades beyond the price.
+   - On every other timeframe: the first breaching bar that opened at or after `known_at` and whose successor opened by the raid bar's open (it closed before the raid).
+   - If such a bar exists, the pool was taken earlier and has no raid in the window.
+
+   Each scan stops at its first breach.
+3. **Per-bar precomputation on the entry timeframe:**
+   - the bars where a confirmed bullish or bearish CISD has its violation candle (`CISDDetector.detect` on each prefix);
+   - the suffix minimum of lows and suffix maximum of highs;
+   - for each raid, the first close back beyond the pool.
+4. **Per entry-eligible array** (unfilled, M15 and below, on that timeframe):
+   - Take the raids on the opposite side with `raided_at ≤ formed_at`, most recent first.
+   - The first raid that has a reclaim, a CISD in its direction after the raid, and an intact protected swing forms the sequence.
+   - The protected swing is the minimum low (bullish) from the raid bar to the array's bar; intact means the suffix minimum after it is not below it.
+   - The leg's far extreme is the suffix maximum (bullish) from the raid bar.
+5. **Selection** (18.8): sort the candidate sequences by the tuple (raid time, pool weight, strength, formed_at, array_id); the largest wins.
+
+Cost: pools × bars per timeframe for the raid scans, with early exit, plus one CISD pass. Expected to stay within Requirement 1.7; measured at the checkpoint (task 232) against task 199's 33 ms per M15 close.
+
+### Models (`liquidity_engine/models.py`)
+
+```python
+class LiquiditySource:                    # + SWING_HIGH, SWING_LOW
+class LiquidityPool(BaseModel):  side: LiquidityType; source: LiquiditySource; timeframe: Timeframe
+                                 price: float; formed_at: datetime; known_at: datetime
+class LiquidityRaid(BaseModel):  pool: LiquidityPool; raided_at: datetime; reclaimed_at: datetime
+class ProtectedSwing(BaseModel): candle_at: datetime; wick: float; body: float; candle_range: float
+class SetupSequence(BaseModel):  entry_array_id: str; direction: BiasDirection; raid: LiquidityRaid
+                                 cisd_at: datetime; protected_swing: ProtectedSwing
+                                 leg_extreme: float          # far end of the leg from the protected wick
+LiquidityMap.setup_sequence: Optional[SetupSequence] = None
+SetupGradeDetail.protected_swing_body_stop: Optional[float] = None
+SetupGradeDetail.counter_trend: bool = False
+```
+
+### SetupGrader changes
+
+| Rule | Change |
+|---|---|
+| Entry array | `_select_entry_array` returns the sequence's array when present; else the old strongest-type choice, used only in the grade reason |
+| `liquidity_sweep_confirmed` | `setup_sequence is not None` |
+| `stop_placement_valid` | A sequence exists and the wick stop is beyond the entry array's far boundary |
+| Gate | `NO_TRADE` without a sequence (checked with the HTF bias and draw-on-liquidity gates) |
+| Counter-trend | After grading: if the array direction differs from the D1 bias and the grade is A+ or A, it becomes B and `counter_trend = True` |
+| Stops | Wick and body stops with the 10% buffer of the protected bar's range |
+| Grade reason | Names the raid (pool source, timeframe, price, time), the protected swing, and any gate or cap |
+
+### Engine changes
+
+- **Marking swept levels.** For each level, the earliest bar (any timeframe) opening after `formed_at` that trades beyond it sets `swept` and `swept_at`. `_find_draw_on_liquidity` already filters on `swept`.
+- **SD projection.** `StandardDeviationCalculator().project()` takes the setup leg: for a bullish sequence `swing_high = leg_extreme` and `swing_low = wick`; mirrored for bearish. It is `None` without a sequence.
+
+### Order derivation (`agent/order_intent.py`, `agent/strategy_config.py`)
+
+- `StrategyConfig.stop_mode: StopMode = StopMode.WICK` (`WICK` / `BODY`), and `tp_levels` defaults to `(2.0, 2.5)`. Both are in the strategy fingerprint, so each stop mode is its own Phase A cache entry and its own backtest variant (`[variants.stop_body] strategy.stop_mode = "BODY"`).
+- **Direction:** `LONG` when `setup_sequence.direction` is bullish.
+- **Stop:** `suggested_stop` (WICK) or `protected_swing_body_stop` (BODY). Not beyond the entry → `NoTrade(reason="INVALID_STOP")`.
+- `_pick_sd_targets` is unchanged: the SD projection now lands in the sequence's direction by construction, and the draw-on-liquidity fallback remains.
+
+### Report (`algo_backtester/signals.py`, `report_html.py`)
+
+- **`TradeContext`:**
+  - `swept_level` = `{side, source, timeframe, price, formed_at, raided_at}`;
+  - new `protected_swing` = `{wick, body, candle_at}`.
+- **The M15 chart draws:**
+  - the raided pool as a dotted line from `formed_at` to the raid, labelled with source and timeframe;
+  - the protected swing as a marker on its bar.
+
+### Measurement (task 233)
+
+1. Same study (`baseline-2026q3`), data and pass mark as the baseline.
+2. Run `base.toml` (stop `WICK`) and `--variant stop_body`. Phase A recomputes: the engine fingerprint changed.
+3. `compare` each run with the baseline run `5d241691c701`.
+4. Results, against the pass mark, go in `docs/backtests/SETUP_SEQUENCE.md`, including:
+   - the `RR_BELOW_MIN` and `INVALID_STOP` counts;
+   - the share of stops narrower than 2× the spread.
+5. The hold-out stays unused.
+
+## Update 2026-10b: Candle Anticipation (Requirements 20–25)
+
+The engine records facts about the frame candle; the strategy decides what to do with them. Every rule is a `StrategyConfig` setting, so each is a backtest variant and lives in the Phase A cache key.
+
+The update encodes the user's method (decisions LE-D9 to LE-D15):
+1. Anticipate how the D1 candle will form, from the W1 context and the nearest objectives.
+2. Wait for its false move, ideally a raid of the Asian range, in the 01:00–13:00 New York window.
+3. Trade the setup sequence (Requirement 18) on the false-move side, toward a realistic objective.
+
+### Evidence it builds on (2026-10-08)
+
+**Hindsight, WICK run `ec4876ba87a1`.** This is an upper bound, not a strategy: a day that closes up also tends to carry a long to its target.
+
+| Trades | n | Avg net R |
+|---|---|---|
+| In the direction their D1 candle closed | 243 | +0.46 |
+| …entered below the open of an up day (or above the open of a down day) | 56 | +1.09 |
+| Against it | 294 | −0.68 |
+
+**Market timing, M15 2025-01 → 2026-07, four instruments.** Shown as the excess over a baseline that shuffles each period's moves. Without that baseline, any up period tends to show its low early (the arcsine law).
+
+| Statistic | Real | Shuffled | Excess |
+|---|---|---|---|
+| Up days, low in the 01/05/09 H4 candles | 34% | 28% | +6 pts |
+| Down days, high in the 01/05/09 H4 candles | 42% | 31% | +11 pts |
+| Up weeks, low on Monday or Tuesday | 85% | 76% | +9 pts (Monday +8, Tuesday +1) |
+| Daily extremes in the Asian H4 candles (17:00, 21:00) | – | – | −5 to −9 pts |
+
+### Pipeline
+
+```
+... PDArrayDetector ... UnicornDetector
+SetupSequenceDetector (+ Asian pools)   -> LiquidityMap.setup_sequence
+CandleProfileAnalyzer(candles_by_tf, t, setup_sequence, pd_arrays) -> LiquidityMap.candle_profile
+SetupGrader (unchanged) -> SD projection
+build_order_intent: grade gates, then the candle policy (bias_mode, require_false_move, time_window,
+                    require_htf_poi), then stop and minimum stop, then targets (target_mode) and min_rr
+```
+
+### Timeframes and Asian pools (Requirement 20)
+
+**Timeframes.**
+- `context_tfs` gains H1, M30 and M15.
+- `StrategyConfig.timeframes` de-duplicates while keeping order, so an M15 entry timeframe appears once.
+- Phase A cost rises with the pools and arrays on three more timeframes; it is measured at the checkpoint.
+
+**Asian pools** (`SetupSequenceDetector.pools`):
+- **Source:** the H1 bars from 20:00 to 23:00 New York of the D1 candle containing `t`, found by `StrategyCalendar.period_start(t, D1)`.
+- **Prices:** the highest high and the lowest low.
+- **Timing:** both pools are known at 00:00 New York.
+- **Gaps:** with no H1 bar in the range (data gaps), there are no Asian pools.
+
+### CandleProfileAnalyzer (`liquidity_engine/profile/candle_profile.py`)
+
+Pure and stateless, like every component. Per `analyze()`:
+
+1. **Frame.** `open_time = StrategyCalendar.period_start(t, D1)`. `frame_open` is the open of the D1 bar at `open_time`, and `midnight_open` the open of the first H1 bar at or after 00:00 New York.
+2. **Before the open.** Each timeframe's bars are cut to those whose period ended by `open_time`.
+3. **Objectives**, from the cut bars:
+   - **Pools:** swings (lookback 2) on H4, D1 and W1 that became known before `open_time` and that no later cut bar traded beyond, plus the previous day and week high and low (the D1 and W1 bars before the frame).
+   - **FVGs:** `PDArrayDetector`'s FVG rule on the cut H4, D1 and W1 bars, at the near edge (bearish FVGs above `frame_open`, bullish FVGs below). An FVG counts if no later cut bar traded into it.
+4. **Nearest objectives.** `draw_above` is the minimum objective price above `frame_open` and `draw_below` the maximum below. Ties go to the higher timeframe.
+5. **Trend.** From the two most recent W1 bars that closed by `open_time`.
+6. **Direction and draw**, as Requirement 21.5.
+7. **Facts up to `t`**, from the current candle's bars on the finest timeframe up to `t`:
+   - `false_move_taken`;
+   - `asia_raided`;
+   - the low and high so far;
+   - `in_window` and `weekday`.
+
+   `raid_in_window` compares `setup_sequence.raid.raided_at` with the window of the current candle.
+
+**Cost.** Steps 1–6 depend only on the candle's open, so a later optimisation can memoise them per instrument and candle without changing a result (Property 35). Not done in the first version; measured first.
+
+### Models
+
+```python
+class Objective(BaseModel):
+    kind: Literal["POOL", "FVG"]
+    source: str                 # LiquiditySource value or "FVG"
+    timeframe: Timeframe
+    price: float
+
+class CandleProfile(BaseModel):
+    frame_tf: Timeframe         # D1 in stage 1
+    open_time: datetime
+    frame_open: float
+    midnight_open: Optional[float]
+    trend: BiasDirection        # NEUTRAL = not trending
+    direction: BiasDirection    # the anticipated direction; NEUTRAL = none
+    draw: Optional[Objective]
+    draw_above: Optional[Objective]
+    draw_below: Optional[Objective]
+    false_move_taken: bool
+    asia_raided: bool
+    candle_low: float
+    candle_low_at: datetime
+    candle_high: float
+    candle_high_at: datetime
+    in_window: bool
+    raid_in_window: bool
+    weekday: int                # 0 = Monday, trading day (17:00 boundary)
+```
+
+`LiquidityMap.candle_profile: Optional[CandleProfile] = None` is the last field.
+
+### Order policy (`agent/order_intent.py`, `agent/strategy_config.py`)
+
+New `StrategyConfig` fields, all in the fingerprint and the Phase A cache key:
+
+| Field | Values (default first) |
+|---|---|
+| `bias_mode` | `OPEN` \| `PROFILE` |
+| `require_false_move` | `False` \| `True` |
+| `time_window` | `ANY` \| `MANIPULATION` |
+| `require_htf_poi` | `False` \| `True` |
+| `target_mode` | `SD` \| `NEAREST` |
+| `min_stop_spreads` | `0.0` (off) or k |
+
+**Order of checks.** The candle policy runs after the grade gates and before the stop checks. The first failing rule names the `NoTrade`.
+
+**Spread.** `build_order_intent` gains `typical_spread: Optional[float] = None`:
+- Phase A passes `InstrumentSpec.default_spread` from the run's specs.
+- The live runner passes its profile's spec.
+- `min_stop_spreads > 0` without a spread raises `ValueError`, so a run can't silently skip the rule.
+
+**Journal.** `simulation._decide` journals each new reason as its own decision, as it does `INVALID_STOP`.
+
+### Swap (algo-backtester code, Requirement 25.1)
+
+- **Export.** `scripts/export_instrument_specs.py` reads `swap_long`, `swap_short`, `swap_mode` and `swap_rollover3days` from `mt5.symbol_info`. A spec file without them means zero swap, so old files still load.
+- **Charge.** The shared fill model (`agent/brokers/fill_model.py`) charges at each 17:00 New York rollover a filled position is held through:
+  - triple on `swap_rollover3days`;
+  - converted to account currency as P&L is;
+  - booked as `cost_r_swap`.
+- **Modes.** Only `SWAP_MODE_POINTS` and `SWAP_MODE_CURRENCY_*` are supported; any other mode raises at load time.
+- **Phase A.** Swap is execution-only, outside Phase A, so the WICK and BODY runs can be re-priced from their cache.
+- **Accounts (LE-D16).** A broker profile gains an optional `swap_free` (default `false`). When it is `true`, `BrokerProfile.specs()` returns every instrument with zero swap. `config/brokers/exness-standard-swapfree.toml` is the swap-free account: the same venue, spec file and symbols as `exness-standard`, so it reads the same candles and shares the Phase A cache.
+- **Both figures.** The journal and the write-up give the net result with swap and without it (net plus `cost_r_swap`). That is exact while compounding is off, since swap changes neither a decision nor a size.
+
+### Report
+
+The M15 chart draws:
+- `frame_open`: a horizontal line from the candle's open time;
+- the draw: dashed, labelled with its source and timeframe.
+
+`TradeContext.candle_profile` is a JSON-ready dict.
+
+### Measurement (task 242)
+
+1. **Variants** in `config/backtests/base.toml`:
+   - **`anticipation`:** `bias_mode = "PROFILE"`, `require_false_move = true`, `time_window = "MANIPULATION"`, `target_mode = "NEAREST"`, `min_stop_spreads = 2.0`;
+   - **`anticipation_body`:** the same with `stop_mode = "BODY"`;
+   - **`anticipation_poi`:** `anticipation` plus `require_htf_poi = true`.
+2. **Reference:** `base.toml` itself, rerun because the new timeframes and swap change it. The WICK and BODY runs are also re-priced with swap from the Phase A cache.
+3. **Compare** each variant with the reference and with `ec4876ba87a1` and `475491a89d91`, on the same pass mark. The hold-out stays unused.
+4. **Ablations, later:** if a variant shows promise, drop one rule at a time to see which ones carry the result.
+5. **Write-up:** results in `docs/backtests/CANDLE_ANTICIPATION.md`, including the NoTrade counts per reason and the breakdown by weekday and by `midnight_open` side.

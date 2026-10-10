@@ -1,0 +1,25 @@
+# AlgoResearch configuration (.kiro/specs/algo-research).
+#   python -m algo_research snapshot | build | explore H002 | run H002 | ledger
+# The hold-out start comes from the study (config/backtests/studies/<study>.toml);
+# research never reads the hold-out. Unknown keys are rejected.
+
+profile = "exness-standard"          # broker profile: candle source, spec file (spread, slippage, commission)
+study = "baseline-2026q3"            # its holdout_start ends the research period
+instruments = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
+start = 2025-01-01                   # the first trading date studied
+snapshot = "exness-2025-2026h1"      # data/research/snapshots/<snapshot>/
+run_config = "config/backtests/base.toml"   # its [strategy] is what the engine sees, as in Phase A
+
+[slices]                             # AR-D3: whole trading dates, [first, end); contiguous; confirm ends at the hold-out
+explore = [2025-01-01, 2025-07-01]
+confirm = [2025-07-01, 2026-07-07]
+
+[bootstrap]
+resamples = 10000                    # AR-D5: trading dates, 95% percentile intervals
+
+[baselines]
+random_time_draws = 20               # AR-D7: per event, same instrument and New York 15-minute slot
+shuffles = 200                       # shuffled-path baseline for timing statistics
+
+[smt]                                # update 2026-10c, AR-D12: correlated pairs for SMT divergence
+pairs = [["EURUSD", "GBPUSD"]]       # DXY and index futures aren't in the data; gold has no partner

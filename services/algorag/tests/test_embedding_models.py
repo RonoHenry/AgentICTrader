@@ -195,7 +195,11 @@ class TestEmbeddingProperties:
     """
 
     @given(text=st.text(min_size=1, max_size=500))
-    @settings(max_examples=30, suppress_health_check=[HealthCheck.too_slow])
+    # deadline=None: these properties are about the output (shape/NaN), not speed.
+    # SBERT inference time varies with host load (one 1058ms vs 18ms for the
+    # same input was observed), which tripped hypothesis's default 200ms
+    # deadline and raised FlakyFailure unrelated to the property.
+    @settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.too_slow])
     def test_output_is_always_384_dim(self, text: str) -> None:
         """For any non-empty string, encode() always returns a 384-dim vector.
 
@@ -208,7 +212,11 @@ class TestEmbeddingProperties:
         )
 
     @given(text=st.text(min_size=1, max_size=500))
-    @settings(max_examples=30, suppress_health_check=[HealthCheck.too_slow])
+    # deadline=None: these properties are about the output (shape/NaN), not speed.
+    # SBERT inference time varies with host load (one 1058ms vs 18ms for the
+    # same input was observed), which tripped hypothesis's default 200ms
+    # deadline and raised FlakyFailure unrelated to the property.
+    @settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.too_slow])
     def test_output_has_no_nan_values(self, text: str) -> None:
         """For any non-empty string, encode() output never contains NaN.
 

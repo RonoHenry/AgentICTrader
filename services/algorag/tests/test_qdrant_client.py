@@ -6,7 +6,8 @@ GREEN phase: implementation in services/algorag/qdrant_client.py.
 REFACTOR: config driven by environment variables in services/algorag/config.py.
 
 All external calls are mocked — no live Qdrant instance required.
-Tests that would need a real Qdrant are marked @pytest.mark.integration.
+Tests that need a real Qdrant are marked @pytest.mark.infrastructure (and
+@pytest.mark.integration); deselect them with -m "not infrastructure".
 """
 
 from __future__ import annotations
@@ -387,6 +388,7 @@ class TestHealthCheck:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.infrastructure  # needs a live Qdrant server on localhost:6333
 @pytest.mark.integration
 class TestQdrantIntegration:
     """

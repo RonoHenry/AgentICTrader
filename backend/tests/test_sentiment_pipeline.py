@@ -9,6 +9,7 @@ Tests do NOT require network access or GPU.
 """
 from __future__ import annotations
 
+import email.utils
 import json
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -90,7 +91,10 @@ def mock_alpha_vantage_response():
                 {
                     "title": "Fed raises rates",
                     "summary": "Federal Reserve raises interest rates by 25bps",
-                    "time_published": "20260514T103000",
+                    # Relative to now: fetch_news drops articles older than 24h.
+                    "time_published": (
+                        datetime.now(timezone.utc) - timedelta(hours=1)
+                    ).strftime("%Y%m%dT%H%M%S"),
                     "source": "Reuters",
                     "url": "https://reuters.com/article/1",
                 }
@@ -407,13 +411,18 @@ class TestFetchNews:
 
     async def test_fetch_news_rss_fallback_when_no_api_key(self):
         """When api_key is empty, the Reuters RSS URL should be used."""
-        rss_xml = """<?xml version="1.0"?>
+        # Relative to now: fetch_news drops articles older than 24h.
+        # format_datetime: RFC 2822 with English day/month names on any locale.
+        pub_date = email.utils.format_datetime(
+            datetime.now(timezone.utc) - timedelta(hours=1)
+        )
+        rss_xml = f"""<?xml version="1.0"?>
         <rss version="2.0">
           <channel>
             <item>
               <title>Gold surges on safe haven demand</title>
               <description>Gold prices rose sharply amid geopolitical tensions.</description>
-              <pubDate>Thu, 14 May 2026 10:30:00 +0000</pubDate>
+              <pubDate>{pub_date}</pubDate>
               <link>https://reuters.com/gold</link>
             </item>
           </channel>

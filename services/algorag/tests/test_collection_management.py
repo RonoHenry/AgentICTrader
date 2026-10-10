@@ -14,7 +14,8 @@ Task 6.3 adds:
 - Collection lifecycle: delete, recreate, verify empty
 
 All Qdrant calls are mocked — no live instance required.
-Integration tests that need a real Qdrant are marked @pytest.mark.integration.
+Integration tests that need a real Qdrant are marked @pytest.mark.infrastructure
+(and @pytest.mark.integration); deselect them with -m "not infrastructure".
 
 Requirements: FR-RAG-1 (Historical Setup Storage), FR-RAG-2 (Semantic Retrieval),
               NFR-RAG-2 (Scalability)
@@ -839,6 +840,7 @@ class TestQueryPerformance:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.infrastructure  # needs a live Qdrant server on localhost:6333
 @pytest.mark.integration
 class TestCollectionManagementIntegration:
     """Full end-to-end collection management against a live Qdrant instance."""

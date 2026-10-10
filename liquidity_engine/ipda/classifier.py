@@ -46,13 +46,27 @@ _C3_EXPANSION_RATIO = 1.5
 class IPDAClassifier:
     """Classifies CRT phase per timeframe and validates the CISD cascade."""
 
-    CISD_CASCADE: Dict[Timeframe, Timeframe] = {
-        Timeframe.MN1: Timeframe.D1,
-        Timeframe.W1: Timeframe.H4,
-        Timeframe.D1: Timeframe.H1,
-        Timeframe.H4: Timeframe.M15,
-        Timeframe.M30: Timeframe.M3,
-        Timeframe.M15: Timeframe.M1,
+    # Each trigger maps to a *list* of acceptable confirmation timeframes,
+    # not one fixed partner — per real trading practice (confirmed against
+    # the canonical TTrades "Swing Confirmation" chart: Weekly->H4,
+    # Daily->H1, H4->M15, H1->M5, M30->M3, M15->M1), price doesn't respect
+    # a rigid pairing even though the chart shows one path per row. H4 in
+    # particular is routinely confirmed on M15 *or* M30 depending on how
+    # the range actually delivers.
+    #
+    # Deliberately NOT extended with dedicated entries for the newer
+    # intraday timeframes (H12/H8/H6/H3) — "algorithmic fractals in price
+    # are not a perfect match," so inventing another fixed ladder for them
+    # would repeat the same mistake this list-based structure exists to
+    # avoid. Those timeframes still contribute to bias/structure/PD-arrays;
+    # they just don't participate in CISD cascade validation.
+    CISD_CASCADE: Dict[Timeframe, List[Timeframe]] = {
+        Timeframe.MN1: [Timeframe.D1],
+        Timeframe.W1: [Timeframe.H4],
+        Timeframe.D1: [Timeframe.H1],
+        Timeframe.H4: [Timeframe.M15, Timeframe.M30],
+        Timeframe.M30: [Timeframe.M3],
+        Timeframe.M15: [Timeframe.M1],
     }
 
     def classify_crt_phase(self, candles: List[Candle], tf: Timeframe) -> CRTPhaseResult:
@@ -61,24 +75,30 @@ class IPDAClassifier:
     def validate_cisd_cascade(
         self, candles_by_tf: Dict[Timeframe, List[Candle]], trigger_tf: Timeframe
     ) -> CISDCascadeStatus:
-        confirmation_tf = self.CISD_CASCADE.get(trigger_tf)
-        if confirmation_tf is None:
-            return CISDCascadeStatus(cascade_valid=False, cascade_chain=[])
-
+        confirmation_candidates = self.CISD_CASCADE.get(trigger_tf, [])
         trigger_candles = candles_by_tf.get(trigger_tf)
-        confirmation_candles = candles_by_tf.get(confirmation_tf)
-        if not trigger_candles or not confirmation_candles:
+        if not trigger_candles or not confirmation_candidates:
             return CISDCascadeStatus(cascade_valid=False, cascade_chain=[])
 
         detector = CISDDetector()
         trigger_result = detector.detect(trigger_candles)
-        confirmation_result = detector.detect(confirmation_candles)
 
-        chain = [r for r in (trigger_result, confirmation_result) if r is not None]
-        return CISDCascadeStatus(
-            cascade_valid=self._cascade_valid(trigger_result, confirmation_result),
-            cascade_chain=chain,
-        )
+        # Try each supplied candidate in order — the sequence "price either
+        # raids liquidity or rebalances an inefficiency" can confirm on
+        # more than one plausible finer timeframe, so the first candidate
+        # actually present isn't necessarily the one that validates.
+        fallback_chain: List[CISDResult] = []
+        for confirmation_tf in confirmation_candidates:
+            confirmation_candles = candles_by_tf.get(confirmation_tf)
+            if not confirmation_candles:
+                continue
+            confirmation_result = detector.detect(confirmation_candles)
+            chain = [r for r in (trigger_result, confirmation_result) if r is not None]
+            if self._cascade_valid(trigger_result, confirmation_result):
+                return CISDCascadeStatus(cascade_valid=True, cascade_chain=chain)
+            fallback_chain = chain
+
+        return CISDCascadeStatus(cascade_valid=False, cascade_chain=fallback_chain)
 
     def _cascade_valid(
         self, trigger: Optional[CISDResult], confirmation: Optional[CISDResult]

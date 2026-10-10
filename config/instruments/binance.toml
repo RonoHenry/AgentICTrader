@@ -1,0 +1,82 @@
+# Instrument specs for venue 'binance'. Prices, spreads and slippage are in price units.
+# Source: Binance public exchangeInfo, exported 2026-10-05
+venue = "binance"
+account_ccy = "USDT"
+
+["BNBUSDT"]
+point = 0.01
+tick_size = 0.01
+contract_size = 1.0
+volume_min = 0.001
+volume_step = 0.001
+volume_max = 900000.0
+base_ccy = "BNB"
+quote_ccy = "USDT"
+default_spread = 0.01
+stop_slippage = 0.3957
+commission = { kind = "RATE_PER_SIDE", value = 0.001 }
+
+["BTCUSDT"]
+point = 0.01
+tick_size = 0.01
+contract_size = 1.0
+volume_min = 1e-05
+volume_step = 1e-05
+volume_max = 9000.0
+base_ccy = "BTC"
+quote_ccy = "USDT"
+default_spread = 0.01
+stop_slippage = 43.162214999999996
+commission = { kind = "RATE_PER_SIDE", value = 0.001 }
+
+["DOGEUSDT"]
+point = 1e-05
+tick_size = 1e-05
+contract_size = 1.0
+volume_min = 1.0
+volume_step = 1.0
+volume_max = 9000000.0
+base_ccy = "DOGE"
+quote_ccy = "USDT"
+default_spread = 1e-05
+stop_slippage = 4.8175000000000005e-05
+commission = { kind = "RATE_PER_SIDE", value = 0.001 }
+
+["ETHUSDT"]
+point = 0.01
+tick_size = 0.01
+contract_size = 1.0
+volume_min = 0.0001
+volume_step = 0.0001
+volume_max = 9000.0
+base_ccy = "ETH"
+quote_ccy = "USDT"
+default_spread = 0.01
+stop_slippage = 1.3628900000000002
+commission = { kind = "RATE_PER_SIDE", value = 0.001 }
+
+["SOLUSDT"]
+point = 0.01
+tick_size = 0.01
+contract_size = 1.0
+volume_min = 0.001
+volume_step = 0.001
+volume_max = 90000.0
+base_ccy = "SOL"
+quote_ccy = "USDT"
+default_spread = 0.01
+stop_slippage = 0.060840000000000005
+commission = { kind = "RATE_PER_SIDE", value = 0.001 }
+
+["XRPUSDT"]
+point = 0.0001
+tick_size = 0.0001
+contract_size = 1.0
+volume_min = 0.1
+volume_step = 0.1
+volume_max = 9222449.0
+base_ccy = "XRP"
+quote_ccy = "USDT"
+default_spread = 0.0001
+stop_slippage = 0.00076
+commission = { kind = "RATE_PER_SIDE", value = 0.001 }

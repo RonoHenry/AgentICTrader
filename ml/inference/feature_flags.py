@@ -305,6 +305,19 @@ def get_feature_flags() -> FeatureFlagManager:
     return _feature_flags
 
 
+def reset_feature_flags() -> None:
+    """
+    Discard the global feature flag manager.
+
+    The manager reads the environment once, when it is first created, so
+    environment changes made afterwards (or runtime ``update_flag`` calls)
+    persist for the life of the process. The next ``get_feature_flags()``
+    call after a reset builds a fresh manager from the current environment.
+    """
+    global _feature_flags
+    _feature_flags = None
+
+
 def is_feature_enabled(flag_key: str, user_id: Optional[str] = None) -> bool:
     """
     Convenience function to check if a feature flag is enabled.
