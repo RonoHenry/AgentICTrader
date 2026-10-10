@@ -421,7 +421,15 @@ These replace the timing drafts and reframe bias before any pre-registration (25
   - **271c. REFACTOR** — re-run the golden research run, unchanged since it has no complement.
   - **Validates: Requirement 20**
 
-- [ ] 272. Session-volatility features and the `h4_range` geometry
+- [x] 272. Session-volatility features and the `h4_range` geometry
+  - **Done 2026-10-10.**
+    - **The features:** `features/volatility.py`, cached with the market table (it is in `MARKET_SOURCES`). Each M15 bar belongs to the trading date, H4 candle and slot of its open. Norms are rolling 20-date medians, shifted one date. The "so far" norm and the ratio are null until one bar of the H4 candle has closed.
+    - **The geometry:** `h4_range` is measured from the row's close, as `atr` is. The spec is worded to match.
+    - **Tests:** in `test_research_volatility.py`, on synthetic markets whose bar ranges follow a formula, so every median is exact:
+      - by date, including a spike that never reaches its own date's norm;
+      - by position in the H4 candle, where the ratio is exactly 1 because the norm is time-matched;
+      - with data cut off at t (Property 1).
+    - **272c:** the real build's market step went from 2.9 s to 4.0 s for four instruments; 46 s in all.
   - **272a. RED** (`test_research_volatility.py`, `test_research_races.py`)
     - On a hand-made 25-date instrument:
       - the four norms equal medians over the previous 20 dates only, never the current one;

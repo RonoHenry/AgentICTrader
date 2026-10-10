@@ -46,6 +46,7 @@ from pydantic import BaseModel, ConfigDict, Field, PositiveInt, ValidationError,
 
 from algo_research.features.anticipation import ANTICIPATION_COLUMNS
 from algo_research.features.draws import DRAW_COLUMNS
+from algo_research.features.volatility import VOLATILITY_COLUMNS
 from algo_research.features.market import COLUMNS
 from algo_research.features.partner import PARTNER_COLUMNS
 from algo_research.frame import close_times
@@ -55,7 +56,7 @@ __all__ = ["EVENTS", "EVENT_COLUMNS", "Event", "EventError", "EventResult", "dir
 
 EVENT_COLUMNS = ("row", "t", "instrument", "trading_date", "direction")
 FEATURE_NAMES = (frozenset(COLUMNS) | frozenset(ANTICIPATION_COLUMNS) | frozenset(DRAW_COLUMNS)
-                 | frozenset(PARTNER_COLUMNS))
+                 | frozenset(VOLATILITY_COLUMNS) | frozenset(PARTNER_COLUMNS))
 
 _LONG = {"UP", "BULLISH", "LONG"}
 _SHORT = {"DOWN", "BEARISH", "SHORT"}

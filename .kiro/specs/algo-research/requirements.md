@@ -436,7 +436,7 @@ H001 and H003 are redrafted, and H004 and H007 are withdrawn. None of them was e
    - `h4_range_norm`: the median full range of this H4 candle (by `h4_index`);
    - `h4_range_so_far_norm`: the median range of this H4 candle from its open up to the same minute;
    - `h4_range_ratio`: the current H4 candle's range so far ÷ `h4_range_so_far_norm`. Above 1 means hotter than normal.
-2. A race's stop and target MAY be `{ kind = "h4_range", value = k }`: k × `h4_range_norm` from the entry's closing-side price.
+2. A race's stop and target MAY be `{ kind = "h4_range", value = k }`: k × `h4_range_norm` from the row's close, as `atr` is measured.
 3. `python -m algo_research profile` SHALL write `docs/research/VOLATILITY_PROFILE.md` from the exploration slice. Per instrument, it holds:
    - the median range of each H4 candle, and its share of the day's range;
    - the hour of the day's high and of its low;

@@ -404,6 +404,31 @@ def test_complement_leaves_out_rows_where_the_filter_is_null(repo, data_dirs):
     assert len(result.events) + result.extra["complement"]["rows"] + result.skipped["where_null"] == len(fired)
 
 
+def test_h4_range_geometry_and_volatility_columns(repo, data_dirs):
+    # Update 2026-10e (Req 21): the dataset carries the session-volatility columns, and a race's
+    # stop and target can be k x h4_range_norm from the row's close.
+    import dataclasses
+
+    from algo_research.hypothesis import parse_hypothesis
+    from algo_research.runner import RunSettings, run_test
+
+    data, costs = fixture_data(repo, data_dirs)
+    assert {"slot_range_norm", "h4_range_norm", "h4_range_so_far_norm", "h4_range_ratio"} <= set(data.features.columns)
+    features = data.features.copy()
+    features["h4_range_norm"] = 0.0010                     # the fixture week has no 20 earlier dates
+    data = dataclasses.replace(data, features=features)
+    text = RACE.replace('stop = { kind = "atr", value = 0.25 }', 'stop = { kind = "h4_range", value = 1.0 }')
+    text = text.replace('target = { kind = "r", value = 1.0 }', 'target = { kind = "h4_range", value = 2.0 }')
+    [test] = parse_hypothesis(text).tests()
+    result = run_test(test, data, "confirm", costs, seed=1, settings=RunSettings(resamples=200, random_time_draws=2))
+    races = result.races.dropna(subset=["stop"])
+    assert len(races) > 0
+    close = features.loc[result.events["row"], "close"].to_numpy()[:len(races)]
+    sign = np.where(races["direction"] == "LONG", 1.0, -1.0)
+    assert np.allclose(races["stop"].to_numpy(), close - sign * 0.0010)
+    assert np.allclose(races["target"].to_numpy(), close + sign * 0.0020)
+
+
 # ── reports ─────────────────────────────────────────────────────────────────
 
 def test_report_has_every_section(repo, data_dirs, capsys):

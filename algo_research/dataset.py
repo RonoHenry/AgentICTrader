@@ -18,7 +18,7 @@ order; the feature and label tables share their index (the row id).
     data = build_dataset(snapshot, cfg, specs, ParquetCache.default())
     data.features, data.frames["EURUSD"], data.summary
 
-Validates: Requirements 3.5, 18 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 3.5, 18, 21.1 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -39,6 +39,7 @@ from algo_research.features.cache import LABEL_SOURCES, MARKET_SOURCES, ParquetC
 from algo_research.features.draws import draw_taken_at
 from algo_research.features.market import market_features
 from algo_research.features.partner import partner_features
+from algo_research.features.volatility import volatility_features
 from algo_research.frame import InstrumentFrame, build_grid, frame_from_data, slices_of
 from algo_research.labels import LABEL_COLUMNS, build_labels, draw_labels
 from algo_research.snapshot import Snapshot
@@ -84,7 +85,7 @@ def build_dataset(snapshot: Snapshot, cfg: ResearchConfig, specs: InstrumentSpec
         return cache.store(kind, key, table) if cache else table
 
     started = time.perf_counter()
-    markets = {i: cached("market", i, lambda f=f: market_features(f, build_grid(f, slices_of(cfg))))
+    markets = {i: cached("market", i, lambda f=f: _market_table(f, build_grid(f, slices_of(cfg))))
                for i, f in frames.items()}
     summary["rows"] = {i: len(t) for i, t in markets.items()}
     summary["timings"]["market"] = time.perf_counter() - started
@@ -108,6 +109,12 @@ def build_dataset(snapshot: Snapshot, cfg: ResearchConfig, specs: InstrumentSpec
     features = pd.concat(tables, ignore_index=True) if tables else pd.DataFrame()
     label_table = pd.concat(labels, ignore_index=True) if labels else pd.DataFrame()
     return ResearchData(frames=frames, features=features, labels=label_table, summary=summary)
+
+
+def _market_table(frame: InstrumentFrame, grid: pd.DataFrame) -> pd.DataFrame:
+    """The market features (Req 3) and the session volatility (Req 21), cached together."""
+    market = market_features(frame, grid)
+    return pd.concat([market, volatility_features(frame, market)], axis=1)
 
 
 def _with_anticipation(snapshot: Snapshot, markets: list[pd.DataFrame], strategy: StrategyConfig,

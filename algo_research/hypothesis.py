@@ -113,7 +113,8 @@ class EventSection(_Section):
 
 
 class LevelRef(_Section):
-    kind: Literal["level", "atr", "r"]                   # a price column; value x atr_d1; value x the stop distance
+    kind: Literal["level", "atr", "r", "h4_range"]       # a price column; value x atr_d1; value x the stop distance;
+                                                         # value x h4_range_norm (update 2026-10e)
     name: Optional[str] = None
     value: Optional[PositiveFloat] = None
 

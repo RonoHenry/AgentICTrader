@@ -202,6 +202,8 @@ def _race(h, events, features, labels, data, costs, seed, settings, skipped):
             return (events[ref.name] if ref.name in events.columns else rows[ref.name]).to_numpy(dtype=float)
         if ref.kind == "atr":
             return close + (-1 if stop is None else 1) * sign * ref.value * atr
+        if ref.kind == "h4_range":                                           # the session's normal range (Req 21.2)
+            return close + (-1 if stop is None else 1) * sign * ref.value * rows["h4_range_norm"].to_numpy(dtype=float)
         return close + sign * ref.value * np.abs(close - stop)               # r: a multiple of the stop distance
 
     stop = level(trade.stop)

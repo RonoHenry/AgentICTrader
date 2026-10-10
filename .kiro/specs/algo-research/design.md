@@ -841,7 +841,7 @@ All values are computed per instrument from the calendar's M15 bars, each indexe
 | `h4_range_ratio` | the current H4 candle's range through this M15 close ÷ `h4_range_so_far_norm` |
 
 - **Implementation:** pivot to (trading date × slot) tables, then a rolling median over 20 rows, shifted by one date so that only earlier dates count. Fewer than 20 earlier dates gives null.
-- **Trade geometry:** `{ kind = "h4_range", value = k }` puts the stop or target at k × `h4_range_norm` from the entry's closing-side price. Random-time draws still rescale by `atr_d1` (Req 10.2).
+- **Trade geometry:** `{ kind = "h4_range", value = k }` puts the stop or target at k × `h4_range_norm` from the row's close, as `atr` is measured. Random-time draws still rescale by `atr_d1` (Req 10.2).
 
 ### The volatility profile (`profile.py`, `python -m algo_research profile`)
 

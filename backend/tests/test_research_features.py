@@ -335,7 +335,9 @@ def test_build_command_builds_and_caches_market_features(tmp_path, capsys):
     entries = sorted((tmp_path / "cache" / "market").glob("*.parquet"))
     assert len(entries) == 2                                              # one per instrument
     table = pd.read_parquet(entries[0])
-    assert list(table.columns) == list(COLUMNS) and len(table) > 100
+    # Update 2026-10e (Req 21): the session-volatility columns are cached with the market features.
+    from algo_research.features.volatility import VOLATILITY_COLUMNS
+    assert list(table.columns) == [*COLUMNS, *VOLATILITY_COLUMNS] and len(table) > 100
 
     assert main(["build"], **dirs) == 0                                   # served from the cache
     out = capsys.readouterr().out
