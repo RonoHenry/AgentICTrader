@@ -400,7 +400,16 @@ These replace the timing drafts and reframe bias before any pre-registration (25
   - **270c. REFACTOR** — event counts per instrument and side, with and against the bias, on the real tables.
   - **Validates: Requirement 19**
 
-- [ ] 271. The `complement` baseline
+- [x] 271. The `complement` baseline
+  - **Done 2026-10-10.**
+    - **How it works:** `run_test` keeps the `where`-false rows (null rows go in neither group) and runs the same measure on them, with no other baselines. Their series sit in the same table as `complement:<stat>`, after the event rows, so the date bootstrap pairs them.
+    - **The report:** the Sample section shows the complement's counts and its statistic per instrument.
+    - **The checks:**
+      - the complement's point estimate equals the same race run with the opposite `where`;
+      - event and complement rows never overlap;
+      - null rows are counted out of both groups;
+      - Property 7 still holds with complement rows.
+    - **The golden research run is unchanged.**
   - **271a. RED** (`test_research_runner.py`, `test_research_hypothesis.py`, `test_research_stats.py`)
     - `complement` without `where` is refused.
     - Complement rows are the `where`-false rows; null rows are in neither group.

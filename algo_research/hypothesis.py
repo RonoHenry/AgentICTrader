@@ -81,10 +81,10 @@ STATS = {
 }
 NAIVE_RULES = ("always_long", "prev_day_dir", "w1_trend", "side_d1_open", "side_midnight_open")
 BASELINES = {
-    "race": ("coin_flip", "random_time"),
-    "direction": ("random_time", *(f"naive:{r}" for r in NAIVE_RULES)),
-    "move": ("random_time",),
-    "rate": ("stratified", "shuffled_path", "sign_flip"),
+    "race": ("coin_flip", "random_time", "complement"),
+    "direction": ("random_time", "complement", *(f"naive:{r}" for r in NAIVE_RULES)),
+    "move": ("random_time", "complement"),
+    "rate": ("stratified", "shuffled_path", "sign_flip", "complement"),
 }
 #: Baselines that judge only some statistics; the others judge every statistic of their measures.
 BASELINE_STATS = {"coin_flip": ("win_rate",), "stratified": ("rate",), "shuffled_path": ("rate",),
@@ -266,6 +266,9 @@ def _problems(h: Hypothesis) -> list[str]:
     for baseline in h.baselines.use:
         if baseline not in allowed:
             problems.append(f"baselines.use: {baseline!r} doesn't fit a {kind} measure; use {list(allowed)}")
+    if "complement" in h.baselines.use and not h.event.where:
+        problems.append("baselines.use: complement measures the event's rows where `where` is false; "
+                        "it needs an event.where (Req 20.2)")
     if "stratified" in h.baselines.use:
         draws = _draw_anchor(h)
         if h.event.name != "level_open" and not draws:

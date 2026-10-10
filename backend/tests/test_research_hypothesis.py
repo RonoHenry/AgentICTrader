@@ -387,3 +387,14 @@ def test_sign_flip_is_a_timing_baseline_for_daily_rate_measures():
         parse_hypothesis(replace(TIMING, 'name = "daily"', 'name = "anchor"\nparams = { at = "09:00" }'))
     with pytest.raises(HypothesisError, match="sign_flip"):
         parse_hypothesis(replace(H002, 'use = ["coin_flip", "random_time"]', 'use = ["coin_flip", "sign_flip"]'))
+
+
+def test_complement_needs_a_where():
+    # Update 2026-10e (Req 20.2): the complement is the where-false rows, so it needs a where.
+    race = replace(H002, 'use = ["coin_flip", "random_time"]', 'use = ["coin_flip", "random_time", "complement"]')
+    with pytest.raises(HypothesisError, match="complement.*where"):
+        parse_hypothesis(race)
+    assert "complement" in parse_hypothesis(replace(race, 'where = ""', 'where = "smt"')).baselines.use
+    rate = replace(TIMING, 'name = "daily"', 'name = "daily"\nwhere = "weekday == 0"')
+    rate = replace(rate, 'use = ["shuffled_path", "sign_flip"]', 'use = ["complement"]')
+    assert parse_hypothesis(replace(rate, 'versus = "sign_flip"', 'versus = "complement"'))

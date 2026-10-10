@@ -91,17 +91,30 @@ def run_test(test: Test, data: ResearchData, slice_name: str, costs: Mapping[str
     labels = data.labels.loc[features.index]
     event = run_event(features, h.event.name, h.event.params)
     events, skipped = event.rows, dict(event.skipped)
+    complement = events.iloc[0:0]
     if h.event.where:
         mask, null = compile_filter(h.event.where, where_columns(EVENTS[h.event.name])).evaluate(
             _where_rows(features, events, EVENTS[h.event.name]))
         skipped["where_null"] = int(null.sum())
         skipped["where_false"] = int((~mask & ~null).sum())
+        complement = events[~mask & ~null].reset_index(drop=True)      # null rows are in neither group
         events = events[mask].reset_index(drop=True)
 
     kind = h.measure.kind
     measure = {"race": _race, "direction": _direction, "rate": _rate, "move": _move}[kind]
     series, extra = measure(h, events, features, labels, data, costs, seed, settings, skipped)
-    table = series_table(events["trading_date"], events["instrument"], series)
+    dates, instruments = events["trading_date"], events["instrument"]
+    if "complement" in h.baselines.use:
+        # The where-false rows, measured as the events are (Req 20): their own series in the same
+        # table, after the event rows, so the date bootstrap pairs them by trading date.
+        plain = h.model_copy(update={"baselines": h.baselines.model_copy(update={"use": ()})})
+        own_skipped: dict[str, int] = {}
+        own, own_extra = measure(plain, complement, features, labels, data, costs, seed, settings, own_skipped)
+        series = _stacked(series, own, len(events), len(complement))
+        dates = pd.concat([events["trading_date"], complement["trading_date"]], ignore_index=True)
+        instruments = pd.concat([events["instrument"], complement["instrument"]], ignore_index=True)
+        extra["complement"] = {"rows": len(complement), "skipped": own_skipped, "races": own_extra.get("races")}
+    table = series_table(dates, instruments, series)
 
     rules = [Rule(r.stat, _versus_keys(h, r.stat, r.versus), label=r.versus, min_effect=r.min_effect)
              for r in h.pass_.require]
@@ -128,6 +141,18 @@ def run_test(test: Test, data: ResearchData, slice_name: str, costs: Mapping[str
         n_events=n_events, n_dates=n_dates, races=extra.get("races"), draws_available=extra.get("available"),
         extra=extra,
     )
+
+
+def _stacked(series: dict, complement: dict, n_events: int, n_complement: int) -> dict:
+    """The events' series over the event rows then the complement rows (zero there), and the
+    complement's series as ``complement:<stat>`` (zero on the event rows)."""
+    out = {}
+    for key, (sums, counts) in series.items():
+        out[key] = tuple(np.concatenate([np.asarray(v, dtype=float), np.zeros(n_complement)]) for v in (sums, counts))
+    for key, (sums, counts) in complement.items():
+        out[f"complement:{key}"] = tuple(np.concatenate([np.zeros(n_events), np.asarray(v, dtype=float)])
+                                         for v in (sums, counts))
+    return out
 
 
 def _starved(h: Hypothesis, measured: np.ndarray, available: Optional[np.ndarray], k: int) -> Optional[tuple]:

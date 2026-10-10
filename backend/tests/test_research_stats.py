@@ -169,3 +169,26 @@ def test_breakdown_dates_count_only_measured_events():
     parts = breakdowns(t, Rule("stat", versus=("base",)))
     row = parts["instrument"].iloc[0]
     assert (row["events"], row["dates"]) == (2, 2)
+
+
+@settings(max_examples=100, deadline=None)
+@given(st.lists(st.tuples(st.integers(0, 40), st.floats(-5, 5, allow_nan=False), st.booleans()), min_size=2,
+                max_size=120),
+       st.integers(0, 2**32 - 1))
+def test_property_7_holds_with_complement_rows(rows, seed):
+    # Update 2026-10e (Req 20.3): complement rows share the table, each counted in its own series only.
+    dates = [DATES[d] for d, _, _ in rows]
+    values = np.array([v for _, v, _ in rows])
+    event = np.array([e for *_, e in rows])
+    if event.all() or not event.any():
+        return
+    def build(k: int):
+        vals, ev = np.tile(values, k), np.tile(event, k)
+        return series_table(dates * k, ["EURUSD"] * (len(rows) * k),
+                            {"stat": (np.where(ev, vals, 0.0), ev.astype(float)),
+                             "complement:stat": (np.where(ev, 0.0, vals), (~ev).astype(float))})
+    once, twice = build(1), build(2)
+    rule = Rule("stat", ("complement:stat",), label="complement")
+    a = evaluate_rule(once, Bootstrap(once, 300, seed), rule)
+    b = evaluate_rule(twice, Bootstrap(twice, 300, seed), rule)
+    assert (a.estimate, a.lo, a.hi) == pytest.approx((b.estimate, b.lo, b.hi), rel=1e-12, abs=1e-12)

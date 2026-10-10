@@ -14,6 +14,7 @@ import subprocess
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -350,6 +351,57 @@ def test_build_dataset_adds_the_engine_draws(repo, data_dirs):
     [test] = parse_hypothesis(unfiltered).tests()
     result = run_test(test, data, "confirm", costs, seed=1, settings=RunSettings(resamples=200))
     assert result.n_events > 0 and "stratified" in result.baselines
+
+
+def _with_where(text: str, where: str, *extra_baselines: str) -> str:
+    params = 'params = { at = "09:00", direction_from = "prev_h4_dir" }'
+    out = text.replace(params, params + f'\nwhere = "{where}"')
+    if extra_baselines:
+        out = out.replace('use = ["coin_flip", "random_time"]',
+                          'use = ["coin_flip", "random_time", ' + ", ".join(f'"{b}"' for b in extra_baselines) + "]")
+    return out
+
+
+def test_complement_measures_the_where_false_rows_like_the_events(repo, data_dirs):
+    # Update 2026-10e (Req 20): the same race on the rows `where` excludes, in the same table.
+    from algo_research.hypothesis import parse_hypothesis
+    from algo_research.report import _sample
+    from algo_research.runner import RunSettings, run_test
+
+    data, costs = fixture_data(repo, data_dirs)
+    settings = RunSettings(resamples=200, random_time_draws=2)
+    [test] = parse_hypothesis(_with_where(RACE, "weekday == 2", "complement")).tests()
+    result = run_test(test, data, "confirm", costs, seed=1, settings=settings)
+    [other] = parse_hypothesis(_with_where(RACE, "weekday != 2")).tests()
+    rest = run_test(other, data, "confirm", costs, seed=1, settings=settings)
+
+    table = result.table
+    events, complement = (table["n:win_rate"] > 0).to_numpy(), (table["n:complement:win_rate"] > 0).to_numpy()
+    assert events.any() and complement.any() and not (events & complement).any()
+    assert result.n_events == int(events.sum())                       # complement rows aren't events
+    assert result.extra["complement"]["rows"] == len(rest.events)
+    assert result.baselines["complement"] == pytest.approx(rest.stats["win_rate"].value)
+    assert "Complement:" in "\n".join(_sample(result))
+
+
+def test_complement_leaves_out_rows_where_the_filter_is_null(repo, data_dirs):
+    import dataclasses
+
+    from algo_research.events import run_event
+    from algo_research.hypothesis import parse_hypothesis
+    from algo_research.runner import RunSettings, run_test
+
+    data, costs = fixture_data(repo, data_dirs)
+    features = data.features.copy()
+    confirm = features["slice"] == "confirm"
+    unknown = features.index[confirm & (features["ny_minute"] == 540)][:2]
+    features.loc[unknown, "side_midnight_open"] = np.nan                 # where can't be decided there
+    data = dataclasses.replace(data, features=features)
+    [test] = parse_hypothesis(_with_where(RACE, "side_midnight_open > 0", "complement")).tests()
+    result = run_test(test, data, "confirm", costs, seed=1, settings=RunSettings(resamples=200, random_time_draws=2))
+    fired = run_event(features[confirm], "anchor", {"at": "09:00", "direction_from": "prev_h4_dir"}).rows
+    assert result.skipped["where_null"] >= 1
+    assert len(result.events) + result.extra["complement"]["rows"] + result.skipped["where_null"] == len(fired)
 
 
 # ── reports ─────────────────────────────────────────────────────────────────

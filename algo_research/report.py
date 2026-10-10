@@ -91,7 +91,7 @@ def _counts(series: pd.Series) -> str:
 
 def _sample(r: TestResult) -> list[str]:
     measured = r.table[f"n:{r.main_stat}"] > 0 if len(r.table) else pd.Series(dtype=bool)
-    events = r.events[measured.to_numpy()] if len(r.events) else r.events
+    events = r.events[measured.to_numpy()[:len(r.events)]] if len(r.events) else r.events   # events come first
     dates = pd.DatetimeIndex(events["trading_date"]) if len(events) else pd.DatetimeIndex([])
     weekdays = pd.Series([("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[d.weekday()] for d in dates],
                          dtype=object)
@@ -106,11 +106,25 @@ def _sample(r: TestResult) -> list[str]:
         low, high = int(r.draws_available.min()), int(r.draws_available.max())
         short = int((r.draws_available < high).sum())
         lines.append(f"- Random-time draws per event: {low} to {high}; {short} event(s) had fewer than the most.")
+    if r.extra.get("complement") is not None:
+        lines.append(_complement_line(r))
     if r.extra.get("starved"):
         mean, k = r.extra["starved"]
         lines.append(f"- **Random-time baseline starved:** {mean:.1f} draws per event on average, below K/2 = "
                      f"{k / 2:g}. Too few to judge by, so the verdict is INSUFFICIENT (Req 10.8).")
     return lines + [""]
+
+
+def _complement_line(r: TestResult) -> str:
+    """The complement's own counts, and its main statistic per instrument (Req 20.3)."""
+    key = f"complement:{r.main_stat}"
+    rows = r.table[r.table[f"n:{key}"] > 0]
+    if rows.empty:
+        return f"- Complement: {r.extra['complement']['rows']} row(s) where the filter is false, none measured."
+    per = rows.groupby("instrument").agg(total=(f"sum:{key}", "sum"), n=(f"n:{key}", "sum"))
+    rates = ", ".join(f"{i} {row.total / row.n:.4f} (n {int(row.n)})" for i, row in per.iterrows())
+    return (f"- Complement: {r.extra['complement']['rows']} row(s) where the filter is false; {int(rows[f'n:{key}'].sum())} "
+            f"measured on {rows['trading_date'].nunique()} trading dates. Its {r.main_stat} by instrument: {rates}.")
 
 
 def _results(r: TestResult) -> list[str]:
