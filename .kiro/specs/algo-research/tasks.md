@@ -350,7 +350,22 @@ Both come before any pre-registration (258, 266): H001 needs the random-time fix
 
 These replace the timing drafts and reframe bias before any pre-registration (258, 266). Task 274 ends with the user's review of the redrafted hypotheses.
 
-- [ ] 269. The engine's draws as levels
+- [x] 269. The engine's draws as levels
+  - **Done 2026-10-10.**
+    - **The code:** `features/draws.py` (taken-at), `labels.draw_labels` (`DRAW_LABELS`, joined into `LABEL_COLUMNS`), and `anchor` with `level = "draw"`, a fixed `direction` and `at = "open"`. `stratified` pools both draws. `dataset.py` adds the draws after the anticipation join, and keeps the label table in `LABEL_COLUMNS` order.
+    - **Tests:** in `test_research_draws.py`, plus the dataset check in `test_research_runner.py`.
+    - **"Beyond", not "at or beyond":** a draw counts as taken or hit only when price trades beyond it, as PDH and PDL are and as the engine's own `untaken` check works. Requirements 18 and 19 are worded to match.
+    - **`at = "open"` was added on the way:** gold pauses after 17:00 New York, so its first close is 18:15. A fixed 17:15 anchor would have dropped gold from H001.
+    - **269c, exploration slice, from each candle's open:**
+
+      | Instrument | Draw above reached | Distance (ATR) | Draw below reached | Distance (ATR) | Bias-side draw reached |
+      |---|---|---|---|---|---|
+      | EURUSD | 0.602 | 0.33 | 0.500 | 0.25 | 0.570 |
+      | GBPUSD | 0.656 | 0.36 | 0.504 | 0.24 | 0.646 |
+      | USDJPY | 0.594 | 0.31 | 0.609 | 0.22 | 0.773 |
+      | XAUUSD | 0.694 | 0.21 | 0.496 | 0.34 | 0.680 |
+
+      The draws are close, so they're reached often. The bias side tends to be the nearer draw (LE-D10), which is why H001 compares with a distance-matched (`stratified`) and an against-bias (`complement`) baseline before reading anything into these rates.
   - **269a. RED** (`test_research_features.py`, `test_research_labels.py`, `test_research_events.py`, `test_research_baselines.py`, `test_research_hypothesis.py`)
     - `ant_draw_*_taken_at` on hand-made candles: the first M1 bar at or beyond the draw; null before it and before the anticipation is known. Property 1 covers them.
     - `ant_draw_*_hit_after`/`_hit_at`: strictly after t and before the D1 close. Property 2 covers them.
@@ -361,7 +376,18 @@ These replace the timing drafts and reframe bias before any pre-registration (25
   - **269c. REFACTOR** — rebuild the real tables, and record how often each draw is hit per instrument (exploration slice).
   - **Validates: Requirement 18**
 
-- [ ] 270. The `objective_touch` event
+- [x] 270. The `objective_touch` event
+  - **Done 2026-10-10.** `events.objective_touch`, tested in `test_research_draws.py`: both sides, the window edges, the opposite draw untaken, once per side, `touch_extreme`, `with_bias` (true, false and null), and data cut off at t.
+  - **270c, exploration slice:** 150 events on 82 of 516 instrument-candles. 70 are with the bias and 80 against.
+
+    | | LONG with | LONG against | SHORT with | SHORT against |
+    |---|---|---|---|---|
+    | EURUSD | 13 | 13 | 14 | 12 |
+    | GBPUSD | 9 | 9 | 8 | 15 |
+    | USDJPY | 5 | 7 | 5 | 9 |
+    | XAUUSD | 10 | 4 | 6 | 11 |
+
+    The confirmation slice is twice as long, so H003 should clear AR-D4's 100 events on 60 dates.
   - **270a. RED** (`test_research_events.py`)
     - On hand-made candles, LONG and SHORT:
       - the touch inside and outside the window;
@@ -374,7 +400,16 @@ These replace the timing drafts and reframe bias before any pre-registration (25
   - **270c. REFACTOR** — event counts per instrument and side, with and against the bias, on the real tables.
   - **Validates: Requirement 19**
 
-- [ ] 271. The `complement` baseline
+- [x] 271. The `complement` baseline
+  - **Done 2026-10-10.**
+    - **How it works:** `run_test` keeps the `where`-false rows (null rows go in neither group) and runs the same measure on them, with no other baselines. Their series sit in the same table as `complement:<stat>`, after the event rows, so the date bootstrap pairs them.
+    - **The report:** the Sample section shows the complement's counts and its statistic per instrument.
+    - **The checks:**
+      - the complement's point estimate equals the same race run with the opposite `where`;
+      - event and complement rows never overlap;
+      - null rows are counted out of both groups;
+      - Property 7 still holds with complement rows.
+    - **The golden research run is unchanged.**
   - **271a. RED** (`test_research_runner.py`, `test_research_hypothesis.py`, `test_research_stats.py`)
     - `complement` without `where` is refused.
     - Complement rows are the `where`-false rows; null rows are in neither group.
@@ -386,7 +421,15 @@ These replace the timing drafts and reframe bias before any pre-registration (25
   - **271c. REFACTOR** — re-run the golden research run, unchanged since it has no complement.
   - **Validates: Requirement 20**
 
-- [ ] 272. Session-volatility features and the `h4_range` geometry
+- [x] 272. Session-volatility features and the `h4_range` geometry
+  - **Done 2026-10-10.**
+    - **The features:** `features/volatility.py`, cached with the market table (it is in `MARKET_SOURCES`). Each M15 bar belongs to the trading date, H4 candle and slot of its open. Norms are rolling 20-date medians, shifted one date. The "so far" norm and the ratio are null until one bar of the H4 candle has closed.
+    - **The geometry:** `h4_range` is measured from the row's close, as `atr` is. The spec is worded to match.
+    - **Tests:** in `test_research_volatility.py`, on synthetic markets whose bar ranges follow a formula, so every median is exact:
+      - by date, including a spike that never reaches its own date's norm;
+      - by position in the H4 candle, where the ratio is exactly 1 because the norm is time-matched;
+      - with data cut off at t (Property 1).
+    - **272c:** the real build's market step went from 2.9 s to 4.0 s for four instruments; 46 s in all.
   - **272a. RED** (`test_research_volatility.py`, `test_research_races.py`)
     - On a hand-made 25-date instrument:
       - the four norms equal medians over the previous 20 dates only, never the current one;
@@ -398,7 +441,14 @@ These replace the timing drafts and reframe bias before any pre-registration (25
   - **272c. REFACTOR** — build time on the real tables.
   - **Validates: Requirements 21.1, 21.2, 21.4**
 
-- [ ] 273. The volatility profile
+- [x] 273. The volatility profile
+  - **Done 2026-10-10.**
+    - **The code:** `profile.py` and the `profile` command. Tested in `test_research_profile.py` and the CLI test in `test_research_runner.py`. `docs/research/VOLATILITY_PROFILE.md` is written from the real exploration slice and committed.
+    - **What it shows:** the 09:00 New York H4 candle carries the most range everywhere (a median 48–55% of the day's). USDJPY's 17:00 H4 (the Tokyo morning) carries 43%, against 28% for EURUSD and GBPUSD. 40% of USDJPY's highs and lows form between 17:00 and 01:00, against 30–31% for EURUSD and GBPUSD. This bears out the user's point about Asian pairs.
+    - **A data finding, added to the profile as a caveat:**
+      - 18–21% of the FX days' lows formed in the 17:00 rollover hour, on spreads 10–15× typical. Other lows sit at about 1× typical, and highs are barely affected (1%).
+      - The bars are bid, and the bid dips when the spread blows out, so these lows are artefacts, not selling. Gold has none, because it pauses through the rollover.
+      - **Follow-up for the user:** the same bid prices feed the day's lows, the false move, which draws count as taken, the candle labels, and possibly the engine's sell-side raids in the backtests. A price-basis rule is needed: extremes on mid prices, or a filter for spread blowouts.
   - **273a. RED** (`test_research_profile.py`) — on a hand-made two-instrument data set:
     - the per-H4 median ranges and shares;
     - the hour of the high and of the low;
@@ -409,6 +459,19 @@ These replace the timing drafts and reframe bias before any pre-registration (25
   - **Validates: Requirement 21.3**
 
 - [ ] 274. Redraft the first batch **(user review)**
+  - **Drafted and explored 2026-10-10; waiting for the user's review.**
+    - **Drafts, uncommitted:** `H001-bias-draw-delivered.toml`, `H003-bias-objective-touch.toml` and `H010-side-of-open-at-0500.toml`. The old H001 and H003 drafts were replaced; they were never pre-registered. H004 and H007 carry a WITHDRAWN header and are left for the user.
+    - **Exploration slice (not evidence):**
+
+      | Test | Verdict | Against the rule's baselines |
+      |---|---|---|
+      | H001, bullish → draw above | PASS | +0.146 [+0.052, +0.240] vs complement; +0.072 [+0.012, +0.132] vs stratified |
+      | H001, bearish → draw below | FAIL | +0.143 [+0.047, +0.238] vs complement; −0.056 [−0.123, +0.009] vs stratified |
+      | H003 (stop at the touch's low) | INSUFFICIENT (69 events) | win rate −0.039 vs coin flip [−0.056, −0.021]; net −0.93R |
+      | H010 | PASS | +0.097 [+0.027, +0.165] vs stratified |
+
+    - **H003's stop.** With stops of 0.5× and 1× the session's normal H4 range (scratch copies, not drafts), H003 stays negative: win rate 6–8 points below the coin flip, net −0.40R and −0.27R, and no better than its complement. After the touch, price tends to continue rather than reverse, without the user's step-3 signature (stage 2).
+    - **The rollover distorts H001's bearish test.** Of the draws below taken before the open's first close, 92% (36 of 39) were taken at the 17:00–17:14 rollover: the bid dips as the spread blows out (task 273). None of the draws above were. A price-basis fix should come before pre-registration.
   - Redraft H001 and H003, and draft H010, from design.md → "The redrafted first batch". The files stay uncommitted.
   - Mark H004 and H007 as withdrawn (AR-D21), leaving the files for the user.
   - `explore` the redrafts on the exploration slice and report the numbers.

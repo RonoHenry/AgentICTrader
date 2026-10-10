@@ -14,6 +14,7 @@ import subprocess
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -334,6 +335,108 @@ def test_sign_flip_rate_per_real_up_day_from_its_own_flips(repo, data_dirs):
     rates = table.loc[flip_days, "sum:sign_flip:rate"]
     assert ((rates >= 0) & (rates <= 1)).all()
     assert "sign_flip" in result.baselines and result.outcomes[0].versus == "sign_flip"
+
+
+def test_build_dataset_adds_the_engine_draws(repo, data_dirs):
+    # Update 2026-10e (Req 18): the draws' taken-at features and labels, built after the anticipation.
+    from algo_research.hypothesis import parse_hypothesis
+    from algo_research.labels import DRAW_LABELS
+    from algo_research.runner import RunSettings, run_test
+    from tests.test_research_draws import H001
+
+    data, costs = fixture_data(repo, data_dirs)
+    assert {"ant_draw_above_taken_at", "ant_draw_below_taken_at"} <= set(data.features.columns)
+    assert set(DRAW_LABELS) <= set(data.labels.columns) and data.labels.index.equals(data.features.index)
+    unfiltered = "\n".join(line for line in H001.splitlines() if not line.startswith("where"))
+    [test] = parse_hypothesis(unfiltered).tests()
+    result = run_test(test, data, "confirm", costs, seed=1, settings=RunSettings(resamples=200))
+    assert result.n_events > 0 and "stratified" in result.baselines
+
+
+def _with_where(text: str, where: str, *extra_baselines: str) -> str:
+    params = 'params = { at = "09:00", direction_from = "prev_h4_dir" }'
+    out = text.replace(params, params + f'\nwhere = "{where}"')
+    if extra_baselines:
+        out = out.replace('use = ["coin_flip", "random_time"]',
+                          'use = ["coin_flip", "random_time", ' + ", ".join(f'"{b}"' for b in extra_baselines) + "]")
+    return out
+
+
+def test_complement_measures_the_where_false_rows_like_the_events(repo, data_dirs):
+    # Update 2026-10e (Req 20): the same race on the rows `where` excludes, in the same table.
+    from algo_research.hypothesis import parse_hypothesis
+    from algo_research.report import _sample
+    from algo_research.runner import RunSettings, run_test
+
+    data, costs = fixture_data(repo, data_dirs)
+    settings = RunSettings(resamples=200, random_time_draws=2)
+    [test] = parse_hypothesis(_with_where(RACE, "weekday == 2", "complement")).tests()
+    result = run_test(test, data, "confirm", costs, seed=1, settings=settings)
+    [other] = parse_hypothesis(_with_where(RACE, "weekday != 2")).tests()
+    rest = run_test(other, data, "confirm", costs, seed=1, settings=settings)
+
+    table = result.table
+    events, complement = (table["n:win_rate"] > 0).to_numpy(), (table["n:complement:win_rate"] > 0).to_numpy()
+    assert events.any() and complement.any() and not (events & complement).any()
+    assert result.n_events == int(events.sum())                       # complement rows aren't events
+    assert result.extra["complement"]["rows"] == len(rest.events)
+    assert result.baselines["complement"] == pytest.approx(rest.stats["win_rate"].value)
+    assert "Complement:" in "\n".join(_sample(result))
+
+
+def test_complement_leaves_out_rows_where_the_filter_is_null(repo, data_dirs):
+    import dataclasses
+
+    from algo_research.events import run_event
+    from algo_research.hypothesis import parse_hypothesis
+    from algo_research.runner import RunSettings, run_test
+
+    data, costs = fixture_data(repo, data_dirs)
+    features = data.features.copy()
+    confirm = features["slice"] == "confirm"
+    unknown = features.index[confirm & (features["ny_minute"] == 540)][:2]
+    features.loc[unknown, "side_midnight_open"] = np.nan                 # where can't be decided there
+    data = dataclasses.replace(data, features=features)
+    [test] = parse_hypothesis(_with_where(RACE, "side_midnight_open > 0", "complement")).tests()
+    result = run_test(test, data, "confirm", costs, seed=1, settings=RunSettings(resamples=200, random_time_draws=2))
+    fired = run_event(features[confirm], "anchor", {"at": "09:00", "direction_from": "prev_h4_dir"}).rows
+    assert result.skipped["where_null"] >= 1
+    assert len(result.events) + result.extra["complement"]["rows"] + result.skipped["where_null"] == len(fired)
+
+
+def test_h4_range_geometry_and_volatility_columns(repo, data_dirs):
+    # Update 2026-10e (Req 21): the dataset carries the session-volatility columns, and a race's
+    # stop and target can be k x h4_range_norm from the row's close.
+    import dataclasses
+
+    from algo_research.hypothesis import parse_hypothesis
+    from algo_research.runner import RunSettings, run_test
+
+    data, costs = fixture_data(repo, data_dirs)
+    assert {"slot_range_norm", "h4_range_norm", "h4_range_so_far_norm", "h4_range_ratio"} <= set(data.features.columns)
+    features = data.features.copy()
+    features["h4_range_norm"] = 0.0010                     # the fixture week has no 20 earlier dates
+    data = dataclasses.replace(data, features=features)
+    text = RACE.replace('stop = { kind = "atr", value = 0.25 }', 'stop = { kind = "h4_range", value = 1.0 }')
+    text = text.replace('target = { kind = "r", value = 1.0 }', 'target = { kind = "h4_range", value = 2.0 }')
+    [test] = parse_hypothesis(text).tests()
+    result = run_test(test, data, "confirm", costs, seed=1, settings=RunSettings(resamples=200, random_time_draws=2))
+    races = result.races.dropna(subset=["stop"])
+    assert len(races) > 0
+    close = features.loc[result.events["row"], "close"].to_numpy()[:len(races)]
+    sign = np.where(races["direction"] == "LONG", 1.0, -1.0)
+    assert np.allclose(races["stop"].to_numpy(), close - sign * 0.0010)
+    assert np.allclose(races["target"].to_numpy(), close + sign * 0.0020)
+
+
+def test_profile_command_writes_the_profile_and_no_ledger(repo, data_dirs, capsys):
+    # Update 2026-10e (Req 21.3): descriptive, from the exploration slice; no verdict, no ledger row.
+    code, out = cli(repo, data_dirs, "profile", capsys=capsys)
+    assert code == 0
+    text = (repo / "docs" / "research" / "VOLATILITY_PROFILE.md").read_text(encoding="utf-8")
+    assert "## EURUSD" in text and "## XAUUSD" in text and "fixture-week" in text
+    assert not (repo / "docs" / "research" / "ledger.csv").exists()
+    assert "VOLATILITY_PROFILE.md" in out
 
 
 # ── reports ─────────────────────────────────────────────────────────────────

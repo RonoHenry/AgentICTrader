@@ -791,11 +791,12 @@ Requirements 18–21; decisions AR-D18 to AR-D22.
 ### The engine's draws as levels (`dataset.py`, `labels.py`, `events.py`, `baselines.py`)
 
 - **Taken-at features.** `ant_draw_above_taken_at` and `ant_draw_below_taken_at` are computed in `dataset.py` after the anticipation is joined. They use the market features' taken-at logic:
-  - within the D1 candle, the close of the first M1 bar whose high is at or above the draw above (low at or below the draw below);
+  - within the D1 candle, the close of the first M1 bar whose high is above the draw above (low below the draw below), as PDH and PDL are taken;
   - at a row t, that time if it is at or before t, and null otherwise.
 - **Labels.** `LEVELS` gains `ant_draw_above` (above) and `ant_draw_below` (below), read from their `_price` columns through a level-to-column map. Labels are therefore built from the joined features.
 - **`anchor`:**
   - `level = "draw"` sets `level` and `level_name` to the draw on each row's side;
+  - `at = "open"` fires at each candle's first M15 close with its D1 open known: 17:15 for FX, 18:15 for gold after its daily break;
   - the fixed `direction = "LONG" | "SHORT"` is exclusive with `direction_from`;
   - rows with an unknown or already-taken level are skipped as `no_level` / `taken`.
 - **`stratified`.** When the event's `level_name` is an engine draw, the pool is both draws on every row of the slice where they are known and untaken, with `ant_draw_*_hit_after` as the outcome. Otherwise the pool is PDH/PDL/PWH/PWL as before. The schema accepts `stratified` with `level_open`, or with `anchor` and `level = "draw"`.
@@ -840,7 +841,7 @@ All values are computed per instrument from the calendar's M15 bars, each indexe
 | `h4_range_ratio` | the current H4 candle's range through this M15 close ÷ `h4_range_so_far_norm` |
 
 - **Implementation:** pivot to (trading date × slot) tables, then a rolling median over 20 rows, shifted by one date so that only earlier dates count. Fewer than 20 earlier dates gives null.
-- **Trade geometry:** `{ kind = "h4_range", value = k }` puts the stop or target at k × `h4_range_norm` from the entry's closing-side price. Random-time draws still rescale by `atr_d1` (Req 10.2).
+- **Trade geometry:** `{ kind = "h4_range", value = k }` puts the stop or target at k × `h4_range_norm` from the row's close, as `atr` is measured. Random-time draws still rescale by `atr_d1` (Req 10.2).
 
 ### The volatility profile (`profile.py`, `python -m algo_research profile`)
 
@@ -855,7 +856,7 @@ It is descriptive only, with no verdict and no ledger row. It records the inputs
 
 | Id | Question | Event | Measure | Baselines | Proposed rules |
 |---|---|---|---|---|---|
-| H001 | Does the engine's bias pick the side whose draw gets delivered? Two tests, LONG and SHORT | `anchor` at 17:15 (the bias as known at the open), fixed `direction`, `level = "draw"`; `where = "ant_direction == 'BULLISH'"` (BEARISH for SHORT) | `rate` of `level_hit_after` | `complement` (the same draw on the other days), `stratified` | rate above both |
+| H001 | Does the engine's bias pick the side whose draw gets delivered? Two tests, LONG and SHORT | `anchor` at `"open"` (the bias as known at the open), fixed `direction`, `level = "draw"`; `where = "ant_direction == 'BULLISH'"` (BEARISH for SHORT) | `rate` of `level_hit_after` | `complement` (the same draw on the other days), `stratified` | rate above both |
 | H003 | With the bias, does a long from the sell-side objective below the open reach the buy-side draw first? Mirrored | `objective_touch` (01:00–13:00); `where = "with_bias"` | `race`: stop `touch_extreme`, target `draw_opposite`, limit at the D1 close | `coin_flip`, `random_time`, `complement` | win rate above the complement and the coin flip; mean net R > 0 |
 | H010 | At 05:00, does price's side of the D1 open pick the draw that gets delivered? (The 56% lead from the exploration slice) | `anchor` at 05:00, `direction_from = "side_d1_open"`, `level = "draw"` | `rate` of `level_hit_after` | `stratified` | rate above it |
 

@@ -41,6 +41,7 @@ CACHE_DIR = REPO_ROOT / "data" / "research" / "cache"
 MARKET_SOURCES = (
     "algo_research/frame.py",
     "algo_research/features/market.py",
+    "algo_research/features/volatility.py",         # computed with the market table (update 2026-10e)
     "algo_backtester/data.py",                       # which bars the loader reads
     "liquidity_engine/utils/*.py",                   # killzones, calendar opens, ATR
     "liquidity_engine/grader/sequence.py",           # the Asian session

@@ -81,10 +81,10 @@ STATS = {
 }
 NAIVE_RULES = ("always_long", "prev_day_dir", "w1_trend", "side_d1_open", "side_midnight_open")
 BASELINES = {
-    "race": ("coin_flip", "random_time"),
-    "direction": ("random_time", *(f"naive:{r}" for r in NAIVE_RULES)),
-    "move": ("random_time",),
-    "rate": ("stratified", "shuffled_path", "sign_flip"),
+    "race": ("coin_flip", "random_time", "complement"),
+    "direction": ("random_time", "complement", *(f"naive:{r}" for r in NAIVE_RULES)),
+    "move": ("random_time", "complement"),
+    "rate": ("stratified", "shuffled_path", "sign_flip", "complement"),
 }
 #: Baselines that judge only some statistics; the others judge every statistic of their measures.
 BASELINE_STATS = {"coin_flip": ("win_rate",), "stratified": ("rate",), "shuffled_path": ("rate",),
@@ -113,7 +113,8 @@ class EventSection(_Section):
 
 
 class LevelRef(_Section):
-    kind: Literal["level", "atr", "r"]                   # a price column; value x atr_d1; value x the stop distance
+    kind: Literal["level", "atr", "r", "h4_range"]       # a price column; value x atr_d1; value x the stop distance;
+                                                         # value x h4_range_norm (update 2026-10e)
     name: Optional[str] = None
     value: Optional[PositiveFloat] = None
 
@@ -266,10 +267,16 @@ def _problems(h: Hypothesis) -> list[str]:
     for baseline in h.baselines.use:
         if baseline not in allowed:
             problems.append(f"baselines.use: {baseline!r} doesn't fit a {kind} measure; use {list(allowed)}")
+    if "complement" in h.baselines.use and not h.event.where:
+        problems.append("baselines.use: complement measures the event's rows where `where` is false; "
+                        "it needs an event.where (Req 20.2)")
     if "stratified" in h.baselines.use:
-        if h.event.name != "level_open":
-            problems.append("baselines.use: stratified buckets by the distance to the event's level: use level_open")
-        if h.measure.of not in ("level_hit_after", *(f"{lv}_hit_after" for lv in ("pdh", "pdl", "pwh", "pwl")))                or h.measure.given:
+        draws = _draw_anchor(h)
+        if h.event.name != "level_open" and not draws:
+            problems.append("baselines.use: stratified buckets by the distance to the event's level: use level_open, "
+                            "or anchor with level = \"draw\"")
+        levels = ("ant_draw_above", "ant_draw_below") if draws else ("pdh", "pdl", "pwh", "pwl")
+        if h.measure.of not in ("level_hit_after", *(f"{lv}_hit_after" for lv in levels)) or h.measure.given:
             problems.append("baselines.use: stratified compares the rate the event's level trades: "
                             "of = \"level_hit_after\", with no given")
     for redrawn in REDRAWN_DAYS:
@@ -330,9 +337,14 @@ def _trade_problems(trade: TradeSection, event: Event, directional: bool) -> lis
     return problems
 
 
+def _draw_anchor(h: Hypothesis) -> bool:
+    """An anchor event on the engine's draws (Req 18.3)."""
+    return h.event.name == "anchor" and h.event.params.get("level") == "draw"
+
+
 def _label_names(h: Hypothesis) -> set[str]:
     names = set(LABEL_COLUMNS)
-    if h.event.name == "level_open":
+    if h.event.name == "level_open" or _draw_anchor(h):
         names |= set(LEVEL_ALIASES)
     return names
 
