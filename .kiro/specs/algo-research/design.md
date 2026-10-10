@@ -374,10 +374,11 @@ require = [
 | Baseline | Measures | Definition |
 |---|---|---|
 | `coin_flip` | race | Mean over events of (entry bid − stop) ÷ (target − stop), mirrored for SHORT. Analytic, no draws. |
-| `random_time` | race, direction, move | K draws per event: same instrument and New York 15-minute slot, other trading dates of the same slice without an event for that instrument. The draws keep the event's direction and its stop/target distances in `atr_d1` units, rescaled by the drawn row's `atr_d1`. |
+| `random_time` | race, direction, move | K draws per event: same instrument and New York 15-minute slot, other trading dates of the same slice; only the event's own date is excluded (update 2026-10d). The draws keep the event's direction and its stop/target distances in `atr_d1` units, rescaled by the drawn row's `atr_d1`. With fewer than K/2 draws per event on average, a rule against it gives INSUFFICIENT. |
 | `naive:<rule>` | direction | `always_long`, `prev_day_dir`, `w1_trend`, `side_d1_open`, `side_midnight_open`, each applied to the event rows. `best_naive` is the best of those the hypothesis lists, re-chosen within each bootstrap resample. |
 | `stratified` | rate | The unconditional rate among rows of the slice in the same decile of distance to the level (in `atr_d1`) and the same New York hour, averaged over the event rows' cells. |
 | `shuffled_path` | rate (timing) | For each trading date, permute its M15 close-to-close moves while keeping its open and close, rebuild the path, and recompute the statistic. Averaged over 200 shuffles. Removes the arcsine artefact: an up day tends to show its low early even at random. |
+| `sign_flip` | rate (timing) | For each trading date, flip each M15 bar's direction at random: a flipped bar's move changes sign and its high and low swap roles. Every bar keeps its slot and its size, so the day's volatility stays where it was (update 2026-10d). Each event is compared with its own date's flips, conditioned the same way. The same number of draws as `shuffled_path`. |
 
 **Seed:** one per hypothesis, from the first 8 bytes of its sha256. Draws are reproducible, so a rerun reproduces its result exactly (Property 9).
 
@@ -756,6 +757,32 @@ What shows promise is drafted as H007 onward, for the user's review of the pass 
 
 ---
 
+## Update 2026-10d: Baseline Corrections
+
+Requirement 10.2 (amended), 10.7 and 10.8; decisions AR-D16 and AR-D17.
+
+### Random time: only the event's own date is excluded (`baselines.py`, `runner.py`)
+
+- **Before:** `random_time_draws` dropped every date with an event for the instrument. An event that fires every day (`anchor`) left no pool, and its baseline was 0–2 draws of noise.
+- **Now:** the pool for an event is its instrument, slot and slice, minus its own trading date. Other event dates stay in.
+  - For a sparse event this barely changes the pool.
+  - For a daily event it restores the K draws. The question then reads: does the event's direction beat the same direction applied to other days at the same time?
+- **Starvation guard:** `run_test` averages `available` over the measured events. When a rule compares with `random_time` and that mean is below K/2, the verdict is INSUFFICIENT. The report's Sample section names the mean and the threshold.
+
+### Sign flip (`baselines.py`)
+
+`_path_labels` rebuilds a day's candle labels from its M15 bars, given an order of the bars. The shuffle passes a permutation. The flip passes the identity order and a ±1 sign per bar:
+
+```
+move' = s · move                     # close-to-close move from the previous close
+up'   = up   if s = +1 else −down    # the bar's high above its starting level
+down' = down if s = +1 else −up      # the bar's low below it
+```
+
+- **Unflipped**, all signs +1, it gives back the real labels exactly, like the unshuffled path.
+- **Per event:** the runner keeps the real days where the measure's `given` holds. For each such day it takes the share of that day's flips where `of` and `given` hold, divided by the share where `given` holds. It then compares the real rate with the mean of those per-day rates. Each real up day is paired with the same day's own volatility shape.
+- **Why it matters:** on a day whose bars are large only in the 01:00–13:00 window, the flips keep the extremes in that window, while a shuffle scatters them. A timing claim must beat the flip to say anything about when price turns.
+
 ## Requirement Traceability
 
 | Requirement | Components | Properties | Tasks |
@@ -770,6 +797,7 @@ What shows promise is drafted as H007 onward, for the user's review of the pass 
 | 8 Hypotheses | `hypothesis.py`, `cli.py` | 9, 11 | 251, 254 |
 | 9 Events and filters | `events.py`, `filters.py` | 1 | 251 |
 | 10 Baselines | `baselines.py` | 6 | 253 |
+| 10.2 (amended), 10.7, 10.8 Baseline corrections | `baselines.py`, `runner.py`, `hypothesis.py`, `report.py` | 6 | 267, 268 |
 | 11 Statistics | `stats.py` | 7 | 252 |
 | 12 Ledger and reports | `ledger.py`, `report.py` | 9 | 254 |
 | 13 Out-of-sample | `config.py`, `cli.py` | 10, 11 | 244, 254 |
