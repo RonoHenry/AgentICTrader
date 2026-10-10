@@ -250,3 +250,89 @@ def test_anchor_at_the_open_is_each_candles_first_known_close():
     assert [t.to_pydatetime() for t in rows["t"]] == [ny(2026, 1, 4, 18, 15)]
     with pytest.raises(EventError):
         run_event(f, "anchor", {"at": "close"})
+
+
+# ── objective_touch (task 270, Req 19) ──────────────────────────────────────
+
+def touch_day(bars: dict, direction: str = "BULLISH"):
+    """A Monday at 1.1000 with the given (time, high, low) overrides, the draws at 1.1050 / 1.0950."""
+    path = Path(ny(2026, 1, 4, 17), ny(2026, 1, 6, 17), base=1.1000)
+    for when, (h, lo) in bars.items():
+        path.bar(when, h=h, lo=lo)
+    frame, f = day(path)
+    f["ant_direction"] = np.where(f["ant_direction"].notna(), direction, None).astype(object)
+    return with_taken(frame, f)
+
+
+def touch(features, **params):
+    return run_event(features, "objective_touch", params).rows
+
+
+def test_objective_touch_long_from_the_sell_side_draw():
+    f = touch_day({ny(2026, 1, 5, 5, 10): (None, 1.0940), ny(2026, 1, 5, 5, 12): (None, 1.0930)})
+    rows = touch(f)
+    assert len(rows) == 1
+    row = rows.iloc[0]
+    assert row["t"] == pd.Timestamp(ny(2026, 1, 5, 5, 15)) and row["direction"] == "LONG"
+    assert row["objective"] == BELOW and row["draw_opposite"] == ABOVE
+    assert row["touch_extreme"] == pytest.approx(1.0930)                 # the low since the touch, by t
+    assert row["with_bias"] is True
+
+
+def test_objective_touch_short_mirror_and_against_the_bias():
+    rows = touch(touch_day({ny(2026, 1, 5, 8, 20): (1.1060, None)}))
+    assert list(rows["direction"]) == ["SHORT"] and rows.iloc[0]["t"] == pd.Timestamp(ny(2026, 1, 5, 8, 30))
+    assert rows.iloc[0]["objective"] == ABOVE and rows.iloc[0]["touch_extreme"] == pytest.approx(1.1060)
+    assert rows.iloc[0]["with_bias"] is False                            # a SHORT on a bullish-bias day
+
+
+def test_objective_touch_needs_the_opposite_draw_untaken():
+    # Above taken at 03:00, below at 06:00: only the SHORT can fire (at 03:15, the draw below still untaken).
+    rows = touch(touch_day({ny(2026, 1, 5, 3, 0): (1.1060, None), ny(2026, 1, 5, 6, 0): (None, 1.0940)}))
+    assert list(rows["direction"]) == ["SHORT"] and rows.iloc[0]["t"] == pd.Timestamp(ny(2026, 1, 5, 3, 15))
+
+
+@pytest.mark.parametrize("touch_at, fires", [
+    ((0, 50), False),            # before the window
+    ((1, 0), True),              # its first minute
+    ((12, 59), True),            # its last minute
+    ((13, 0), False),            # the window is [01:00, 13:00)
+])
+def test_objective_touch_window_edges(touch_at, fires):
+    f = touch_day({ny(2026, 1, 5, *touch_at): (None, 1.0940)})
+    assert (len(touch(f)) == 1) == fires
+    assert len(touch(f, window=["00:00", "14:00"])) == 1
+
+
+def test_objective_touch_once_per_side_and_null_bias_when_neutral():
+    f = touch_day({ny(2026, 1, 5, 5, 10): (None, 1.0940), ny(2026, 1, 5, 9, 40): (None, 1.0935)}, "NEUTRAL")
+    rows = touch(f)
+    assert len(rows) == 1 and rows.iloc[0]["with_bias"] is None
+
+
+def test_objective_touch_uses_only_the_past():
+    # Property 1 for the event: what it fires by t is the same from data cut off at t.
+    from algo_research.features.draws import draw_taken_at
+    from tests.test_research_features import _truncated
+
+    f = touch_day({ny(2026, 1, 5, 5, 10): (None, 1.0940), ny(2026, 1, 5, 8, 20): (1.1060, None)})
+    full = touch(f)
+    frame = Path(ny(2026, 1, 4, 17), ny(2026, 1, 6, 17), base=1.1000) \
+        .bar(ny(2026, 1, 5, 5, 10), lo=1.0940).bar(ny(2026, 1, 5, 8, 20), h=1.1060).frame()
+    for cut in (ny(2026, 1, 5, 5, 15), ny(2026, 1, 5, 8, 30), ny(2026, 1, 5, 12, 0)):
+        short = _truncated(frame, cut)
+        g = with_draws(market_features(short, grid_for(short, date(2026, 1, 5), date(2026, 1, 6))))
+        g = pd.concat([g, draw_taken_at(short, g)], axis=1)
+        again = touch(g)
+        want = full[full["t"] <= pd.Timestamp(cut)].reset_index(drop=True)
+        assert list(again["t"]) == list(want["t"]) and list(again["direction"]) == list(want["direction"])
+        assert list(again["touch_extreme"]) == list(want["touch_extreme"])
+
+
+def test_objective_touch_registered_with_levels_and_with_bias():
+    from algo_research.events import EVENTS
+
+    event = EVENTS["objective_touch"]
+    assert event.levels == ("objective", "touch_extreme", "draw_opposite") and event.attributes == ("with_bias",)
+    with pytest.raises(EventError):
+        touch(touch_day({}), window=["13:00", "01:00"])

@@ -13,6 +13,7 @@ fires at most once per instrument, trading date and direction (Req 9.4).
 | ``level_open`` | at ``at``, when ``level`` is untaken | toward the level | ``level``, ``level_name`` |
 | ``daily`` | the candle's last M15 close | none | - |
 | ``crt`` | the M15 close equal to C2's close on ``tf`` (H1, H4, D1), when C2 swept one side of C1 and closed back inside | LONG after C1's low was swept, SHORT after its high | ``c2_extreme``, ``c1_opposite``; its own ``limit``: C3's close |
+| ``objective_touch`` | the first M15 close after price traded beyond the engine's draw below (above) the open, the touch inside ``window``, the other draw untaken | LONG from the draw below, SHORT from the draw above | ``objective``, ``touch_extreme``, ``draw_opposite``; attribute ``with_bias`` (update 2026-10e) |
 
 ``asia_raid_reclaim`` and ``crt`` carry ``smt`` (Req 16.3): true when the
 correlated partner did not take its own matching level by t (its Asian low,
@@ -31,7 +32,7 @@ An event with ``Event.limit`` gives each row its own race time limit
     result = run_event(features, "asia_raid_reclaim", {"window": ["01:00", "09:00"], "reclaim_within": 4})
     result.rows, result.skipped
 
-Validates: Requirements 9.1, 9.2, 9.4, 9.5, 15.2, 16.3, 18.3 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 9.1, 9.2, 9.4, 9.5, 15.2, 16.3, 18.3, 19 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -118,6 +119,18 @@ class AnchorParams(_Params):
 class AsiaRaidReclaimParams(_Params):
     window: tuple[str, str] = ("01:00", "09:00")         # the raid bar's New York time, [start, end)
     reclaim_within: PositiveInt = 4                      # M15 closes from the raid's first
+
+    @field_validator("window")
+    @classmethod
+    def _window(cls, value: tuple[str, str]) -> tuple[str, str]:
+        start, end = (_minutes(v) for v in value)
+        if not start < end:
+            raise ValueError(f"window {value} must run forward within the trading day's New York clock")
+        return value
+
+
+class ObjectiveTouchParams(_Params):
+    window: tuple[str, str] = ("01:00", "13:00")         # the touch bar's New York time, [start, end)
 
     @field_validator("window")
     @classmethod
@@ -268,6 +281,32 @@ def _asia_raid_reclaim(features: pd.DataFrame, p: AsiaRaidReclaimParams) -> Even
     return EventResult(rows.reset_index(drop=True))
 
 
+def _objective_touch(features: pd.DataFrame, p: ObjectiveTouchParams) -> EventResult:
+    """The user's step 2 (Req 19): price went lower first, beyond the engine's draw below the open
+    (a sell-side objective), while the draw above is untaken: LONG toward it. Mirrored for SHORT.
+    It fires at the first M15 close by which the touch bar has closed, once per side and candle."""
+    start, end = (_minutes(v) for v in p.window)
+    keys = [features["instrument"].to_numpy(), features["trading_date"].to_numpy()]
+    bias = features["ant_direction"].to_numpy() if "ant_direction" in features.columns         else np.full(len(features), None, dtype=object)
+    frames = []
+    for touched, other, objective, opposite, extreme, direction, mine, theirs in (
+            ("ant_draw_below_taken_at", "ant_draw_above_taken_at", "ant_draw_below_price", "ant_draw_above_price",
+             "day_low", "LONG", "BULLISH", "BEARISH"),
+            ("ant_draw_above_taken_at", "ant_draw_below_taken_at", "ant_draw_above_price", "ant_draw_below_price",
+             "day_high", "SHORT", "BEARISH", "BULLISH")):
+        known = features[touched].notna().to_numpy()
+        first = known & (pd.Series(known.astype(int)).groupby(keys).cumsum().to_numpy() == 1)
+        touch_open = (pd.DatetimeIndex(features[touched]) - pd.Timedelta(minutes=1)).tz_convert("America/New_York")
+        minute = np.where(known, touch_open.hour * 60 + touch_open.minute, -1)
+        picked = first & (minute >= start) & (minute < end) & features[other].isna().to_numpy()
+        with_bias = np.array([True if b == mine else False if b == theirs else None for b in bias], dtype=object)
+        frames.append(_rows(features, picked, direction, objective=features[objective].to_numpy(dtype=float),
+                            touch_extreme=features[extreme].to_numpy(dtype=float),
+                            draw_opposite=features[opposite].to_numpy(dtype=float), with_bias=with_bias))
+    rows = pd.concat(frames, ignore_index=True).sort_values(["instrument", "t", "direction"], kind="stable")
+    return EventResult(rows.reset_index(drop=True))
+
+
 _TOWARD = {"pdh": "LONG", "pwh": "LONG", "pdl": "SHORT", "pwl": "SHORT"}
 
 
@@ -324,6 +363,8 @@ EVENTS: dict[str, Event] = {
     "level_open": Event("level_open", LevelOpenParams, _level_open, levels=("level",)),
     "daily": Event("daily", DailyParams, _daily, directional=lambda params: False),
     "crt": Event("crt", CrtParams, _crt, levels=("c2_extreme", "c1_opposite"), attributes=("smt",), limit=True),
+    "objective_touch": Event("objective_touch", ObjectiveTouchParams, _objective_touch,
+                             levels=("objective", "touch_extreme", "draw_opposite"), attributes=("with_bias",)),
 }
 
 

@@ -376,7 +376,18 @@ These replace the timing drafts and reframe bias before any pre-registration (25
   - **269c. REFACTOR** — rebuild the real tables, and record how often each draw is hit per instrument (exploration slice).
   - **Validates: Requirement 18**
 
-- [ ] 270. The `objective_touch` event
+- [x] 270. The `objective_touch` event
+  - **Done 2026-10-10.** `events.objective_touch`, tested in `test_research_draws.py`: both sides, the window edges, the opposite draw untaken, once per side, `touch_extreme`, `with_bias` (true, false and null), and data cut off at t.
+  - **270c, exploration slice:** 150 events on 82 of 516 instrument-candles. 70 are with the bias and 80 against.
+
+    | | LONG with | LONG against | SHORT with | SHORT against |
+    |---|---|---|---|---|
+    | EURUSD | 13 | 13 | 14 | 12 |
+    | GBPUSD | 9 | 9 | 8 | 15 |
+    | USDJPY | 5 | 7 | 5 | 9 |
+    | XAUUSD | 10 | 4 | 6 | 11 |
+
+    The confirmation slice is twice as long, so H003 should clear AR-D4's 100 events on 60 dates.
   - **270a. RED** (`test_research_events.py`)
     - On hand-made candles, LONG and SHORT:
       - the touch inside and outside the window;
