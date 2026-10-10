@@ -429,6 +429,16 @@ def test_h4_range_geometry_and_volatility_columns(repo, data_dirs):
     assert np.allclose(races["target"].to_numpy(), close + sign * 0.0020)
 
 
+def test_profile_command_writes_the_profile_and_no_ledger(repo, data_dirs, capsys):
+    # Update 2026-10e (Req 21.3): descriptive, from the exploration slice; no verdict, no ledger row.
+    code, out = cli(repo, data_dirs, "profile", capsys=capsys)
+    assert code == 0
+    text = (repo / "docs" / "research" / "VOLATILITY_PROFILE.md").read_text(encoding="utf-8")
+    assert "## EURUSD" in text and "## XAUUSD" in text and "fixture-week" in text
+    assert not (repo / "docs" / "research" / "ledger.csv").exists()
+    assert "VOLATILITY_PROFILE.md" in out
+
+
 # ── reports ─────────────────────────────────────────────────────────────────
 
 def test_report_has_every_section(repo, data_dirs, capsys):

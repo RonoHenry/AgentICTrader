@@ -441,7 +441,14 @@ These replace the timing drafts and reframe bias before any pre-registration (25
   - **272c. REFACTOR** — build time on the real tables.
   - **Validates: Requirements 21.1, 21.2, 21.4**
 
-- [ ] 273. The volatility profile
+- [x] 273. The volatility profile
+  - **Done 2026-10-10.**
+    - **The code:** `profile.py` and the `profile` command. Tested in `test_research_profile.py` and the CLI test in `test_research_runner.py`. `docs/research/VOLATILITY_PROFILE.md` is written from the real exploration slice and committed.
+    - **What it shows:** the 09:00 New York H4 candle carries the most range everywhere (a median 48–55% of the day's). USDJPY's 17:00 H4 (the Tokyo morning) carries 43%, against 28% for EURUSD and GBPUSD. 40% of USDJPY's highs and lows form between 17:00 and 01:00, against 30–31% for EURUSD and GBPUSD. This bears out the user's point about Asian pairs.
+    - **A data finding, added to the profile as a caveat:**
+      - 18–21% of the FX days' lows formed in the 17:00 rollover hour, on spreads 10–15× typical. Other lows sit at about 1× typical, and highs are barely affected (1%).
+      - The bars are bid, and the bid dips when the spread blows out, so these lows are artefacts, not selling. Gold has none, because it pauses through the rollover.
+      - **Follow-up for the user:** the same bid prices feed the day's lows, the false move, which draws count as taken, the candle labels, and possibly the engine's sell-side raids in the backtests. A price-basis rule is needed: extremes on mid prices, or a filter for spread blowouts.
   - **273a. RED** (`test_research_profile.py`) — on a hand-made two-instrument data set:
     - the per-H4 median ranges and shares;
     - the hour of the high and of the low;

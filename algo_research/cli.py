@@ -45,10 +45,12 @@ from agent.broker_profiles import BrokerProfile, load_profile
 from algo_backtester.data import CandleSource, TimescaleSource
 from algo_backtester.report import git_state, spec_source
 from algo_research.config import REPO_ROOT, HoldoutError, ResearchConfig, load_research_config
-from algo_research.dataset import ResearchData, build_dataset
+from algo_research.dataset import ResearchData, build_dataset, build_frames
 from algo_research.features.cache import CACHE_DIR, ParquetCache
+from algo_research.frame import slices_of
 from algo_research.hypothesis import Hypothesis, HypothesisError, find_hypothesis, load_hypothesis
 from algo_research.ledger import append_rows, ledger_row, read_ledger, render_ledger_md, result_differences
+from algo_research.profile import instrument_profile, render_profile
 from algo_research.races import RaceCosts
 from algo_research.report import ReportInputs, render_report
 from algo_research.runner import RunSettings, TestResult, run_test
@@ -84,6 +86,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         command.add_argument("--workers", type=int, help="processes for a build the cache can't serve")
 
     commands.add_parser("ledger", help="render docs/research/LEDGER.md from docs/research/ledger.csv")
+    commands.add_parser("profile", help="write docs/research/VOLATILITY_PROFILE.md: where each instrument makes "
+                                        "its range (exploration slice; descriptive, no ledger)")
     return parser.parse_args(argv)
 
 
@@ -107,6 +111,8 @@ def main(argv: Optional[Sequence[str]] = None, source_factory: Optional[SourceFa
             return _explore(args, cfg, root, snapshots_dir, cache_dir, drafts_dir, now)
         if args.command == "run":
             return _run(args, cfg, root, snapshots_dir, cache_dir, now)
+        if args.command == "profile":
+            return _profile(cfg, root, snapshots_dir)
     except (HoldoutError, SnapshotError, HypothesisError) as exc:
         print(f"refused: {exc}")
         return 2
@@ -194,6 +200,21 @@ def _inputs(h: Hypothesis, cfg: ResearchConfig, snapshot, specs, commit: str, se
                  "commission": f"{specs[i].commission.value:g} {specs[i].commission.kind}"} for i in cfg.instruments}
     return ReportInputs(snapshot=cfg.snapshot, fingerprints=fingerprints, code_commit=commit, specs=costs,
                         hypothesis_text=h.path.read_text(encoding="utf-8"), ledger_rows=seqs)
+
+
+def _profile(cfg: ResearchConfig, root: Path, snapshots_dir: Path) -> int:
+    """Req 21.3: the volatility profile of the exploration slice, descriptive; no ledger."""
+    snapshot = load_snapshot(snapshots_dir / cfg.snapshot, cfg.instruments)
+    frames = build_frames(snapshot, load_profile(cfg.profile).specs())
+    start, end = slices_of(cfg)["explore"]
+    profiles = [instrument_profile(frames[i], start, end) for i in cfg.instruments if i in frames]
+    text = render_profile(profiles, {"snapshot": cfg.snapshot, "slice": f"exploration slice, {start} to {end} "
+                                     f"(end exclusive)", "code_commit": _commit(root)})
+    out = root / DOCS / "VOLATILITY_PROFILE.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8", newline="\n")
+    print(f"wrote {out} (descriptive: no verdict, no ledger row)")
+    return 0
 
 
 def _explore(args, cfg: ResearchConfig, root: Path, snapshots_dir: Path, cache_dir: Path, drafts_dir: Path,
