@@ -40,7 +40,7 @@ Tasks marked **(user review)** end with your review before the next one starts.
   - **290c. REFACTOR**
   - **Validates: Requirements 1.1–1.5, 2.1–2.4, 5.1**
 
-- [ ] 291. The trade autopsy
+- [x] 291. The trade autopsy
   - **291a. RED** (`backend/tests/test_backtest_autopsy.py`)
     - A synthetic run directory (`journal.csv`, `context.json`, `candles.json`) with one trade per failure mode on hand-built days.
     - `test_load_run_keeps_closed_fills_and_counts_open_at_end`
