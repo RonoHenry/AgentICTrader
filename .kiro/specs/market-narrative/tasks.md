@@ -73,6 +73,9 @@ Tasks marked **(user review)** end with your review before the next one starts.
   - **Validates: Requirements 4.1–4.5**
 
 - [ ] 293. Autopsy of the reference runs **(user review)**
+  - **Done 2026-10-12; waiting for your review.**
+    - `docs/backtests/AUTOPSY.md` is written. `trading-method.md`, section 8, cites it.
+    - Headline: the rewrite fixed execution. Right-direction fills on time make +1.7 to +1.8R in WICK and BODY, against −0.46R in the baseline. Direction is what's left: 44–45% with the day, and a third of trades fade the day's expansion (−189R BODY, −172R WICK).
   - Run `python -m algo_backtester autopsy` on WICK `ec4876ba87a1`, BODY `475491a89d91` and the baseline `5d241691c701`.
   - Write `docs/backtests/AUTOPSY.md`:
     - each run's split by failure mode;
