@@ -170,7 +170,7 @@ def test_candle_labels_per_date_frame():
 
 def _imports(path: FilePath) -> set[str]:
     names = set()
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8-sig"))):   # some files carry a BOM
         if isinstance(node, ast.Import):
             names.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
@@ -191,6 +191,18 @@ def test_features_events_filters_do_not_import_labels():
         leaks = {name for name in _imports(path) if name == "algo_research.labels" or
                  name.startswith("algo_research.labels.")}
         assert not leaks, f"{path.name} imports {leaks}"
+
+
+def test_nothing_that_decides_imports_the_narrative():
+    """market-narrative Requirement 5.1: the narrative and the autopsy are hindsight."""
+    files = [*sorted((REPO / "liquidity_engine").rglob("*.py")), *sorted((REPO / "agent").rglob("*.py")),
+             *sorted((REPO / "algo_research" / "features").glob("*.py")), REPO / "algo_research" / "frame.py"]
+    files += [p for p in (REPO / "algo_research" / "events.py", REPO / "algo_research" / "filters.py") if p.exists()]
+    assert len(files) >= 50
+    hindsight = ("algo_research.narrative", "algo_backtester.autopsy")
+    for path in files:
+        leaks = {name for name in _imports(path) if any(name == h or name.startswith(h + ".") for h in hindsight)}
+        assert not leaks, f"{path.relative_to(REPO)} imports {leaks}"
 
 
 # ── Property 2: forward labels use only the future ──────────────────────────

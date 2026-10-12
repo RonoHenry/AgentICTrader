@@ -118,9 +118,9 @@ def fill_phase(candle: Mapping, bar_open: Timestamp) -> str
     - direction follows ND-D6;
     - the false-move and expansion fields follow the glossary; FLAT candles get NaN and NaT;
     - `inverted` is `t_exp < t_false`.
-  - **Child index:** count the child periods from the frame's start, stepping with `calendar.period_end`, until the child period holding the extreme. This is calendar-based, so a child with no bars still counts (Sunday's hour is part of Monday's D1, which is child 0 of the week).
+  - **Child index:** count the child periods from the frame's start, stepping with `calendar.period_end`, until the child period holding the extreme. This is calendar-based, so a child with no bars still counts. D1 by H4: 0 is the 17:00 New York slot and 4 the 09:00 one. W1 by D1: the week starts at the server's Sunday (17:00 New York on Saturday), so 0 is Sunday's empty D1, 1 is Monday (from Sunday 17:00 New York) and 5 is Friday.
   - **`complete`** is false for the candle holding the series' first bar unless that bar opens at the candle's start, and for the candle holding the last bar unless that bar ends at the candle's end.
-- **`fill_phase`:** Requirement 3.2, in that order.
+- **`fill_phase`:** Requirement 3.2: UNKNOWN first (a missing, incomplete or FLAT candle), then INVERTED, then by the bar's time against the two extremes.
 
 ### `algo_backtester/autopsy.py`
 
@@ -218,7 +218,7 @@ The seed is `seed_from(sha256(run_id))`.
 ## Correctness Properties
 
 ### Property 1: Resolution Invariance
-*For any* bar series and frame F, narrating F from the bars, or from those bars aggregated on the strategy calendar to any coarser timeframe that is still finer than F, gives the same open, high, low, close, direction, inversion and child indexes. `t_high` and `t_low` from the coarser bars equal the finer ones floored to the coarser timeframe.
+*For any* bar series and frame F, narrating F from the bars, or from those bars aggregated on the strategy calendar to any coarser timeframe that is still finer than F, gives the same open, high, low, close, direction and child indexes. `t_high` and `t_low` from the coarser bars equal the finer ones floored to the coarser timeframe, and the inversion agrees whenever the two extremes fall in different coarser bars.
 
 **Validates: Requirements 1.1, 1.3**
 

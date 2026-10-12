@@ -1,0 +1,14 @@
+# Market narrative configuration (.kiro/specs/market-narrative).
+# How finished candles are described, and how the trade autopsy judges a run:
+#   python -m algo_backtester autopsy data/backtests/<run_id>
+# Each value is a proposed definition awaiting the trader. Unknown keys are rejected.
+
+frames = ["W1", "D1", "H4"]          # ND-D10: the frames each trade is read against
+bias_frame = "D1"                    # ND-D10: the frame its failure mode is judged on
+direction_rule = "CLOSE_VS_OPEN"     # ND-D6: a candle is UP when it closed above its open
+resamples = 2000                     # day-cluster bootstrap of the autopsy's split
+
+[price_basis]                        # ND-D7: the narrative's prices; fills never change
+rule = "ROLLOVER_WINDOW"             # NONE | ROLLOVER_WINDOW
+minutes = 30                         # FX bars opening 17:00-17:29 New York flattened at the last clean close
+instruments = ["EURUSD", "GBPUSD", "USDJPY"]   # gold has no rollover blowout

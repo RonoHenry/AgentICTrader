@@ -18,14 +18,14 @@ Tasks marked **(user review)** end with your review before the next one starts.
 
 ## Tasks
 
-- [ ] 290. The candle narrative
+- [x] 290. The candle narrative
   - **290a. RED** (`backend/tests/test_narrative.py`)
     - `test_up_day_low_first` — open, extremes, their times, the false move and its share, child indexes (H4 slots of a D1).
     - `test_down_day_and_flat_day` — a FLAT candle has no false-move or expansion fields.
     - `test_inverted_day` — the expansion extreme came first.
     - `test_ties_take_the_first_bar`
     - `test_incomplete_edges` — a series starting or ending inside a candle; one starting at a candle's start is complete.
-    - `test_week_child_index_counts_sunday_with_monday` — W1 by D1.
+    - `test_week_child_index_from_sunday` — W1 by D1: Monday is 1, and a missing Monday still counts.
     - `test_refuses_bars_not_finer_than_frame`
     - `test_fill_phase_cases` — every phase of Requirement 3.2, including UNKNOWN.
     - `test_rollover_window_flattens_fx` — 17:00–17:29 New York bars set to the last kept close, in summer and in winter time.
