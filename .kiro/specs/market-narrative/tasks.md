@@ -58,7 +58,7 @@ Tasks marked **(user review)** end with your review before the next one starts.
   - **291c. REFACTOR**
   - **Validates: Requirements 3.1–3.6, 5.2**
 
-- [ ] 292. The autopsy report and commands
+- [x] 292. The autopsy report and commands
   - **292a. RED**
     - `test_autopsy_md_sections` — the hindsight header, the configuration, and each split of Requirement 4.2.
     - `test_write_autopsy_is_byte_identical` — written twice, the same bytes.

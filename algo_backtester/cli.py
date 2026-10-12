@@ -1,10 +1,11 @@
-"""The command line: python -m algo_backtester check-data | run | compare | report.
+"""The command line: python -m algo_backtester check-data | run | compare | report | autopsy.
 
     python -m algo_backtester check-data config/backtests/base.toml
     python -m algo_backtester run config/backtests/base.toml [--variant min_rr_5] [--final] [--walk-forward 3M]
     python -m algo_backtester compare data/backtests/<run_id> data/backtests/<run_id> [--by killzone]
     python -m algo_backtester report data/backtests/<run_id>
     python -m algo_backtester report --forward-test data/paper_trades.json --profile binance
+    python -m algo_backtester autopsy data/backtests/<run_id> [--config config/research/narrative.toml]
 
 check-data loads every instrument's history for the run and reports coverage
 problems and warm-up sources (Req 3.6). On first use it also creates the
@@ -22,13 +23,18 @@ compare puts finished runs side by side; runs on different data are refused.
 report rewrites a run's report.html from its recorded files, or renders a
 paper forward test's trades file with candles from the store (Req 11.7).
 
+autopsy writes a run's autopsy.csv and autopsy.md: every trade read against
+how its candles formed, the run's R split by failure mode (market-narrative
+spec). run writes it too, after the report. It needs only the run directory.
+
 Candles come from the TimescaleDB store (TIMESCALE_URL, from the environment
 or .env): the rows of the profile's venue, mt5 or binance.
 
-Exit codes: 0 done; 1 data problems; 2 refused (the hold-out, or runs that
-can't be compared).
+Exit codes: 0 done; 1 data problems; 2 refused (the hold-out, runs that
+can't be compared, or a directory the autopsy can't read).
 
-Validates: Requirements 7.1 (.kiro/specs/algo-backtester/requirements.md)
+Validates: Requirements 7.1 (.kiro/specs/algo-backtester/requirements.md);
+market-narrative Requirements 4.3-4.4
 """
 from __future__ import annotations
 
@@ -40,6 +46,7 @@ from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 from agent.broker_profiles import BrokerProfile, load_profile
+from algo_backtester.autopsy import AutopsyError, write_autopsy
 from algo_backtester.cache import SignalCache, engine_code_fingerprint
 from algo_backtester.compare import ComparisonError, compare
 from algo_backtester.config import (
@@ -56,6 +63,7 @@ from algo_backtester.data import CandleSource, CoverageError, InstrumentData, Ti
 from algo_backtester.report import RUNS_DIR, build_manifest, git_state, spec_source, write_run
 from algo_backtester.report_html import build_forward_test, render, write_html_report, write_report_inputs
 from algo_backtester.run import run_backtest
+from algo_research.narrative import load_narrative_config
 from liquidity_engine.models import Timeframe
 from services.market_data.as_of_view import aggregate
 from services.market_data.strategy_calendar import StrategyCalendar
@@ -97,6 +105,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     rep.add_argument("--profile", help="the forward test's broker profile (its candles come from the store)")
     rep.add_argument("--entry-tf", default="M15", help="chart timeframe for a forward test (default M15)")
     rep.add_argument("--out", type=Path, help="where to write a forward test's report (default: beside the trades)")
+
+    aut = commands.add_parser("autopsy", help="read a run's trades against how their candles formed")
+    aut.add_argument("run_dir", type=Path, help="a run directory, data/backtests/<run_id>")
+    aut.add_argument("--config", type=Path, help="narrative settings (default config/research/narrative.toml)")
     return parser.parse_args(argv)
 
 
@@ -114,6 +126,8 @@ def main(argv: Optional[Sequence[str]] = None, source_factory: Optional[SourceFa
         return 0
     if args.command == "report":
         return _report(args, source_factory or _store)
+    if args.command == "autopsy":
+        return _autopsy(args)
 
     cfg = load_run_config(args.config, args.variant)
     profile = load_profile(cfg.run.profile)
@@ -212,6 +226,23 @@ def _run(args: argparse.Namespace, cfg: RunConfig, profile: BrokerProfile, sourc
     print(f"wrote {run_dir}  ({', '.join(f'{k} {v}' for k, v in counts.items())})")
     print(f"summary: {run_dir / 'summary.md'}")
     print(f"report:  {report}")
+    try:
+        autopsy, _ = write_autopsy(run_dir)
+        print(f"autopsy: {autopsy}")
+    except AutopsyError as exc:              # the run itself succeeded
+        print(f"autopsy skipped: {exc}")
+    return 0
+
+
+def _autopsy(args: argparse.Namespace) -> int:
+    try:
+        cfg = load_narrative_config(args.config)
+        md, table = write_autopsy(args.run_dir, cfg)
+    except (AutopsyError, ValueError, FileNotFoundError) as exc:
+        print(f"refused: {exc}")
+        return 2
+    print(f"autopsy: {md}")
+    print(f"table:   {table}")
     return 0
 
 

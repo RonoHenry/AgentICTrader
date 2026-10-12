@@ -302,3 +302,45 @@ def test_property_4_asof_shape_ignores_later_bars(tmp_path_factory, name, seed):
     moved = autopsy_table(load_run(write_run(root, [trade], bars)), NONE).set_index("setup_id")
     assert moved.loc[name, "asof_shape"] == _RUN_CACHE["base"].loc[name, "asof_shape"]
 
+
+# ── Requirement 4: the report and the commands (task 292) ──────────────────
+
+def test_autopsy_md_sections(tmp_path):
+    from algo_backtester.autopsy import write_autopsy
+    md_path, csv_path = write_autopsy(write_run(tmp_path), NONE)
+    md = md_path.read_text(encoding="utf-8")
+    assert md_path.name == "autopsy.md" and csv_path.name == "autopsy.csv"
+    assert "hindsight" in md.lower() and "never decide" in md
+    assert "Trades labelled: 9" in md and "net +0.60R" in md and "open at the end, left out: 1" in md
+    assert "Frames: W1, D1, H4; failure modes judged on D1" in md and "Price basis: NONE" in md
+    for heading in ("## Direction", "## Failure modes", "## When the direction was right", "## Raid side",
+                    "## Fill side", "## As-of shape", "## By instrument", "## By New York hour"):
+        assert heading in md, heading
+    assert "| WITH_ON_TIME | 2 | 22% | 100% | +2.30R |" in md
+    assert "Stopped by the false move" in md and "Target beyond the expansion extreme" in md
+    table = pd.read_csv(csv_path)
+    assert list(table.columns) == list(AUTOPSY_COLUMNS) and len(table) == 9
+
+
+def test_write_autopsy_is_byte_identical(tmp_path):
+    from algo_backtester.autopsy import write_autopsy
+    run = write_run(tmp_path)
+    md, csv_ = write_autopsy(run, NONE)
+    first = (md.read_bytes(), csv_.read_bytes())
+    md.unlink()
+    csv_.unlink()
+    write_autopsy(run, NONE)
+    assert (md.read_bytes(), csv_.read_bytes()) == first
+
+
+def test_no_filled_trades(tmp_path):
+    from algo_backtester.autopsy import write_autopsy
+    md, csv_ = write_autopsy(write_run(tmp_path, trades=[]), NONE)
+    assert "No filled trades" in md.read_text(encoding="utf-8")
+    assert pd.read_csv(csv_).empty
+
+
+def test_write_autopsy_refuses_coarse_candles(tmp_path):
+    from algo_backtester.autopsy import write_autopsy
+    with pytest.raises(AutopsyError, match="H4"):
+        write_autopsy(write_run(tmp_path, timeframe="H4"), NONE)

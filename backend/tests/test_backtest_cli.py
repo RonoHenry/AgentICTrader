@@ -95,15 +95,15 @@ def test_run_writes_outputs_to_run_dir(setup, capsys):
     assert cli(["run", str(config), "--runs-dir", str(runs), "--no-cache", "--workers", "1"], root) == 0
     [run_dir] = list(runs.iterdir())
     assert sorted(p.name for p in run_dir.iterdir()) == [
-        "candles.json", "context.json", "executions.json", "journal.csv", "manifest.json", "report.html",
-        "summary.json", "summary.md"]
+        "autopsy.csv", "autopsy.md", "candles.json", "context.json", "executions.json", "journal.csv",
+        "manifest.json", "report.html", "summary.json", "summary.md"]
     assert json.loads((run_dir / "executions.json").read_text(encoding="utf-8"))["account_ccy"] == "USD"
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["run_id"] == run_dir.name and manifest["final_validation"] is False
     assert manifest["instrument_spec_source"].startswith("Exness")
     assert len((run_dir / "journal.csv").read_text(encoding="utf-8").splitlines()) > 50   # a day of M15 closes
     out = capsys.readouterr().out
-    assert str(run_dir) in out and "report.html" in out
+    assert str(run_dir) in out and "report.html" in out and "autopsy.md" in out
 
 
 def test_report_regenerates_from_run_dir(setup, capsys):
@@ -180,3 +180,30 @@ def test_compare_prints_side_by_side_and_refuses_with_exit_2(setup, capsys):
     assert cli(["compare", *run_dirs], root) == 0
     assert "| trades |" in capsys.readouterr().out
     assert cli(["compare", run_dirs[0]], root) == 2
+
+
+# ── autopsy (market-narrative task 292) ────────────────────────────────────
+
+def test_autopsy_command_writes_and_refuses(tmp_path, capsys):
+    from tests.test_backtest_autopsy import write_run as write_synthetic_run
+    run = write_synthetic_run(tmp_path / "runs")
+    assert main(["autopsy", str(run)]) == 0
+    assert (run / "autopsy.md").is_file() and (run / "autopsy.csv").is_file()
+    assert "autopsy.md" in capsys.readouterr().out
+
+    assert main(["autopsy", str(tmp_path / "nothing")]) == 2
+    assert "refused" in capsys.readouterr().out
+
+    coarse = write_synthetic_run(tmp_path / "coarse", timeframe="H4")
+    assert main(["autopsy", str(coarse)]) == 2
+    assert "H4" in capsys.readouterr().out
+
+
+def test_autopsy_command_reads_its_config(tmp_path, capsys):
+    from tests.test_backtest_autopsy import write_run as write_synthetic_run
+    run = write_synthetic_run(tmp_path / "runs")
+    config = tmp_path / "narrative.toml"
+    config.write_text('frames = ["D1", "H4"]\nbias_frame = "D1"\n[price_basis]\nrule = "NONE"\n', encoding="utf-8")
+    assert main(["autopsy", str(run), "--config", str(config)]) == 0
+    md = (run / "autopsy.md").read_text(encoding="utf-8")
+    assert "Frames: D1, H4" in md and "Price basis: NONE" in md
