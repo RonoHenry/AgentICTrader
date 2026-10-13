@@ -21,15 +21,18 @@ from typing import Optional
 import pytest
 
 from agent.order_intent import NoTrade, OrderIntent
-from agent.strategy_config import StrategyConfig
+from agent.strategy_config import StopMode, StrategyConfig
 from algo_backtester.data import InstrumentData, StoredBar, load_instrument
 from algo_backtester.signals import (
     EngineError,
     SignalRecord,
     TradeContext,
     generate_all,
+    generate_many,
     generate_signals,
+    same_view,
     signal_at,
+    signals_at,
     trade_context,
 )
 from liquidity_engine import LiquidityMappingEngine
@@ -280,3 +283,50 @@ def test_trade_context_round_trips_through_cache(tmp_path):
     loaded = cache.load("k" * 64)
     assert loaded == stored == list(context_records())
     assert all(type(r.context) is TradeContext for r in loaded if isinstance(r.result, OrderIntent))
+
+
+# ── several configurations, one engine pass (task 298) ─────────────────────
+
+# Variants that change only order rules: the engine sees the same candles under each.
+VARIANTS = [CFG, CFG.model_copy(update={"min_rr": 5.0}),
+            CFG.model_copy(update={"stop_mode": StopMode.BODY})]
+
+
+class CountingEngine(LiquidityMappingEngine):
+    def __init__(self):
+        self.calls = 0
+
+    def analyze(self, view, instrument, t):
+        self.calls += 1
+        return super().analyze(view, instrument, t)
+
+
+def test_signals_at_analyses_once_and_matches_each_configuration_alone():
+    data, t = data_for(), datetime(2026, 9, 30, 14, 0, tzinfo=UTC)
+    engine = CountingEngine()
+    shared = signals_at(data, VARIANTS, t, engine)
+    assert engine.calls == 1
+    assert shared == [signal_at(data, cfg, t) for cfg in VARIANTS]
+
+
+def test_signals_at_records_an_engine_failure_for_every_configuration():
+    fail_at = datetime(2026, 9, 30, 13, 30, tzinfo=UTC)
+    records = signals_at(data_for(), VARIANTS, fail_at, FakeEngine(fail_at=fail_at))
+    assert [type(r.result) for r in records] == [EngineError] * len(VARIANTS)
+    assert records[0] == signal_at(data_for(), CFG, fail_at, FakeEngine(fail_at=fail_at))
+
+
+def test_generate_many_equals_each_configuration_alone():
+    datas = [data_for("EURUSD"), data_for("XAUUSD")]
+    start, end = datetime(2026, 10, 2, 6, 0, tzinfo=UTC), datetime(2026, 10, 2, 7, 0, tzinfo=UTC)   # gold sets up here
+    alone = [generate_all(datas, cfg, start, end, workers=1) for cfg in VARIANTS]
+    assert alone[0] != alone[1] and alone[0] != alone[2]           # the rules differ somewhere in the window
+    assert generate_many(datas, VARIANTS, start, end, workers=1) == alone
+    assert generate_many(datas, VARIANTS, start, end, workers=5) == alone   # time-sliced too
+
+
+def test_generate_many_refuses_configurations_that_see_different_candles():
+    other = CFG.model_copy(update={"candle_counts": {**CFG.candle_counts, TF.M15: 50}})
+    assert same_view(VARIANTS) and not same_view([CFG, other])
+    with pytest.raises(ValueError, match="same entry_tf"):
+        generate_many([data_for()], [CFG, other], START, END)

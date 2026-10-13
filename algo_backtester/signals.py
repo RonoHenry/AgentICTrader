@@ -58,8 +58,11 @@ __all__ = [
     "TradeContext",
     "entry_closes",
     "generate_all",
+    "generate_many",
     "generate_signals",
+    "same_view",
     "signal_at",
+    "signals_at",
     "time_slices",
     "trade_context",
 ]
@@ -203,16 +206,36 @@ def signal_at(data: InstrumentData, cfg: StrategyConfig, t: datetime, engine: Op
               typical_spread: Optional[float] = None) -> SignalRecord:
     """The decision at t, from the data known at t only. ``typical_spread`` is the
     instrument's spec spread, for cfg.min_stop_spreads."""
-    view = compose_as_of_view(data.closed, data.m1, t, cfg.entry_tf, cfg.candle_counts, _CALENDAR)
-    context = None
+    return signals_at(data, (cfg,), t, engine, typical_spread)[0]
+
+
+def signals_at(data: InstrumentData, cfgs: Sequence[StrategyConfig], t: datetime, engine: Optional[Engine] = None,
+               typical_spread: Optional[float] = None) -> list[SignalRecord]:
+    """signal_at for each of ``cfgs``, which share one engine view (same_view): the
+    engine analyses t once and each configuration's order rules read its map."""
+    view = compose_as_of_view(data.closed, data.m1, t, cfgs[0].entry_tf, cfgs[0].candle_counts, _CALENDAR)
     try:
         liquidity_map = (engine or LiquidityMappingEngine()).analyze(view, data.instrument, t)
-        result = build_order_intent(liquidity_map, view, data.instrument, t, cfg, typical_spread)
-        if isinstance(result, OrderIntent):
-            context = trade_context(liquidity_map, t)
     except Exception as exc:
-        result = EngineError(exception=type(exc).__name__, message=str(exc))
-    return SignalRecord(t=t, instrument=data.instrument, result=result, context=context)
+        error = EngineError(exception=type(exc).__name__, message=str(exc))
+        return [SignalRecord(t=t, instrument=data.instrument, result=error, context=None) for _ in cfgs]
+    records = []
+    for cfg in cfgs:
+        context = None
+        try:
+            result = build_order_intent(liquidity_map, view, data.instrument, t, cfg, typical_spread)
+            if isinstance(result, OrderIntent):
+                context = trade_context(liquidity_map, t)
+        except Exception as exc:
+            result = EngineError(exception=type(exc).__name__, message=str(exc))
+        records.append(SignalRecord(t=t, instrument=data.instrument, result=result, context=context))
+    return records
+
+
+def same_view(cfgs: Sequence[StrategyConfig]) -> bool:
+    """Whether the engine sees the same candles under every one of ``cfgs``: its
+    analysis reads only the view, so they can share it (generate_many)."""
+    return len({(c.entry_tf, tuple(sorted(c.candle_counts.items()))) for c in cfgs}) <= 1
 
 
 def generate_signals(data: InstrumentData, cfg: StrategyConfig, start: datetime, end: datetime,
@@ -250,36 +273,60 @@ def generate_all(datas: Sequence[InstrumentData], cfg: StrategyConfig, start: da
 
     With a ``cache``, instruments it holds are served from it; the others are
     computed and stored whole, one entry per instrument as before."""
+    return generate_many(datas, (cfg,), start, end, workers, cache, spreads)[0]
+
+
+def generate_many(datas: Sequence[InstrumentData], cfgs: Sequence[StrategyConfig], start: datetime, end: datetime,
+                  workers: Optional[int] = None, cache: Optional[SignalCache] = None,
+                  spreads: Optional[Mapping[str, float]] = None) -> list[dict[str, list[SignalRecord]]]:
+    """generate_all for several configurations at once, in their order (task 298).
+
+    The engine's analysis reads only its view of the candles, so configurations
+    with the same view (same_view; e.g. variants that change only order rules)
+    share one analyze() per close: the batch costs about one run's Phase A
+    instead of one per configuration. Each configuration's records are exactly
+    what generate_all gives it alone, cached under its own key."""
+    cfgs = list(cfgs)
+    if not same_view(cfgs):
+        raise ValueError("generate_many needs configurations with the same entry_tf and candle_counts")
     spreads = spreads or {}
-    hits = ({d.instrument: cache.load(cache.key(d, cfg, start, end, spreads.get(d.instrument))) for d in datas}
-            if cache else {})
-    todo = [d for d in datas if hits.get(d.instrument) is None]
+    keys = ({(d.instrument, k): cache.key(d, cfg, start, end, spreads.get(d.instrument))
+             for d in datas for k, cfg in enumerate(cfgs)} if cache else {})
+    hits = {ik: cache.load(key) for ik, key in keys.items()} if cache else {}
+    missing = {d.instrument: [k for k in range(len(cfgs)) if hits.get((d.instrument, k)) is None] for d in datas}
+    todo = [d for d in datas if missing[d.instrument]]
+    computed: dict[tuple[str, int], list[SignalRecord]] = {}
+
+    def keep(d: InstrumentData, per_cfg: list[list[SignalRecord]]) -> None:
+        for k, records in zip(missing[d.instrument], per_cfg):
+            computed[d.instrument, k] = cache.store(keys[d.instrument, k], records) if cache else records
+
     if workers == 1 or (workers is None and len(todo) <= 1) or not todo:
-        computed = {d.instrument: _generate_list(d, cfg, start, end, cache, spreads.get(d.instrument)) for d in todo}
+        for d in todo:
+            keep(d, _generate_closes(d, [cfgs[k] for k in missing[d.instrument]],
+                                     entry_closes(d, cfgs[0].entry_tf, start, end), spreads.get(d.instrument)))
     else:
         n_workers = workers or len(todo)
         per_instrument = max(1, -(-n_workers // len(todo)))          # round up: keep every worker busy
         with ProcessPoolExecutor(max_workers=min(n_workers, len(todo) * per_instrument)) as pool:
-            futures = {d.instrument: [pool.submit(_generate_closes, d, cfg, part, spreads.get(d.instrument))
-                                      for part in time_slices(entry_closes(d, cfg.entry_tf, start, end),
+            futures = {d.instrument: [pool.submit(_generate_closes, d, [cfgs[k] for k in missing[d.instrument]],
+                                                  part, spreads.get(d.instrument))
+                                      for part in time_slices(entry_closes(d, cfgs[0].entry_tf, start, end),
                                                               per_instrument)]
                        for d in todo}
-            computed = {}
             for d in todo:
-                records = [r for f in futures[d.instrument] for r in f.result()]
-                key = cache.key(d, cfg, start, end, spreads.get(d.instrument)) if cache else None
-                computed[d.instrument] = cache.store(key, records) if cache else records
-    return {d.instrument: computed[d.instrument] if d.instrument in computed else hits[d.instrument] for d in datas}
+                parts = [f.result() for f in futures[d.instrument]]
+                keep(d, [[r for part in parts for r in part[j]] for j in range(len(missing[d.instrument]))])
+    return [{d.instrument: computed[d.instrument, k] if (d.instrument, k) in computed else hits[d.instrument, k]
+             for d in datas} for k in range(len(cfgs))]
 
 
-def _generate_closes(data: InstrumentData, cfg: StrategyConfig, closes: Sequence[datetime],
-                     typical_spread: Optional[float] = None) -> list[SignalRecord]:
-    """One time slice of Phase A: the records at ``closes``, in order."""
+def _generate_closes(data: InstrumentData, cfgs: Sequence[StrategyConfig], closes: Sequence[datetime],
+                     typical_spread: Optional[float] = None) -> list[list[SignalRecord]]:
+    """One time slice of Phase A: per configuration, the records at ``closes``, in order."""
     engine = LiquidityMappingEngine()
-    return [signal_at(data, cfg, t, engine, typical_spread) for t in closes]
-
-
-def _generate_list(data: InstrumentData, cfg: StrategyConfig, start: datetime, end: datetime,
-                   cache: Optional[SignalCache] = None, typical_spread: Optional[float] = None) -> list[SignalRecord]:
-    records = generate_signals(data, cfg, start, end, typical_spread=typical_spread)
-    return cache.store(cache.key(data, cfg, start, end, typical_spread), records) if cache else list(records)
+    per_cfg: list[list[SignalRecord]] = [[] for _ in cfgs]
+    for t in closes:
+        for records, record in zip(per_cfg, signals_at(data, cfgs, t, engine, typical_spread)):
+            records.append(record)
+    return per_cfg

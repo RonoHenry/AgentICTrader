@@ -2,6 +2,7 @@
 
     python -m algo_backtester check-data config/backtests/base.toml
     python -m algo_backtester run config/backtests/base.toml [--variant min_rr_5] [--final] [--walk-forward 3M]
+    python -m algo_backtester run config/backtests/base.toml --variant base --variant anticipation --workers 10
     python -m algo_backtester compare data/backtests/<run_id> data/backtests/<run_id> [--by killzone]
     python -m algo_backtester report data/backtests/<run_id>
     python -m algo_backtester report --forward-test data/paper_trades.json --profile binance
@@ -18,6 +19,8 @@ run refuses, before any work:
 - data with coverage problems, unless ``[data] allow_gaps``.
 It then runs Phase A (cached in data/backtests/cache/ unless ``--no-cache``)
 and Phase B, and writes data/backtests/<run_id>/, report.html included.
+A repeated ``--variant`` runs each variant in turn; those that see the same
+candles over the same run share one Phase A pass (task 298).
 
 compare puts finished runs side by side; runs on different data are refused.
 
@@ -68,6 +71,7 @@ from algo_backtester.pine import PineError, write_pine
 from algo_backtester.report import RUNS_DIR, build_manifest, git_state, spec_source, write_run
 from algo_backtester.report_html import build_forward_test, render, write_html_report, write_report_inputs
 from algo_backtester.run import run_backtest
+from algo_backtester.signals import generate_many
 from algo_research.narrative import load_narrative_config
 from liquidity_engine.models import Timeframe
 from services.market_data.as_of_view import aggregate
@@ -77,9 +81,16 @@ __all__ = ["main", "parse_args"]
 
 SourceFactory = Callable[[BrokerProfile], CandleSource]
 
+#: In a repeated ``run --variant``, the configuration as written, with no variant applied.
+BASE = "base"
+
 
 class _DataProblem(Exception):
     pass
+
+
+def _variant(name: Optional[str]) -> Optional[str]:
+    return None if name == BASE else name
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -93,7 +104,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
     run = commands.add_parser("run", help="run a backtest and write data/backtests/<run_id>/")
     run.add_argument("config", help="run configuration, e.g. config/backtests/base.toml")
-    run.add_argument("--variant", help="a [variants.<name>] of the configuration")
+    run.add_argument("--variant", action="append",
+                     help=f"a [variants.<name>] of the configuration; repeat it to run several, sharing the engine's "
+                          f"Phase A when they see the same candles ('{BASE}' is the configuration as written)")
     run.add_argument("--final", action="store_true", help="the final validation run: may use the hold-out")
     run.add_argument("--walk-forward", metavar="PERIOD", help="consecutive windows, e.g. 3M, 2W, 10D")
     run.add_argument("--workers", type=int, help="processes for Phase A (default: one per instrument; more than the "
@@ -145,7 +158,12 @@ def main(argv: Optional[Sequence[str]] = None, source_factory: Optional[SourceFa
     if args.command == "pine":
         return _pine(args)
 
-    cfg = load_run_config(args.config, args.variant)
+    names = args.variant if args.command == "run" else [args.variant]
+    if args.command == "run" and not names:
+        names = [None]
+    if len(names) > 1:
+        return _run_many(args, names, source_factory or _store, studies_root)
+    cfg = load_run_config(args.config, _variant(names[0]))
     profile = load_profile(cfg.run.profile)
     source = (source_factory or _store)(profile)
     try:
@@ -182,9 +200,12 @@ def _study(cfg: RunConfig, source: CandleSource, root: Path) -> tuple[StudyConfi
     return load_or_create_study(cfg.run.study, min(lasts.values()).date(), root), True
 
 
+def _utc(day: date) -> datetime:
+    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+
+
 def _load(cfg: RunConfig, profile: BrokerProfile, source: CandleSource) -> dict[str, InstrumentData]:
-    start = datetime(cfg.run.start.year, cfg.run.start.month, cfg.run.start.day, tzinfo=timezone.utc)
-    end = datetime(cfg.run.end.year, cfg.run.end.month, cfg.run.end.day, tzinfo=timezone.utc)
+    start, end = _utc(cfg.run.start), _utc(cfg.run.end)
     clock = profile.clock() if profile.venue == "mt5" else None
     return {i: load_instrument(source, i, start, end, cfg.strategy, clock, venue=profile.venue,
                                max_gap_minutes=cfg.data.max_gap_minutes)
@@ -213,11 +234,60 @@ def _check_data(cfg: RunConfig, profile: BrokerProfile, source: CandleSource, st
     return 1 if problems else 0
 
 
+def _run_many(args: argparse.Namespace, names: Sequence[str], source_factory: SourceFactory,
+              studies_root: Path) -> int:
+    """Several variants in one command (task 298). Variants that see the same
+    candles over the same run share the engine: their Phase A is computed in one
+    pass into the cache, then each runs as on its own, served from the cache."""
+    if args.no_cache:
+        print("refused: several variants share their Phase A through the cache; drop --no-cache")
+        return 2
+    if len(set(names)) < len(names):
+        print(f"refused: a variant is named twice in {list(names)}")
+        return 2
+    cfgs = [load_run_config(args.config, _variant(name)) for name in names]
+    groups: dict[str, list[RunConfig]] = {}
+    for cfg in cfgs:
+        view = (cfg.run, cfg.data, cfg.strategy.entry_tf, sorted(cfg.strategy.candle_counts.items()),
+                cfg.strategy.timeframes)
+        groups.setdefault(repr(view), []).append(cfg)
+    cache = SignalCache.default()
+    codes = []
+    for group in groups.values():
+        first = group[0]
+        profile = load_profile(first.run.profile)
+        source = source_factory(profile)
+        try:
+            study, _ = _study(first, source, studies_root)
+            for cfg in group:
+                check_holdout(cfg, study, args.final)
+            print(f"loading {', '.join(first.run.instruments)} from {first.run.start} to {first.run.end}...")
+            datas = _load(first, profile, source)
+            ensure_coverage([d.coverage for d in datas.values()], first.data.allow_gaps)
+            labels = ", ".join(cfg.variant or BASE for cfg in group)
+            print(f"Phase A, shared by {labels}...")
+            specs = profile.specs()
+            generate_many([datas[i] for i in first.run.instruments], [cfg.strategy for cfg in group],
+                          _utc(first.run.start), _utc(first.run.end), args.workers, cache,
+                          {i: specs[i].default_spread for i in first.run.instruments})
+            for cfg in group:
+                print(f"--- {cfg.variant or BASE}")
+                codes.append(_run(args, cfg, profile, source, study, datas))
+        except HoldoutOverlapError as exc:
+            print(f"refused: {exc}")
+            return 2
+        except (_DataProblem, CoverageError) as exc:
+            print(f"data problem: {exc}")
+            return 1
+    return max(codes, default=0)
+
+
 def _run(args: argparse.Namespace, cfg: RunConfig, profile: BrokerProfile, source: CandleSource,
-         study: StudyConfig) -> int:
+         study: StudyConfig, datas: Optional[dict[str, InstrumentData]] = None) -> int:
     check_holdout(cfg, study, args.final)
-    print(f"loading {', '.join(cfg.run.instruments)} from {cfg.run.start} to {cfg.run.end}...")
-    datas = _load(cfg, profile, source)
+    if datas is None:
+        print(f"loading {', '.join(cfg.run.instruments)} from {cfg.run.start} to {cfg.run.end}...")
+        datas = _load(cfg, profile, source)
     ensure_coverage([d.coverage for d in datas.values()], cfg.data.allow_gaps)
     specs = profile.specs()
     cache = None if args.no_cache else SignalCache.default()

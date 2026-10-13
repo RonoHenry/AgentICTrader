@@ -645,6 +645,13 @@ Numbered from 294, after market-narrative's 290–293. Tasks 294 and 295 need th
     - Rebuilding only when a timeframe's bar closes (as context-engine CE-D9 plans) is the larger, engine-side saving.
   - **Validates: Requirements 7.4**
 
+- [x] 298. Variants share Phase A (`algo_backtester/signals.py`, `cli.py`)
+  - Added 2026-10-13. The 242 batch (four variants of ~1.5 h each) was lost to a restart, and its variants differ only in order rules: `analyze()` reads only the candle view, so its map is the same under each.
+  - `signals_at` runs the engine once per close and applies each configuration's order rules to the map. `generate_many` is `generate_all` for several configurations with the same view (`same_view`: entry_tf and candle_counts), time-sliced as in task 297, one cache entry per configuration and instrument. Configurations already cached are not recomputed.
+  - `run --variant A --variant B …` (`base` is the configuration as written) groups the variants that see the same candles over the same run, computes their Phase A in one pass into the cache, then runs each as on its own. It needs the cache: `--no-cache` is refused, as is a variant named twice.
+  - **RED:** `test_signals_at_analyses_once_and_matches_each_configuration_alone`, `test_signals_at_records_an_engine_failure_for_every_configuration`, `test_generate_many_equals_each_configuration_alone`, `test_generate_many_refuses_configurations_that_see_different_candles`, `test_generate_many_stores_each_configuration_and_serves_it_alone`, `test_generate_many_computes_only_what_the_cache_lacks`, `test_run_several_variants_shares_phase_a`, `test_run_several_variants_refuses_no_cache_and_repeats`. The golden run is unchanged.
+  - **Validates: Requirements 7.4**
+
 ---
 
 ## Task Dependency Graph

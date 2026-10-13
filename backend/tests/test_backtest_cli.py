@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from algo_backtester.cli import main, parse_args
+from liquidity_engine import LiquidityMappingEngine
 from tests.test_backtest_signals import FixtureSource
 
 UTC = timezone.utc
@@ -152,7 +153,7 @@ def test_run_refuses_holdout_and_coverage_problems(setup, capsys):
 def test_variant_and_final_flags_parsed(setup, capsys):
     args = parse_args(["run", "base.toml", "--variant", "min_rr_5", "--final", "--walk-forward", "3M", "--workers", "2"])
     assert (args.command, args.config, args.variant, args.final, args.walk_forward, args.workers) == (
-        "run", "base.toml", "min_rr_5", True, "3M", 2)
+        "run", "base.toml", ["min_rr_5"], True, "3M", 2)
     assert parse_args(["run", "base.toml"]).final is False
 
     config, root = setup
@@ -165,6 +166,45 @@ def test_variant_and_final_flags_parsed(setup, capsys):
     assert manifest["final_validation"] is True and manifest["variant"] == "min_rr_5"
     assert manifest["strategy_config"]["min_rr"] == 5.0
 
+
+
+def test_run_several_variants_shares_phase_a(setup, capsys, monkeypatch):
+    """Task 298: variants that see the same candles share one engine pass; each
+    run is what it would be alone."""
+    config, root = setup
+    study(root, "2026-10-01")
+    monkeypatch.setattr("algo_backtester.cache.CACHE_DIR", root / "cache")
+    analysed, real = [], LiquidityMappingEngine.analyze
+
+    def counting(self, view, instrument, t):
+        analysed.append(t)
+        return real(self, view, instrument, t)
+
+    monkeypatch.setattr(LiquidityMappingEngine, "analyze", counting)
+    runs = root / "runs"
+    assert cli(["run", str(config), "--variant", "base", "--variant", "min_rr_5", "--runs-dir", str(runs),
+                "--workers", "1"], root) == 0
+    assert "Phase A, shared by base, min_rr_5" in capsys.readouterr().out
+    assert analysed and len(analysed) == len(set(analysed))           # every close analysed once, for both
+    shared = {json.loads((d / "manifest.json").read_text(encoding="utf-8"))["variant"]: d for d in runs.iterdir()}
+    assert set(shared) == {None, "min_rr_5"}
+
+    alone = root / "alone"
+    for name in ("base", "min_rr_5"):
+        assert cli(["run", str(config), "--variant", name, "--runs-dir", str(alone), "--no-cache", "--workers", "1"],
+                   root) == 0
+    for d in alone.iterdir():
+        variant = json.loads((d / "manifest.json").read_text(encoding="utf-8"))["variant"]
+        assert (d / "journal.csv").read_text(encoding="utf-8") == (shared[variant] / "journal.csv").read_text(
+            encoding="utf-8")
+
+
+def test_run_several_variants_refuses_no_cache_and_repeats(setup, capsys):
+    config, root = setup
+    assert cli(["run", str(config), "--variant", "base", "--variant", "min_rr_5", "--no-cache"], root) == 2
+    assert cli(["run", str(config), "--variant", "min_rr_5", "--variant", "min_rr_5"], root) == 2
+    out = capsys.readouterr().out
+    assert "drop --no-cache" in out and "named twice" in out
 
 # ── compare ────────────────────────────────────────────────────────────────
 
