@@ -207,3 +207,22 @@ def test_autopsy_command_reads_its_config(tmp_path, capsys):
     assert main(["autopsy", str(run), "--config", str(config)]) == 0
     md = (run / "autopsy.md").read_text(encoding="utf-8")
     assert "Frames: D1, H4" in md and "Price basis: NONE" in md
+
+
+# ── pine (algo-backtester task 294) ────────────────────────────────────────
+
+def test_pine_command_writes_and_refuses(tmp_path, capsys):
+    from tests.test_backtest_autopsy import write_run as write_synthetic_run
+    run = write_synthetic_run(tmp_path / "runs")
+    assert main(["pine", str(run), "--instrument", "EURUSD", "--start", "2026-01-12", "--end", "2026-01-15"]) == 0
+    assert (run / "pine" / "EURUSD_2026-01-12_2026-01-15.pine").is_file()
+    assert "EURUSD_2026-01-12_2026-01-15.pine" in capsys.readouterr().out
+
+    assert main(["pine", str(run), "--instrument", "EURUSD", "--month", "2026-01"]) == 0
+    month = (run / "pine" / "EURUSD_2026-01-01_2026-01-31.pine").read_text(encoding="utf-8")
+    assert month.count("WITH_ON_TIME") >= 2
+    capsys.readouterr()
+
+    assert main(["pine", str(tmp_path / "nothing"), "--instrument", "EURUSD", "--month", "2026-01"]) == 2
+    assert main(["pine", str(run), "--instrument", "EURUSD", "--month", "2026-03"]) == 2
+    assert "no trades" in capsys.readouterr().out

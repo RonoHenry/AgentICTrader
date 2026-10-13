@@ -724,3 +724,69 @@ The tests follow the TDD steering doc: each task is written RED first. They live
 | 10 Broker profiles | `BrokerProfile`, `config/brokers/*.toml`, L8, manifest `broker_profile` |
 | 11 Run report | `report_html.py`, `TradeContext` on `SignalRecord` |
 | 9.6 FX forward test | `scripts/run_fx_forward_test.ps1`, runner `--profile` (task 192), paper broker on `FillModel` (L4) |
+| 13 TradingView overlay | `pine.py`, the `pine` command (update 2026-10f) |
+| 14 Failure modes in the report | `report_html.py` reads `autopsy.csv` (update 2026-10f) |
+
+---
+
+## Update 2026-10f: The Engine on the Trader's Own Charts
+
+### `algo_backtester/pine.py` (Requirement 13)
+
+```python
+MAX_TRADES = 120                                      # D26
+
+class PineError(Exception): ...                       # an empty or too-large window
+
+def pine_script(run_dir: Path, instrument: str, start: date, end: date,
+                cfg: Optional[NarrativeConfig] = None) -> str
+def write_pine(run_dir: Path, instrument: str, start: date, end: date,
+               cfg: Optional[NarrativeConfig] = None) -> Path   # <run_dir>/pine/<instrument>_<start>_<end>.pine
+```
+
+**Inputs.** Everything comes from the run directory:
+- `load_run`, `autopsy_table` (task 291);
+- the journal's `t` and `grade`;
+- each setup's swept level and draw in `context.json`;
+- the D1 narrative of `candles.json` on the narrative's price basis.
+
+**Which trades.** The window holds the instrument's filled, closed trades whose decision falls on a trading date in `[start, end]`.
+
+**The script.** A fixed Pine v6 template:
+- `indicator(..., overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)`;
+- the inputs of Requirement 13.5;
+- the data as typed `var array<...> = array.from(...)` literals, sorted by decision time:
+  - times are UNIX milliseconds, which `xloc.bar_time` reads, so the chart's time zone doesn't matter;
+  - floats always carry a decimal point, so Pine infers the type;
+  - a missing raid or draw is 0 (a sentinel);
+  - strings are escaped;
+  - long literals wrap with a 6-space continuation indent (any indent that isn't a multiple of 4).
+
+**Each bar** (D25):
+1. Create the D1 opens whose day starts before `time_close`.
+2. Open the trades whose decision time is before `time_close`:
+   - risk and reward boxes from the decision to the current bar;
+   - the decision label;
+   - the raided pool's line (formed → raided, both at or before the decision);
+   - the draw's line.
+3. For each open trade:
+   - put a fill marker on the bar holding its fill;
+   - extend its boxes and draw line to `time_close`;
+   - on the bar holding its exit, end them at the exit, add the exit label, and drop it from the open list.
+
+The open list is walked from the end, guarded against an empty list, because a Pine `for` loop from −1 to 0 still runs.
+
+**Symbol check.** On the last bar, a label warns when `syminfo.ticker` doesn't contain the instrument.
+
+**CLI.** `python -m algo_backtester pine <run_dir> --instrument EURUSD (--month 2025-03 | --start 2025-03-01 --end 2025-03-31) [--config narrative.toml]`
+- exit 0 when written;
+- exit 2 when the run can't be read or the window is refused.
+
+### `report_html.py` (Requirement 14)
+
+`build_from_run_dir` reads `autopsy.csv` when present and maps `setup_id` → mode onto each filled trade's row:
+- the row gains `mode`;
+- `mode` joins `_FILTERS`;
+- the details panel shows it.
+
+Without the file, rows carry no `mode` and the filter is absent, so older runs and the golden report render unchanged.

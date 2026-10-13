@@ -1,4 +1,4 @@
-"""The command line: python -m algo_backtester check-data | run | compare | report | autopsy.
+"""The command line: python -m algo_backtester check-data | run | compare | report | autopsy | pine.
 
     python -m algo_backtester check-data config/backtests/base.toml
     python -m algo_backtester run config/backtests/base.toml [--variant min_rr_5] [--final] [--walk-forward 3M]
@@ -6,6 +6,7 @@
     python -m algo_backtester report data/backtests/<run_id>
     python -m algo_backtester report --forward-test data/paper_trades.json --profile binance
     python -m algo_backtester autopsy data/backtests/<run_id> [--config config/research/narrative.toml]
+    python -m algo_backtester pine data/backtests/<run_id> --instrument EURUSD --month 2025-03
 
 check-data loads every instrument's history for the run and reports coverage
 problems and warm-up sources (Req 3.6). On first use it also creates the
@@ -27,6 +28,9 @@ autopsy writes a run's autopsy.csv and autopsy.md: every trade read against
 how its candles formed, the run's R split by failure mode (market-narrative
 spec). run writes it too, after the report. It needs only the run directory.
 
+pine writes a TradingView Pine Script overlay of a run's trades for one
+instrument and window, to paste into the Pine Editor (update 2026-10f).
+
 Candles come from the TimescaleDB store (TIMESCALE_URL, from the environment
 or .env): the rows of the profile's venue, mt5 or binance.
 
@@ -34,7 +38,7 @@ Exit codes: 0 done; 1 data problems; 2 refused (the hold-out, runs that
 can't be compared, or a directory the autopsy can't read).
 
 Validates: Requirements 7.1 (.kiro/specs/algo-backtester/requirements.md);
-market-narrative Requirements 4.3-4.4
+Requirement 13.1; market-narrative Requirements 4.3-4.4
 """
 from __future__ import annotations
 
@@ -60,6 +64,7 @@ from algo_backtester.config import (
     load_run_config,
 )
 from algo_backtester.data import CandleSource, CoverageError, InstrumentData, TimescaleSource, ensure_coverage, load_instrument
+from algo_backtester.pine import PineError, write_pine
 from algo_backtester.report import RUNS_DIR, build_manifest, git_state, spec_source, write_run
 from algo_backtester.report_html import build_forward_test, render, write_html_report, write_report_inputs
 from algo_backtester.run import run_backtest
@@ -109,6 +114,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     aut = commands.add_parser("autopsy", help="read a run's trades against how their candles formed")
     aut.add_argument("run_dir", type=Path, help="a run directory, data/backtests/<run_id>")
     aut.add_argument("--config", type=Path, help="narrative settings (default config/research/narrative.toml)")
+
+    pine = commands.add_parser("pine", help="write a TradingView overlay of a run's trades")
+    pine.add_argument("run_dir", type=Path, help="a run directory, data/backtests/<run_id>")
+    pine.add_argument("--instrument", required=True, help="e.g. EURUSD")
+    pine.add_argument("--month", help="a calendar month of trading dates, e.g. 2025-03")
+    pine.add_argument("--start", type=date.fromisoformat, help="first trading date, e.g. 2025-03-01")
+    pine.add_argument("--end", type=date.fromisoformat, help="last trading date, e.g. 2025-03-31")
+    pine.add_argument("--config", type=Path, help="narrative settings (default config/research/narrative.toml)")
     return parser.parse_args(argv)
 
 
@@ -128,6 +141,8 @@ def main(argv: Optional[Sequence[str]] = None, source_factory: Optional[SourceFa
         return _report(args, source_factory or _store)
     if args.command == "autopsy":
         return _autopsy(args)
+    if args.command == "pine":
+        return _pine(args)
 
     cfg = load_run_config(args.config, args.variant)
     profile = load_profile(cfg.run.profile)
@@ -243,6 +258,28 @@ def _autopsy(args: argparse.Namespace) -> int:
         return 2
     print(f"autopsy: {md}")
     print(f"table:   {table}")
+    return 0
+
+
+def _window(args: argparse.Namespace) -> tuple[date, date]:
+    if args.month:
+        first = date.fromisoformat(f"{args.month}-01")
+        last = (first.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+        return first, last
+    if args.start is None or args.end is None:
+        raise ValueError("give --month, or both --start and --end")
+    return args.start, args.end
+
+
+def _pine(args: argparse.Namespace) -> int:
+    try:
+        start, end = _window(args)
+        path = write_pine(args.run_dir, args.instrument, start, end, load_narrative_config(args.config))
+    except (AutopsyError, PineError, ValueError, FileNotFoundError) as exc:
+        print(f"refused: {exc}")
+        return 2
+    print(f"pine: {path}")
+    print("paste it into TradingView's Pine Editor on a chart of the same instrument, then Add to chart")
     return 0
 
 

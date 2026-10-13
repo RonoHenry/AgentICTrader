@@ -605,6 +605,36 @@ Tasks marked **(user action)** need your MT5 terminal or a decision from you.
   - Confirm with `grep` that nothing imports `ml.backtesting`.
   - `python scripts/run_all_tests.py` is green.
 
+### Update 2026-10f: the engine on the trader's own charts (tasks 294–296)
+
+Numbered from 294, after market-narrative's 290–293. Tasks 294 and 295 need the trade autopsy (market-narrative tasks 291–292).
+
+- [x] 294. TradingView overlay (`algo_backtester/pine.py`, the `pine` command)
+  - **294a. RED** (`backend/tests/test_backtest_pine.py`, on the autopsy tests' synthetic run)
+    - `test_header_and_inputs` — Pine v6, overlay, the 500 caps, each input; the failure-mode input says "hindsight".
+    - `test_trades_embedded_in_decision_order` — times in UNIX ms, sides, levels, the 0 sentinel for a missing raid, and exit texts carrying R, exit reason and mode.
+    - `test_window_filters_instrument_and_trading_dates`
+    - `test_d1_opens_for_each_day_in_the_window`
+    - `test_floats_carry_a_decimal_point` and `test_strings_escaped`
+    - `test_arrays_have_equal_lengths` and `test_continuation_indent_is_not_a_multiple_of_four`
+    - `test_refuses_empty_and_oversized_windows`
+    - `test_backtest_cli.py`: `pine` writes the file; a directory without run files exits 2; `--month` and `--start/--end` agree.
+  - **294b. GREEN** — `pine.py` and the `pine` command.
+  - **294c. REFACTOR**
+  - **Validates: Requirements 13.1–13.7**
+
+- [ ] 295. Failure modes in the run report (`algo_backtester/report_html.py`)
+  - **295a. RED** (`test_backtest_report_html.py`)
+    - `test_report_carries_failure_mode_when_autopsy_present`
+    - `test_report_unchanged_without_autopsy`
+  - **295b. GREEN**
+  - **Validates: Requirements 14.1–14.2**
+
+- [ ] 296. Check on TradingView **(user review)**
+  - Write one month of the BODY run for one instrument. You paste it into the Pine Editor on your own chart, check the drawings sit where the report puts them, and replay a day with Bar Replay.
+  - Fix whatever doesn't compile or draw right.
+  - Then the failure-mode filter: replay the `AGAINST_EXPANSION` days and note what you would have done.
+
 ---
 
 ## Task Dependency Graph
