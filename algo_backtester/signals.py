@@ -258,7 +258,7 @@ def generate_all(datas: Sequence[InstrumentData], cfg: StrategyConfig, start: da
         computed = {d.instrument: _generate_list(d, cfg, start, end, cache, spreads.get(d.instrument)) for d in todo}
     else:
         n_workers = workers or len(todo)
-        per_instrument = max(1, n_workers // len(todo))
+        per_instrument = max(1, -(-n_workers // len(todo)))          # round up: keep every worker busy
         with ProcessPoolExecutor(max_workers=min(n_workers, len(todo) * per_instrument)) as pool:
             futures = {d.instrument: [pool.submit(_generate_closes, d, cfg, part, spreads.get(d.instrument))
                                       for part in time_slices(entry_closes(d, cfg.entry_tf, start, end),
