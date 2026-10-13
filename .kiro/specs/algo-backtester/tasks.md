@@ -623,7 +623,7 @@ Numbered from 294, after market-narrative's 290–293. Tasks 294 and 295 need th
   - **294c. REFACTOR**
   - **Validates: Requirements 13.1–13.7**
 
-- [ ] 295. Failure modes in the run report (`algo_backtester/report_html.py`)
+- [x] 295. Failure modes in the run report (`algo_backtester/report_html.py`)
   - **295a. RED** (`test_backtest_report_html.py`)
     - `test_report_carries_failure_mode_when_autopsy_present`
     - `test_report_unchanged_without_autopsy`

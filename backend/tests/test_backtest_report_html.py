@@ -321,3 +321,34 @@ def test_run_written_before_executions_still_renders(run_dir):
     (run_dir / "executions.json").unlink()
     data = data_of(write_html_report(run_dir).read_text(encoding="utf-8"))
     assert data["executions"] == {} and row_of(data, "EURUSD-1")["markers"]["fill"]
+
+
+# ── failure modes from the trade autopsy (algo-backtester task 295) ────────
+
+def _write_autopsy(run_dir: Path, mode: str) -> list[dict]:
+    with (run_dir / "journal.csv").open(encoding="utf-8", newline="") as fh:
+        filled = [r for r in csv.DictReader(fh) if r["filled_at"]]
+    with (run_dir / "autopsy.csv").open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["t", "instrument", "setup_id", "mode"], lineterminator="\n")
+        writer.writeheader()
+        writer.writerows({"t": r["t"], "instrument": r["instrument"], "setup_id": r["setup_id"], "mode": mode}
+                         for r in filled)
+    return filled
+
+
+def test_report_carries_failure_mode_when_autopsy_present(run_dir):
+    filled = _write_autopsy(run_dir, "AGAINST_EXPANSION")
+    assert filled
+    html = write_html_report(run_dir).read_text(encoding="utf-8")
+    data = data_of(html)
+    trades = {(datetime.fromisoformat(r["t"]), r["instrument"]) for r in filled}
+    for row in data["rows"]:
+        expected = "AGAINST_EXPANSION" if (datetime.fromisoformat(row["t"]), row["instrument"]) in trades else None
+        assert row["mode"] == expected
+    assert data["filters"]["mode"] == ["AGAINST_EXPANSION"]
+    assert 'mode: "Failure mode (hindsight)"' in html and '"failure mode (hindsight)"' in html
+
+
+def test_report_unchanged_without_autopsy(run_dir):
+    data = data_of(write_html_report(run_dir).read_text(encoding="utf-8"))
+    assert "mode" not in data["filters"] and "mode" not in data["fields"]

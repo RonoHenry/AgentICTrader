@@ -166,12 +166,25 @@ def build_from_run_dir(run_dir: Path) -> dict:
     ]
     charts = _Charts(candles)
     rows = [_journal_row(n, r, contexts.get((r["t"], r["instrument"])), charts) for n, r in enumerate(journal)]
+    modes = _autopsy_modes(run_dir)
+    if modes is not None:                                     # the trade autopsy's failure modes (Req 14)
+        for row, r in zip(rows, journal):
+            row["mode"] = modes.get((r["t"], r["instrument"])) if r["filled_at"] else None
     executed = read("executions.json") if (run_dir / "executions.json").is_file() else {}
     executions = {o["order_id"]: {k: v for k, v in o.items() if k not in ("order_id", "instrument")}
                   for o in executed.get("orders", [])}
     return _model(f"Backtest {manifest['run_id'][:12]}", header, rows, charts,
                   summary={**summary, "min_trades": manifest["run_config"]["report"]["min_trades"]},
                   executions=executions, account_ccy=executed.get("account_ccy"))
+
+
+def _autopsy_modes(run_dir: Path) -> Optional[dict]:
+    """(t, instrument) -> failure mode from the run's autopsy.csv; None without one."""
+    path = run_dir / "autopsy.csv"
+    if not path.is_file():
+        return None
+    with path.open(encoding="utf-8", newline="") as fh:
+        return {(r["t"], r["instrument"]): r["mode"] for r in csv.DictReader(fh) if r.get("mode")}
 
 
 def build_forward_test(trades: Sequence[Mapping[str, Any]], candles: Mapping[str, Sequence[Any]],
@@ -293,7 +306,8 @@ class _Charts:
 def _model(title: str, header: list, rows: list[dict], charts: _Charts, summary: Optional[dict],
            executions: Optional[dict] = None, account_ccy: Optional[str] = None) -> dict:
     used = {r["instrument"] for r in rows if r["window"]}
-    filters = {name: sorted({str(r[name]) for r in rows if r[name] is not None}) for name in _FILTERS}
+    names = _FILTERS + (("mode",) if any(r.get("mode") for r in rows) else ())
+    filters = {name: sorted({str(r[name]) for r in rows if r.get(name) is not None}) for name in names}
     return {"title": title, "header": header, "rows": rows, "filters": filters, "summary": summary,
             "timeframe": charts.timeframe.value,
             "candles": {i: bars for i, bars in sorted(charts.bars.items()) if i in used},
@@ -528,8 +542,10 @@ svg text.tag { font-weight:600; fill:var(--fg); } svg text.pos { fill:var(--up);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
   const num = (v, d) => v == null ? "" : Number(v).toFixed(d);
   const filters = document.getElementById("filters");
-  const labels = {outcome: "Outcome", decision: "Decision / skip reason", instrument: "Instrument", grade: "Grade", killzone: "Killzone"};
+  const labels = {outcome: "Outcome", decision: "Decision / skip reason", instrument: "Instrument", grade: "Grade", killzone: "Killzone",
+                  mode: "Failure mode (hindsight)"};
   for (const name of Object.keys(labels)) {
+    if (!data.filters[name]) continue;                      // runs without an autopsy have no failure modes
     const opts = (name === "decision" ? ['<option value="__setups">all but no-trade</option>', '<option value="">all</option>']
                                       : ['<option value="">all</option>'])
       .concat(data.filters[name].map(v => `<option>${esc(v)}</option>`));
@@ -590,6 +606,7 @@ svg text.tag { font-weight:600; fill:var(--fg); } svg text.pos { fill:var(--up);
       ["position", ex ? `${ex.lots} lots, risk ${num(ex.risk_amount, 2)}${ccy}` + (m.fill ? `, P&L ${money(ex.pnl)}` : "") : ""],
       ["fill", m.fill ? `${m.fill[1]} at ${m.fill[0]}` : ""], ["exit", m.exit ? `${m.exit[1]} at ${m.exit[0]} (${r.outcome})` : r.outcome],
       ["R", r.net_r == null ? "" : `gross ${num(r.gross_r, 2)}, net ${num(r.net_r, 2)}, costs ${num(r.cost_r, 2)}`],
+      ["failure mode (hindsight)", r.mode || ""],
       ["entry array", c.entry_array ? `${c.entry_array.type} ${c.entry_array.direction} ${c.entry_array.timeframe} ${c.entry_array.low}-${c.entry_array.high}, formed ${c.entry_array.formed_at}` : ""],
       ["draw on liquidity", c.draw_on_liquidity ? `${c.draw_on_liquidity.type} ${c.draw_on_liquidity.source} ${c.draw_on_liquidity.price}` : ""],
       ["raid", c.swept_level ? `${c.swept_level.side} ${c.swept_level.source} ${c.swept_level.timeframe} ${c.swept_level.price}, formed ${c.swept_level.formed_at}, raided ${c.swept_level.raided_at}` : ""],

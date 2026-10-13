@@ -236,16 +236,18 @@ def _run(args: argparse.Namespace, cfg: RunConfig, profile: BrokerProfile, sourc
     write_report_inputs(run_dir, result.journal, {i: d.closed[entry_tf] for i, d in datas.items()}, entry_tf,
                         cfg.report.chart_bars_before, cfg.report.chart_bars_after, m1=result.bars,
                         account_ccy=specs.account_ccy)
+    autopsy: Optional[Path] = None
+    skipped: Optional[AutopsyError] = None
+    try:                                     # before the report, which shows its failure modes
+        autopsy = write_autopsy(run_dir)[0]
+    except AutopsyError as exc:              # the run itself succeeded
+        skipped = exc
     report = write_html_report(run_dir)
     counts = {"journal rows": len(result.journal), "closed": len(result.trades), "open": len(result.open_orders)}
     print(f"wrote {run_dir}  ({', '.join(f'{k} {v}' for k, v in counts.items())})")
     print(f"summary: {run_dir / 'summary.md'}")
     print(f"report:  {report}")
-    try:
-        autopsy, _ = write_autopsy(run_dir)
-        print(f"autopsy: {autopsy}")
-    except AutopsyError as exc:              # the run itself succeeded
-        print(f"autopsy skipped: {exc}")
+    print(f"autopsy: {autopsy}" if autopsy is not None else f"autopsy skipped: {skipped}")
     return 0
 
 
