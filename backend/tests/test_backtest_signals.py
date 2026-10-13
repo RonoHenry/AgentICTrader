@@ -156,6 +156,27 @@ def test_parallel_per_instrument_equals_sequential():
     assert set(parallel) == {"EURUSD", "XAUUSD"} and all(parallel.values())
 
 
+def test_time_slices_equal_sequential():
+    """More workers than instruments: each instrument's closes are cut into
+    contiguous slices, computed in parallel and joined in order. The engine is
+    stateless per close, so the records are identical."""
+    datas = [data_for("EURUSD"), data_for("XAUUSD")]
+    start, end = datetime(2026, 9, 30, 13, 0, tzinfo=UTC), datetime(2026, 9, 30, 15, 0, tzinfo=UTC)
+    sequential = generate_all(datas, CFG, start, end, workers=1)
+    assert generate_all(datas, CFG, start, end, workers=5) == sequential
+    one = [data_for("EURUSD")]
+    assert generate_all(one, CFG, start, end, workers=3) == {"EURUSD": sequential["EURUSD"]}
+
+
+def test_time_slices_are_contiguous_and_ordered():
+    from algo_backtester.signals import time_slices
+    closes = list(range(10))
+    assert time_slices(closes, 3) == [[0, 1, 2, 3], [4, 5, 6], [7, 8, 9]]
+    assert time_slices(closes, 1) == [closes]
+    assert time_slices([1, 2], 5) == [[1], [2]]
+    assert time_slices([], 3) == []
+
+
 # ── TradeContext (task 217, Req 11.5) ──────────────────────────────────────
 # 12:00-14:00 UTC on 2026-09-30 holds both order intents and no-trades.
 CONTEXT_START, CONTEXT_END = datetime(2026, 9, 30, 12, 0, tzinfo=UTC), datetime(2026, 9, 30, 14, 0, tzinfo=UTC)

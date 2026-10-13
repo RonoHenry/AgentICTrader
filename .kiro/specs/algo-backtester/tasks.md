@@ -635,6 +635,16 @@ Numbered from 294, after market-narrative's 290–293. Tasks 294 and 295 need th
   - Fix whatever doesn't compile or draw right.
   - Then the failure-mode filter: replay the `AGAINST_EXPANSION` days and note what you would have done.
 
+- [x] 297. Time-sliced Phase A (`algo_backtester/signals.py`)
+  - Added 2026-10-13 at the user's request ("why should this take this long?"). A full run took ~2.5 h when two ran side by side: Phase A gave each instrument one process, so 4 of 12 threads did the work.
+  - The engine is stateless per close. With more `--workers` than instruments, each instrument's closes are cut into contiguous time slices, run in parallel and joined in order. The records are identical, and the cache still holds one entry per instrument.
+  - **RED:** `test_time_slices_equal_sequential`, `test_time_slices_are_contiguous_and_ordered`, `test_time_sliced_run_stores_one_entry_per_instrument`. The golden run is unchanged.
+  - **Profile, for the next step:**
+    - `analyze()` rebuilds every timeframe's arrays at each M15 close, about 1,800 PDArrays per call.
+    - Pydantic validation and id hashing take about 30% of it.
+    - Rebuilding only when a timeframe's bar closes (as context-engine CE-D9 plans) is the larger, engine-side saving.
+  - **Validates: Requirements 7.4**
+
 ---
 
 ## Task Dependency Graph

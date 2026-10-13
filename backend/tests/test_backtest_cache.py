@@ -145,6 +145,16 @@ def test_generate_all_writes_and_reuses_cache(tmp_path):
     assert parallel == generate_all(datas, CFG, start, end, workers=1)
 
 
+def test_time_sliced_run_stores_one_entry_per_instrument(tmp_path):
+    datas = [data_for("EURUSD"), data_for("XAUUSD")]
+    start, end = datetime(2026, 9, 30, 13, 0, tzinfo=UTC), datetime(2026, 9, 30, 14, 0, tzinfo=UTC)
+    cache = SignalCache(tmp_path, ENGINE_FP)
+    sliced = generate_all(datas, CFG, start, end, workers=4, cache=cache)
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(
+        cache.path(cache.key(d, CFG, start, end)).name for d in datas)
+    assert generate_all(datas, CFG, start, end, workers=1, cache=cache) == sliced == generate_all(datas, CFG, start, end, workers=1)
+
+
 # ── corruption and atomic writes ───────────────────────────────────────────
 
 CORRUPTIONS = {

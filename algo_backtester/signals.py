@@ -60,6 +60,7 @@ __all__ = [
     "generate_all",
     "generate_signals",
     "signal_at",
+    "time_slices",
     "trade_context",
 ]
 
@@ -222,27 +223,60 @@ def generate_signals(data: InstrumentData, cfg: StrategyConfig, start: datetime,
         yield signal_at(data, cfg, t, engine, typical_spread)
 
 
+def time_slices(closes: Sequence, n: int) -> list[list]:
+    """``closes`` cut into at most ``n`` contiguous slices, in order, sizes differing by one at most."""
+    n = max(1, min(n, len(closes)))
+    size, extra = divmod(len(closes), n)
+    out, i = [], 0
+    for k in range(n):
+        step = size + (1 if k < extra else 0)
+        if step:
+            out.append(list(closes[i:i + step]))
+        i += step
+    return out
+
+
 def generate_all(datas: Sequence[InstrumentData], cfg: StrategyConfig, start: datetime, end: datetime,
                  workers: Optional[int] = None, cache: Optional[SignalCache] = None,
                  spreads: Optional[Mapping[str, float]] = None) -> dict[str, list[SignalRecord]]:
-    """Phase A for every instrument, one process each (``workers=1``: in this
-    process). Results are identical either way. ``spreads`` holds each
-    instrument's typical spread, for cfg.min_stop_spreads.
+    """Phase A for every instrument (``workers=1``: in this process). Results are
+    identical either way. ``spreads`` holds each instrument's typical spread, for
+    cfg.min_stop_spreads.
+
+    By default each instrument gets one process. With more ``workers`` than
+    instruments, each instrument's closes are also cut into contiguous time
+    slices, computed in parallel and joined in order: the engine is stateless
+    per close, so the records don't change, only the wall time.
 
     With a ``cache``, instruments it holds are served from it; the others are
-    computed and stored by their worker."""
+    computed and stored whole, one entry per instrument as before."""
     spreads = spreads or {}
     hits = ({d.instrument: cache.load(cache.key(d, cfg, start, end, spreads.get(d.instrument))) for d in datas}
             if cache else {})
     todo = [d for d in datas if hits.get(d.instrument) is None]
-    if workers == 1 or len(todo) <= 1:
+    if workers == 1 or (workers is None and len(todo) <= 1) or not todo:
         computed = {d.instrument: _generate_list(d, cfg, start, end, cache, spreads.get(d.instrument)) for d in todo}
     else:
-        with ProcessPoolExecutor(max_workers=min(workers or len(todo), len(todo))) as pool:
-            futures = {d.instrument: pool.submit(_generate_list, d, cfg, start, end, cache, spreads.get(d.instrument))
+        n_workers = workers or len(todo)
+        per_instrument = max(1, n_workers // len(todo))
+        with ProcessPoolExecutor(max_workers=min(n_workers, len(todo) * per_instrument)) as pool:
+            futures = {d.instrument: [pool.submit(_generate_closes, d, cfg, part, spreads.get(d.instrument))
+                                      for part in time_slices(entry_closes(d, cfg.entry_tf, start, end),
+                                                              per_instrument)]
                        for d in todo}
-            computed = {instrument: future.result() for instrument, future in futures.items()}
+            computed = {}
+            for d in todo:
+                records = [r for f in futures[d.instrument] for r in f.result()]
+                key = cache.key(d, cfg, start, end, spreads.get(d.instrument)) if cache else None
+                computed[d.instrument] = cache.store(key, records) if cache else records
     return {d.instrument: computed[d.instrument] if d.instrument in computed else hits[d.instrument] for d in datas}
+
+
+def _generate_closes(data: InstrumentData, cfg: StrategyConfig, closes: Sequence[datetime],
+                     typical_spread: Optional[float] = None) -> list[SignalRecord]:
+    """One time slice of Phase A: the records at ``closes``, in order."""
+    engine = LiquidityMappingEngine()
+    return [signal_at(data, cfg, t, engine, typical_spread) for t in closes]
 
 
 def _generate_list(data: InstrumentData, cfg: StrategyConfig, start: datetime, end: datetime,

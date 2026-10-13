@@ -96,7 +96,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     run.add_argument("--variant", help="a [variants.<name>] of the configuration")
     run.add_argument("--final", action="store_true", help="the final validation run: may use the hold-out")
     run.add_argument("--walk-forward", metavar="PERIOD", help="consecutive windows, e.g. 3M, 2W, 10D")
-    run.add_argument("--workers", type=int, help="processes for Phase A (default: one per instrument)")
+    run.add_argument("--workers", type=int, help="processes for Phase A (default: one per instrument; more than the "
+                                                 "instruments also slices each instrument's period in time)")
     run.add_argument("--no-cache", action="store_true", help="recompute Phase A instead of using the cache")
     run.add_argument("--runs-dir", type=Path, default=RUNS_DIR, help=f"where runs are written (default {RUNS_DIR})")
 
