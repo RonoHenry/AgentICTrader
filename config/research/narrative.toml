@@ -12,3 +12,5 @@ resamples = 2000                     # day-cluster bootstrap of the autopsy's sp
 rule = "ROLLOVER_WINDOW"             # NONE | ROLLOVER_WINDOW
 minutes = 30                         # FX bars opening 17:00-17:29 New York flattened at the last clean close
 instruments = ["EURUSD", "GBPUSD", "USDJPY"]   # gold has no rollover blowout
+closure_minutes = 60                 # a longer gap before a window bar is a closure (the weekly reopen):
+                                     # flatten to the first clean open, keeping the gap, not to the last close

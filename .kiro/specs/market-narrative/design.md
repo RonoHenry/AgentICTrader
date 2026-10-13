@@ -71,6 +71,7 @@ class PriceBasis:
     rule: str = "ROLLOVER_WINDOW"                    # NONE | ROLLOVER_WINDOW (ND-D7)
     minutes: int = 30                                # 1..60, after 17:00 New York
     instruments: tuple[str, ...] = ("EURUSD", "GBPUSD", "USDJPY")
+    closure_minutes: int = 60                        # a longer gap before a window bar is a closure
 
 @dataclass(frozen=True)
 class NarrativeConfig:
@@ -91,8 +92,10 @@ def load_narrative_config(path: Optional[Path] = None) -> NarrativeConfig
 `apply_price_basis(bars, instrument, basis) -> DataFrame` takes columns `time` (UTC), `open`, `high`, `low` and `close`, and returns a copy:
 - **`NONE`:** the bars unchanged.
 - **`ROLLOVER_WINDOW`, configured instrument:**
-  - a bar whose New York opening time falls in [17:00, 17:00 + minutes) gets open, high, low and close set to the previous kept bar's close (CE-D3's "as if the market had paused");
-  - leading window bars with no previous close are dropped.
+  - a bar whose New York opening time falls in [17:00, 17:00 + minutes) gets open, high, low and close set to one price;
+  - that price is the last clean close when the last clean bar is within `closure_minutes` (CE-D3's "as if the market had paused");
+  - after a longer gap (the weekly reopen) or at the start of a series, it is the open of the first clean bar after the window, so a real gap such as the NWOG survives;
+  - window bars with no clean bar after them are dropped.
 - **Any other instrument:** unchanged.
 
 ### `algo_research/narrative/candles.py`

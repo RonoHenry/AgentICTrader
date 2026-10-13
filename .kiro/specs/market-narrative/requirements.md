@@ -88,8 +88,13 @@ Where it sits:
 
 1. THE narrative SHALL read bars through a configurable price basis (ND-D7):
    - `NONE`: the bars as recorded;
-   - `ROLLOVER_WINDOW` (default): for the configured instruments, a bar opening in the first `minutes` after 17:00 New York (default 30) is flattened to the last clean close, its open, high, low and close all set to it, as context-engine CE-D3 does.
-2. A flattened bar at the start of a series, with no clean close before it, SHALL be dropped.
+   - `ROLLOVER_WINDOW` (default): for the configured instruments, a bar opening in the first `minutes` after 17:00 New York (default 30) is flattened: its open, high, low and close are all set to one price.
+2. THE flattening price SHALL depend on what came before the bar:
+   - **After a pause** (the last clean bar within `closure_minutes`, default 60): the last clean close, as context-engine CE-D3 does.
+   - **After a closure** (the weekly reopen, a holiday) **or at the start of a series:** the open of the first clean bar after the window. Friday's close is days old by Sunday's reopen, so the gap between them is real (an NWOG); only the blown-out minutes after the reopen are not.
+   - **With no clean bar after the window:** the bar is dropped.
+
+   Added 2026-10-13: flattening to Friday's close erased the NWOG and moved Monday's D1 open (EURUSD 2026-10-12: 1.12011 instead of 1.11861). Dropping the leading bars made a short run's first day incomplete.
 3. Instruments not configured SHALL be unchanged (gold by default).
 4. THE price basis SHALL apply only to the narrative. Fills and the run's journal are never touched.
 
@@ -223,7 +228,7 @@ Proposed defaults apply unless the trader changes them. Stage 1 uses ND-D6 to ND
 | ND-D4 | How to classify a child candle | Body ratio and range share rules; awaiting the trader. |
 | ND-D5 | Week and day profiles | Week: `MON_LOW_EXPANSION`, `TUE_LOW_EXPANSION`, `WED_REVERSAL`, `CONSOLIDATION_THU_REVERSAL`, `SEEK_AND_DESTROY`. Day: `ASIA_LOW`, `LONDON_LOW`, `NY_AM_LOW`, `LATE_LOW`, `CONSOLIDATION`. |
 | ND-D6 | The narrative's direction | `CLOSE_VS_OPEN`. The trader judges bias by delivery, not the close (AR-D18): `DRAW_DELIVERED` is the stage-2 alternative, once the draw is defined at every frame (context-engine Requirement 3). |
-| ND-D7 | The narrative's price basis | `ROLLOVER_WINDOW`: EURUSD, GBPUSD and USDJPY bars opening 17:00–17:29 New York flattened at the last clean close (CE-D3 measured FX spreads 3–8× typical through 17:00–17:15). Replaced by the spread-based quarantine once context-engine task 276 exists. |
+| ND-D7 | The narrative's price basis | `ROLLOVER_WINDOW`: EURUSD, GBPUSD and USDJPY bars opening 17:00–17:29 New York flattened at the last clean close after a pause, or at the first clean open after a closure of more than 60 minutes (CE-D3 measured FX spreads 3–8× typical through 17:00–17:15). Replaced by the spread-based quarantine once context-engine task 276 exists. |
 | ND-D8 | Fill phases and failure modes | As Requirements 3.2 and 3.4, judged on the bias frame. A trade held past its candle is still judged by the candle it filled in. |
 | ND-D9 | What counts as an opportunity | A raid, then an M15 CISD within 4 hours, then a move of at least one D1 ATR to the next objective (ATR as a unit only). |
 | ND-D10 | Frames and bias frame | W1, D1 and H4; bias frame D1, the frame the engine's daily bias targets. |

@@ -193,10 +193,41 @@ def test_rollover_window_minutes():
     assert out.low.iloc[4] == bars.close.iloc[3] and out.low.iloc[5] == 1.0950
 
 
-def test_rollover_window_drops_leading_bars():
+def test_rollover_window_at_series_start_takes_the_first_clean_open():
+    """No earlier close: the window bars wait at the first clean bar's open, so the candle stays whole."""
     bars = rollover_bars("2026-01-13", -5).iloc[4:].reset_index(drop=True)   # starts at 17:00 New York
     out = apply_price_basis(bars, "USDJPY", PriceBasis())
-    assert out.time.tolist() == bars.time.iloc[2:].tolist()
+    assert out.time.tolist() == bars.time.tolist()
+    for i in (0, 1):
+        assert out.loc[i, ["open", "high", "low", "close"]].tolist() == [bars.open.iloc[2]] * 4
+
+
+def test_rollover_window_after_a_closure_keeps_the_gap():
+    """The weekly reopen: Friday's close is days old, so the gap is real (an NWOG). The window
+    bars take the first clean bar's open, not Friday's close; the spread-blown dip still goes."""
+    friday = pd.Timestamp("2026-10-09 20:45", tz="UTC")                   # 16:45 New York
+    sunday = pd.Timestamp("2026-10-11 21:05", tz="UTC")                   # 17:05 New York, the reopen
+    rows = [[friday, 1.1202, 1.1203, 1.1200, 1.12011],
+            [sunday, 1.11861, 1.11861, 1.11790, 1.11809],                 # spread blowout
+            [sunday + M15, 1.11810, 1.11850, 1.11800, 1.11840],
+            [sunday + 2 * M15, 1.11880, 1.11900, 1.11870, 1.11890]]       # 17:35: clean
+    bars = pd.DataFrame(rows, columns=["time", "open", "high", "low", "close"])
+    out = apply_price_basis(bars, "EURUSD", PriceBasis())
+    for i in (1, 2):
+        assert out.loc[i, ["open", "high", "low", "close"]].tolist() == [1.11880] * 4
+    assert out.loc[0, "close"] == 1.12011 and out.loc[3, "open"] == 1.11880
+
+
+def test_rollover_window_with_no_clean_bar_after_is_dropped():
+    bars = rollover_bars("2026-01-13", -5).iloc[4:6].reset_index(drop=True)   # only the 17:00 and 17:15 bars
+    assert apply_price_basis(bars, "EURUSD", PriceBasis()).empty
+
+
+def test_closure_minutes_is_a_setting(tmp_path):
+    assert PriceBasis().closure_minutes == 60
+    path = tmp_path / "n.toml"
+    path.write_text("[price_basis]\nclosure_minutes = 90\n", encoding="utf-8")
+    assert load_narrative_config(path).price_basis.closure_minutes == 90
 
 
 def test_gold_untouched_and_basis_none():

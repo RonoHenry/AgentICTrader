@@ -23,7 +23,7 @@ DEFAULT_PATH = Path(__file__).resolve().parents[2] / "config" / "research" / "na
 PRICE_RULES = ("NONE", "ROLLOVER_WINDOW")
 DIRECTION_RULES = ("CLOSE_VS_OPEN",)          # ND-D6; DRAW_DELIVERED is stage 2
 _KEYS = {"frames", "bias_frame", "direction_rule", "resamples", "price_basis"}
-_BASIS_KEYS = {"rule", "minutes", "instruments"}
+_BASIS_KEYS = {"rule", "minutes", "instruments", "closure_minutes"}
 
 
 @dataclass(frozen=True)
@@ -32,12 +32,15 @@ class PriceBasis:
     rule: str = "ROLLOVER_WINDOW"
     minutes: int = 30                          # after 17:00 New York
     instruments: tuple[str, ...] = ("EURUSD", "GBPUSD", "USDJPY")
+    closure_minutes: int = 60                  # a longer gap before a window bar is a closure, not a pause
 
     def __post_init__(self) -> None:
         if self.rule not in PRICE_RULES:
             raise ValueError(f"price_basis.rule must be one of {PRICE_RULES}, not {self.rule!r}")
         if not 1 <= self.minutes <= 60:
             raise ValueError(f"price_basis.minutes must be 1-60, not {self.minutes}")
+        if self.closure_minutes < 1:
+            raise ValueError(f"price_basis.closure_minutes must be positive, not {self.closure_minutes}")
 
 
 @dataclass(frozen=True)
@@ -96,5 +99,6 @@ def load_narrative_config(path: Optional[Path] = None) -> NarrativeConfig:
         rule=basis.get("rule", defaults.price_basis.rule),
         minutes=basis.get("minutes", defaults.price_basis.minutes),
         instruments=tuple(basis.get("instruments", defaults.price_basis.instruments)),
+        closure_minutes=basis.get("closure_minutes", defaults.price_basis.closure_minutes),
     )
     return NarrativeConfig(**kwargs)

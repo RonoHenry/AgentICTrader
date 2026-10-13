@@ -318,8 +318,8 @@ As of 2026-10-12, on Exness M1, EURUSD, GBPUSD, USDJPY and XAUUSD, 2025-01 → 2
 
 | Claim | Result | Source |
 |---|---|---|
-| The engine picks the day's direction | 44–45% of trades go the way their D1 candle closed: no better than a coin flip | `docs/backtests/AUTOPSY.md` |
-| Trades in the day's direction do well | +0.46R vs −0.68R against (WICK); +0.58R vs −0.49R (BODY). Hindsight upper bound | liquidity-engine design, update 2026-10b; `AUTOPSY.md` |
+| The engine picks the day's direction | 45–46% of trades go the way their D1 candle closed: no better than a coin flip | `docs/backtests/AUTOPSY.md` |
+| Trades in the day's direction do well | +0.47R vs −0.70R against (WICK); +0.57R vs −0.49R (BODY). Hindsight upper bound | liquidity-engine design, update 2026-10b; `AUTOPSY.md` |
 | C1/C2 turtle soup alone predicts direction | coin flip on D1, H4, H1 | `docs/research/INDICATOR_IDEAS.md` |
 | Mechanical biases (W1 trend, previous day, anticipation, HTF sweep) pick direction | none beats a coin flip | `INDICATOR_IDEAS.md` |
 | Side of the D1 open at 05:00 New York picks the draw delivered (H010) | 56%; +9.7 points [+2.7, +16.5] over the stratified baseline. Exploration only | algo-research tasks, task 274 |
@@ -329,11 +329,11 @@ As of 2026-10-12, on Exness M1, EURUSD, GBPUSD, USDJPY and XAUUSD, 2025-01 → 2
 
 | Claim | Result | Source |
 |---|---|---|
-| The engine fades the day's expansion | a third of trades went against the day and filled while it was expanding: no target hit, −0.84R each, −189R in all, more than the run's whole loss. 194 of 224 reacted to M15 swing raids | `AUTOPSY.md` |
-| The setup chain works when the direction is right | with the day, filled after its false move and before its high/low: +1.80R (19% of trades); with the day and the raid beyond the open (the real false move): +0.75R. In the baseline (stops inside the spread) the same fills lost −0.46R: the rewrite fixed execution, not direction | `AUTOPSY.md` |
-| With the right direction, timing still costs | filled inside the false move: −0.54R (45 of 54 stopped by the false move itself); filled after the day's extreme: −0.32R | `AUTOPSY.md` |
+| The engine fades the day's expansion | a third of trades went against the day and filled while it was expanding: no target hit, −0.85R each, −187R in all, more than the run's whole loss. 192 of 221 reacted to M15 swing raids | `AUTOPSY.md` |
+| The setup chain works when the direction is right | with the day, filled after its false move and before its high/low: +1.80R (20% of trades); with the day and the raid beyond the open (the real false move): +0.85R. In the baseline (stops inside the spread) the same fills lost −0.46R: the rewrite fixed execution, not direction | `AUTOPSY.md` |
+| With the right direction, timing still costs | filled inside the false move: −0.54R (46 of 54 stopped by the false move itself); filled after the day's extreme: −0.25R | `AUTOPSY.md` |
 | Targets overshoot the day | 88% of with-day targets lay beyond the day's extreme (22% hit, vs 53% inside it) | `AUTOPSY.md` |
-| Rough payoff of direction accuracy, today's execution | BODY: ~46% breaks even, 60% ≈ +0.15R a trade. WICK: ~59% breaks even | `AUTOPSY.md` |
+| Rough payoff of direction accuracy, today's execution | BODY: ~46% breaks even, 60% ≈ +0.15R a trade. WICK: ~60% breaks even | `AUTOPSY.md` |
 
 **Time**
 
@@ -350,7 +350,7 @@ As of 2026-10-12, on Exness M1, EURUSD, GBPUSD, USDJPY and XAUUSD, 2025-01 → 2
 |---|---|---|
 | Entry style creates an edge | no: ~7,000 setups entered four ways (market, limit at the array's middle, at its near edge, stop on the break) all land near 0R | context-engine requirements, introduction |
 | SD 2.0 targets at R:R 10+ | hit about 3% of the time; the worst R:R band | `docs/backtests/SETUP_SEQUENCE.md` |
-| Stopped trades reach +1R first | 32–35% of all stopped trades; 46–51% of stopped trades that were with the day | `SETUP_SEQUENCE.md`; `AUTOPSY.md` |
+| Stopped trades reach +1R first | 32–35% of all stopped trades; 46–49% of stopped trades that were with the day | `SETUP_SEQUENCE.md`; `AUTOPSY.md` |
 | Full system, best variant (BODY stop) | −0.01R per trade, CI −0.20 to +0.18, n = 686 | `SETUP_SEQUENCE.md` |
 
 **Reading:**
