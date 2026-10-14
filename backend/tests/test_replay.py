@@ -1,11 +1,11 @@
 """
 Tests for algo_research/replay/ — the blind replay (market-narrative Requirement 10).
 
-Tasks 299 and 300 (.kiro/specs/market-narrative/tasks.md). A synthetic gold-like
+Tasks 299, 300 and 302-303 (.kiro/specs/market-narrative/tasks.md). A synthetic gold-like
 instrument: one M1 random walk, trading Sunday 18:00 to Friday 17:00 New York with
 the daily 17:00-18:00 break, so trading days, the as-of chart, the reads and their
 scores are checked without the snapshot.
-Validates: Requirements 10.1-10.9 (.kiro/specs/market-narrative/requirements.md)
+Validates: Requirements 10.1-10.9, 11.1-11.6 (.kiro/specs/market-narrative/requirements.md)
 """
 from __future__ import annotations
 
@@ -23,7 +23,9 @@ import pytest
 from algo_research.replay.bars import ReplayBars
 from algo_research.replay.journal import Journal, ReplayError, day_order
 from algo_research.replay.scoring import score_thesis, score_trade, summarize
+from algo_research.frame import aggregate_frame
 from algo_research.replay.server import ReplayApp, make_server
+from algo_research.replay.timeframes import bucket, wall_seconds
 from liquidity_engine.models import Timeframe as TF
 
 NY = "America/New_York"
@@ -66,6 +68,10 @@ def test_trading_dates_are_weekdays_with_m1():
     assert all(d.weekday() < 5 for d in days) and len(days) == 9
 
 
+def wall(ny: str) -> int:
+    return int(wall_seconds([pd.Timestamp(ny, tz=NY).tz_convert("UTC")])[0])
+
+
 @pytest.mark.parametrize("until", ["2025-01-09 17:00", "2025-01-10 09:37", "2025-01-12 17:00", "2025-01-13 18:00"])
 def test_as_of_never_shows_later_prices(until):
     """Every M1 bar that closes after `until` gets new prices: what the chart shows doesn't move."""
@@ -77,23 +83,58 @@ def test_as_of_never_shows_later_prices(until):
     other = ReplayBars(changed, "XAUUSD")
     for tf in ReplayBars.TIMEFRAMES:
         seen = bars().as_of(tf, t)
-        assert not seen.empty
+        assert not seen.empty, tf
         pd.testing.assert_frame_equal(seen, other.as_of(tf, t))
-        assert (seen["time"] < t).all()
+        assert (seen["time"] < wall(until)).all()
 
 
 def test_forming_bar_is_built_from_closed_m1_and_becomes_the_closed_bar():
     t = pd.Timestamp("2025-01-10 09:37", tz=NY).tz_convert("UTC")
-    h1 = bars().as_of(TF.H1, t)
-    forming = h1.iloc[-1]
-    assert forming["time"] == pd.Timestamp("2025-01-10 09:00", tz=NY) and forming["close_time"] > t
+    forming = bars().as_of("H1", t).iloc[-1]
+    assert forming["time"] == wall("2025-01-10 09:00")
     m1 = synthetic_m1()
-    inside = m1[(m1["time"] >= forming["time"]) & (m1["time"] + pd.Timedelta(minutes=1) <= t)]
+    start = pd.Timestamp("2025-01-10 09:00", tz=NY)
+    inside = m1[(m1["time"] >= start) & (m1["time"] + pd.Timedelta(minutes=1) <= t)]
     assert (forming["open"], forming["high"], forming["low"], forming["close"]) == (
         inside["open"].iloc[0], inside["high"].max(), inside["low"].min(), inside["close"].iloc[-1])
-    full = bars().as_of(TF.H1, pd.Timestamp("2025-01-10 10:00", tz=NY).tz_convert("UTC")).iloc[-1]
-    assert full["time"] == forming["time"] and full["close_time"] == pd.Timestamp("2025-01-10 10:00", tz=NY)
-    assert full["high"] >= forming["high"] and full["open"] == forming["open"]
+    full = bars().as_of("H1", pd.Timestamp("2025-01-10 10:00", tz=NY).tz_convert("UTC")).iloc[-1]
+    assert full["time"] == forming["time"] and full["high"] >= forming["high"] and full["open"] == forming["open"]
+
+
+@pytest.mark.parametrize("tf, at, start", [
+    ("H4", "2025-01-09 18:30", "2025-01-09 17:00"), ("H4", "2025-01-10 02:15", "2025-01-10 01:00"),
+    ("H4", "2025-01-10 09:59", "2025-01-10 09:00"), ("H4", "2025-01-10 13:00", "2025-01-10 13:00"),
+    ("H7", "2025-01-09 23:59", "2025-01-09 17:00"), ("H7", "2025-01-10 00:30", "2025-01-10 00:00"),
+    ("H7", "2025-01-10 16:59", "2025-01-10 14:00"), ("H12", "2025-01-10 04:59", "2025-01-09 17:00"),
+    ("H12", "2025-01-10 05:00", "2025-01-10 05:00"), ("M45", "2025-01-09 17:44", "2025-01-09 17:00"),
+    ("M45", "2025-01-09 18:31", "2025-01-09 18:30"), ("M20", "2025-01-10 09:59", "2025-01-10 09:40"),
+    ("D1", "2025-01-10 16:59", "2025-01-09 17:00"), ("D1", "2025-01-10 17:00", "2025-01-10 17:00"),
+    ("W1", "2025-01-08 10:00", "2025-01-05 17:00"), ("W1", "2025-01-12 18:00", "2025-01-12 17:00"),
+    ("MN1", "2025-02-03 10:00", "2025-01-31 17:00"), ("MN1", "2025-01-30 10:00", "2024-12-31 17:00"),
+])
+def test_timeframes_are_anchored_at_the_new_york_open(tf, at, start):
+    assert bucket(np.array([wall(at)]), tf)[0] == wall(start)
+
+
+@pytest.mark.parametrize("tf", ["M5", "M15", "H1", "H4", "D1"])
+def test_bars_match_the_strategy_calendar(tf):
+    """Where the engine's calendar has the timeframe, the chart's bars are the same bars."""
+    until = pd.Timestamp("2025-01-17 17:00", tz=NY).tz_convert("UTC")
+    seen = bars().as_of(tf, until, limit=5000)
+    research = aggregate_frame(bars().m1, TF(tf), as_of=until)
+    research = research.assign(time=wall_seconds(research["time"]))[["time", "open", "high", "low", "close"]]
+    both = seen.merge(research, on="time", suffixes=("", "_r"))
+    assert len(both) >= min(len(seen), len(research)) - 1 and len(both) > 10
+    for col in ("open", "high", "low", "close"):
+        assert np.allclose(both[col], both[col + "_r"]), col
+
+
+def test_since_returns_the_bar_holding_it_and_later():
+    t = pd.Timestamp("2025-01-10 09:37", tz=NY).tz_convert("UTC")
+    full = bars().as_of("M15", t)
+    tail = bars().as_of("M15", t, since=wall("2025-01-10 09:05"))
+    assert list(tail["time"]) == [wall("2025-01-10 09:00"), wall("2025-01-10 09:15"), wall("2025-01-10 09:30")]
+    pd.testing.assert_frame_equal(tail, full.tail(3).reset_index(drop=True))
 
 
 # ── the journal's rules (10.1, 10.3-10.6, 10.8) ─────────────────────────────
@@ -156,7 +197,9 @@ def test_time_only_moves_forward_and_stops_at_the_close(tmp_path):
     j = journal(tmp_path)
     j.save_read(bullish_read(j))
     open_ = pd.Timestamp(j.current()["open_time"])
-    assert pd.Timestamp(j.advance(step="M15")["revealed_until"]) == open_ + pd.Timedelta(minutes=15)
+    # gold pauses 17:00-18:00: a step into the pause lands that step past the reopen
+    assert pd.Timestamp(j.advance(step="M15")["revealed_until"]) == open_ + pd.Timedelta(hours=1, minutes=15)
+    assert pd.Timestamp(j.advance(step="M15")["revealed_until"]) == open_ + pd.Timedelta(hours=1, minutes=30)
     at = pd.Timestamp(j.advance(to="09:30")["revealed_until"]).tz_convert(NY)
     assert (at.hour, at.minute) == (9, 30) and at > open_
     with pytest.raises(ReplayError, match="past"):
@@ -200,6 +243,73 @@ def test_days_are_stored_resumed_and_skipped_once_revealed(tmp_path):
     assert third.current()["trading_date"] != first["trading_date"]
     assert third.remaining() == len(bars().trading_dates(FIRST, END)) - 1
 
+
+
+def box(id_="b1", **change) -> dict:
+    return {"id": id_, "type": "rect", "points": [{"t": 1736460000, "p": 2650.5}, {"t": 1736463600, "p": 2648.0}],
+            "kind": "FVG", "tf": "H1", "mid": True, **change}
+
+
+def test_drawings_are_checked(tmp_path):
+    j = journal(tmp_path)
+    for bad, field in ((dict(type="circle"), "type"), (dict(points=[{"t": 1, "p": 2}]), "point"),
+                       (dict(points=[{"t": "x", "p": 2}, {"t": 1, "p": 2}]), "point"), (dict(id=""), "id")):
+        with pytest.raises(ReplayError, match=field):
+            j.save_drawings([box(**bad)])
+    with pytest.raises(ReplayError, match="twice"):
+        j.save_drawings([box(), box()])
+    saved = j.save_drawings([box(note="dropped", status="client only")])["drawings"][0]
+    assert "note" not in saved and "status" not in saved and saved["kind"] == "FVG"
+
+
+def test_drawings_keep_the_phase_and_time_they_were_made_in(tmp_path):
+    j = journal(tmp_path)
+    j.save_drawings([box("read-box")])
+    j.save_read(bullish_read(j))
+    day = j._current()
+    assert [d["id"] for d in day["read"]["drawings"]] == ["read-box"]          # the read keeps the chart as it was
+    j.advance(to="08:00")
+    at_eight = j._current()["revealed_until"]
+    j.save_drawings([box("read-box", p=1), box("later", kind="OB")])
+    stored = {d["id"]: d for d in j._current()["drawings"]}
+    assert stored["read-box"]["phase"] == "read" and "edited_at" not in stored["read-box"]
+    assert stored["later"]["phase"] == "intraday" and stored["later"]["created_at"] == at_eight
+    moved = box("read-box", points=[{"t": 1736460000, "p": 2651.0}, {"t": 1736463600, "p": 2648.0}])
+    j.save_drawings([moved, box("later", kind="OB")])
+    stored = {d["id"]: d for d in j._current()["drawings"]}
+    assert stored["read-box"]["phase"] == "read" and stored["read-box"]["edited_phase"] == "intraday"
+    assert [d["id"] for d in j._current()["read"]["drawings"]] == ["read-box"]
+    assert j._current()["read"]["drawings"][0]["points"][0]["p"] == 2650.5       # the read's copy didn't move
+    j.reveal()
+    j.save_drawings([moved, box("later", kind="OB"), box("after")])
+    stored = {d["id"]: d for d in j._current()["drawings"]}
+    assert stored["after"]["phase"] == "narrative"
+    assert {d["id"] for d in j._current()["drawings_at_reveal"]} == {"read-box", "later"}
+
+
+def test_the_narrative_is_written_after_the_reveal(tmp_path):
+    j = journal(tmp_path)
+    with pytest.raises(ReplayError):
+        j.save_narrative("too early")
+    j.save_read(bullish_read(j))
+    j.reveal()
+    assert j.save_narrative("London took the Asian low, NY expanded to PDH")["narrative_note"].startswith("London")
+
+
+def test_trades_are_followed_live(tmp_path):
+    j = journal(tmp_path)
+    j.save_read(bullish_read(j))
+    j.advance(to="08:00")
+    price = j.current()["price"]
+    j.mark_trade({"direction": "LONG", "entry": price - 50, "stop": price - 60, "target": price - 40, "drawing": "pos1"})
+    j.mark_trade({"direction": "LONG", "entry": price, "stop": price - 3, "target": price + 900})
+    assert j._current()["trades"][0]["drawing"] == "pos1"
+    j.advance(step="H1")
+    live = j.live_trades()
+    assert live[0]["outcome"] == "PENDING"                                       # 50 below: not reached in an hour
+    assert live[1]["outcome"] in ("OPEN", "STOP")
+    if live[1]["outcome"] == "OPEN":
+        assert live[1]["r"] == pytest.approx((j.current()["price"] - price) / 3)
 
 # ── scores (10.7, 10.9) ─────────────────────────────────────────────────────
 
@@ -284,28 +394,45 @@ def test_http_round_trip(tmp_path):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
     try:
+        status, meta = call(base, "/api/meta")
+        assert status == 200 and [t["tf"] for t in meta["timeframes"]][:3] == ["M1", "M2", "M3"]
+        assert {"H7", "M45", "M20", "M4", "MN1"} <= {t["tf"] for t in meta["timeframes"]}
         status, state = call(base, "/api/state")
         assert status == 200 and state["status"] == "READING" and state["date"] is None and state["weekday"]
         open_epoch = state["revealed_until_epoch"]
-        status, h1 = call(base, "/api/bars?tf=H1")
-        assert status == 200 and h1["bars"] and max(b["time"] for b in h1["bars"]) < open_epoch
-        assert call(base, "/api/bars?tf=H7")[0] == 400
+        for tf in ("H7", "M45", "M2", "W1"):
+            status, got = call(base, f"/api/bars?tf={tf}")
+            assert status == 200 and got["bars"] and max(b["time"] for b in got["bars"]) < open_epoch, tf
+        assert call(base, "/api/bars?tf=H5")[0] == 400
+        status, saved = call(base, "/api/drawings", {"drawings": [box()]})
+        assert status == 200 and saved["drawings"][0]["phase"] == "read" and "created_at" not in saved["drawings"][0]
         price = state["open_price"]
         assert call(base, "/api/read", {"bias": "BULLISH", "draw": price + 4, "invalidation": price - 4})[0] == 200
         status, again = call(base, "/api/read", {"bias": "BEARISH", "draw": price - 4, "invalidation": price + 4})
         assert status == 409 and again["error"]
+        status, bars_m5 = call(base, "/api/bars?tf=M5")
+        status, moved = call(base, "/api/advance", {"step": "M1", "tf": "M5", "since": bars_m5["bars"][-1]["time"]})
+        assert status == 200 and len(moved["update"]["m1"]) == 1 and moved["update"]["bars"]
+        assert moved["update"]["m1"][0]["time"] == open_epoch + 3600              # gold reopens at 18:00
         assert call(base, "/api/advance", {"to": "09:30"})[0] == 200
         status, now = call(base, "/api/state")
         assert call(base, "/api/trade", {"direction": "LONG", "entry": now["price"], "stop": now["price"] - 3,
                                          "target": now["price"] + 9})[0] == 200
+        status, now = call(base, "/api/state")
+        assert now["trades"][0]["live"]["outcome"] in ("PENDING", "OPEN", "STOP", "TARGET")
         status, revealed = call(base, "/api/reveal", {})
         assert status == 200 and revealed["date"] and revealed["scores"]["thesis"]["outcome"]
+        assert call(base, "/api/narrative", {"text": "it delivered"})[1]["narrative_note"] == "it delivered"
         status, summary = call(base, "/api/summary")
         assert status == 200 and summary["revealed"] == 1
         status, nxt = call(base, "/api/next", {})
-        assert status == 200 and nxt["status"] == "READING" and nxt["date"] is None
-        status, page = 200, urllib.request.urlopen(base + "/", timeout=10).read().decode()
-        assert "lightweight-charts@4.2.0" in page
+        assert status == 200 and nxt["status"] == "READING" and nxt["date"] is None and nxt["drawings"] == []
+        page = urllib.request.urlopen(base + "/", timeout=10).read().decode()
+        assert "lightweight-charts@4.2.0" in page and "/static/app.js" in page
+        for name in ("app.js", "drawings.js", "app.css"):
+            assert urllib.request.urlopen(f"{base}/static/{name}", timeout=10).status == 200
+        with pytest.raises(urllib.error.HTTPError):
+            urllib.request.urlopen(f"{base}/static/../journal.py", timeout=10)
     finally:
         server.shutdown()
         server.server_close()

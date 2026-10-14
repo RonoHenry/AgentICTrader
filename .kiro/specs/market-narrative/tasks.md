@@ -95,6 +95,12 @@ Tasks marked **(user review)** end with your review before the next one starts.
   - **RED:** an HTTP round trip on a synthetic instrument: state, bars as of the open, read, advance, trade, reveal, a refused second read (409), summary.
   - **Validates: Requirements 10.1-10.6, 10.9**
 
+- [x] 303. The replay chart (Requirement 11)
+  - Added 2026-10-14 at the trader's request: TradingView-like reading and marking, the day printing live, the trader's timeframes.
+  - `timeframes.py`; `ReplayBars.as_of(tf, until, since)` and `next_open`; drawings, narrative and live trades in the journal; `/api/meta`, `update` on advance, `/api/drawings`, `/api/narrative`; `static/drawings.js`, `app.js`, `app.css`.
+  - **RED:** bars anchored at the New York open (H4, H7, H12, M45, M20, D1, W1, MN1); the same bars as the strategy calendar for M5, M15, H1, H4, D1; `since`; drawings checked, stamped and copied into the read and the reveal; the narrative only after the reveal; trades followed live; a step into the gold pause lands past the reopen; the HTTP round trip with the new endpoints and static files.
+  - **Validates: Requirements 11.1-11.7**
+
 - [ ] 301. Pilot: 50 blind gold days **(user action)**
   - You read 50 exploration-slice gold days; then we look at the summary together, and at the days where your thesis and the engine's candle profile disagreed.
 
@@ -124,7 +130,7 @@ Tasks marked **(user review)** end with your review before the next one starts.
     },
     {
       "name": "Blind replay",
-      "tasks": ["299", "300", "301"],
+      "tasks": ["299", "300", "303", "301"],
       "description": "The trader's blind daily reads, scored (update 2026-10-14)",
       "dependencies": ["Narrative"]
     }

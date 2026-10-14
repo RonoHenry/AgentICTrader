@@ -1,4 +1,4 @@
-"""The blind replay's HTTP server (market-narrative Requirement 10; design: update 2026-10-14).
+"""The blind replay's HTTP server (market-narrative Requirement 10; design: updates 2026-10-14 and 2026-10-14b).
 
 ``ReplayApp`` is the API as plain methods over a Journal; ``make_server`` wraps it
 in the standard library's threading HTTP server on 127.0.0.1, so the trader's
@@ -18,15 +18,17 @@ from urllib.parse import parse_qs, urlparse
 
 import pandas as pd
 
-from algo_research.replay.bars import ReplayBars
-from algo_research.replay.journal import Journal, ReplayError
+from algo_research.replay.journal import STEPS, Journal, ReplayError
 from algo_research.replay.scoring import summarize
-from liquidity_engine.models import Timeframe
+from algo_research.replay.timeframes import TIMEFRAMES, seconds_of, wall_seconds
 
 __all__ = ["ReplayApp", "make_server"]
 
 NY = "America/New_York"
-PAGE = Path(__file__).parent / "static" / "index.html"
+STATIC = Path(__file__).parent / "static"
+#: The page's files: name -> content type. Nothing else under static/ is served.
+FILES = {"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8",
+         "drawings.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8"}
 _EPOCH = pd.Timestamp("1970-01-01")
 
 
@@ -37,6 +39,14 @@ def ny_epoch(t) -> int:
 
 def ny_label(t) -> str:
     return pd.Timestamp(t).tz_convert(NY).strftime("%a %H:%M")
+
+
+def _rows(frame: pd.DataFrame) -> list[dict]:
+    return [{"time": int(r.time), "open": float(r.open), "high": float(r.high), "low": float(r.low),
+             "close": float(r.close)} for r in frame.itertuples()]
+
+
+_STAMPS = ("created_at", "edited_at")         # market times: they would name the date
 
 
 class ReplayApp:
@@ -51,37 +61,39 @@ class ReplayApp:
         show = revealed or day["date_shown"]
         read = None
         if day["read"] is not None:
-            read = {k: v for k, v in day["read"].items() if k != "as_of"}
-        trades = [{k: v for k, v in t.items() if k != "marked_at"} | {"marked_epoch": ny_epoch(t["marked_at"]),
-                                                                       "marked_ny": ny_label(t["marked_at"])}
-                  for t in day["trades"]]
+            read = {k: v for k, v in day["read"].items() if k not in ("as_of", "drawings")}
+        live = self.journal.live_trades() if day["status"] == "INTRADAY" else [None] * len(day["trades"])
+        trades = [{k: v for k, v in t.items() if k != "marked_at"}
+                  | {"marked_epoch": ny_epoch(t["marked_at"]), "marked_ny": ny_label(t["marked_at"]), "live": status}
+                  for t, status in zip(day["trades"], live)]
+        drawings = [{k: v for k, v in d.items() if k not in _STAMPS} for d in day.get("drawings", [])]
         return {
             "instrument": self.journal.instrument, "digits": self.journal.bars.digits, "weekday": day["weekday"],
             "status": day["status"], "date": day["trading_date"] if show else None, "date_shown": day["date_shown"],
             "open_price": day["open_price"], "price": day["price"],
             "open_epoch": ny_epoch(day["open_time"]), "close_epoch": ny_epoch(day["close_time"]),
             "revealed_until_epoch": ny_epoch(day["revealed_until"]), "revealed_until_ny": ny_label(day["revealed_until"]),
-            "read": read, "trades": trades, "remaining": self.journal.remaining(),
+            "read": read, "trades": trades, "drawings": drawings, "remaining": self.journal.remaining(),
             "narrative": day["narrative"] if revealed else None, "scores": day["scores"] if revealed else None,
+            "narrative_note": day.get("narrative_note"),
         }
+
+    def meta(self) -> dict:
+        return {"instrument": self.journal.instrument, "digits": self.journal.bars.digits,
+                "timeframes": [{"tf": tf, "seconds": seconds_of(tf)} for tf in TIMEFRAMES], "steps": list(STEPS)}
 
     def state(self) -> dict:
         with self._lock:
             return self._view(self.journal.current())
 
-    def bars(self, tf: str) -> dict:
-        try:
-            timeframe = Timeframe(tf)
-        except ValueError:
-            raise ValueError(f"tf: one of {', '.join(t.value for t in ReplayBars.TIMEFRAMES)}") from None
-        if timeframe not in ReplayBars.TIMEFRAMES:
-            raise ValueError(f"tf: one of {', '.join(t.value for t in ReplayBars.TIMEFRAMES)}")
+    def _bars(self, tf: str, since: Optional[int] = None) -> list[dict]:
+        seconds_of(tf)                                                  # refuses an unknown timeframe
+        until = pd.Timestamp(self.journal.current()["revealed_until"])
+        return _rows(self.journal.bars.as_of(tf, until, since=since))
+
+    def bars(self, tf: str, since: Optional[int] = None) -> dict:
         with self._lock:
-            until = pd.Timestamp(self.journal.current()["revealed_until"])
-            frame = self.journal.bars.as_of(timeframe, until)
-        return {"tf": timeframe.value, "bars": [
-            {"time": ny_epoch(r.time), "open": float(r.open), "high": float(r.high), "low": float(r.low),
-             "close": float(r.close)} for r in frame.itertuples()]}
+            return {"tf": tf, "bars": self._bars(tf, since)}
 
     def _write(self, method, *args, **kwargs) -> dict:
         with self._lock:
@@ -91,10 +103,28 @@ class ReplayApp:
         return self._write(self.journal.save_read, body)
 
     def advance(self, body: dict) -> dict:
-        return self._write(self.journal.advance, step=body.get("step"), to=body.get("to"))
+        """Time forward. With ``tf`` (and ``since``, the start of the chart's last bar), the answer also
+        carries the chart's bars from ``since`` and the M1 bars this step revealed, for a live update."""
+        tf, since = body.get("tf"), body.get("since")
+        with self._lock:
+            before = pd.Timestamp(self.journal.current()["revealed_until"])
+            view = self._view(self.journal.advance(step=body.get("step"), to=body.get("to")))
+            if tf:
+                after = pd.Timestamp(self.journal.current()["revealed_until"])
+                m1 = self.journal.bars.m1_between(before, after)
+                view["update"] = {"tf": tf, "bars": self._bars(tf, None if since is None else int(since)),
+                                  "m1": [dict(r, time=int(w)) for r, w in
+                                         zip(_rows(m1.assign(time=0)), wall_seconds(m1["time"]))]}
+            return view
 
     def trade(self, body: dict) -> dict:
         return self._write(self.journal.mark_trade, body)
+
+    def drawings(self, body: dict) -> dict:
+        return self._write(self.journal.save_drawings, body.get("drawings"))
+
+    def narrative(self, body: dict) -> dict:
+        return self._write(self.journal.save_narrative, body.get("text"))
 
     def reveal(self, body: Optional[dict] = None) -> dict:
         return self._write(self.journal.reveal)
@@ -111,7 +141,8 @@ class ReplayApp:
 
 
 _POSTS = {"/api/read": "read", "/api/advance": "advance", "/api/trade": "trade", "/api/reveal": "reveal",
-          "/api/show-date": "show_date", "/api/next": "next"}
+          "/api/show-date": "show_date", "/api/next": "next", "/api/drawings": "drawings",
+          "/api/narrative": "narrative"}
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -136,13 +167,19 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 (http.server's naming)
         url = urlparse(self.path)
-        if url.path in ("/", "/index.html"):
-            self._send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
+        name = "index.html" if url.path in ("/", "/index.html") else url.path.removeprefix("/static/")
+        if name in FILES and (url.path in ("/", "/index.html") or url.path.startswith("/static/")):
+            self._send(200, (STATIC / name).read_bytes(), FILES[name])
+        elif url.path == "/favicon.ico":
+            self._send(204, b"", "image/x-icon")
         elif url.path == "/api/state":
             self._answer(self.app.state)
+        elif url.path == "/api/meta":
+            self._answer(self.app.meta)
         elif url.path == "/api/bars":
-            tf = parse_qs(url.query).get("tf", ["H1"])[0]
-            self._answer(lambda: self.app.bars(tf))
+            query = parse_qs(url.query)
+            since = query.get("since", [None])[0]
+            self._answer(lambda: self.app.bars(query.get("tf", ["H1"])[0], None if since is None else int(since)))
         elif url.path == "/api/summary":
             self._answer(self.app.summary)
         else:

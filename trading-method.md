@@ -408,7 +408,7 @@ Each has a proposed default. ND-D decisions live in `.kiro/specs/market-narrativ
 | ND-D6 | The narrative's direction | The close against the open; judging by the draw delivered (AR-D18) comes in stage 2 |
 | ND-D7 | The narrative's price basis | FX bars 17:00–17:29 NY flattened at the last clean close, until the spread-based quarantine (CE-D3) is built |
 | — | C4 in turtle soup | Undefined: what C4 does after C3 |
-| — | H7 | Not in `Timeframe`; 7 hours doesn't tile the day. Add only if the trader confirms its use |
+| — | H7 | The trader uses it on charts (2026-10-14): it is in the blind replay's chart, restarting at each 17:00 open. Not in the engine's `Timeframe` |
 | — | Accumulation week: "body size" threshold | Undefined |
 | — | "Specific candle opens" used for sniper entries | Undefined: which opens, at which frames |
 

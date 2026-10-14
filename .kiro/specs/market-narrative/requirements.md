@@ -261,3 +261,23 @@ Requirement 9 is brought forward, for gold first. On 2026-10-13 the trader expla
    - **trade:** filled at the first bar after the mark whose range holds the entry; then `STOP` or `TARGET`, whichever comes first, the stop winning a tie and counting from the fill bar, the target from the next bar; else `OPEN`, marked to the D1 close; `NOT_FILLED` when never filled. The result is in R, before costs.
 8. EACH day SHALL be stored as one JSON file under `data/journal/blind/<instrument>/`, which git ignores, written whole or not at all, with the wall-clock time of the read, of each trade and of the reveal.
 9. THE summary SHALL report, over revealed days: thesis and no-thesis days; the `DRAW` rate of thesis days with a 95% bootstrap interval over trading dates, beside the mean `p_coin` and the coin flip; direction accuracy; and trades (count, mean R, total R).
+
+---
+
+## Update 2026-10-14b: The Replay as a Chart Workstation
+
+The trader asked for the replay to work like their TradingView: the timeframes they use, the day printing as if live, and the tools to mark PD arrays, anchor targets and place trades, with a written narrative. Their marks become data: each drawing is kept with the moment it was made, so later the engine's arrays can be set beside the ones the trader marked.
+
+### Requirement 11: The Replay Chart
+
+**User Story:** As the trader, I want to read, mark and trade a replayed day the way I do on my own charts, so that what I see and do is recorded honestly and can be compared with the engine.
+
+#### Acceptance Criteria
+
+1. THE chart SHALL offer M1, M2, M3, M4, M5, M10, M15, M20, M30, M45, H1, H3, H4, H6, H7, H8, H12, D1, W1 and MN1. Intraday bars SHALL be counted from the trading day's 17:00 New York open, so a timeframe that doesn't divide the day (H7, M45) restarts at each open; W1 opens Sunday 17:00; MN1 holds the trading dates of a calendar month. Where the engine's calendar has the timeframe, the bars SHALL be the same.
+2. M1 is the finest data: there are no second charts (the MT5 terminal gives no tick history for these dates). Playing SHALL reveal one step at a time, the newest minute drawn open → extreme → extreme → close; the page says that the path inside a minute is simulated.
+3. A step that reveals no bar, into a market pause, SHALL land that step past the reopen.
+4. THE drawing tools SHALL be: horizontal line and ray, vertical line, trend line, box (a PD array: side, kind, timeframe, an optional 50% line, extend right), fib/SD projection (editable levels; default 1, 0.786, 0.705, 0.618, 0.5, 0, −0.5, −1, −1.5, −2, −2.5, −4), long and short position (entry, stop, target), and text; with select, drag, delete, undo, a magnet to the bar's open, high, low and close, and hide.
+5. EACH drawing SHALL be stored with the day, stamped with the phase (`read`, `intraday`, `narrative`) and the revealed time it was made in; an edit SHALL be stamped too. THE read SHALL keep a copy of the drawings made before it was saved, and the reveal a copy of those made before it; later edits never change those copies.
+6. A position drawing MAY be placed as a trade at the revealed time (Requirement 10.5, linked to the drawing). WHILE the day is live, each trade SHALL show its state as of the revealed time: `PENDING` until filled, then `OPEN` with its R, `STOP` or `TARGET`.
+7. AFTER the reveal, the trader MAY write the day's narrative in their own words; it is stored apart from the read.
