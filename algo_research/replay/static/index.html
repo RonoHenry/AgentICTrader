@@ -17,6 +17,7 @@
   <span class="spacer"></span>
   <span class="muted" id="left"></span>
   <button class="boxed" id="showDate" title="The day records that you looked">Show date</button>
+  <button class="boxed" id="chartSettings" title="Chart settings (right-click the chart for more)">⚙ Chart</button>
 </header>
 <div id="bar">
   <div class="group" id="tfs"></div>
@@ -24,7 +25,7 @@
   <div class="group" id="replay">
     <button class="boxed" id="play" title="Play / pause (Space)">▶ Play</button>
     <select id="speed" title="Replay speed"></select>
-    <button class="boxed" id="stepBtn" title="One step (→)">Step ▸</button>
+    <button class="boxed" id="stepBtn" title="One step (→; Shift+→ an hour)">Step ▸</button>
     <select id="jump" title="Jump to a New York time"><option value="">Jump to…</option></select>
     <button class="boxed danger" id="reveal">End day &amp; reveal</button>
   </div>
@@ -32,16 +33,21 @@
 </div>
 <main>
   <nav id="tools"></nav>
-  <section id="chart"></section>
+  <section id="chartWrap">
+    <div id="chart"></div>
+    <div id="favbar" title="Favourite tools: right-click a tool on the left to add or remove it"></div>
+  </section>
   <aside>
     <div id="panel"></div>
     <div id="props"></div>
     <div id="msg"></div>
+    <details id="objectsBox"><summary>Objects <span class="muted" id="objCount"></span></summary><div id="objects"></div></details>
     <h2>So far</h2>
     <div id="summary" class="muted">No revealed days yet.</div>
   </aside>
 </main>
 <script src="/static/drawings.js"></script>
+<script src="/static/settings.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

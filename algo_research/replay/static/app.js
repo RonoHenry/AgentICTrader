@@ -1,7 +1,8 @@
-// The blind replay page (market-narrative Requirement 10; update 2026-10-14b).
+// The blind replay page (market-narrative Requirements 10 and 11; updates 2026-10-14b and 2026-10-14c).
 // Read the open, then play the day forward as if it were live, drawing as you go.
 "use strict";
 
+const { Prefs, CHART_DEFAULTS } = window.ReplayUI;
 const $ = (id) => document.getElementById(id);
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const pad = (n) => String(n).padStart(2, "0");
@@ -9,33 +10,42 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const GROUPS = [["M1", "M2", "M3", "M4", "M5", "M10", "M15", "M20", "M30", "M45"],
                 ["H1", "H3", "H4", "H6", "H7", "H8", "H12"], ["D1", "W1", "MN1"]];
+const ALL_TFS = GROUPS.flat();
 const SPEEDS = [
   { label: "1m per second", step: "M1", ms: 1000 }, { label: "1m per ½ s", step: "M1", ms: 500 },
   { label: "1m per ⅕ s", step: "M1", ms: 200 }, { label: "5m per ½ s", step: "M5", ms: 500 },
   { label: "15m per ½ s", step: "M15", ms: 500 }, { label: "1h per ½ s", step: "H1", ms: 500 },
 ];
 const JUMPS = ["20:00", "00:00", "02:00", "03:00", "05:00", "07:00", "08:30", "09:30", "10:00", "11:00", "13:30", "16:00"];
+// The tool strip, in TradingView's order: lines, shapes, fib, measures and positions, text.
 const TOOLS = [
-  { type: null, icon: "↖", title: "Cursor (Esc)" },
+  { type: null, icon: "↖", title: "Cursor (Esc)" }, "-",
+  { type: "trend", icon: "╱", title: "Trend line (Alt+T)", key: "t" },
+  { type: "ray", icon: "↗", title: "Ray" },
+  { type: "extended", icon: "⤢", title: "Extended line (Alt+E)", key: "e" },
   { type: "hline", icon: "―", title: "Horizontal line (Alt+H)", key: "h" },
   { type: "hray", icon: "⟶", title: "Horizontal ray: liquidity (Alt+J)", key: "j" },
-  { type: "trend", icon: "╱", title: "Trend line (Alt+T)", key: "t" },
-  { type: "rect", icon: "▭", title: "Box: a PD array, with its 50% line (Alt+R)", key: "r" },
-  { type: "fib", icon: "≣", title: "Fib / SD projection: click the 1, then the 0 (Alt+F)", key: "f" },
-  { type: "long", icon: "▲", title: "Long position: entry, stop, target (Alt+L)", key: "l" },
-  { type: "short", icon: "▼", title: "Short position: entry, stop, target (Alt+S)", key: "s" },
   { type: "vline", icon: "│", title: "Vertical line (Alt+V)", key: "v" },
+  { type: "arrow", icon: "➚", title: "Arrow (Alt+A)", key: "a" }, "-",
+  { type: "rect", icon: "▭", title: "Box: a PD array, with its 50% line (Alt+R)", key: "r" },
+  { type: "channel", icon: "▱", title: "Parallel channel: start, end, width (Alt+C)", key: "c" },
+  { type: "path", icon: "✎", title: "Brush: drag to draw (Alt+B)", key: "b" }, "-",
+  { type: "fib", icon: "≣", title: "Fib / SD projection: click the 1, then the 0 (Alt+F)", key: "f" },
+  { type: "fibext", icon: "⋰", title: "Trend-based fib extension: A, B, then C (Alt+X)", key: "x" }, "-",
+  { type: "range", icon: "⇕", title: "Date & price range (Alt+M; or Shift + drag to measure)", key: "m" },
+  { type: "long", icon: "▲", title: "Long position: entry, stop, target (Alt+L)", key: "l" },
+  { type: "short", icon: "▼", title: "Short position: entry, stop, target (Alt+S)", key: "s" }, "-",
   { type: "text", icon: "T", title: "Text (Alt+N)", key: "n" },
 ];
 const KINDS = ["OB", "FVG", "BREAKER", "IFVG", "BPR", "LIQUIDITY", "OTHER"];
-const S = { meta: null, state: null, tf: "M15", tfSec: 900, bars: [], playing: false, speed: 1, pick: null,
-            saveTimer: null, busy: false };
+const S = { meta: null, state: null, tf: Prefs.get("tf", "M15"), tfSec: 900, bars: [], playing: false,
+            speed: Prefs.get("speed", 1), pick: null, saveTimer: null, busy: false,
+            chartPrefs: { ...CHART_DEFAULTS, ...Prefs.get("chart", {}) } };
 
 // ── the chart ─────────────────────────────────────────────────────────────
 const chart = LightweightCharts.createChart($("chart"), {
   autoSize: true,
   layout: { background: { color: "transparent" }, textColor: css("--muted"), fontSize: 12 },
-  grid: { vertLines: { color: css("--grid") }, horzLines: { color: css("--grid") } },
   crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
   rightPriceScale: { borderColor: css("--line") },
   timeScale: { borderColor: css("--line"), timeVisible: true, secondsVisible: false, rightOffset: 12,
@@ -44,17 +54,19 @@ const chart = LightweightCharts.createChart($("chart"), {
 });
 const series = chart.addCandlestickSeries({ borderVisible: false });
 function palette() {
-  return { ink: css("--ink"), muted: css("--muted"), accent: css("--accent"), up: css("--up"), bad: css("--bad"),
-           panel: css("--panel") };
+  return { ink: css("--ink"), muted: css("--muted"), accent: css("--accent"), up: css("--up"), down: css("--down"),
+           bad: css("--bad"), panel: css("--panel"), background: css("--bg") };
 }
-function paint() {
-  const up = css("--up"), down = css("--down");
-  series.applyOptions({ upColor: up, downColor: down, wickUpColor: up, wickDownColor: down });
-  chart.applyOptions({ layout: { textColor: css("--muted") },
-                       grid: { vertLines: { color: css("--grid") }, horzLines: { color: css("--grid") } } });
-  draw.refresh();
+function rgba(color, a) {
+  const m = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!m) return color;
+  const n = parseInt(m[1], 16);
+  return `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
 }
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paint);
+function hexOf(color) {                                   // css colours can be rgb(): the colour inputs need #rrggbb
+  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(color);
+  return m ? "#" + [m[1], m[2], m[3]].map((x) => Number(x).toString(16).padStart(2, "0")).join("") : color;
+}
 
 // Bar times are New York wall-clock seconds. Until the reveal, the axis shows weekday and time only.
 function timeLabel(t, long) {
@@ -96,16 +108,110 @@ const timeline = {
   barAt(l) { const b = S.bars; return b.length ? b[Math.max(0, Math.min(b.length - 1, Math.round(l)))] : null; },
 };
 
+const templates = Prefs.get("templates", {});
 const draw = new Drawings(chart, series, {
   container: $("chart"), timeline, palette,
   digits: () => (S.meta ? S.meta.digits : 2),
-  onChange: (items) => scheduleSave(items),
-  onSelect: (item) => renderProps(item),
+  template: (type) => templates[type],
+  onChange: (items) => { scheduleSave(items); renderObjects(); },
+  onSelect: (item) => { renderProps(item); renderObjects(); },
+  onEdit: (item, start) => editDrawing(item, start),
+  onContext: (item, x, y) => (item ? drawingMenu(item, x, y) : chartMenu(x, y)),
   picking: () => !!S.pick,
   onPick: (at) => finishPick(at),
   onError: (text) => say(text),
 });
-paint();
+const uiCtx = {
+  palette, kinds: KINDS, timeframes: ALL_TFS, digits: () => (S.meta ? S.meta.digits : 2),
+  timeLabel: (t) => timeLabel(t, true), say: (t) => say(t),
+  saveTemplate: (type, look) => { templates[type] = look; Prefs.set("templates", templates); draw.refresh(); },
+};
+function editDrawing(item, start) { window.ReplayUI.toolSettings(draw, item, uiCtx, start); }
+
+// ── sessions: day separators, the day and midnight opens, killzone shading ──
+let sessionsUpdate = () => {};
+series.attachPrimitive({
+  attached(param) { sessionsUpdate = param.requestUpdate; }, detached() {}, updateAllViews() {},
+  paneViews() {
+    return [{ zOrder: () => "bottom", renderer: () => ({
+      draw: (target) => target.useMediaCoordinateSpace(({ context, mediaSize }) => paintSessions(context, mediaSize)),
+    }) }];
+  },
+});
+const ZONES = [["kzAsia", 1200, 1440], ["kzLondon", 120, 300], ["kzNyAm", 420, 600], ["kzNyPm", 810, 960]];
+function paintSessions(ctx, size) {
+  const p = S.chartPrefs, b = S.bars;
+  if (!b.length || S.tfSec >= 86400) return;
+  const ts = chart.timeScale(), range = ts.getVisibleLogicalRange();
+  if (!range) return;
+  const from = Math.max(0, Math.floor(range.from) - 2), to = Math.min(b.length - 1, Math.ceil(range.to) + 2);
+  const half = ts.options().barSpacing / 2;
+  const x = (i) => ts.logicalToCoordinate(i);
+  const minute = (t) => (((t % 86400) + 86400) % 86400) / 60;
+  const dayOf = (t) => Math.floor((t - 61200) / 86400);              // trading days start 17:00 wall
+  ctx.save();
+  if (S.tfSec <= 3600 && ZONES.some(([k]) => p[k])) {
+    let run = null;
+    const flush = () => { if (run) { ctx.fillStyle = rgba(p[run.key + "Color"], p.kzOpacity); ctx.fillRect(x(run.i) - half, 0, x(run.j) - x(run.i) + 2 * half, size.height); } run = null; };
+    for (let i = from; i <= to; i++) {
+      const m = minute(b[i].time);
+      const zone = ZONES.find(([k, a, z]) => p[k] && m >= a && m < z);
+      const key = zone ? zone[0] : null;
+      if (run && (key !== run.key || dayOf(b[i].time) !== run.day)) flush();
+      if (key) { if (!run) run = { key, i, j: i, day: dayOf(b[i].time) }; else run.j = i; }
+    }
+    flush();
+  }
+  for (let i = from; i <= to; i++) {
+    const day = dayOf(b[i].time);
+    const first = i === 0 || dayOf(b[i - 1].time) !== day;
+    if (!first) continue;
+    let end = i;
+    while (end + 1 < b.length && dayOf(b[end + 1].time) === day) end++;
+    const xEnd = end === b.length - 1 ? size.width : x(end) + half;
+    if (p.separators && i > 0) {
+      ctx.strokeStyle = rgba(hexOf(css("--muted")), 0.45); ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x(i) - half, 0); ctx.lineTo(x(i) - half, size.height); ctx.stroke(); ctx.setLineDash([]);
+    }
+    const level = (k, price, label, dash) => {
+      const y = series.priceToCoordinate(price);
+      if (y === null) return;
+      ctx.strokeStyle = css("--muted"); ctx.setLineDash(dash); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x(k) - half, y); ctx.lineTo(xEnd, y); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = css("--muted"); ctx.font = "11px system-ui, sans-serif"; ctx.textBaseline = "bottom";
+      ctx.fillText(label, Math.max(x(k) - half, 0) + 3, y - 2);
+    };
+    if (p.dayOpen) level(i, b[i].open, "day open", [1, 3]);
+    if (p.midnightOpen) {
+      let k = i;
+      while (k <= end && minute(b[k].time) >= 1020) k++;                // the first bar at or after 00:00
+      if (k <= end) level(k, b[k].open, "00:00 open", [6, 3]);
+    }
+  }
+  ctx.restore();
+}
+
+function applyChartPrefs(p) {
+  S.chartPrefs = { ...CHART_DEFAULTS, ...p };
+  p = S.chartPrefs;
+  if (p.theme === "auto") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = p.theme;
+  const up = p.upColor || css("--up"), down = p.downColor || css("--down");
+  series.applyOptions({ upColor: up, downColor: down, borderVisible: !!p.borders, borderUpColor: up, borderDownColor: down,
+                        wickUpColor: p.wicksLikeBody ? up : p.upWick || up, wickDownColor: p.wicksLikeBody ? down : p.downWick || down });
+  const modes = { normal: LightweightCharts.PriceScaleMode.Normal, log: LightweightCharts.PriceScaleMode.Logarithmic,
+                  percent: LightweightCharts.PriceScaleMode.Percentage };
+  chart.applyOptions({
+    layout: { background: { color: p.background || "transparent" }, textColor: css("--muted") },
+    grid: { vertLines: { visible: p.gridV, color: css("--grid") }, horzLines: { visible: p.gridH, color: css("--grid") } },
+    crosshair: { mode: p.crosshair === "magnet" ? LightweightCharts.CrosshairMode.Magnet : LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { mode: modes[p.scaleMode] || modes.normal, autoScale: p.autoScale, borderColor: css("--line") },
+    timeScale: { borderColor: css("--line") },
+    watermark: { visible: !!p.watermark, text: `${S.meta ? S.meta.instrument : ""} · ${tfLabel(S.tf)}`, fontSize: 56,
+                 color: rgba(hexOf(css("--muted")), 0.14), horzAlign: "center", vertAlign: "center" },
+  });
+  draw.refresh(); sessionsUpdate();
+}
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyChartPrefs(S.chartPrefs));
 
 // ── API ───────────────────────────────────────────────────────────────────
 async function api(path, body) {
@@ -118,7 +224,6 @@ async function api(path, body) {
 }
 function say(text) { $("msg").textContent = text || ""; }
 async function act(fn) { say(""); try { await fn(); } catch (e) { say(e.message); } }
-
 function scheduleSave(items) {
   clearTimeout(S.saveTimer);
   S.saveTimer = setTimeout(() => act(async () => onState(await api("/api/drawings", { drawings: items }))), 400);
@@ -127,20 +232,16 @@ function scheduleSave(items) {
 // ── loading a day ─────────────────────────────────────────────────────────
 async function boot() {
   S.meta = await api("/api/meta");
-  buildTfs(); buildTools(); buildReplay();
+  if (!ALL_TFS.includes(S.tf)) S.tf = "M15";
+  S.tfSec = S.meta.timeframes.find((x) => x.tf === S.tf).seconds;
+  buildTfs(); buildTools(); buildFavBar(); buildReplay();
+  applyChartPrefs(S.chartPrefs);
   await loadDay(await api("/api/state"));
-}
-let openLine = null;
-function markOpen() {                             // the day's open, a reference on every timeframe
-  if (openLine) series.removePriceLine(openLine);
-  openLine = series.createPriceLine({ price: S.state.open_price, color: css("--muted"), lineWidth: 1,
-                                      lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "day open" });
 }
 async function loadDay(state) {
   S.state = state;
-  markOpen();
   draw.load(state.drawings);
-  renderHeader(); renderPanel(); renderReplay(); renderProps(null); markLinked();
+  renderHeader(); renderPanel(); renderReplay(); renderProps(null); markLinked(); renderObjects();
   await loadBars(true);
   renderSummary();
 }
@@ -151,7 +252,6 @@ function onState(state) {
   if (fresh) { renderPanel(); renderReplay(); } else renderLive();
   markLinked();
 }
-
 async function loadBars(fit) {
   const range = chart.timeScale().getVisibleLogicalRange();
   const data = await api("/api/bars?tf=" + S.tf);
@@ -160,72 +260,174 @@ async function loadBars(fit) {
   series.setData(S.bars);
   const n = S.bars.length;
   if (fit || !range) chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 10 });
-  draw.refresh();
+  draw.refresh(); sessionsUpdate();
 }
 
-// ── timeframes, tools, replay controls ────────────────────────────────────
+// ── timeframes: favourites in the bar, every one in the menu ──────────────
 function tfLabel(tf) {
   if (tf === "MN1") return "M";
   if (tf === "W1") return "W";
   if (tf === "D1") return "D";
   return tf[0] === "M" ? tf.slice(1) + "m" : tf.slice(1) + "H";
 }
+const favTfs = () => Prefs.get("favTfs", ALL_TFS);
 function buildTfs() {
-  const box = $("tfs");
+  const box = $("tfs"), favs = favTfs();
+  box.replaceChildren();
+  let group = -1;
+  for (const tf of ALL_TFS) {
+    if (!favs.includes(tf) && tf !== S.tf) continue;
+    const g = GROUPS.findIndex((gr) => gr.includes(tf));
+    if (group >= 0 && g !== group) box.append(Object.assign(document.createElement("span"), { className: "sep" }));
+    group = g;
+    const b = document.createElement("button");
+    b.textContent = tfLabel(tf); b.dataset.tf = tf; b.title = tf;
+    b.classList.toggle("on", tf === S.tf);
+    b.onclick = () => setTf(tf);
+    box.append(b);
+  }
+  const more = document.createElement("button");
+  more.textContent = "▾"; more.title = "All timeframes; star your favourites";
+  more.onclick = (e) => tfMenu(e.currentTarget);
+  box.append(more);
+}
+function tfMenu(anchor) {
+  const { el } = window.ReplayUI;
+  const favs = new Set(favTfs());
+  const panel = el("div", { class: "menu tfmenu" });
   GROUPS.forEach((group, gi) => {
-    if (gi) { const s = document.createElement("span"); s.className = "sep"; box.appendChild(s); }
+    if (gi) panel.append(el("div", { class: "menu-sep" }));
     for (const tf of group) {
-      const b = document.createElement("button");
-      b.textContent = tfLabel(tf); b.dataset.tf = tf; b.title = tf;
-      b.onclick = () => setTf(tf);
-      box.appendChild(b);
+      const star = el("button", { class: "star", title: favs.has(tf) ? "Remove from favourites" : "Add to favourites" }, favs.has(tf) ? "★" : "☆");
+      star.onclick = (e) => {
+        e.stopPropagation();
+        if (favs.has(tf)) favs.delete(tf); else favs.add(tf);
+        Prefs.set("favTfs", ALL_TFS.filter((x) => favs.has(x)));
+        star.textContent = favs.has(tf) ? "★" : "☆";
+        buildTfs();
+      };
+      panel.append(el("div", { class: "menu-row" + (tf === S.tf ? " on" : "") },
+        el("button", { class: "grow", onclick: () => { close(); setTf(tf); } }, tf), star));
     }
   });
-  markTf();
+  document.body.append(panel);
+  const r = anchor.getBoundingClientRect();
+  panel.style.left = Math.min(r.left, window.innerWidth - panel.offsetWidth - 6) + "px";
+  panel.style.top = r.bottom + 4 + "px";
+  const outside = (e) => { if (!panel.contains(e.target) && e.target !== anchor) close(); };
+  function close() { panel.remove(); window.removeEventListener("mousedown", outside, true); }
+  setTimeout(() => window.addEventListener("mousedown", outside, true), 0);
 }
-function markTf() { for (const b of $("tfs").querySelectorAll("button")) b.classList.toggle("on", b.dataset.tf === S.tf); }
 function setTf(tf) {
   act(async () => {
-    S.tf = tf;
+    S.tf = tf; Prefs.set("tf", tf);
     S.tfSec = S.meta.timeframes.find((x) => x.tf === tf).seconds;
-    markTf();
+    buildTfs();
+    applyChartPrefs(S.chartPrefs);
     await loadBars(true);
   });
 }
+
+// ── tools: the strip, favourites, toggles ─────────────────────────────────
+const favTools = () => Prefs.get("favTools", ["rect", "hray", "fib", "long", "short"]);
+function toolButton(tool) {
+  const b = document.createElement("button");
+  b.textContent = tool.icon; b.title = tool.title; b.dataset.type = tool.type || "";
+  b.onclick = () => { S.pick = null; document.body.classList.remove("picking"); draw.use(tool.type); markTool(); };
+  if (tool.type) {
+    b.oncontextmenu = (e) => {
+      e.preventDefault();
+      const favs = favTools(), on = favs.includes(tool.type);
+      window.ReplayUI.contextMenu(e.clientX, e.clientY, [{ label: on ? "Remove from favourites" : "Add to favourites", action: () => {
+        Prefs.set("favTools", on ? favs.filter((x) => x !== tool.type) : [...favs, tool.type]); buildTools(); buildFavBar();
+      } }]);
+    };
+  }
+  return b;
+}
 function buildTools() {
-  const nav = $("tools");
-  TOOLS.forEach((tool, i) => {
-    const b = document.createElement("button");
-    b.textContent = tool.icon; b.title = tool.title; b.dataset.type = tool.type || "";
-    b.onclick = () => { S.pick = null; draw.use(tool.type); markTool(); };
-    nav.appendChild(b);
-    if (i === 0) { const s = document.createElement("span"); s.className = "sep"; nav.appendChild(s); }
-  });
-  const sep = document.createElement("span"); sep.className = "sep"; nav.appendChild(sep);
+  const nav = $("tools"), favs = favTools();
+  nav.replaceChildren();
+  for (const tool of TOOLS) {
+    if (tool === "-") { nav.append(Object.assign(document.createElement("span"), { className: "sep" })); continue; }
+    const b = toolButton(tool);
+    if (tool.type && favs.includes(tool.type)) b.classList.add("fav");
+    nav.append(b);
+  }
+  nav.append(Object.assign(document.createElement("span"), { className: "sep" }));
   const toggle = (icon, title, get, set) => {
     const b = document.createElement("button");
     b.textContent = icon; b.title = title;
     const mark = () => b.classList.toggle("on", get());
     b.onclick = () => { set(!get()); mark(); draw.refresh(); };
-    mark(); nav.appendChild(b);
+    mark(); nav.append(b);
   };
   toggle("🧲", "Magnet: snap to open, high, low, close", () => draw.magnet, (v) => { draw.magnet = v; });
-  toggle("👁", "Hide drawings", () => draw.hidden, (v) => { draw.hidden = v; });
-  const undo = document.createElement("button");
-  undo.textContent = "↶"; undo.title = "Undo (Ctrl+Z)"; undo.onclick = () => draw.undo(); nav.appendChild(undo);
-  const clear = document.createElement("button");
-  clear.textContent = "🗑"; clear.title = "Remove all drawings";
-  clear.onclick = () => { if (confirm("Remove every drawing on this day?")) draw.clearAll(); };
-  nav.appendChild(clear);
+  toggle("📌", "Stay in drawing mode", () => draw.keepTool, (v) => { draw.keepTool = v; });
+  toggle("👁", "Hide all drawings", () => draw.hidden, (v) => { draw.hidden = v; });
+  const action = (icon, title, fn) => { const b = document.createElement("button"); b.textContent = icon; b.title = title; b.onclick = fn; nav.append(b); };
+  action("↶", "Undo (Ctrl+Z)", () => draw.undo());
+  action("🗑", "Remove all drawings", () => { if (confirm("Remove every drawing on this day?")) draw.clearAll(); });
   markTool();
 }
 function markTool() {
-  for (const b of $("tools").querySelectorAll("button[data-type]")) b.classList.toggle("on", (b.dataset.type || null) === draw.tool);
+  for (const b of document.querySelectorAll("#tools button[data-type], #favbar button[data-type]")) {
+    b.classList.toggle("on", (b.dataset.type || null) === draw.tool);
+  }
 }
+function buildFavBar() {
+  const bar = $("favbar"), favs = favTools();
+  bar.replaceChildren();
+  bar.style.display = favs.length ? "" : "none";
+  const grip = document.createElement("span");
+  grip.className = "grip"; grip.textContent = "⋮⋮"; grip.title = "Drag to move";
+  bar.append(grip);
+  for (const type of favs) { const tool = TOOLS.find((t) => t.type === type); if (tool) bar.append(toolButton(tool)); }
+  const pos = Prefs.get("favbarPos", null);
+  if (pos) { bar.style.left = pos.left + "px"; bar.style.top = pos.top + "px"; }
+  grip.onmousedown = (e) => {
+    e.preventDefault();
+    const host = $("chartWrap").getBoundingClientRect(), r = bar.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+    const move = (m) => { bar.style.left = Math.max(0, m.clientX - host.left - dx) + "px"; bar.style.top = Math.max(0, m.clientY - host.top - dy) + "px"; };
+    const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up);
+                       Prefs.set("favbarPos", { left: parseInt(bar.style.left, 10), top: parseInt(bar.style.top, 10) }); };
+    window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
+  };
+  markTool();
+}
+new MutationObserver(markTool).observe($("chart"), { attributes: true, attributeFilter: ["style"] });
+
+// ── context menus ─────────────────────────────────────────────────────────
+function drawingMenu(d, x, y) {
+  window.ReplayUI.contextMenu(x, y, [
+    { label: "Settings…", key: "double-click", action: () => editDrawing(d) },
+    { label: "Clone", action: () => draw.clone(d) },
+    { label: d.locked ? "Unlock" : "Lock", action: () => draw.toggle(d, "locked") },
+    { label: "Hide", action: () => draw.toggle(d, "hidden") },
+    { label: "Bring to front", action: () => { draw.snapshot(); draw.items = [...draw.items.filter((q) => q !== d), d]; draw.changed(); } },
+    { label: "Send to back", action: () => { draw.snapshot(); draw.items = [d, ...draw.items.filter((q) => q !== d)]; draw.changed(); } },
+    "-",
+    { label: "Delete", key: "Del", action: () => draw.remove(d) },
+  ]);
+}
+function chartMenu(x, y) {
+  window.ReplayUI.contextMenu(x, y, [
+    { label: "Chart settings…", action: () => openChartSettings() },
+    { label: "Reset the chart view", action: () => { const n = S.bars.length; chart.priceScale("right").applyOptions({ autoScale: true });
+                                                     chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 10 }); } },
+    { label: draw.hidden ? "Show drawings" : "Hide drawings", action: () => { draw.hidden = !draw.hidden; buildTools(); draw.refresh(); } },
+    "-",
+    { label: "Remove all drawings", disabled: !draw.items.length, action: () => { if (confirm("Remove every drawing on this day?")) draw.clearAll(); } },
+  ]);
+}
+function openChartSettings() { window.ReplayUI.chartSettings({ palette, apply: (p) => applyChartPrefs(p) }); }
+$("chartSettings").onclick = () => openChartSettings();
+
+// ── replay controls ───────────────────────────────────────────────────────
 function buildReplay() {
   SPEEDS.forEach((s, i) => { const o = document.createElement("option"); o.value = i; o.textContent = s.label; $("speed").appendChild(o); });
   $("speed").value = S.speed;
-  $("speed").onchange = () => { S.speed = Number($("speed").value); };
+  $("speed").onchange = () => { S.speed = Number($("speed").value); Prefs.set("speed", S.speed); };
   JUMPS.forEach((t) => { const o = document.createElement("option"); o.value = t; o.textContent = t + " NY"; $("jump").appendChild(o); });
   $("jump").onchange = () => {
     const to = $("jump").value; $("jump").value = "";
@@ -246,10 +448,8 @@ function renderReplay() {
   for (const id of ["play", "speed", "stepBtn", "jump", "reveal"]) $(id).disabled = !live;
   $("play").textContent = S.playing ? "⏸ Pause" : "▶ Play";
   $("replayHint").textContent = S.state && S.state.status === "READING" ? "Save your read to start the day." :
-    S.state && S.state.status === "REVEALED" ? "Day revealed." : "Candles inside a minute are simulated (open, high/low, close).";
+    S.state && S.state.status === "REVEALED" ? "Day revealed." : "Inside a minute the path is simulated (open, extremes, close).";
 }
-
-// ── playing the day ───────────────────────────────────────────────────────
 function stop() { S.playing = false; renderReplay(); }
 function togglePlay() {
   if (S.playing) { stop(); return; }
@@ -305,7 +505,7 @@ async function applyUpdate(u, ms) {
   } catch (e) {                                   // the chart got out of step: redraw it from the server
     await loadBars(false);
   }
-  draw.refresh();
+  draw.refresh(); sessionsUpdate();
 }
 
 // ── header and panels ─────────────────────────────────────────────────────
@@ -368,8 +568,7 @@ function renderPanel() {
         <div class="row"><label>Invalidation</label>${pickable("inv", "wrong past")}</div>
         <div class="row"><label>Key array</label>
           <select id="akind"><option value="">none</option>${KINDS.map((k) => `<option>${k}</option>`).join("")}</select>
-          <select id="atf">${["MN1", "W1", "D1", "H12", "H8", "H7", "H6", "H4", "H3", "H1", "M45", "M30", "M20", "M15", "M10", "M5", "M4", "M3", "M2", "M1"]
-            .map((t) => `<option ${t === "H4" ? "selected" : ""}>${t}</option>`).join("")}</select>
+          <select id="atf">${[...ALL_TFS].reverse().map((t) => `<option ${t === "H4" ? "selected" : ""}>${t}</option>`).join("")}</select>
           <button class="boxed" id="fromBox" title="Use the selected box">from box</button></div>
         <div class="row"><label></label>${pickable("alow", "low")}</div>
         <div class="row"><label></label>${pickable("ahigh", "high")}</div>
@@ -398,13 +597,13 @@ function renderPanel() {
       if ($("akind").value) Object.assign(body, { array_kind: $("akind").value, array_tf: $("atf").value,
                                                  array_low: num("alow"), array_high: num("ahigh") });
       clearTimeout(S.saveTimer);
-      await api("/api/drawings", { drawings: draw.items });   // the read keeps the chart as it is now
+      await api("/api/drawings", { drawings: draw.items.map(({ status, ...d }) => d) });   // the read keeps the chart as it is now
       onState(await api("/api/read", body));
     });
   } else if (s.status === "INTRADAY") {
     p.innerHTML = readCard() + `
       <h2>Trades</h2>
-      <div class="hint">Place a long or short with the position tools, then "Place trade" in its settings. Or type one:</div>
+      <div class="hint">Draw a long or short, then "Place trade" in its panel below. Or type one:</div>
       <div class="row"><span class="seg" id="dir"><button data-v="LONG">Long</button><button data-v="SHORT">Short</button></span></div>
       <div class="row"><label>Entry</label>${pickable("entry")}</div>
       <div class="row"><label>Stop</label>${pickable("stop")}</div>
@@ -481,72 +680,38 @@ function markLinked() {
   draw.refresh();
 }
 
-// ── the selected drawing's settings ───────────────────────────────────────
+// ── the selected drawing: quick settings; the rest in its dialog ──────────
 function renderProps(d) {
   const box = $("props");
   if (!d) { box.innerHTML = ""; return; }
-  const name = { hline: "Horizontal line", hray: "Horizontal ray", vline: "Vertical line", trend: "Trend line", rect: "Box",
-                 fib: "Fib / SD", long: "Long position", short: "Short position", text: "Text" }[d.type];
-  let html = `<h2>${name}</h2>`;
+  let html = `<h2>${window.DRAWING_NAMES[d.type]}${d.locked ? " · locked" : ""}</h2>`;
   if (d.type === "rect") {
     html += `<div class="row"><label>Side</label><span class="seg" id="pdir"><button data-v="bullish">Bullish</button>
                <button data-v="bearish">Bearish</button><button data-v="neutral">Other</button></span></div>
              <div class="row"><label>Array</label><select id="pkind"><option value="">—</option>${KINDS.map((k) => `<option ${d.kind === k ? "selected" : ""}>${k}</option>`).join("")}</select>
-               <select id="ptf"><option value="">TF</option>${S.meta.timeframes.map((x) => `<option ${d.tf === x.tf ? "selected" : ""}>${x.tf}</option>`).join("")}</select></div>
-             <div class="row"><label>High</label><input type="number" step="any" id="pp0"></div>
-             <div class="row"><label>Low</label><input type="number" step="any" id="pp1"></div>
-             <div class="row"><label></label><label><input type="checkbox" id="pmid"> 50% line (CE / MT)</label>
-               <label><input type="checkbox" id="pext"> extend right</label></div>`;
-  }
-  if (d.type === "hline" || d.type === "hray") html += `<div class="row"><label>Price</label><input type="number" step="any" id="pp0"></div>`;
-  if (d.type === "fib") {
-    html += `<div class="row"><label>Levels</label><input type="text" id="plevels" style="width:100%"></div>
-             <div class="row"><label></label><label><input type="checkbox" id="pext"> extend right</label></div>`;
+               <select id="ptf"><option value="">TF</option>${ALL_TFS.map((x) => `<option ${d.tf === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>`;
   }
   if (d.type === "long" || d.type === "short") {
     const placed = S.state.trades.some((t) => t.drawing === d.id);
-    html += `<div class="row"><label>Entry</label><input type="number" step="any" id="pp0"></div>
-             <div class="row"><label>Stop</label><input type="number" step="any" id="pp1"></div>
-             <div class="row"><label>Target</label><input type="number" step="any" id="pp2"></div>
-             <div class="row"><label></label><label><input type="checkbox" id="pext"> extend right</label></div>
+    const [e, st, tg] = d.points.map((q) => q.p);
+    html += `<div class="row"><label>Entry</label><span>${fmt(e)}</span></div>
+             <div class="row"><label>Stop</label><span>${fmt(st)}</span></div>
+             <div class="row"><label>Target</label><span>${fmt(tg)} · R:R ${(Math.abs(tg - e) / Math.abs(e - st)).toFixed(2)}</span></div>
              <div class="row">${placed ? '<span class="good">Placed as a trade</span>' :
                `<button class="primary" id="placeTrade" ${S.state.status === "INTRADAY" ? "" : "disabled"}>Place trade at ${S.state.revealed_until_ny}</button>`}</div>`;
   }
-  if (d.type === "text") html += `<div class="row"><label>Text</label><input type="text" id="ptext" style="width:100%"></div>`;
-  if (d.type !== "text") html += `<div class="row"><label>Label</label><input type="text" id="plabel" placeholder="e.g. PDH, NWOG, Asia low"></div>`;
-  html += `<div class="row"><label>Colour</label><input type="color" id="pcolor"></div>
-           <div class="row"><button class="boxed danger" id="pdel">Delete (Del)</button></div>`;
+  html += `<div class="row"><button class="boxed" id="psettings">Settings… (double-click)</button>
+             <button class="boxed" id="pclone">Clone</button><button class="boxed" id="plock">${d.locked ? "Unlock" : "Lock"}</button>
+             <button class="boxed danger" id="pdel">Delete</button></div>`;
   box.innerHTML = html;
-
-  const set = (change) => { draw.update(d, change); };
-  const pointInput = (id, i) => {
-    const el = $(id); if (!el) return;
-    el.value = d.points[i].p.toFixed(S.meta.digits);
-    el.onchange = () => { const v = Number(el.value); if (isFinite(v)) { const pts = d.points.map((q) => ({ ...q })); pts[i].p = v; set({ points: pts }); } };
-  };
   if (d.type === "rect") {
-    const hiIdx = d.points[0].p >= d.points[1].p ? 0 : 1;
-    pointInput("pp0", hiIdx); pointInput("pp1", 1 - hiIdx);
-    seg("pdir", (v) => set({ direction: v, color: undefined }), d.direction || "neutral");
-    $("pkind").onchange = () => set({ kind: $("pkind").value || undefined });
-    $("ptf").onchange = () => set({ tf: $("ptf").value || undefined });
-    $("pmid").checked = !!d.mid; $("pmid").onchange = () => set({ mid: $("pmid").checked });
-  } else {
-    pointInput("pp0", 0); pointInput("pp1", 1); pointInput("pp2", 2);
+    seg("pdir", (v) => { draw.update(d, { direction: v }); if (d.style) draw.setStyle(d, { color: "", fill: "" }); }, d.direction || "neutral");
+    $("pkind").onchange = () => draw.update(d, { kind: $("pkind").value || undefined });
+    $("ptf").onchange = () => draw.update(d, { tf: $("ptf").value || undefined });
   }
-  if ($("pext")) { $("pext").checked = !!d.extend; $("pext").onchange = () => set({ extend: $("pext").checked }); }
-  if ($("plevels")) {
-    $("plevels").value = (d.levels || FIB_LEVELS).join(", ");
-    $("plevels").onchange = () => {
-      const levels = $("plevels").value.split(",").map((x) => Number(x.trim())).filter((x) => isFinite(x));
-      if (levels.length) set({ levels });
-    };
-  }
-  if ($("ptext")) { $("ptext").value = d.text || ""; $("ptext").onchange = () => set({ text: $("ptext").value }); }
-  if ($("plabel")) { $("plabel").value = d.label || ""; $("plabel").onchange = () => set({ label: $("plabel").value || undefined }); }
-  const pal = palette();
-  $("pcolor").value = /^#[0-9a-f]{6}$/i.test(d.color || "") ? d.color : "#2563eb";
-  $("pcolor").onchange = () => set({ color: $("pcolor").value });
+  $("psettings").onclick = () => editDrawing(d);
+  $("pclone").onclick = () => draw.clone(d);
+  $("plock").onclick = () => { draw.toggle(d, "locked"); renderProps(d); };
   $("pdel").onclick = () => draw.remove(d);
   if ($("placeTrade")) {
     $("placeTrade").onclick = () => act(async () => {
@@ -555,18 +720,22 @@ function renderProps(d) {
       renderProps(d);
     });
   }
-  void pal;
+}
+function renderObjects() {
+  $("objCount").textContent = draw.items.length ? `(${draw.items.length})` : "";
+  window.ReplayUI.objectTree($("objects"), draw, { refresh: () => renderObjects() });
 }
 
 // ── keys ──────────────────────────────────────────────────────────────────
 document.addEventListener("keydown", (e) => {
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
-  if (e.key === "Escape") { S.pick = null; document.body.classList.remove("picking"); draw.use(null); draw.select(null); markTool(); return; }
+  if (e.key === "Escape") { S.pick = null; document.body.classList.remove("picking"); draw.use(null); draw.select(null);
+                            draw.measure = null; window.ReplayUI.closeMenu(); markTool(); draw.refresh(); return; }
   if (typing) return;
   if ((e.key === "Delete" || e.key === "Backspace") && draw.selected) { e.preventDefault(); draw.remove(draw.selected); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); draw.undo(); return; }
   if (e.altKey) {
-    const tool = TOOLS.find((t) => t.key === e.key.toLowerCase());
+    const tool = TOOLS.find((t) => t !== "-" && t.key === e.key.toLowerCase());
     if (tool) { e.preventDefault(); S.pick = null; draw.use(tool.type); markTool(); }
     return;
   }
@@ -575,7 +744,6 @@ document.addEventListener("keydown", (e) => {
     else if (e.key === "ArrowRight") { e.preventDefault(); act(async () => { stop(); await advance({ step: e.shiftKey ? "H1" : SPEEDS[S.speed].step }, 0); }); }
   }
 });
-new MutationObserver(markTool).observe($("chart"), { attributes: true, attributeFilter: ["style"] });
 
 // ── summary ───────────────────────────────────────────────────────────────
 async function renderSummary() {

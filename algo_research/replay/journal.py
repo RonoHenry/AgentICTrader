@@ -41,10 +41,16 @@ NY = "America/New_York"
 BIASES = ("BULLISH", "BEARISH", "NO_THESIS")
 ARRAY_KINDS = ("OB", "FVG", "BREAKER", "IFVG", "BPR", "LIQUIDITY", "OTHER")
 STEPS = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240}
-#: Drawing types and their anchor points: lines, a box for a PD array, a fib/SD
-#: projection, a long or short position (entry, stop, target), a text note.
-DRAWING_POINTS = {"hline": 1, "hray": 1, "vline": 1, "text": 1, "trend": 2, "rect": 2, "fib": 2, "long": 3, "short": 3}
+#: Drawing types and their anchor points (a range for a freehand path): lines, rays, an arrow,
+#: a box for a PD array, a parallel channel, fib/SD projections (two points) and trend-based
+#: extensions (three), a date and price range, a long or short position (entry, stop, target),
+#: a text note, a brush path.
+DRAWING_POINTS: dict[str, object] = {
+    "hline": 1, "hray": 1, "vline": 1, "text": 1, "trend": 2, "ray": 2, "extended": 2, "arrow": 2, "rect": 2,
+    "range": 2, "fib": 2, "channel": 3, "fibext": 3, "long": 3, "short": 3, "path": (2, 400),
+}
 MAX_DRAWINGS = 400
+MAX_STYLE_KEYS = 32
 _PHASE = {"READING": "read", "INTRADAY": "intraday", "REVEALED": "narrative"}
 MAX_TRADES = 3
 
@@ -75,9 +81,11 @@ def _drawing(raw) -> dict:
     did = str(raw.get("id") or "")
     if not 1 <= len(did) <= 40:
         raise ReplayError("drawings: an id of 1 to 40 characters")
-    points = raw.get("points")
-    if not isinstance(points, list) or len(points) != DRAWING_POINTS[kind]:
-        raise ReplayError(f"drawings: a {kind} has {DRAWING_POINTS[kind]} point(s)")
+    points, count = raw.get("points"), DRAWING_POINTS[kind]
+    low, high = count if isinstance(count, tuple) else (count, count)
+    if not isinstance(points, list) or not low <= len(points) <= high:
+        many = f"{low} to {high}" if low != high else f"{low}"
+        raise ReplayError(f"drawings: a {kind} has {many} point(s)")
     try:
         clean_points = [{"t": int(p["t"]), "p": float(p["p"])} for p in points]
     except (KeyError, TypeError, ValueError):
@@ -88,15 +96,56 @@ def _drawing(raw) -> dict:
     for key, limit in (("label", 200), ("text", 1000), ("tf", 5), ("kind", 12), ("color", 32), ("direction", 8)):
         if raw.get(key) not in (None, ""):
             clean[key] = str(raw[key])[:limit]
-    for key in ("mid", "extend", "hidden"):
+    for key in ("mid", "extend", "hidden", "locked"):
         if key in raw:
             clean[key] = bool(raw[key])
     if raw.get("levels") is not None:
-        try:
-            clean["levels"] = [float(x) for x in raw["levels"]][:24]
-        except (TypeError, ValueError):
-            raise ReplayError("drawings: levels are numbers") from None
+        clean["levels"] = _levels(raw["levels"])
+    if raw.get("style") is not None:
+        clean["style"] = _style(raw["style"])
     return clean
+
+
+def _levels(raw) -> list:
+    """Fib levels: numbers, or {value, color, visible}; at most 40."""
+    if not isinstance(raw, list):
+        raise ReplayError("drawings: levels are a list")
+    out = []
+    try:
+        for level in raw[:40]:
+            if isinstance(level, dict):
+                item = {"value": float(level["value"])}
+                if level.get("color"):
+                    item["color"] = str(level["color"])[:32]
+                if "visible" in level:
+                    item["visible"] = bool(level["visible"])
+                out.append(item)
+            else:
+                out.append(float(level))
+    except (KeyError, TypeError, ValueError):
+        raise ReplayError("drawings: each level is a number or {value, color, visible}") from None
+    if not all(math.isfinite(x["value"] if isinstance(x, dict) else x) for x in out):
+        raise ReplayError("drawings: levels must be finite")
+    return out
+
+
+def _style(raw) -> dict:
+    """A drawing's look, as the page sets it: flat keys, plain values (colours, widths, switches)."""
+    if not isinstance(raw, dict) or len(raw) > MAX_STYLE_KEYS:
+        raise ReplayError(f"drawings: style is an object of at most {MAX_STYLE_KEYS} keys")
+    out = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not 1 <= len(key) <= 24:
+            raise ReplayError("drawings: style keys are short names")
+        if value is None or isinstance(value, bool):
+            out[key] = value
+        elif isinstance(value, (int, float)) and math.isfinite(value):
+            out[key] = value
+        elif isinstance(value, str):
+            out[key] = value[:64]
+        else:
+            raise ReplayError(f"drawings: style {key} must be a number, text, true/false or empty")
+    return out
 
 
 def _now() -> str:

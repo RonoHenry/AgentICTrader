@@ -281,3 +281,18 @@ The trader asked for the replay to work like their TradingView: the timeframes t
 5. EACH drawing SHALL be stored with the day, stamped with the phase (`read`, `intraday`, `narrative`) and the revealed time it was made in; an edit SHALL be stamped too. THE read SHALL keep a copy of the drawings made before it was saved, and the reveal a copy of those made before it; later edits never change those copies.
 6. A position drawing MAY be placed as a trade at the revealed time (Requirement 10.5, linked to the drawing). WHILE the day is live, each trade SHALL show its state as of the revealed time: `PENDING` until filled, then `OPEN` with its R, `STOP` or `TARGET`.
 7. AFTER the reveal, the trader MAY write the day's narrative in their own words; it is stored apart from the read.
+
+---
+
+## Update 2026-10-14c: Chart Settings, Favourites and More Tools
+
+TradingView's own chart can't be used: its charting library is licensed to companies for public products only, and the free widget runs on TradingView's data with no replay and no access to the drawings. So the replay chart takes on the free tier's conveniences the trader asked for.
+
+### Requirement 12: The Chart, Made the Trader's Own
+
+1. EACH drawing SHALL have a settings dialog (double-click, or its right-click menu): line colour, width and style; fill and opacity; the box's 50% line; extend left and right; price labels; label text, colour and size; fib levels (value, colour, visible; add, remove, defaults); coordinates; lock and hide. "Save as default" SHALL make it the look of new drawings of that kind.
+2. THE tools SHALL add: ray, extended line, arrow, parallel channel, trend-based fib extension, date and price range, brush; and Shift + drag SHALL measure (price, percent, bars, time) without saving a drawing.
+3. FAVOURITES: a tool's right-click menu SHALL add it to or remove it from a movable favourites bar; the timeframe menu SHALL star the timeframes the bar shows.
+4. THE chart settings SHALL set: candle and wick colours, borders; background, grid, theme (system, light, dark), crosshair, watermark; price scale (regular, logarithmic, percent) and auto-scale; day separators, the day (17:00) and midnight (00:00) opens per day, and shading of the engine's killzones (London 02–05, NY AM 07–10, NY PM 13:30–16, New York time) and the Asian range (20–00).
+5. A right-click on a drawing SHALL offer settings, clone, lock, hide, bring to front, send to back and delete; on the chart, chart settings, reset view, hide drawings and remove all. An object list SHALL show, select, hide, lock and delete drawings.
+6. PREFERENCES (chart settings, favourites, defaults per tool, the last timeframe and speed) SHALL be kept in this browser only; the page SHALL work without them. Drawings and their styles are stored with the day (Requirement 11.5).

@@ -262,6 +262,24 @@ def test_drawings_are_checked(tmp_path):
     assert "note" not in saved and "status" not in saved and saved["kind"] == "FVG"
 
 
+
+def test_drawings_take_a_style_coloured_levels_and_freehand_paths(tmp_path):
+    """Update 2026-10-14c: every tool keeps its own look; fib levels carry colours; a brush is a path."""
+    j = journal(tmp_path)
+    fib = {"id": "f1", "type": "fib", "points": [{"t": 1, "p": 2660.0}, {"t": 2, "p": 2650.0}],
+           "levels": [1, {"value": -2.5, "color": "#16a34a", "visible": False}],
+           "style": {"color": "#2563eb", "width": 2, "dash": "dotted", "extendRight": True, "fontSize": None}}
+    path = {"id": "p1", "type": "path", "points": [{"t": i, "p": 2650.0 + i} for i in range(50)], "locked": True}
+    ext = {"id": "x1", "type": "fibext", "points": [{"t": 1, "p": 1.0}, {"t": 2, "p": 2.0}, {"t": 3, "p": 1.5}]}
+    saved = {d["id"]: d for d in j.save_drawings([fib, path, ext])["drawings"]}
+    assert saved["f1"]["levels"] == [1.0, {"value": -2.5, "color": "#16a34a", "visible": False}]
+    assert saved["f1"]["style"] == fib["style"] and saved["p1"]["locked"] is True and len(saved["p1"]["points"]) == 50
+    for bad, field in (({**fib, "style": {"nested": {"a": 1}}}, "style"), ({**fib, "levels": [{"color": "red"}]}, "level"),
+                       ({**path, "points": path["points"][:1]}, "2 to 400"),
+                       ({**fib, "style": {f"k{i}": 1 for i in range(40)}}, "style")):
+        with pytest.raises(ReplayError, match=field):
+            j.save_drawings([bad])
+
 def test_drawings_keep_the_phase_and_time_they_were_made_in(tmp_path):
     j = journal(tmp_path)
     j.save_drawings([box("read-box")])
@@ -429,7 +447,7 @@ def test_http_round_trip(tmp_path):
         assert status == 200 and nxt["status"] == "READING" and nxt["date"] is None and nxt["drawings"] == []
         page = urllib.request.urlopen(base + "/", timeout=10).read().decode()
         assert "lightweight-charts@4.2.0" in page and "/static/app.js" in page
-        for name in ("app.js", "drawings.js", "app.css"):
+        for name in ("app.js", "drawings.js", "settings.js", "app.css"):
             assert urllib.request.urlopen(f"{base}/static/{name}", timeout=10).status == 200
         with pytest.raises(urllib.error.HTTPError):
             urllib.request.urlopen(f"{base}/static/../journal.py", timeout=10)

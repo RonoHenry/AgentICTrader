@@ -28,7 +28,8 @@ NY = "America/New_York"
 STATIC = Path(__file__).parent / "static"
 #: The page's files: name -> content type. Nothing else under static/ is served.
 FILES = {"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8",
-         "drawings.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8"}
+         "drawings.js": "text/javascript; charset=utf-8", "settings.js": "text/javascript; charset=utf-8",
+         "app.css": "text/css; charset=utf-8"}
 _EPOCH = pd.Timestamp("1970-01-01")
 
 
