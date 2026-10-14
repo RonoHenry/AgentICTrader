@@ -885,6 +885,11 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     - stops against the spread;
     - swap's share of costs, and each run's result without swap (the swap-free account, LE-D16).
   - The hold-out stays unused. The user reviews the trades in `report.html`.
+  - **Result (2026-10-14, `docs/backtests/CANDLE_ANTICIPATION.md`):** no run passes (1 of 5 each).
+    - base `72b9ce1fd2ca`: −0.19R a trade, drawdown 113R.
+    - anticipation `335eec26f2a7`: +0.08R [−0.24, +0.43]; anticipation_body `a11314f6c70c`: +0.12R [−0.20, +0.48], profit factor 1.15, drawdown 39R; anticipation_poi `b17bcdc7925e`: +0.11R.
+    - The improvement comes from delivery, not direction: only 28% of anticipation trades went the day's way, but trades against the close that weren't fading its expansion made +0.75 to +0.96R (the nearer draw reached first). Fading the expansion still costs about −75R a run.
+    - Exploration leads: XAUUSD +0.60 to +0.96R; fills below the midnight open for longs and above it for shorts pay (+0.16 to +0.34R), the reverse loses.
 
 - [ ] 243. Decide the next step with the user
   - **If a variant passes:** ablations (one rule removed at a time), then the hold-out `--final` run once the user agrees the version is final.

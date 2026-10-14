@@ -352,6 +352,7 @@ As of 2026-10-12, on Exness M1, EURUSD, GBPUSD, USDJPY and XAUUSD, 2025-01 → 2
 | SD 2.0 targets at R:R 10+ | hit about 3% of the time; the worst R:R band | `docs/backtests/SETUP_SEQUENCE.md` |
 | Stopped trades reach +1R first | 32–35% of all stopped trades; 46–49% of stopped trades that were with the day | `SETUP_SEQUENCE.md`; `AUTOPSY.md` |
 | Full system, best variant (BODY stop) | −0.01R per trade, CI −0.20 to +0.18, n = 686 | `SETUP_SEQUENCE.md` |
+| Candle anticipation (trade the profile's direction after the false move, 01:00–13:00 NY, nearer target) | best +0.12R a trade (CI −0.20 to +0.48), profit factor 1.15, drawdown 39R, n = 276: fails the pass mark. It beats the base (−0.19R) by delivery, not direction: 28% of trades went the day's way | `docs/backtests/CANDLE_ANTICIPATION.md` |
 
 **Reading:**
 - Time says *when* price moves (the volatility schedule), not yet *where* it turns.
