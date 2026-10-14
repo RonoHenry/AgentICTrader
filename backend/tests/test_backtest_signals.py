@@ -21,15 +21,18 @@ from typing import Optional
 import pytest
 
 from agent.order_intent import NoTrade, OrderIntent
-from agent.strategy_config import StrategyConfig
+from agent.strategy_config import StopMode, StrategyConfig
 from algo_backtester.data import InstrumentData, StoredBar, load_instrument
 from algo_backtester.signals import (
     EngineError,
     SignalRecord,
     TradeContext,
     generate_all,
+    generate_many,
     generate_signals,
+    same_view,
     signal_at,
+    signals_at,
     trade_context,
 )
 from liquidity_engine import LiquidityMappingEngine
@@ -156,6 +159,27 @@ def test_parallel_per_instrument_equals_sequential():
     assert set(parallel) == {"EURUSD", "XAUUSD"} and all(parallel.values())
 
 
+def test_time_slices_equal_sequential():
+    """More workers than instruments: each instrument's closes are cut into
+    contiguous slices, computed in parallel and joined in order. The engine is
+    stateless per close, so the records are identical."""
+    datas = [data_for("EURUSD"), data_for("XAUUSD")]
+    start, end = datetime(2026, 9, 30, 13, 0, tzinfo=UTC), datetime(2026, 9, 30, 15, 0, tzinfo=UTC)
+    sequential = generate_all(datas, CFG, start, end, workers=1)
+    assert generate_all(datas, CFG, start, end, workers=5) == sequential
+    one = [data_for("EURUSD")]
+    assert generate_all(one, CFG, start, end, workers=3) == {"EURUSD": sequential["EURUSD"]}
+
+
+def test_time_slices_are_contiguous_and_ordered():
+    from algo_backtester.signals import time_slices
+    closes = list(range(10))
+    assert time_slices(closes, 3) == [[0, 1, 2, 3], [4, 5, 6], [7, 8, 9]]
+    assert time_slices(closes, 1) == [closes]
+    assert time_slices([1, 2], 5) == [[1], [2]]
+    assert time_slices([], 3) == []
+
+
 # ── TradeContext (task 217, Req 11.5) ──────────────────────────────────────
 # 12:00-14:00 UTC on 2026-09-30 holds both order intents and no-trades.
 CONTEXT_START, CONTEXT_END = datetime(2026, 9, 30, 12, 0, tzinfo=UTC), datetime(2026, 9, 30, 14, 0, tzinfo=UTC)
@@ -259,3 +283,50 @@ def test_trade_context_round_trips_through_cache(tmp_path):
     loaded = cache.load("k" * 64)
     assert loaded == stored == list(context_records())
     assert all(type(r.context) is TradeContext for r in loaded if isinstance(r.result, OrderIntent))
+
+
+# ── several configurations, one engine pass (task 298) ─────────────────────
+
+# Variants that change only order rules: the engine sees the same candles under each.
+VARIANTS = [CFG, CFG.model_copy(update={"min_rr": 5.0}),
+            CFG.model_copy(update={"stop_mode": StopMode.BODY})]
+
+
+class CountingEngine(LiquidityMappingEngine):
+    def __init__(self):
+        self.calls = 0
+
+    def analyze(self, view, instrument, t):
+        self.calls += 1
+        return super().analyze(view, instrument, t)
+
+
+def test_signals_at_analyses_once_and_matches_each_configuration_alone():
+    data, t = data_for(), datetime(2026, 9, 30, 14, 0, tzinfo=UTC)
+    engine = CountingEngine()
+    shared = signals_at(data, VARIANTS, t, engine)
+    assert engine.calls == 1
+    assert shared == [signal_at(data, cfg, t) for cfg in VARIANTS]
+
+
+def test_signals_at_records_an_engine_failure_for_every_configuration():
+    fail_at = datetime(2026, 9, 30, 13, 30, tzinfo=UTC)
+    records = signals_at(data_for(), VARIANTS, fail_at, FakeEngine(fail_at=fail_at))
+    assert [type(r.result) for r in records] == [EngineError] * len(VARIANTS)
+    assert records[0] == signal_at(data_for(), CFG, fail_at, FakeEngine(fail_at=fail_at))
+
+
+def test_generate_many_equals_each_configuration_alone():
+    datas = [data_for("EURUSD"), data_for("XAUUSD")]
+    start, end = datetime(2026, 10, 2, 6, 0, tzinfo=UTC), datetime(2026, 10, 2, 7, 0, tzinfo=UTC)   # gold sets up here
+    alone = [generate_all(datas, cfg, start, end, workers=1) for cfg in VARIANTS]
+    assert alone[0] != alone[1] and alone[0] != alone[2]           # the rules differ somewhere in the window
+    assert generate_many(datas, VARIANTS, start, end, workers=1) == alone
+    assert generate_many(datas, VARIANTS, start, end, workers=5) == alone   # time-sliced too
+
+
+def test_generate_many_refuses_configurations_that_see_different_candles():
+    other = CFG.model_copy(update={"candle_counts": {**CFG.candle_counts, TF.M15: 50}})
+    assert same_view(VARIANTS) and not same_view([CFG, other])
+    with pytest.raises(ValueError, match="same entry_tf"):
+        generate_many([data_for()], [CFG, other], START, END)

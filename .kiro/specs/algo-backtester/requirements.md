@@ -257,6 +257,48 @@ Recorded so they are not silently forgotten, and not bolted on mid-implementatio
 
 ---
 
+## Update 2026-10f: The Engine on the Trader's Own Charts
+
+Added 2026-10-13 at the user's request. The user judges the engine by eye, on TradingView: every timeframe, drawing tools, snapshots, and Bar Replay to read a day without seeing what follows. The trade autopsy (`.kiro/specs/market-narrative`, task 291) splits a run by failure mode, and the user wants to pull up those trades and replay them.
+
+TradingView's embeddable Advanced Charts library is licensed only to companies for public web projects, so the engine's trades go to the user's own TradingView as a generated Pine Script overlay. The run report stays the place to check executions: exact M1 fills and the spread used.
+
+Requirement 12 stays reserved for the deferred setup-review brief (`docs/ALGO_BACKTESTER_VALIDATION_HANDOFF.md`).
+
+### Requirement 13: TradingView Overlay
+
+**User Story:** As the trader, I want the engine's trades drawn on my own TradingView charts, so that I can switch timeframes, annotate, take snapshots and replay each day to judge whether its logic is right.
+
+#### Acceptance Criteria
+
+1. `python -m algo_backtester pine <run_dir> --instrument <symbol>` with `--month YYYY-MM` (or `--start` and `--end` trading dates) SHALL write a Pine Script v6 indicator into `<run_dir>/pine/`, built only from the run's own files.
+2. FOR each filled trade of the instrument whose decision falls in the window, THE overlay SHALL draw:
+   - the risk box (entry to stop) and reward box (entry to target), from the decision to the exit, TradingView position-tool style;
+   - a label at the decision: direction, grade, and the pool the setup raided;
+   - the raided pool, as a dotted line from where it formed to where it was raided;
+   - the draw on liquidity, as a dashed line while the trade is open;
+   - a marker at the fill;
+   - a label at the exit: the result in R, the exit reason, and the trade's failure mode (D25).
+3. THE overlay SHALL also draw each D1 candle's open (17:00 New York), from the run's own candles on the narrative's price basis.
+4. THE overlay SHALL be safe in Bar Replay (D25):
+   - each drawing is created only on the chart bar that contains its event's time;
+   - an open trade's boxes grow bar by bar until its exit;
+   - nothing on the chart reveals an outcome before the replay reaches it.
+5. Inputs SHALL switch each layer on and off: raided pool, draw, D1 open, and the exit result. A failure-mode input SHALL show only the trades of one mode. Its label SHALL say that it is hindsight.
+6. THE overlay SHALL say on the chart when the chart's symbol doesn't match the instrument.
+7. A window with no trades, or more trades than the overlay's limit (D26), SHALL be refused, with the count and a shorter window suggested.
+
+### Requirement 14: Failure Modes in the Run Report
+
+**User Story:** As the trader, I want to filter the run report by failure mode, so that I can check how the trades of each mode were executed.
+
+#### Acceptance Criteria
+
+1. WHEN a run directory holds `autopsy.csv`, THE report SHALL show each trade's failure mode in its details and offer a failure-mode filter beside the existing ones.
+2. Runs without `autopsy.csv` SHALL render as before.
+
+---
+
 ## Open Decisions
 
 To be settled by the user before `design.md`. Proposed defaults are shown; they apply if not changed.
@@ -282,3 +324,10 @@ Decided 2026-10-05, after the first spec export (task 183) showed the connected 
 | D11 | First real broker profile | `exness-standard`: an Exness Standard MT5 demo. Server clock UTC+0, hedging, costs costed through the spread. MetaQuotes-Demo data is test data only and never used for results. |
 | D12 | Visual review | A self-contained HTML run report per run (Requirement 11), built before the first baseline. A served frontend stays deferred. |
 | D13 | Forward test on the real market | An Exness FX and gold paper forward test on the Windows host (Requirement 9.6). The `exness-standard` account offers no crypto, so the Binance forward test is a plumbing check only. |
+
+Update 2026-10f (proposed; D14–D24 are reserved by the setup-review brief):
+
+| # | Decision | Proposed default |
+|---|---|---|
+| D25 | What the overlay shows, and when | Everything known at the decision appears on the decision's bar: levels, grade, the raided pool, the draw, and the D1 open from its own open. Hindsight (the result, the exit reason, the failure mode) appears only on the exit's bar. The failure-mode filter is hindsight by nature, so its input says so; for a blind replay, leave it at ALL and switch the exit result off. |
+| D26 | Overlay size | At most 120 trades per script. A trade uses 3 labels, 2 boxes and 2 lines, and Pine shows at most 500 of each. One instrument-month of the BODY run averages about 10 trades. |

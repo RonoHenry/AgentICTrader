@@ -81,22 +81,28 @@ services:
     image: ghcr.io/mlflow/mlflow:v2.11.1
     ports:
       - "5000:5000"
-    command: >
-      mlflow server
-      --backend-store-uri postgresql://${DB_USER:-agentictrader}:${DB_PASSWORD:-changeme}@timescaledb:5432/${DB_NAME:-agentictrader}
-      --default-artifact-root /mlflow/artifacts
-      --host 0.0.0.0
+    # The official image has no Postgres driver; install it before the server starts.
+    command:
+      - bash
+      - -c
+      - >-
+        pip install --quiet --no-cache-dir psycopg2-binary &&
+        mlflow server
+        --backend-store-uri postgresql://${DB_USER:-agentictrader}:${DB_PASSWORD:-changeme}@timescaledb:5432/${DB_NAME:-agentictrader}
+        --default-artifact-root /mlflow/artifacts
+        --host 0.0.0.0
     volumes:
       - mlflow_artifacts:/mlflow/artifacts
     depends_on:
       timescaledb:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+      # no curl in the image: python's urllib instead
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/health')\" || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 60s
 
   # ── VECTOR STORE ─────────────────────────────────────────
   qdrant:
@@ -115,7 +121,8 @@ services:
         reservations:
           memory: 512M
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:6333/healthz || exit 1"]
+      # no curl in the image: a bash TCP probe of the REST port instead
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -258,7 +265,8 @@ services:
     ports:
       - "3000:3000"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000 >/dev/null || exit 1"]
+      # localhost is ::1 in Alpine and Next.js listens on IPv4
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000 >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

@@ -20,7 +20,8 @@ from agent.order_intent import NoTrade, OrderIntent
 from agent.strategy_config import StrategyConfig
 from algo_backtester.cache import ENGINE_SOURCES, SignalCache, cache_key, engine_code_fingerprint
 from algo_backtester.data import DataFingerprint
-from algo_backtester.signals import EngineError, SignalRecord, generate_all, generate_signals
+from algo_backtester import signals
+from algo_backtester.signals import EngineError, SignalRecord, generate_all, generate_many, generate_signals
 from liquidity_engine import LiquidityMappingEngine
 from liquidity_engine.models import SetupGrade, Timeframe
 from ml.features.session_features import TimeFeatures
@@ -144,6 +145,52 @@ def test_generate_all_writes_and_reuses_cache(tmp_path):
     assert generate_all(datas, CFG, start, end, workers=1, cache=cache) == parallel
     assert parallel == generate_all(datas, CFG, start, end, workers=1)
 
+
+def test_time_sliced_run_stores_one_entry_per_instrument(tmp_path):
+    datas = [data_for("EURUSD"), data_for("XAUUSD")]
+    start, end = datetime(2026, 9, 30, 13, 0, tzinfo=UTC), datetime(2026, 9, 30, 14, 0, tzinfo=UTC)
+    cache = SignalCache(tmp_path, ENGINE_FP)
+    sliced = generate_all(datas, CFG, start, end, workers=4, cache=cache)
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(
+        cache.path(cache.key(d, CFG, start, end)).name for d in datas)
+    assert generate_all(datas, CFG, start, end, workers=1, cache=cache) == sliced == generate_all(datas, CFG, start, end, workers=1)
+
+
+
+def test_generate_many_stores_each_configuration_and_serves_it_alone(tmp_path, monkeypatch):
+    """Task 298: one engine pass for several configurations, one cache entry each;
+    a later run of any one of them is served without computing."""
+    datas = [data_for("EURUSD"), data_for("XAUUSD")]
+    start, end = datetime(2026, 9, 30, 13, 0, tzinfo=UTC), datetime(2026, 9, 30, 14, 0, tzinfo=UTC)
+    cfgs = [CFG, CFG.model_copy(update={"min_rr": 5.0})]
+    cache = SignalCache(tmp_path, ENGINE_FP)
+    shared = generate_many(datas, cfgs, start, end, workers=4, cache=cache)
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(
+        cache.path(cache.key(d, cfg, start, end)).name for d in datas for cfg in cfgs)
+
+    def computed(*args):
+        raise AssertionError("served from the cache: nothing should be computed")
+
+    monkeypatch.setattr(signals, "_generate_closes", computed)
+    assert [generate_all(datas, cfg, start, end, workers=1, cache=cache) for cfg in cfgs] == shared
+
+
+def test_generate_many_computes_only_what_the_cache_lacks(tmp_path, monkeypatch):
+    data = data_for("EURUSD")
+    start, end = datetime(2026, 9, 30, 13, 0, tzinfo=UTC), datetime(2026, 9, 30, 14, 0, tzinfo=UTC)
+    cfgs = [CFG, CFG.model_copy(update={"min_rr": 5.0})]
+    cache = SignalCache(tmp_path, ENGINE_FP)
+    first = generate_all([data], CFG, start, end, workers=1, cache=cache)
+    asked, real = [], signals._generate_closes
+
+    def spy(d, cfgs_, closes, spread=None):
+        asked.append(list(cfgs_))
+        return real(d, cfgs_, closes, spread)
+
+    monkeypatch.setattr(signals, "_generate_closes", spy)
+    both = generate_many([data], cfgs, start, end, workers=1, cache=cache)
+    assert asked == [[cfgs[1]]]
+    assert both[0] == first and both[1] == generate_all([data], cfgs[1], start, end, workers=1)
 
 # ── corruption and atomic writes ───────────────────────────────────────────
 
