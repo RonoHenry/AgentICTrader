@@ -652,6 +652,13 @@ Numbered from 294, after market-narrative's 290–293. Tasks 294 and 295 need th
   - **RED:** `test_signals_at_analyses_once_and_matches_each_configuration_alone`, `test_signals_at_records_an_engine_failure_for_every_configuration`, `test_generate_many_equals_each_configuration_alone`, `test_generate_many_refuses_configurations_that_see_different_candles`, `test_generate_many_stores_each_configuration_and_serves_it_alone`, `test_generate_many_computes_only_what_the_cache_lacks`, `test_run_several_variants_shares_phase_a`, `test_run_several_variants_refuses_no_cache_and_repeats`. The golden run is unchanged.
   - **Validates: Requirements 7.4**
 
+- [x] 302. Resumable Phase A (`algo_backtester/signals.py`, `cache.py`)
+  - Added 2026-10-14. Three 242 runs were lost in two days: a restart, a sleep and a worker that died (BrokenProcessPool). Phase A kept its work in memory until an instrument was done, so each loss cost hours.
+  - Phase A now works in chunks of entry closes, one per UTC day (`chunks`, `CHUNK_SECONDS`), queued to the workers (replacing task 297's equal time slices). With a cache, each finished chunk is stored at once under `SignalCache.part_key`, and a rerun skips the chunks it finds; the parts are removed once the instrument's entry is stored. A crash costs at most the chunks in flight.
+  - Each worker reads an instrument's data once from a temporary file and keeps it for its next chunks, so the many small tasks don't each carry the data.
+  - **RED:** `test_a_run_that_dies_resumes_from_its_finished_chunks`, `test_chunks_are_contiguous_ordered_and_daily`, `test_parallel_chunks_equal_sequential`. The golden run is unchanged.
+  - **Validates: Requirements 7.4**
+
 ---
 
 ## Task Dependency Graph

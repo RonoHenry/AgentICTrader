@@ -107,6 +107,10 @@ class SignalCache:
     def path(self, key: str) -> Path:
         return Path(self.root) / f"{key}.jsonl"
 
+    def part_key(self, key: str, first: datetime, last: datetime, count: int) -> str:
+        """The key of one chunk of entry ``key`` while it is computed (task 302)."""
+        return hashlib.sha256(f"{key}|{first.isoformat()}|{last.isoformat()}|{count}".encode()).hexdigest()
+
     def signals(self, data: InstrumentData, cfg: StrategyConfig, start: datetime, end: datetime,
                 engine: Optional[Engine] = None, typical_spread: Optional[float] = None) -> list[SignalRecord]:
         """generate_signals(), served from the cache when it holds the entry."""

@@ -31,10 +31,13 @@ Requirements 19.5, 24.1 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
 
-from concurrent.futures import ProcessPoolExecutor
+import pickle
+import tempfile
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timedelta
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator, Mapping, Optional, Protocol, Sequence, Union
 
 from agent.order_intent import NoTrade, OrderIntent, build_order_intent
@@ -63,7 +66,7 @@ __all__ = [
     "same_view",
     "signal_at",
     "signals_at",
-    "time_slices",
+    "chunks",
     "trade_context",
 ]
 
@@ -246,16 +249,22 @@ def generate_signals(data: InstrumentData, cfg: StrategyConfig, start: datetime,
         yield signal_at(data, cfg, t, engine, typical_spread)
 
 
-def time_slices(closes: Sequence, n: int) -> list[list]:
-    """``closes`` cut into at most ``n`` contiguous slices, in order, sizes differing by one at most."""
-    n = max(1, min(n, len(closes)))
-    size, extra = divmod(len(closes), n)
-    out, i = [], 0
-    for k in range(n):
-        step = size + (1 if k < extra else 0)
-        if step:
-            out.append(list(closes[i:i + step]))
-        i += step
+#: Phase A works in chunks of entry closes, one per UTC day (task 302). Each chunk is
+#: cached as soon as it is done, so a run that dies (a restart, a broken worker)
+#: resumes where it stopped instead of starting over.
+CHUNK_SECONDS = 86_400
+
+
+def chunks(closes: Sequence[datetime]) -> list[list[datetime]]:
+    """``closes``, in order, cut where the bar ending at t starts a new CHUNK_SECONDS period."""
+    out: list[list[datetime]] = []
+    current = None
+    for t in closes:
+        key = int((t - _M1).timestamp()) // CHUNK_SECONDS
+        if key != current:
+            out.append([])
+            current = key
+        out[-1].append(t)
     return out
 
 
@@ -266,13 +275,14 @@ def generate_all(datas: Sequence[InstrumentData], cfg: StrategyConfig, start: da
     identical either way. ``spreads`` holds each instrument's typical spread, for
     cfg.min_stop_spreads.
 
-    By default each instrument gets one process. With more ``workers`` than
-    instruments, each instrument's closes are also cut into contiguous time
-    slices, computed in parallel and joined in order: the engine is stateless
-    per close, so the records don't change, only the wall time.
+    Each instrument's closes are cut into daily chunks (``chunks``), computed by
+    up to ``workers`` processes and joined in order: the engine is stateless per
+    close, so the records don't change, only the wall time.
 
     With a ``cache``, instruments it holds are served from it; the others are
-    computed and stored whole, one entry per instrument as before."""
+    stored whole, one entry per instrument. While a run is going, each finished
+    chunk is cached too, so a run that dies resumes from its finished chunks;
+    they are removed once the instrument's entry is stored."""
     return generate_many(datas, (cfg,), start, end, workers, cache, spreads)[0]
 
 
@@ -301,29 +311,75 @@ def generate_many(datas: Sequence[InstrumentData], cfgs: Sequence[StrategyConfig
         for k, records in zip(missing[d.instrument], per_cfg):
             computed[d.instrument, k] = cache.store(keys[d.instrument, k], records) if cache else records
 
-    if workers == 1 or (workers is None and len(todo) <= 1) or not todo:
-        for d in todo:
-            keep(d, _generate_closes(d, [cfgs[k] for k in missing[d.instrument]],
-                                     entry_closes(d, cfgs[0].entry_tf, start, end), spreads.get(d.instrument)))
+    plan = {d.instrument: chunks(entry_closes(d, cfgs[0].entry_tf, start, end)) for d in todo}
+
+    def part(d: InstrumentData, k: int, i: int) -> str:
+        piece = plan[d.instrument][i]
+        return cache.part_key(keys[d.instrument, k], piece[0], piece[-1], len(piece))
+
+    done: dict[tuple[str, int], list[list[SignalRecord]]] = {}
+    pending = []
+    for d in todo:
+        for i in range(len(plan[d.instrument])):
+            stored = [cache.load(part(d, k, i)) for k in missing[d.instrument]] if cache else [None]
+            if all(records is not None for records in stored):
+                done[d.instrument, i] = stored
+            else:
+                pending.append((d, i))
+
+    def finish(d: InstrumentData, i: int, per_cfg: list[list[SignalRecord]]) -> None:
+        done[d.instrument, i] = per_cfg
+        if cache:
+            for k, records in zip(missing[d.instrument], per_cfg):
+                cache.store(part(d, k, i), records)
+
+    if workers == 1 or (workers is None and len(todo) <= 1) or not pending:
+        for d, i in pending:
+            finish(d, i, _generate_closes(d, [cfgs[k] for k in missing[d.instrument]], plan[d.instrument][i],
+                                          spreads.get(d.instrument)))
     else:
-        n_workers = workers or len(todo)
-        per_instrument = max(1, -(-n_workers // len(todo)))          # round up: keep every worker busy
-        with ProcessPoolExecutor(max_workers=min(n_workers, len(todo) * per_instrument)) as pool:
-            futures = {d.instrument: [pool.submit(_generate_closes, d, [cfgs[k] for k in missing[d.instrument]],
-                                                  part, spreads.get(d.instrument))
-                                      for part in time_slices(entry_closes(d, cfgs[0].entry_tf, start, end),
-                                                              per_instrument)]
-                       for d in todo}
-            for d in todo:
-                parts = [f.result() for f in futures[d.instrument]]
-                keep(d, [[r for part in parts for r in part[j]] for j in range(len(missing[d.instrument]))])
+        # Each worker reads an instrument's data from a file once and keeps it for its next
+        # chunks, so the chunks themselves travel light.
+        with tempfile.TemporaryDirectory(prefix="phase-a-") as tmp:
+            paths = {}
+            for d, _ in pending:
+                if d.instrument not in paths:
+                    paths[d.instrument] = str(Path(tmp) / f"{d.instrument}.pickle")
+                    with open(paths[d.instrument], "wb") as fh:
+                        pickle.dump(d, fh, protocol=pickle.HIGHEST_PROTOCOL)
+            with ProcessPoolExecutor(max_workers=min(workers or len(todo), len(pending))) as pool:
+                futures = {pool.submit(_generate_chunk, paths[d.instrument], [cfgs[k] for k in missing[d.instrument]],
+                                       plan[d.instrument][i], spreads.get(d.instrument)): (d, i) for d, i in pending}
+                for future in as_completed(futures):
+                    finish(*futures[future], future.result())
+
+    for d in todo:
+        n = len(plan[d.instrument])
+        keep(d, [[r for i in range(n) for r in done[d.instrument, i][j]] for j in range(len(missing[d.instrument]))])
+        if cache:
+            for i in range(n):
+                for k in missing[d.instrument]:
+                    cache.path(part(d, k, i)).unlink(missing_ok=True)
     return [{d.instrument: computed[d.instrument, k] if (d.instrument, k) in computed else hits[d.instrument, k]
              for d in datas} for k in range(len(cfgs))]
 
 
+_LOADED: dict[str, InstrumentData] = {}       # in a worker: the instrument it last read
+
+
+def _generate_chunk(path: str, cfgs: Sequence[StrategyConfig], closes: Sequence[datetime],
+                    typical_spread: Optional[float] = None) -> list[list[SignalRecord]]:
+    """_generate_closes in a worker, the instrument's data read from ``path`` once."""
+    if path not in _LOADED:
+        _LOADED.clear()                          # one instrument at a time keeps a worker's memory flat
+        with open(path, "rb") as fh:
+            _LOADED[path] = pickle.load(fh)
+    return _generate_closes(_LOADED[path], cfgs, closes, typical_spread)
+
+
 def _generate_closes(data: InstrumentData, cfgs: Sequence[StrategyConfig], closes: Sequence[datetime],
                      typical_spread: Optional[float] = None) -> list[list[SignalRecord]]:
-    """One time slice of Phase A: per configuration, the records at ``closes``, in order."""
+    """One chunk of Phase A: per configuration, the records at ``closes``, in order."""
     engine = LiquidityMappingEngine()
     per_cfg: list[list[SignalRecord]] = [[] for _ in cfgs]
     for t in closes:

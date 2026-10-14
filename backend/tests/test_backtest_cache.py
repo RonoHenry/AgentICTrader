@@ -157,6 +157,34 @@ def test_time_sliced_run_stores_one_entry_per_instrument(tmp_path):
 
 
 
+def test_a_run_that_dies_resumes_from_its_finished_chunks(tmp_path, monkeypatch):
+    """Task 302: finished chunks are cached as the run goes; a rerun computes only
+    the rest, gives the same records, and leaves only the instrument's entry."""
+    monkeypatch.setattr(signals, "CHUNK_SECONDS", 1800)
+    data = data_for("EURUSD")
+    start, end = datetime(2026, 9, 30, 13, 0, tzinfo=UTC), datetime(2026, 9, 30, 15, 0, tzinfo=UTC)
+    whole = generate_all([data], CFG, start, end, workers=1)
+    cache = SignalCache(tmp_path, ENGINE_FP)
+    computed, real = [], signals._generate_closes
+
+    def dies_on_the_third(d, cfgs, closes, spread=None):
+        computed.append(closes[0])
+        if len(computed) == 3:
+            raise RuntimeError("the power went")
+        return real(d, cfgs, closes, spread)
+
+    monkeypatch.setattr(signals, "_generate_closes", dies_on_the_third)
+    with pytest.raises(RuntimeError):
+        generate_all([data], CFG, start, end, workers=1, cache=cache)
+    assert len(list(tmp_path.glob("*.jsonl"))) == 2                   # the two finished chunks
+
+    computed.clear()
+    monkeypatch.setattr(signals, "_generate_closes",
+                        lambda d, cfgs, closes, spread=None: computed.append(closes[0]) or real(d, cfgs, closes, spread))
+    assert generate_all([data], CFG, start, end, workers=1, cache=cache) == whole
+    assert len(computed) == len(signals.chunks(signals.entry_closes(data, CFG.entry_tf, start, end))) - 2
+    assert [p.name for p in tmp_path.glob("*.jsonl")] == [cache.path(cache.key(data, CFG, start, end)).name]
+
 def test_generate_many_stores_each_configuration_and_serves_it_alone(tmp_path, monkeypatch):
     """Task 298: one engine pass for several configurations, one cache entry each;
     a later run of any one of them is served without computing."""
