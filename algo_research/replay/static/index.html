@@ -4,379 +4,50 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Blind Replay</title>
+<link rel="stylesheet" href="/static/app.css">
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
-<style>
-  :root {
-    --bg: #f7f7f5; --panel: #ffffff; --ink: #1c1f23; --muted: #6b7280; --line: #e3e3df; --accent: #2563eb;
-    --up: #3a9a46; --down: #1c1f23; --good: #15803d; --bad: #b91c1c; --warn: #b45309; --chip: #eef0f3;
-    --grid: rgba(0, 0, 0, 0.05);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #121417; --panel: #1a1d21; --ink: #e7e9ec; --muted: #9aa1ab; --line: #2a2e34; --accent: #60a5fa;
-      --up: #4fb35c; --down: #d4d7dc; --good: #4ade80; --bad: #f87171; --warn: #fbbf24; --chip: #23272d;
-      --grid: rgba(255, 255, 255, 0.05);
-    }
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
-  body { background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
-         display: grid; grid-template-rows: auto 1fr; }
-  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px 16px;
-           border-bottom: 1px solid var(--line); background: var(--panel); }
-  header h1 { font-size: 15px; margin: 0; font-weight: 650; }
-  .pill { padding: 2px 10px; border-radius: 999px; background: var(--chip); font-size: 12px; font-weight: 600; }
-  .pill.READING { color: var(--accent); } .pill.INTRADAY { color: var(--warn); } .pill.REVEALED { color: var(--good); }
-  .when { font-variant-numeric: tabular-nums; font-weight: 600; }
-  .spacer { flex: 1; }
-  .muted { color: var(--muted); }
-  main { display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
-  #chartWrap { display: grid; grid-template-rows: auto 1fr; min-height: 0; }
-  .tfs { display: flex; gap: 4px; padding: 8px 12px; flex-wrap: wrap; }
-  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
-           border-radius: 6px; padding: 5px 10px; cursor: pointer; }
-  button:hover { border-color: var(--muted); }
-  button.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
-  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
-  button.danger { border-color: var(--bad); color: var(--bad); }
-  button:disabled { opacity: 0.5; cursor: default; }
-  #chart { min-height: 320px; }
-  aside { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 14px 16px 24px; }
-  aside h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 18px 0 8px; }
-  aside h2:first-child { margin-top: 0; }
-  .row { display: flex; gap: 6px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
-  .row label { min-width: 88px; color: var(--muted); font-size: 13px; }
-  input[type=number], input[type=text], select, textarea {
-    font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
-    padding: 5px 8px; width: 120px; }
-  input.price:focus { outline: 2px solid var(--accent); }
-  textarea { width: 100%; min-height: 70px; resize: vertical; }
-  .seg button { border-radius: 0; margin-left: -1px; } .seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
-  .seg button:last-child { border-radius: 0 6px 6px 0; }
-  .hint { font-size: 12px; color: var(--muted); margin: 4px 0 8px; }
-  .card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 6px 0; font-size: 13px; }
-  .good { color: var(--good); font-weight: 650; } .bad { color: var(--bad); font-weight: 650; }
-  .neutral { color: var(--warn); font-weight: 650; }
-  #msg { min-height: 20px; color: var(--bad); font-size: 13px; margin-top: 8px; }
-  table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  td { padding: 3px 0; } td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
-  @media (max-width: 860px) { main { grid-template-columns: 1fr; } aside { border-left: 0; border-top: 1px solid var(--line); } #chart { height: 55vh; } }
-</style>
 </head>
 <body>
 <header>
   <h1>Blind replay · <span id="inst">…</span></h1>
   <span class="pill" id="status">…</span>
   <span class="when" id="when">…</span>
+  <span class="muted" id="price"></span>
   <span class="muted" id="dateLabel"></span>
   <span class="spacer"></span>
   <span class="muted" id="left"></span>
-  <button id="showDate" title="Recorded on the day">Show date</button>
+  <button class="boxed" id="showDate" title="The day records that you looked">Show date</button>
+  <button class="boxed" id="chartSettings" title="Chart settings (right-click the chart for more)">⚙ Chart</button>
 </header>
+<div id="bar">
+  <div class="group" id="tfs"></div>
+  <span class="sep"></span>
+  <div class="group" id="replay">
+    <button class="boxed" id="play" title="Play / pause (Space)">▶ Play</button>
+    <select id="speed" title="Replay speed"></select>
+    <button class="boxed" id="stepBtn" title="One step (→; Shift+→ an hour)">Step ▸</button>
+    <select id="jump" title="Jump to a New York time"><option value="">Jump to…</option></select>
+    <button class="boxed danger" id="reveal">End day &amp; reveal</button>
+  </div>
+  <span class="muted" id="replayHint"></span>
+</div>
 <main>
+  <nav id="tools"></nav>
   <section id="chartWrap">
-    <div class="tfs" id="tfs"></div>
     <div id="chart"></div>
+    <div id="favbar" title="Favourite tools: right-click a tool on the left to add or remove it"></div>
   </section>
-  <aside id="side">
+  <aside>
     <div id="panel"></div>
+    <div id="props"></div>
     <div id="msg"></div>
+    <details id="objectsBox"><summary>Objects <span class="muted" id="objCount"></span></summary><div id="objects"></div></details>
     <h2>So far</h2>
     <div id="summary" class="muted">No revealed days yet.</div>
   </aside>
 </main>
-<script>
-"use strict";
-const TFS = ["W1", "D1", "H4", "H1", "M15", "M5", "M1"];
-const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const S = { state: null, tf: "H1", step: "M5", bias: null, conf: 2, dir: "LONG", field: null, lines: [], bars: [] };
-const $ = (id) => document.getElementById(id);
-const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-const pad = (n) => String(n).padStart(2, "0");
-
-// ── the chart ───────────────────────────────────────────────────────────────
-const chart = LightweightCharts.createChart($("chart"), {
-  autoSize: true,
-  layout: { background: { color: "transparent" }, textColor: css("--muted"), fontSize: 12 },
-  grid: { vertLines: { color: css("--grid") }, horzLines: { color: css("--grid") } },
-  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-  rightPriceScale: { borderColor: css("--line") },
-  timeScale: { borderColor: css("--line"), timeVisible: true, secondsVisible: false, rightOffset: 8,
-               tickMarkFormatter: (t) => label(t, false) },
-  localization: { timeFormatter: (t) => label(t, true) },
-});
-const series = chart.addCandlestickSeries({ borderVisible: false });
-function paint() {
-  const up = css("--up"), down = css("--down");
-  series.applyOptions({ upColor: up, downColor: down, wickUpColor: up, wickDownColor: down });
-  chart.applyOptions({ layout: { textColor: css("--muted") },
-                       grid: { vertLines: { color: css("--grid") }, horzLines: { color: css("--grid") } } });
-}
-paint();
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paint);
-
-// Bar times are New York wall-clock seconds. Until the reveal, label by weekday and time only.
-function label(t, long) {
-  const d = new Date(t * 1000);
-  const daily = S.tf === "D1" || S.tf === "W1";
-  if (S.state && S.state.date) {
-    const ymd = d.toISOString().slice(0, 10);
-    return daily ? ymd : (long ? ymd + " " : "") + WD[d.getUTCDay()] + " " + pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes());
-  }
-  if (S.tf === "W1") return long ? "week" : "";
-  if (S.tf === "D1") return WD[new Date((t + 7 * 3600) * 1000).getUTCDay()];   // a D1 candle opens 17:00 the eve
-  return WD[d.getUTCDay()] + " " + pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes());
-}
-
-chart.subscribeClick((p) => {
-  if (!p.point || !S.field) return;
-  const price = series.coordinateToPrice(p.point.y);
-  if (price == null) return;
-  S.field.value = price.toFixed(S.state ? S.state.digits : 2);
-  S.field.dispatchEvent(new Event("input", { bubbles: true }));
-  S.field.focus();
-});
-
-// ── API ─────────────────────────────────────────────────────────────────────
-async function api(path, body) {
-  const init = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" },
-                                          body: JSON.stringify(body) };
-  const r = await fetch(path, init);
-  const j = await r.json();
-  if (!r.ok) throw new Error(j.error || r.statusText);
-  return j;
-}
-function say(text) { $("msg").textContent = text || ""; }
-async function act(fn) {
-  say("");
-  try { await fn(); } catch (e) { say(e.message); }
-}
-
-async function load(state, fit) {
-  S.state = state || await api("/api/state");
-  renderHeader();
-  renderPanel();
-  await loadBars(fit);
-  drawLines();
-  renderSummary();
-}
-
-async function loadBars(fit) {
-  const range = chart.timeScale().getVisibleLogicalRange();
-  const data = await api("/api/bars?tf=" + S.tf);
-  S.bars = data.bars;
-  series.applyOptions({ priceFormat: { type: "price", precision: S.state.digits, minMove: Math.pow(10, -S.state.digits) } });
-  series.setData(S.bars);
-  const n = S.bars.length;
-  if (fit || !range) chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 160), to: n + 8 });
-  else chart.timeScale().setVisibleLogicalRange({ from: range.from + (n - S.lastN || 0), to: range.to + (n - S.lastN || 0) });
-  S.lastN = n;
-}
-
-// ── header and timeframe buttons ────────────────────────────────────────────
-for (const tf of TFS) {
-  const b = document.createElement("button");
-  b.textContent = tf; b.dataset.tf = tf;
-  b.onclick = () => act(async () => { S.tf = tf; markTf(); await loadBars(true); drawLines(); });
-  $("tfs").appendChild(b);
-}
-function markTf() { for (const b of $("tfs").children) b.classList.toggle("on", b.dataset.tf === S.tf); }
-markTf();
-
-function renderHeader() {
-  const s = S.state;
-  $("inst").textContent = s.instrument;
-  $("status").textContent = { READING: "Reading the open", INTRADAY: "Intraday", REVEALED: "Revealed" }[s.status];
-  $("status").className = "pill " + s.status;
-  $("when").textContent = s.revealed_until_ny + " New York";
-  $("dateLabel").textContent = s.date ? s.date : "";
-  $("left").textContent = s.remaining + " days left";
-  $("showDate").style.display = s.date ? "none" : "";
-}
-$("showDate").onclick = () => act(async () => {
-  if (!confirm("Show this day's date? Seeing it may bring back memories, so the day records that you looked.")) return;
-  await load(await api("/api/show-date", {}));
-});
-
-// ── the panel, by the day's status ──────────────────────────────────────────
-function priceInput(id, placeholder) {
-  return `<input class="price" type="number" step="any" id="${id}" placeholder="${placeholder || ""}">`;
-}
-function renderPanel() {
-  const s = S.state;
-  const p = $("panel");
-  if (s.status === "READING") {
-    p.innerHTML = `
-      <h2>Your read at the open</h2>
-      <div class="hint">${s.weekday}'s candle opens now at ${fmt(s.open_price)}. Only bars closed by the open are shown.
-        Select a price field, then click the chart to fill it.</div>
-      <div class="row"><label>Bias</label><span class="seg" id="bias">
-        <button data-v="BULLISH">Bullish</button><button data-v="BEARISH">Bearish</button><button data-v="NO_THESIS">No thesis</button></span></div>
-      <div id="levels">
-        <div class="row"><label>Draw</label>${priceInput("draw", "target level")}</div>
-        <div class="row"><label>Invalidation</label>${priceInput("inv", "thesis is wrong past")}</div>
-        <div class="row"><label>Key array</label>
-          <select id="akind"><option value="">none</option><option>OB</option><option>FVG</option><option>BREAKER</option>
-            <option>IFVG</option><option>BPR</option><option>LIQUIDITY</option><option>OTHER</option></select>
-          <select id="atf">${["MN1", ...TFS].map((t) => `<option ${t === "H4" ? "selected" : ""}>${t}</option>`).join("")}</select></div>
-        <div class="row"><label></label>${priceInput("alow", "low")}${priceInput("ahigh", "high")}</div>
-      </div>
-      <div class="row"><label>Confidence</label><span class="seg" id="conf">
-        <button data-v="1">1</button><button data-v="2">2</button><button data-v="3">3</button></span></div>
-      <div class="row"><label></label><label style="min-width:0"><input type="checkbox" id="remembered"> I remember this period</label></div>
-      <textarea id="note" placeholder="The story: phase, the array that matters, sentiment, the draw and why"></textarea>
-      <div class="row"><button class="primary" id="saveRead">Save read (it locks)</button></div>`;
-    seg("bias", (v) => { S.bias = v; $("levels").style.opacity = v === "NO_THESIS" ? 0.4 : 1; drawLines(); }, S.bias);
-    seg("conf", (v) => { S.conf = Number(v); }, String(S.conf));
-    $("saveRead").onclick = () => act(async () => {
-      if (!S.bias) throw new Error("bias: choose bullish, bearish or no thesis");
-      const body = { bias: S.bias, confidence: S.conf, remembered: $("remembered").checked, note: $("note").value,
-                     draw: num("draw"), invalidation: num("inv") };
-      if ($("akind").value) Object.assign(body, { array_kind: $("akind").value, array_tf: $("atf").value,
-                                                 array_low: num("alow"), array_high: num("ahigh") });
-      S.bias = null;
-      await load(await api("/api/read", body));
-    });
-  } else if (s.status === "INTRADAY") {
-    p.innerHTML = readCard() + `
-      <h2>Step through the day</h2>
-      <div class="row"><span class="seg" id="step">${["M1", "M5", "M15", "H1"].map((t) => `<button data-v="${t}">+${t.slice(1)}${t[0] === "M" ? "m" : "h"}</button>`).join("")}</span>
-        <button id="go">Step ▶</button></div>
-      <div class="hint">Right arrow steps too. Jump to a New York time:</div>
-      <div class="row" id="jumps">${["20:00", "00:00", "02:00", "05:00", "08:30", "09:30", "11:00", "13:30", "16:00"]
-        .map((t) => `<button data-to="${t}">${t}</button>`).join("")}</div>
-      <h2>Mark a trade at ${s.revealed_until_ny}</h2>
-      <div class="hint">Price now ${fmt(s.price)}.</div>
-      <div class="row"><label>Direction</label><span class="seg" id="dir"><button data-v="LONG">Long</button><button data-v="SHORT">Short</button></span></div>
-      <div class="row"><label>Entry</label>${priceInput("entry")}</div>
-      <div class="row"><label>Stop</label>${priceInput("stop")}</div>
-      <div class="row"><label>Target</label>${priceInput("target")}</div>
-      <div class="row"><label>R:R</label><span id="rr" class="muted">—</span></div>
-      <div class="row"><button id="mark">Mark trade</button></div>
-      ${s.trades.map(tradeCard).join("")}
-      <h2>End of the day</h2>
-      <div class="row"><button class="danger" id="reveal">End day and reveal</button></div>`;
-    seg("step", (v) => { S.step = v; }, S.step);
-    seg("dir", (v) => { S.dir = v; rr(); drawLines(); }, S.dir);
-    $("go").onclick = () => step();
-    for (const b of $("jumps").children) b.onclick = () => act(async () => load(await api("/api/advance", { to: b.dataset.to })));
-    for (const id of ["entry", "stop", "target"]) $(id).addEventListener("input", rr);
-    $("mark").onclick = () => act(async () => {
-      await load(await api("/api/trade", { direction: S.dir, entry: num("entry"), stop: num("stop"), target: num("target") }));
-    });
-    $("reveal").onclick = () => act(async () => {
-      if (!confirm("End the day and reveal it? Nothing can be added afterwards.")) return;
-      await load(await api("/api/reveal", {}), true);
-    });
-  } else {
-    const sc = s.scores, n = s.narrative || {};
-    const t = sc.thesis;
-    const cls = { DRAW: "good", INVALIDATED: "bad", NEITHER: "neutral", NO_THESIS: "muted" }[t.outcome];
-    p.innerHTML = `<h2>${s.weekday} ${s.date}</h2>` + readCard() + `
-      <div class="card">Thesis: <span class="${cls}">${t.outcome.replace("_", " ")}</span>
-        ${t.p_coin != null ? `<div class="muted">A coin flip reaches the draw first ${(t.p_coin * 100).toFixed(0)}% of the time from these distances.</div>` : ""}
-        ${t.direction_right != null ? `<div>Direction: ${t.direction_right ? '<span class="good">right</span>' : '<span class="bad">wrong</span>'}</div>` : ""}</div>
-      <div class="card"><table>
-        <tr><td>Day</td><td>${n.direction || "—"}</td></tr>
-        <tr><td>Open / close</td><td>${fmt(n.open)} / ${fmt(n.close)}</td></tr>
-        <tr><td>High</td><td>${fmt(n.high)} at ${ny(n.t_high)}</td></tr>
-        <tr><td>Low</td><td>${fmt(n.low)} at ${ny(n.t_low)}</td></tr>
-        <tr><td>False move</td><td>${n.false_move != null ? fmt(n.false_move) : "—"}</td></tr></table></div>
-      ${s.trades.map((tr, i) => tradeCard(tr, i, sc.trades[i])).join("")}
-      <div class="row"><button class="primary" id="next">Next day</button></div>`;
-    $("next").onclick = () => act(async () => { S.tf = "H1"; markTf(); await load(await api("/api/next", {}), true); });
-  }
-}
-
-function readCard() {
-  const r = S.state.read;
-  if (!r) return "";
-  const lv = r.bias === "NO_THESIS" ? "" :
-    `<div>Draw ${fmt(r.draw)} · invalidation ${fmt(r.invalidation)}</div>` +
-    (r.array_low != null ? `<div>Key array: ${r.array_tf} ${r.array_kind} ${fmt(r.array_low)}–${fmt(r.array_high)}</div>` : "");
-  return `<h2>Your read (locked)</h2><div class="card"><b>${r.bias.replace("_", " ")}</b>, confidence ${r.confidence}${r.remembered ? ", remembered" : ""}
-    ${lv}${r.note ? `<div class="muted">${escape(r.note)}</div>` : ""}</div>`;
-}
-function tradeCard(t, i, score) {
-  const res = score ? ` → <span class="${score.r > 0 ? "good" : score.r < 0 ? "bad" : "neutral"}">${score.outcome}${score.r != null ? ` ${score.r >= 0 ? "+" : ""}${score.r.toFixed(2)}R` : ""}</span>` : "";
-  const rr = Math.abs(t.target - t.entry) / Math.abs(t.entry - t.stop);
-  return `<div class="card">${t.direction} at ${t.marked_ny}: entry ${fmt(t.entry)}, stop ${fmt(t.stop)}, target ${fmt(t.target)} (R:R ${rr.toFixed(1)})${res}</div>`;
-}
-
-function seg(id, onPick, current) {
-  const box = $(id);
-  for (const b of box.children) {
-    b.classList.toggle("on", b.dataset.v === current);
-    b.onclick = () => { for (const o of box.children) o.classList.toggle("on", o === b); onPick(b.dataset.v); };
-  }
-}
-document.addEventListener("focusin", (e) => { if (e.target.classList && e.target.classList.contains("price")) S.field = e.target; });
-document.addEventListener("input", (e) => { if (e.target.classList && e.target.classList.contains("price")) drawLines(); });
-document.addEventListener("keydown", (e) => {
-  if (e.key === "ArrowRight" && S.state && S.state.status === "INTRADAY" && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
-    e.preventDefault(); step(e.shiftKey ? "H1" : S.step);
-  }
-});
-function step(size) { act(async () => load(await api("/api/advance", { step: size || S.step }))); }
-function rr() {
-  const e = num("entry"), s = num("stop"), t = num("target");
-  $("rr").textContent = e && s && t && e !== s ? (Math.abs(t - e) / Math.abs(e - s)).toFixed(1) : "—";
-}
-
-// ── price lines ─────────────────────────────────────────────────────────────
-function drawLines() {
-  for (const l of S.lines) series.removePriceLine(l);
-  S.lines = [];
-  const s = S.state;
-  if (!s) return;
-  const line = (price, color, title, style) => {
-    if (price == null || !isFinite(price)) return;
-    S.lines.push(series.createPriceLine({ price, color, title, lineWidth: 1, axisLabelVisible: true,
-                                          lineStyle: style ?? LightweightCharts.LineStyle.Solid }));
-  };
-  line(s.open_price, css("--muted"), "open", LightweightCharts.LineStyle.Dotted);
-  const r = s.read || (s.status === "READING" ? { draw: num("draw"), invalidation: num("inv"), array_low: num("alow"),
-                                                  array_high: num("ahigh"), bias: S.bias } : null);
-  if (r && r.bias !== "NO_THESIS") {
-    line(r.draw, css("--good"), "draw");
-    line(r.invalidation, css("--bad"), "invalidation");
-    line(r.array_low, css("--accent"), "array", LightweightCharts.LineStyle.Dashed);
-    line(r.array_high, css("--accent"), "array", LightweightCharts.LineStyle.Dashed);
-  }
-  s.trades.forEach((t, i) => {
-    line(t.entry, css("--ink"), `T${i + 1} entry`, LightweightCharts.LineStyle.Dashed);
-    line(t.stop, css("--bad"), `T${i + 1} stop`, LightweightCharts.LineStyle.Dashed);
-    line(t.target, css("--good"), `T${i + 1} target`, LightweightCharts.LineStyle.Dashed);
-  });
-  if (s.status === "INTRADAY" && $("entry")) {
-    line(num("entry"), css("--ink"), "entry?", LightweightCharts.LineStyle.SparseDotted);
-    line(num("stop"), css("--bad"), "stop?", LightweightCharts.LineStyle.SparseDotted);
-    line(num("target"), css("--good"), "target?", LightweightCharts.LineStyle.SparseDotted);
-  }
-}
-
-// ── summary ─────────────────────────────────────────────────────────────────
-async function renderSummary() {
-  const m = await api("/api/summary");
-  if (!m.revealed) { $("summary").textContent = "No revealed days yet."; return; }
-  const pct = (x) => x == null ? "—" : (x * 100).toFixed(0) + "%";
-  $("summary").innerHTML = `<table>
-    <tr><td>Days revealed</td><td>${m.revealed} (${m.thesis_days} with a thesis)</td></tr>
-    <tr><td>Draw reached first</td><td>${pct(m.draw_rate)} ${m.draw_interval ? `[${pct(m.draw_interval[0])}, ${pct(m.draw_interval[1])}]` : ""}</td></tr>
-    <tr><td>Coin flip from your levels</td><td>${pct(m.mean_p_coin)}</td></tr>
-    <tr><td>Direction right</td><td>${pct(m.direction_accuracy)}</td></tr>
-    <tr><td>Trades (not filled)</td><td>${m.trades} (${m.not_filled})</td></tr>
-    <tr><td>Mean R / total R</td><td>${m.mean_r == null ? "—" : m.mean_r.toFixed(2)} / ${m.total_r.toFixed(1)}</td></tr></table>
-    <div class="hint">Your edge shows when "draw reached first" beats the coin flip from your levels, over many days.</div>`;
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────────
-function num(id) { const el = $(id); if (!el || el.value === "") return null; const v = Number(el.value); return isFinite(v) ? v : null; }
-function fmt(x) { return x == null ? "—" : Number(x).toFixed(S.state ? S.state.digits : 2); }
-function ny(iso) { if (!iso) return "—"; return new Date(iso).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false }); }
-function escape(t) { return t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
-
-load(null, true).catch((e) => { $("panel").innerHTML = `<div class="card">${escape(e.message)}</div>`; });
-</script>
+<script src="/static/drawings.js"></script>
+<script src="/static/settings.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>

@@ -306,3 +306,18 @@ API (JSON; the current day is the journal's next day):
 A refused write answers 409 with the reason; an unknown timeframe or a malformed body, 400.
 
 The replay imports the narrative for the reveal. It decides nothing, so Requirement 5's guard doesn't apply to it.
+
+---
+
+## Update 2026-10-14b: The Replay Chart (Requirement 11)
+
+| Module | Change |
+|---|---|
+| `timeframes.py` (new) | The chart's timeframes and their bucketing, in New York wall-clock seconds: `bucket(wall, tf)` counts intraday bars from the 17:00 open; W1 from Sunday 17:00; MN1 by trading date. `aggregate` is vectorised (`reduceat`). |
+| `bars.py` | `as_of(tf, until, since=None)` aggregates on request from the M1 bars closed by `until` (bar times in wall seconds); `since` returns only the bars from the one holding it, for live updates. `next_open` finds the reopen after a pause. |
+| `journal.py` | `STEPS` adds M30 and H4; a step into a pause lands past the reopen. `save_drawings` checks and stamps drawings (`DRAWING_POINTS`, at most 400); `save_read` and `reveal` keep copies; `save_narrative`; `live_trades`; a trade may carry its drawing's id. |
+| `server.py` | `GET /api/meta` (timeframes, steps); `/api/bars?tf=&since=`; `POST /api/advance` with `tf` and `since` answers with `update` (the chart's new bars and the M1 bars revealed); `POST /api/drawings`, `POST /api/narrative`; serves `static/app.js`, `drawings.js`, `app.css` by name only. Market times that would name the date are left out of the page's drawings. |
+| `static/drawings.js` (new) | One series primitive (Lightweight Charts 4.2 plugins) paints every drawing; times map to logical positions through the bars on screen, so drawings sit right on every timeframe. Pointer: create by clicks, select, drag handles or the body, magnet. |
+| `static/app.js`, `app.css` | Timeframe bar, play/pause and speeds, jumps, the tool strip, the read form (prices picked from the chart; "from box" fills the key array), the settings of the selected drawing (place a position as a trade), the live trades, the narrative. |
+
+The page was driven end to end in headless Chrome (puppeteer, scratchpad): every tool drawn, labelled, dragged and undone; the read saved with its drawings; the day played and jumped; a position placed and followed to its stop; all twenty timeframes loaded; the reveal, the narrative and the next day; no console errors.

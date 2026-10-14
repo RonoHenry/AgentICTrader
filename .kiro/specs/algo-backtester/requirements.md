@@ -331,3 +331,24 @@ Update 2026-10f (proposed; D14–D24 are reserved by the setup-review brief):
 |---|---|---|
 | D25 | What the overlay shows, and when | Everything known at the decision appears on the decision's bar: levels, grade, the raided pool, the draw, and the D1 open from its own open. Hindsight (the result, the exit reason, the failure mode) appears only on the exit's bar. The failure-mode filter is hindsight by nature, so its input says so; for a blind replay, leave it at ALL and switch the exit result off. |
 | D26 | Overlay size | At most 120 trades per script. A trade uses 3 labels, 2 boxes and 2 lines, and Pine shows at most 500 of each. One instrument-month of the BODY run averages about 10 trades. |
+
+---
+
+## Update 2026-10-14d: Watch the Engine Work
+
+The trader can't judge the engine from tables: "something is still broken, but I can't judge it if it isn't happening visually." They want to start a backtesting session and watch the core engine interpret the chart, annotate it, execute and manage the trades. The first session shown already put two known flaws on screen: a grade-A short against the day profile's bullish draw, built on a raid two and a half days old.
+
+### Requirement 15: The Engine Watch
+
+1. `python -m algo_backtester watch [config]` SHALL serve a page on 127.0.0.1. There the trader picks an instrument, a first trading day in the research snapshot's exploration slice (AR-D3), up to 5 days, and the configuration or one of its variants.
+2. THE session SHALL run the backtest over those days as `run` does: the same Phase A and Phase B, the broker profile's costs, M1 from the research snapshot (no Docker). At every entry-timeframe close it SHALL replay the engine and keep:
+   - its unfilled PD arrays near price, as the engine draws them (the order block's 50% too);
+   - the liquidity pools it could still raid;
+   - the D1 candle profile (open, midnight open, trend, direction, draw);
+   - the setup sequence (raid, reclaim, CISD, protected swing, entry array);
+   - the grade with its eight conditions, and the journal's decision and reason.
+3. THE page SHALL play the days forward (play, speeds, step, next order, next event), with any of the replay chart's timeframes. Engine layers can be switched on and off, and arrays filtered by timeframe. It SHALL draw:
+   - each order from its placement until it fills or expires;
+   - each trade's fill, stop, target and exit with its R;
+   - a log of orders, fills and exits that jumps to each one.
+4. NOTHING the page shows SHALL come from after the session's current time: bars, states and events are revealed as the clock passes them. The trader's own drawing tools work on top, kept in that browser per session. The page decides nothing.

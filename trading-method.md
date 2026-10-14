@@ -352,6 +352,7 @@ As of 2026-10-12, on Exness M1, EURUSD, GBPUSD, USDJPY and XAUUSD, 2025-01 → 2
 | SD 2.0 targets at R:R 10+ | hit about 3% of the time; the worst R:R band | `docs/backtests/SETUP_SEQUENCE.md` |
 | Stopped trades reach +1R first | 32–35% of all stopped trades; 46–49% of stopped trades that were with the day | `SETUP_SEQUENCE.md`; `AUTOPSY.md` |
 | Full system, best variant (BODY stop) | −0.01R per trade, CI −0.20 to +0.18, n = 686 | `SETUP_SEQUENCE.md` |
+| Candle anticipation (trade the profile's direction after the false move, 01:00–13:00 NY, nearer target) | best +0.12R a trade (CI −0.20 to +0.48), profit factor 1.15, drawdown 39R, n = 276: fails the pass mark. It beats the base (−0.19R) by delivery, not direction: 28% of trades went the day's way | `docs/backtests/CANDLE_ANTICIPATION.md` |
 
 **Reading:**
 - Time says *when* price moves (the volatility schedule), not yet *where* it turns.
@@ -408,7 +409,7 @@ Each has a proposed default. ND-D decisions live in `.kiro/specs/market-narrativ
 | ND-D6 | The narrative's direction | The close against the open; judging by the draw delivered (AR-D18) comes in stage 2 |
 | ND-D7 | The narrative's price basis | FX bars 17:00–17:29 NY flattened at the last clean close, until the spread-based quarantine (CE-D3) is built |
 | — | C4 in turtle soup | Undefined: what C4 does after C3 |
-| — | H7 | Not in `Timeframe`; 7 hours doesn't tile the day. Add only if the trader confirms its use |
+| — | H7 | The trader uses it on charts (2026-10-14): it is in the blind replay's chart, restarting at each 17:00 open. Not in the engine's `Timeframe` |
 | — | Accumulation week: "body size" threshold | Undefined |
 | — | "Specific candle opens" used for sniper entries | Undefined: which opens, at which frames |
 

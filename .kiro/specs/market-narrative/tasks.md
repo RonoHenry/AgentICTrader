@@ -95,6 +95,18 @@ Tasks marked **(user review)** end with your review before the next one starts.
   - **RED:** an HTTP round trip on a synthetic instrument: state, bars as of the open, read, advance, trade, reveal, a refused second read (409), summary.
   - **Validates: Requirements 10.1-10.6, 10.9**
 
+- [x] 303. The replay chart (Requirement 11)
+  - Added 2026-10-14 at the trader's request: TradingView-like reading and marking, the day printing live, the trader's timeframes.
+  - `timeframes.py`; `ReplayBars.as_of(tf, until, since)` and `next_open`; drawings, narrative and live trades in the journal; `/api/meta`, `update` on advance, `/api/drawings`, `/api/narrative`; `static/drawings.js`, `app.js`, `app.css`.
+  - **RED:** bars anchored at the New York open (H4, H7, H12, M45, M20, D1, W1, MN1); the same bars as the strategy calendar for M5, M15, H1, H4, D1; `since`; drawings checked, stamped and copied into the read and the reveal; the narrative only after the reveal; trades followed live; a step into the gold pause lands past the reopen; the HTTP round trip with the new endpoints and static files.
+  - **Validates: Requirements 11.1-11.7**
+
+- [x] 304. Chart settings, favourites and more tools (Requirement 12)
+  - Added 2026-10-14 at the trader's request ("TradingView's free tier plus our own"). TradingView's chart itself can't be embedded: its library is licensed to companies for public products, and the free widget can't replay our data or hand back the drawings.
+  - `static/settings.js` (preferences in this browser, the drawing and chart settings dialogs, context menus, the object list); `drawings.js` v3 (a look per drawing from type defaults, the trader's saved default and its own style; ray, extended line, arrow, channel, fib extension, range, brush; lock, hide, clone, Shift-drag measure); `app.js` (timeframe and tool favourites, the favourites bar, sessions layer: day separators, day and midnight opens, killzone shading). The server keeps a drawing's `style`, coloured fib `levels`, `locked`, and paths of 2 to 400 points.
+  - **RED:** `test_drawings_take_a_style_coloured_levels_and_freehand_paths`; the HTTP round trip serves `settings.js`; the browser walk-through (scratchpad `uitest/ui.js`) covers every step of Requirements 11 and 12 with no console errors.
+  - **Validates: Requirements 12.1-12.6**
+
 - [ ] 301. Pilot: 50 blind gold days **(user action)**
   - You read 50 exploration-slice gold days; then we look at the summary together, and at the days where your thesis and the engine's candle profile disagreed.
 
@@ -124,7 +136,7 @@ Tasks marked **(user review)** end with your review before the next one starts.
     },
     {
       "name": "Blind replay",
-      "tasks": ["299", "300", "301"],
+      "tasks": ["299", "300", "303", "304", "301"],
       "description": "The trader's blind daily reads, scored (update 2026-10-14)",
       "dependencies": ["Narrative"]
     }
