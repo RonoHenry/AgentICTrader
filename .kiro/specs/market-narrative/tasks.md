@@ -85,6 +85,19 @@ Tasks marked **(user review)** end with your review before the next one starts.
   - Update `trading-method.md`, section 8, to cite it.
   - You review, then decide with me which context-engine task the autopsy ranks first.
 
+- [x] 299. The blind replay: bars, journal and scores (`algo_research/replay/`)
+  - Added 2026-10-14 (Requirement 10). `ReplayBars.as_of`, `Journal` with its state rules and atomic files, `score_thesis`, `score_trade`, `summarize`.
+  - **RED:** perturbing every M1 bar after `until` leaves `as_of` unchanged; the forming bar equals the closed bar at its period's end; a read is refused after it is saved and every write after the reveal; reads that break 10.3 are refused naming the field; `revealed_until` is monotone and capped; trades are refused unless stop and target straddle the entry; thesis outcomes, including the same-bar tie and `p_coin`; trade outcomes; days resume and skip revealed ones.
+  - **Validates: Requirements 10.1-10.9**
+
+- [x] 300. The replay page and its server (`algo_research/replay/server.py`, `static/index.html`, `__main__.py`)
+  - `ReplayApp` and the HTTP handler; `python -m algo_research.replay`; `data/journal/` added to `.gitignore`.
+  - **RED:** an HTTP round trip on a synthetic instrument: state, bars as of the open, read, advance, trade, reveal, a refused second read (409), summary.
+  - **Validates: Requirements 10.1-10.6, 10.9**
+
+- [ ] 301. Pilot: 50 blind gold days **(user action)**
+  - You read 50 exploration-slice gold days; then we look at the summary together, and at the days where your thesis and the engine's candle profile disagreed.
+
 ---
 
 ## Task Dependency Graph
@@ -108,6 +121,12 @@ Tasks marked **(user review)** end with your review before the next one starts.
       "tasks": ["293"],
       "description": "The autopsy of WICK, BODY and the baseline; your review",
       "dependencies": ["Autopsy"]
+    },
+    {
+      "name": "Blind replay",
+      "tasks": ["299", "300", "301"],
+      "description": "The trader's blind daily reads, scored (update 2026-10-14)",
+      "dependencies": ["Narrative"]
     }
   ]
 }

@@ -270,3 +270,39 @@ The seed is `seed_from(sha256(run_id))`.
 | A trade's candle missing (outside the recorded span) or incomplete | Its frame columns are `UNKNOWN` and empty; its mode is `UNKNOWN` |
 | No filled trades | The files are written, and `autopsy.md` says there were none |
 | Bad `narrative.toml` | `ValueError` naming the key |
+
+---
+
+## Update 2026-10-14: The Blind Replay (Requirement 10)
+
+A local page, served by the standard library's HTTP server on 127.0.0.1, so the trader's reads stay on the machine. No new Python dependencies; the page loads TradingView's open-source Lightweight Charts 4.2.0 from unpkg, pinned.
+
+    python -m algo_research.replay [--instrument XAUUSD] [--port 8765] [--no-browser]
+
+Package `algo_research/replay/`:
+
+| Module | Role |
+|---|---|
+| `bars.py` | `ReplayBars`: the snapshot's M1 for one instrument, with the narrative's price basis (ND-D7), pre-aggregated to W1…M5 on the strategy calendar (`aggregate_frame`). `as_of(tf, until)` returns the closed bars plus the forming bar built from the M1 bars closed by `until`. |
+| `journal.py` | `Journal`: the day records and their rules. A day moves `READING` → `INTRADAY` (read saved) → `REVEALED`; `revealed_until` only moves forward and never passes the D1 close; every write is refused in the wrong state (`ReplayError`). `day_order` is the explore slice's trading dates with M1, shuffled with a fixed seed. Files are written to a temporary name and renamed. |
+| `scoring.py` | `score_thesis`, `score_trade` (Requirement 10.7) on M1 rows; `summarize` (10.9), bootstrapping over trading dates. |
+| `server.py` | `ReplayApp` (the API as plain methods, tested without HTTP) and a thin `BaseHTTPRequestHandler`. |
+| `static/index.html` | The page: timeframe buttons, the chart, the read form (a click on the chart fills the focused price field), the step buttons, the trade form, the reveal and the summary. Times are New York wall time; the axis shows weekday and time only until the reveal. |
+
+API (JSON; the current day is the journal's next day):
+
+| Method | Path | Does |
+|---|---|---|
+| GET | `/api/state` | the day: weekday, status, revealed time, open price, read, trades; the date only once revealed or shown |
+| GET | `/api/bars?tf=H1` | `as_of(tf, revealed_until)` |
+| POST | `/api/read` | saves the read (10.3) |
+| POST | `/api/advance` | `{"step": "M5"}` or `{"to": "09:30"}` |
+| POST | `/api/trade` | marks a trade at the revealed time (10.5) |
+| POST | `/api/reveal` | ends the day: narrative and scores (10.6, 10.7) |
+| POST | `/api/show-date` | records that the date was shown (10.1) |
+| POST | `/api/next` | moves to the next day |
+| GET | `/api/summary` | 10.9 |
+
+A refused write answers 409 with the reason; an unknown timeframe or a malformed body, 400.
+
+The replay imports the narrative for the reveal. It decides nothing, so Requirement 5's guard doesn't apply to it.

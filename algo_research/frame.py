@@ -72,7 +72,7 @@ _SHIFT = pd.Timedelta(hours=7)          # the ny_close server clock: New York wa
 _ONE_HOUR = pd.Timedelta(hours=1)
 _CALENDAR = StrategyCalendar()
 _WINDOW = (60, 13 * 60)                 # LE-D11: [01:00, 13:00) New York, in minutes
-_INTRADAY = {Timeframe.M15: "15min", Timeframe.H1: "1h"}
+_INTRADAY = {Timeframe.M5: "5min", Timeframe.M15: "15min", Timeframe.H1: "1h"}   # M5: the blind replay's chart
 
 
 def _killzone_by_minute() -> np.ndarray:
@@ -132,7 +132,8 @@ def _period_start_wall(wall: pd.DatetimeIndex, tf: Timeframe) -> pd.DatetimeInde
     raise ValueError(f"unsupported timeframe {tf}")
 
 
-_LENGTH = {Timeframe.M15: pd.Timedelta(minutes=15), Timeframe.H1: pd.Timedelta(hours=1),
+_LENGTH = {Timeframe.M5: pd.Timedelta(minutes=5), Timeframe.M15: pd.Timedelta(minutes=15),
+           Timeframe.H1: pd.Timedelta(hours=1),
            Timeframe.H4: pd.Timedelta(hours=4), Timeframe.D1: pd.Timedelta(days=1),
            Timeframe.W1: pd.Timedelta(days=7)}
 

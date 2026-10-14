@@ -233,3 +233,31 @@ Proposed defaults apply unless the trader changes them. Stage 1 uses ND-D6 to ND
 | ND-D9 | What counts as an opportunity | A raid, then an M15 CISD within 4 hours, then a move of at least one D1 ATR to the next objective (ATR as a unit only). |
 | ND-D10 | Frames and bias frame | W1, D1 and H4; bias frame D1, the frame the engine's daily bias targets. |
 | ND-D11 | Names and numbering | Package `algo_research/narrative/`, module `algo_backtester/autopsy.py`, spec `.kiro/specs/market-narrative/`, decisions ND-D. Tasks continue the platform sequence from 290. |
+
+---
+
+## Update 2026-10-14: The Blind Replay
+
+Requirement 9 is brought forward, for gold first. On 2026-10-13 the trader explained the read behind a gold trade: one thesis carried across days (the phase, the one array that matters, a realistic draw, an invalidation), with lower timeframes only timing the entry. The engine has no such thesis, and the trader's own read has never been measured where hindsight can't help. The blind replay measures it, and gives the engine its first honest labels.
+
+### Requirement 10: The Blind Replay
+
+**User Story:** As the trader, I want to read days I don't remember, as of their open, and be scored on them, so that we know whether my read beats chance before the engine is taught it.
+
+#### Acceptance Criteria
+
+1. THE replay SHALL offer one instrument's trading dates from the exploration slice (AR-D3), in a fixed shuffled order, resuming a day in progress first and skipping days already revealed. The chart SHALL hide the date and year until the reveal and show the weekday; prices are real. A "show date" switch SHALL be recorded on the day.
+2. Before the read is saved, the chart SHALL show only bars that closed by the trading day's open (17:00 New York), at W1, D1, H4, H1, M15, M5 and M1. THE server SHALL refuse any bar after the day's revealed time.
+3. THE read (the daily thesis, a reduced trading-method.md section 7.2) SHALL hold:
+   - a bias: `BULLISH`, `BEARISH` or `NO_THESIS`;
+   - for a thesis: a draw above the open price and an invalidation below it (mirrored for bearish), and optionally the key array (low, high, timeframe, kind);
+   - confidence 1 to 3, a "remembered" flag and a note.
+   A read that breaks these rules SHALL be refused, naming the field.
+4. ONCE the read is saved it SHALL NOT change. THE trader then steps time forward (by an M1, M5, M15 or H1 bar, or to a New York time within the day); each timeframe shows its forming candle as of the revealed time.
+5. AT the revealed time the trader MAY mark a trade (direction, entry, stop, target; at most three a day). It SHALL be refused unless stop and target lie on opposite sides of the entry.
+6. ENDING the day SHALL reveal the rest of the D1 candle, its narrative (Requirement 1) and the scores. Nothing is accepted after the reveal.
+7. THE scores SHALL be computed from the M1 bars after the read (or after the mark, for a trade) up to the D1 close:
+   - **thesis:** `DRAW` when the draw is reached before the invalidation, `INVALIDATED` when the invalidation is reached first or in the same M1 bar, `NEITHER` otherwise; with `p_coin`, the chance a driftless path reaches the draw first, `|open − invalidation| / (|draw − open| + |open − invalidation|)`; and the direction against the candle's close (ND-D6);
+   - **trade:** filled at the first bar after the mark whose range holds the entry; then `STOP` or `TARGET`, whichever comes first, the stop winning a tie and counting from the fill bar, the target from the next bar; else `OPEN`, marked to the D1 close; `NOT_FILLED` when never filled. The result is in R, before costs.
+8. EACH day SHALL be stored as one JSON file under `data/journal/blind/<instrument>/`, which git ignores, written whole or not at all, with the wall-clock time of the read, of each trade and of the reveal.
+9. THE summary SHALL report, over revealed days: thesis and no-thesis days; the `DRAW` rate of thesis days with a 95% bootstrap interval over trading dates, beside the mean `p_coin` and the coin flip; direction accuracy; and trades (count, mean R, total R).
