@@ -659,6 +659,13 @@ Numbered from 294, after market-narrative's 290–293. Tasks 294 and 295 need th
   - **RED:** `test_a_run_that_dies_resumes_from_its_finished_chunks`, `test_chunks_are_contiguous_ordered_and_daily`, `test_parallel_chunks_equal_sequential`. The golden run is unchanged.
   - **Validates: Requirements 7.4**
 
+- [x] 305. Watch the engine work (`algo_backtester/watch.py`, `algo_research/replay/static/engine.html`, `engine.js`)
+  - Added 2026-10-14 at the trader's request (Requirement 15).
+  - `SnapshotSource` (M1 from the research snapshot). `WatchSession` runs `run_backtest` over the days and replays `LiquidityMappingEngine.analyze` at each close into a compact state; `WatchApp` and its server (`/api/watch/meta`, `start`, `status`, `bars`, `state`, `journal`); `python -m algo_backtester watch`.
+  - The page reuses the replay chart: its timeframes, drawing tools and styles.
+  - **RED:** `test_snapshot_source_serves_m1_only`, `test_a_session_replays_the_engine_at_each_close`, `test_bars_never_pass_the_time_asked`, `test_the_watch_server_round_trip`. The browser walk-through (scratchpad `uitest/watch_ui.js`): the session opens, next order, next event, play, timeframes, layers, drawings, no console errors.
+  - **Validates: Requirements 15.1-15.4**
+
 ---
 
 ## Task Dependency Graph

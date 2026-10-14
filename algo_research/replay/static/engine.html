@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Engine Watch</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  .layers label { margin-right: 10px; white-space: nowrap; }
+  .log { max-height: 260px; overflow-y: auto; font-size: 12px; }
+  .log div { padding: 2px 4px; border-radius: 4px; cursor: pointer; }
+  .log div:hover { background: var(--chip); }
+  .log .now { background: var(--chip); }
+  .cond { font-size: 12px; } .cond .y { color: var(--good); } .cond .n { color: var(--bad); }
+  .progress { height: 6px; background: var(--chip); border-radius: 3px; overflow: hidden; margin: 6px 0; }
+  .progress > div { height: 100%; background: var(--accent); width: 0; }
+  .decision { font-weight: 650; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Engine watch · <span id="inst">—</span></h1>
+  <span class="pill" id="status">no session</span>
+  <span class="when" id="when"></span>
+  <span class="muted" id="price"></span>
+  <span class="spacer"></span>
+  <span class="muted" id="summaryTop"></span>
+</header>
+<div id="bar">
+  <div class="group" id="tfs"></div>
+  <span class="sep"></span>
+  <div class="group">
+    <button class="boxed" id="play" title="Play / pause (Space)">▶ Play</button>
+    <select id="speed" title="Speed"></select>
+    <button class="boxed" id="stepBtn" title="To the next 15-minute close (→)">Step ▸</button>
+    <button class="boxed" id="nextSetup" title="To the next order the engine places">Next order ⏭</button>
+    <button class="boxed" id="nextEvent" title="To the next order, fill or exit">Next event ⏭</button>
+  </div>
+  <span class="sep"></span>
+  <div class="group layers" id="layers"></div>
+</div>
+<main>
+  <nav id="tools"></nav>
+  <section id="chartWrap"><div id="chart"></div></section>
+  <aside>
+    <h2>Session</h2>
+    <div class="row"><label>Instrument</label><select id="sInst"></select></div>
+    <div class="row"><label>First day</label><input type="date" id="sDay"></div>
+    <div class="row"><label>Days</label><select id="sDays"></select></div>
+    <div class="row"><label>Strategy</label><select id="sVariant"></select></div>
+    <div class="row"><button class="primary" id="sStart">Start session</button></div>
+    <div class="progress"><div id="prog"></div></div>
+    <div class="hint" id="sMsg">Days come from the exploration slice. The backtest runs over them exactly as a real run, then plays here.</div>
+    <div id="engine"></div>
+    <h2>Events</h2>
+    <div class="log" id="log"></div>
+    <div id="msg"></div>
+  </aside>
+</main>
+<script src="/static/drawings.js"></script>
+<script src="/static/settings.js"></script>
+<script src="/static/engine.js"></script>
+</body>
+</html>
