@@ -7,6 +7,17 @@
 "use strict";
 
 (function () {
+  // The x of a logical bar position. The chart maps whole bars only (a fraction comes back as 0),
+  // so a time between two bar opens, such as an M1 fill on an M15 chart, sits between them.
+  function logicalX(ts, logical) {
+    const i = Math.floor(logical), f = logical - i;
+    const a = ts.logicalToCoordinate(i);
+    if (a === null) return NaN;
+    if (!f) return a;
+    const b = ts.logicalToCoordinate(i + 1);
+    return b === null ? a : a + f * (b - a);
+  }
+
   // Points per type; 0 is a freehand path (any number, drawn by dragging).
   const POINTS = { hline: 1, hray: 1, vline: 1, text: 1, trend: 2, ray: 2, extended: 2, arrow: 2, rect: 2, range: 2,
                    fib: 2, channel: 3, fibext: 3, long: 3, short: 3, path: 0 };
@@ -160,7 +171,7 @@
     }
 
     // ── coordinates ───────────────────────────────────────────────────────
-    X(t) { const x = this.chart.timeScale().logicalToCoordinate(this.opts.timeline.toLogical(t)); return x === null ? NaN : x; }
+    X(t) { return logicalX(this.chart.timeScale(), this.opts.timeline.toLogical(t)); }
     Y(p) { const y = this.series.priceToCoordinate(p); return y === null ? NaN : y; }
     round(p) { const f = Math.pow(10, this.opts.digits()); return Math.round(p * f) / f; }
     at(x, y, snap) {
@@ -568,6 +579,7 @@
   }
 
   window.Drawings = Drawings;
+  window.logicalX = logicalX;
   window.DRAWING_POINTS = POINTS;
   window.DRAWING_NAMES = NAMES;
   window.FIB_LEVELS = FIB;

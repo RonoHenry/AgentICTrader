@@ -98,7 +98,7 @@ series.attachPrimitive({
   attached(p) { engineUpdate = p.requestUpdate; }, detached() {}, updateAllViews() {},
   paneViews() { return [{ zOrder: () => "normal", renderer: () => ({ draw: (target) => target.useMediaCoordinateSpace(({ context, mediaSize }) => paintEngine(context, mediaSize)) }) }]; },
 });
-function X(t) { const x = chart.timeScale().logicalToCoordinate(timeline.toLogical(t)); return x === null ? NaN : x; }
+function X(t) { return logicalX(chart.timeScale(), timeline.toLogical(t)); }
 function Y(p) { const y = series.priceToCoordinate(p); return y === null ? NaN : y; }
 const TF_RANK = { M1: 1, M3: 2, M5: 3, M15: 4, M30: 5, H1: 6, H3: 7, H4: 8, H6: 9, H8: 10, H12: 11, D1: 12, W1: 13, MN1: 14 };
 function showArray(a) {
@@ -173,13 +173,24 @@ function paintEngine(ctx, size) {
         text(`${r.order_kind || ""} ${r.direction} @ ${fmt(r.entry)}  (R:R ${r.r_ratio ? r.r_ratio.toFixed(1) : "—"})`, x1 + 3, Y(r.entry) - 2, c);
         continue;
       }
-      const x1 = X(r.filled_at), x2 = closed ? X(r.closed_at) : Math.max(X(S.t), x1 + 20);
-      ctx.fillStyle = rgba((long ? pal.up : pal.bad).startsWith("#") ? (long ? pal.up : pal.bad) : "#888888", 0.08);
-      line(x1, Y(r.fill), x2, Y(r.fill), c, [], 1.5);
+      const x1 = X(r.filled_at), x2 = closed ? Math.max(X(r.closed_at), x1 + 6) : Math.max(X(S.t), x1 + 40);
+      const fy = Y(r.fill), sy = Y(r.stop), ty = Y(r.target);
+      const shade = (col, a) => rgba(col.startsWith("#") ? col : "#888888", a);
+      ctx.fillStyle = shade(pal.bad, 0.12); ctx.fillRect(x1, Math.min(fy, sy), x2 - x1, Math.abs(sy - fy));     // risk
+      ctx.fillStyle = shade(pal.good, 0.12); ctx.fillRect(x1, Math.min(fy, ty), x2 - x1, Math.abs(ty - fy));    // reward
+      line(x1, fy, x2, fy, c, [], 1.5);
       line(x1, Y(r.stop), x2, Y(r.stop), pal.bad, [], 1.2); line(x1, Y(r.target), x2, Y(r.target), pal.good, [], 1.2);
-      ctx.fillStyle = c; ctx.beginPath(); const fy = Y(r.fill);
+      ctx.fillStyle = c; ctx.beginPath();
       if (long) { ctx.moveTo(x1, fy); ctx.lineTo(x1 - 6, fy + 10); ctx.lineTo(x1 + 6, fy + 10); } else { ctx.moveTo(x1, fy); ctx.lineTo(x1 - 6, fy - 10); ctx.lineTo(x1 + 6, fy - 10); }
       ctx.fill();
+      if (!closed) {                                    // the open trade, marked to the last close
+        const last = S.bars[S.bars.length - 1], risk = Math.abs(r.stop - r.fill);
+        const openR = last && risk ? (long ? last.close - r.fill : r.fill - last.close) / risk : null;
+        const s = `${r.direction} @ ${fmt(r.fill)} · stop ${fmt(r.stop)} · target ${fmt(r.target)}` +
+                  (openR == null ? "" : ` · open ${openR >= 0 ? "+" : ""}${openR.toFixed(2)}R`);
+        const right = x1 + 8 + ctx.measureText(s).width > W - 4;          // no room to the right: read leftwards
+        text(s, right ? x1 - 8 : x1 + 8, long ? fy + 22 : fy - 12, c, right ? "right" : "left");
+      }
       if (closed) {
         const ey = Y(r.exit), win = (r.net_r || 0) > 0;
         ctx.strokeStyle = win ? pal.good : pal.bad; ctx.lineWidth = 2;
@@ -215,6 +226,7 @@ async function boot() {
   buildTfs(); buildTools(); buildLayers(); buildControls();
   const st = await api("/api/watch/status");
   if (st.state === "ready") await openSession(st); else if (st.state === "preparing") await waitReady();
+  else overlay("No session yet", "Pick an instrument, a first day and how many days on the right, then Start session.");
 }
 async function startSession() {
   Prefs.set("watch.day", $("sDay").value);
@@ -222,18 +234,31 @@ async function startSession() {
   await api("/api/watch/start", { instrument: $("sInst").value, first_day: $("sDay").value, days: Number($("sDays").value), variant: $("sVariant").value });
   await waitReady();
 }
+function overlay(title, text, progress) {
+  $("overlay").style.display = title ? "" : "none";
+  if (!title) return;
+  $("ovTitle").textContent = title; $("ovText").textContent = text || "";
+  $("ovProg").parentElement.style.display = progress == null ? "none" : "";
+  $("ovProg").style.width = Math.round((progress || 0) * 100) + "%";
+}
 async function waitReady() {
   $("status").textContent = "preparing"; $("status").className = "pill READING";
+  const started = Date.now();
   for (;;) {
     const st = await api("/api/watch/status");
-    $("prog").style.width = Math.round((st.progress || 0) * 100) + "%";
+    const pct = Math.round((st.progress || 0) * 100);
+    $("prog").style.width = pct + "%";
     $("sMsg").textContent = st.message || "";
-    if (st.state === "ready") { await openSession(st); return; }
-    if (st.state === "error") { $("status").textContent = "error"; throw new Error(st.message); }
+    const secs = Math.round((Date.now() - started) / 1000);
+    overlay(`Preparing ${st.instrument}, ${st.days} day(s) from ${st.first_day}`,
+            `${st.message || "starting"} — ${pct}% (${secs} s). The backtest runs for real; about 20-30 s a day.`, st.progress || 0);
+    if (st.state === "ready") { overlay(null); await openSession(st); return; }
+    if (st.state === "error") { $("status").textContent = "error"; overlay("The session failed", st.message); throw new Error(st.message); }
     await sleep(700);
   }
 }
 async function openSession(st) {
+  overlay(null);
   S.status = st; S.digits = st.digits;
   $("inst").textContent = `${st.instrument} · ${st.variant}`;
   $("status").textContent = "ready"; $("status").className = "pill REVEALED";

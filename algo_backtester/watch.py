@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import io
 import json
+import tempfile
 import threading
 import traceback
 import webbrowser
@@ -29,11 +30,12 @@ import numpy as np
 import pandas as pd
 
 from agent.broker_profiles import load_profile
+from algo_backtester.cache import SignalCache, engine_code_fingerprint
 from algo_backtester.config import REPO_ROOT, load_or_create_study, load_run_config
 from algo_backtester.data import StoredBar, load_instrument
 from algo_backtester.report import journal_csv
 from algo_backtester.run import run_backtest
-from algo_backtester.signals import entry_closes
+from algo_backtester.signals import entry_closes, signals_at
 from algo_research.config import load_research_config, trading_date_open
 from algo_research.narrative import PriceBasis
 from algo_research.replay.bars import ReplayBars
@@ -144,40 +146,49 @@ class WatchSession:
         cfg = cfg.model_copy(update={"run": cfg.run.model_copy(update={"instruments": (self.instrument,),
                                                                          "start": run_start, "end": run_end})})
         profile = load_profile(cfg.run.profile)
+        specs = profile.specs()
         study = load_or_create_study(cfg.run.study, date.today(), self.studies_root)
         start_dt = datetime(run_start.year, run_start.month, run_start.day, tzinfo=timezone.utc)
         end_dt = datetime(run_end.year, run_end.month, run_end.day, tzinfo=timezone.utc)
-        source = SnapshotSource(self.snapshot)
-        data = load_instrument(source, self.instrument, start_dt, end_dt, cfg.strategy,
+        data = load_instrument(SnapshotSource(self.snapshot), self.instrument, start_dt, end_dt, cfg.strategy,
                                profile.clock() if profile.venue == "mt5" else None, venue=profile.venue,
                                max_gap_minutes=cfg.data.max_gap_minutes)
         m1 = pd.DataFrame({"time": [b.timestamp for b in data.m1], "open": [b.open for b in data.m1],
                            "high": [b.high for b in data.m1], "low": [b.low for b in data.m1],
                            "close": [b.close for b in data.m1]})
         self.bars = ReplayBars(m1, self.instrument, PriceBasis(instruments=()))   # the engine's own prices, unflattened
-        self.message, self.progress = "running the backtest (Phase A and B)", 0.1
-        result = run_backtest(cfg, study, False, {self.instrument: data}, profile.specs(), cache=None, workers=1)
-        frame = pd.read_csv(io.StringIO(journal_csv(result.journal, result.open_orders)))
-        self.journal = [self._journal_row(r) for r in frame.to_dict("records")]
-        filled = [r for r in self.journal if r["net_r"] is not None and r["filled_at"] is not None]
-        self.summary = {"orders": sum(1 for r in self.journal if r["decision"] == "EXECUTE"), "trades": len(filled),
-                        "total_r": round(sum(r["net_r"] for r in filled), 2)}
-        self.message = "replaying the engine at each close"
+        # Phase A, once: the backtest's own records, with the engine's view of each close kept for the page.
         closes = entry_closes(data, cfg.strategy.entry_tf, start_dt, end_dt)
-        engine = LiquidityMappingEngine()
-        decisions = {r["t"]: r for r in self.journal}
+        spread = specs[self.instrument].default_spread
+        engine = _Capturing()
+        records, states = [], {}
         for n, t in enumerate(closes):
-            view = compose_as_of_view(data.closed, data.m1, t, cfg.strategy.entry_tf, cfg.strategy.candle_counts, _CALENDAR)
+            self.message = f"the engine at close {n + 1} of {len(closes)}"
+            engine.last = None
+            records.append(signals_at(data, (cfg.strategy,), t, engine, spread)[0])
             try:
-                lm = engine.analyze(view, self.instrument, t)
-                state = self._state(lm, view, t, cfg.strategy.entry_tf)
+                state = (self._state(*engine.last, t, cfg.strategy.entry_tf) if engine.last
+                         else {"error": "the engine raised: see the decision"})
             except Exception as exc:
                 state = {"error": f"{type(exc).__name__}: {exc}"}
             state["t"] = wall(t)
-            state["decision"] = decisions.get(state["t"])
-            self.states[state["t"]] = state
-            self.progress = 0.1 + 0.9 * (n + 1) / max(1, len(closes))
-        self._keys = sorted(self.states)
+            states[state["t"]] = state
+            self.progress = 0.05 + 0.85 * (n + 1) / max(1, len(closes))
+        # Phase B: the backtest itself, served those records from a temporary cache.
+        self.message = "simulating the account (orders, fills, exits)"
+        with tempfile.TemporaryDirectory(prefix="watch-") as tmp:
+            cache = SignalCache(Path(tmp), engine_code_fingerprint())
+            cache.store(cache.key(data, cfg.strategy, start_dt, end_dt, spread), records)
+            result = run_backtest(cfg, study, False, {self.instrument: data}, specs, cache=cache, workers=1)
+        frame = pd.read_csv(io.StringIO(journal_csv(result.journal, result.open_orders)))
+        self.journal = [self._journal_row(r) for r in frame.to_dict("records")]
+        decisions = {r["t"]: r for r in self.journal}
+        for w_, state in states.items():
+            state["decision"] = decisions.get(w_)
+        filled = [r for r in self.journal if r["net_r"] is not None and r["filled_at"] is not None]
+        self.summary = {"orders": sum(1 for r in self.journal if r["decision"] == "EXECUTE"), "trades": len(filled),
+                        "total_r": round(sum(r["net_r"] for r in filled), 2)}
+        self.states, self._keys = states, sorted(states)
 
     @staticmethod
     def _journal_row(r: dict) -> dict:
@@ -268,6 +279,19 @@ class WatchSession:
         frame = self.bars.as_of(tf, from_wall(min(int(until), wall(self.end))), since=since)
         return [{"time": int(r.time), "open": float(r.open), "high": float(r.high), "low": float(r.low), "close": float(r.close)}
                 for r in frame.itertuples()]
+
+
+class _Capturing:
+    """The engine, keeping the last view and map it produced, for the page."""
+
+    def __init__(self) -> None:
+        self.engine = LiquidityMappingEngine()
+        self.last = None
+
+    def analyze(self, view, instrument, t):
+        lm = self.engine.analyze(view, instrument, t)
+        self.last = (lm, view)
+        return lm
 
 
 class WatchApp:
