@@ -280,6 +280,20 @@ def test_drawings_take_a_style_coloured_levels_and_freehand_paths(tmp_path):
         with pytest.raises(ReplayError, match=field):
             j.save_drawings([bad])
 
+def test_drawings_keep_visibility_intervals(tmp_path):
+    """Update 2026-10-15 (Requirement 14): a drawing shows on the chart timeframes inside its intervals."""
+    j = journal(tmp_path)
+    vis = {"minutes": {"on": False, "from": 1, "to": 59}, "hours": {"on": True, "from": 1, "to": 4},
+           "days": {"on": True, "from": 1, "to": 366}}
+    saved = j.save_drawings([{**box("h4-only"), "visibility": vis}])["drawings"][0]
+    assert saved["visibility"] == vis
+    for bad, field in (({"hours": {"on": True, "from": 5, "to": 4}}, "from"), ({"seconds": {"on": True, "from": 1, "to": 5}}, "unit"),
+                       ({"hours": {"on": True, "from": 1, "to": 25}}, "1 to 24"), ({"days": "all"}, "on, from, to"),
+                       ([1, 2], "object")):
+        with pytest.raises(ReplayError, match=field):
+            j.save_drawings([{**box("bad"), "visibility": bad}])
+
+
 def test_drawings_keep_the_phase_and_time_they_were_made_in(tmp_path):
     j = journal(tmp_path)
     j.save_drawings([box("read-box")])

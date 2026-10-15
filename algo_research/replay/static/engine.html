@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Engine Watch</title>
+<title>Charts · Engine</title>
 <link rel="stylesheet" href="/static/app.css">
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
@@ -16,6 +16,15 @@
   .progress { height: 6px; background: var(--chip); border-radius: 3px; overflow: hidden; margin: 6px 0; }
   .progress > div { height: 100%; background: var(--accent); width: 0; }
   .decision { font-weight: 650; }
+  .cand { position: relative; padding: 4px 64px 4px 6px; margin: 3px 0; border: 1px solid transparent; border-radius: 6px; cursor: default; }
+  .cand:hover { background: var(--chip); }
+  .cand.chosen { border-color: var(--accent); }
+  .cand.mine { background: var(--chip); border-color: var(--good); }
+  .cand .rk { font-weight: 700; }
+  .cand button.pick { position: absolute; right: 4px; top: 4px; font-size: 11px; padding: 1px 7px; }
+  .cands textarea { min-height: 44px; margin-top: 6px; }
+  .ma { padding: 4px 0; border-top: 1px solid var(--line); }
+  .ma:first-of-type { border-top: 0; }
   #overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 4; pointer-events: none; }
   #overlay > div { pointer-events: auto; max-width: 440px; padding: 18px 22px; border-radius: 10px; background: var(--panel);
                    border: 1px solid var(--line); box-shadow: var(--shadow); text-align: center; }
@@ -23,6 +32,7 @@
 </style>
 </head>
 <body>
+<div id="shell"></div>
 <header>
   <h1>Engine watch · <span id="inst">—</span></h1>
   <span class="pill" id="status">no session</span>
@@ -50,12 +60,14 @@
     <div class="muted" id="ovText">Pick an instrument and days on the right, then Start session.</div>
     <div class="progress"><div id="ovProg"></div></div></div></div></section>
   <aside>
+    <div id="watchlist"></div>
     <h2>Session</h2>
     <div class="row"><label>Instrument</label><select id="sInst"></select></div>
     <div class="row"><label>First day</label><input type="date" id="sDay"></div>
     <div class="row"><label>Days</label><select id="sDays"></select></div>
     <div class="row"><label>Strategy</label><select id="sVariant"></select></div>
     <div class="row"><button class="primary" id="sStart">Start session</button></div>
+    <div class="hint bad" id="blindWarn"></div>
     <div class="progress"><div id="prog"></div></div>
     <div class="hint" id="sMsg">Days come from the exploration slice. The backtest runs over them exactly as a real run, then plays here.</div>
     <div id="engine"></div>
@@ -66,6 +78,8 @@
 </main>
 <script src="/static/drawings.js"></script>
 <script src="/static/settings.js"></script>
+<script src="/static/motion.js"></script>
+<script src="/static/shell.js"></script>
 <script src="/static/engine.js"></script>
 </body>
 </html>

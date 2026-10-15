@@ -18,6 +18,33 @@
     return b === null ? a : a + f * (b - a);
   }
 
+  // Visibility intervals (update 2026-10-15), as TradingView's Visibility tab: the chart timeframes a drawing
+  // shows on, per unit. No intervals: every timeframe.
+  const UNITS = [["minutes", 59], ["hours", 24], ["days", 366], ["weeks", 52], ["months", 12]];
+  const Visibility = {
+    UNITS,
+    unitOf(tf) {
+      const m = /^(MN|M|H|D|W)(\d+)$/.exec(tf || "");
+      return m ? [{ MN: "months", M: "minutes", H: "hours", D: "days", W: "weeks" }[m[1]], Number(m[2])] : null;
+    },
+    shows(vis, tf) {
+      const u = vis && this.unitOf(tf);
+      if (!u) return true;
+      const v = vis[u[0]];
+      return !v || (v.on !== false && u[1] >= v.from && u[1] <= v.to);
+    },
+    between(lo, hi) {                                   // every timeframe from lo up to hi
+      const a = this.unitOf(lo), b = this.unitOf(hi);
+      const ia = UNITS.findIndex(([u]) => u === a[0]), ib = UNITS.findIndex(([u]) => u === b[0]);
+      const out = {};
+      UNITS.forEach(([u, top], i) => {
+        out[u] = i < ia || i > ib ? { on: false, from: 1, to: top } : { on: true, from: i === ia ? a[1] : 1, to: i === ib ? b[1] : top };
+      });
+      return out;
+    },
+    all() { return Object.fromEntries(UNITS.map(([u, top]) => [u, { on: true, from: 1, to: top }])); },
+  };
+
   // Points per type; 0 is a freehand path (any number, drawn by dragging).
   const POINTS = { hline: 1, hray: 1, vline: 1, text: 1, trend: 2, ray: 2, extended: 2, arrow: 2, rect: 2, range: 2,
                    fib: 2, channel: 3, fibext: 3, long: 3, short: 3, path: 0 };
@@ -72,13 +99,14 @@
   }
 
   class Drawings {
-    // opts: { container, timeline: {toLogical, toTime, barAt}, digits(), palette(), template(type),
+    // opts: { container, timeline: {toLogical, toTime, barAt}, digits(), palette(), template(type), tf(),
     //         onChange(items), onSelect(item), onEdit(item), onContext(item, x, y), onPick(at), picking(), onError(text) }
     constructor(chart, series, opts) {
       this.chart = chart; this.series = series; this.opts = opts;
       this.items = []; this.selected = null; this.tool = null; this.pending = null; this.mouse = null;
       this.drag = null; this.measure = null; this.magnet = true; this.hidden = false; this.keepTool = false;
       this.history = [];
+      this.restore = { handleScroll: true, handleScale: true };   // the chart's own options, back after a drag
       this.requestUpdate = () => {};
       const owner = this;
       series.attachPrimitive({
@@ -157,6 +185,8 @@
       if (d.mid !== undefined) legacy.showMid = !!d.mid;
       return { ...BASE, ...TYPE_LOOK[d.type], ...(this.opts.template(d.type) || {}), ...legacy, ...(d.style || {}) };
     }
+    visibilityOf(d) { return d.visibility || (this.opts.template(d.type) || {}).visibility || null; }
+    shows(d) { return !d.hidden && Visibility.shows(this.visibilityOf(d), this.opts.tf ? this.opts.tf() : null); }
     levelsOf(d) {
       const t = this.opts.template(d.type) || {};
       const raw = d.levels && d.levels.length ? d.levels : t.levels && t.levels.length ? t.levels : d.type === "fibext" ? FIBEXT : FIB;
@@ -254,7 +284,7 @@
     hit(x, y, width) {
       for (let i = this.items.length - 1; i >= 0; i--) {
         const d = this.items[i];
-        if (d.hidden) continue;
+        if (!this.shows(d)) continue;
         const s = this.shape(d, width);
         if (d === this.selected && !d.locked) {
           const h = s.handles.findIndex((q) => Math.hypot(q.x - x, q.y - y) <= HANDLE + 3);
@@ -292,9 +322,8 @@
       const pal = this.opts.palette();
       if (!this.hidden) {
         const preview = this.previewItem();
-        for (const d of preview ? [...this.items, preview] : this.items) {
-          if (!d.hidden) this.paintOne(ctx, size, d, pal, d === this.selected);
-        }
+        for (const d of this.items) if (this.shows(d)) this.paintOne(ctx, size, d, pal, d === this.selected);
+        if (preview) this.paintOne(ctx, size, preview, pal, false);
       }
       if (this.measure) this.paintMeasure(ctx, pal);
     }
@@ -446,12 +475,12 @@
       });
       if (this.hidden) return views;
       for (const d of this.items) {
-        if (d.hidden) continue;
+        if (!this.shows(d)) continue;
         const L = this.look(d);
         if ((d.type === "hline" || d.type === "hray") && L.priceLabels) add(d.points[0].p, this.colorOf(d, L, pal));
       }
       const s = this.selected;
-      if (s && !s.hidden && this.look(s).priceLabels) {
+      if (s && this.shows(s) && this.look(s).priceLabels) {
         if (s.type === "long" || s.type === "short") { add(s.points[0].p, pal.ink); add(s.points[1].p, pal.bad); add(s.points[2].p, pal.up); }
         if (s.type === "rect" || s.type === "range") { const c = this.colorOf(s, this.look(s), pal); add(s.points[0].p, c); add(s.points[1].p, c); }
       }
@@ -462,7 +491,7 @@
     bind(el) {
       const local = (e) => { const r = el.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
       const paneWidth = () => this.chart.timeScale().width();
-      const freeze = (on) => this.chart.applyOptions({ handleScroll: !on, handleScale: !on });
+      const freeze = (on) => this.chart.applyOptions(on ? { handleScroll: false, handleScale: false } : this.restore);
       el.addEventListener("mousedown", (e) => {
         if (e.button !== 0) return;
         const { x, y } = local(e);
@@ -580,6 +609,7 @@
 
   window.Drawings = Drawings;
   window.logicalX = logicalX;
+  window.Visibility = Visibility;
   window.DRAWING_POINTS = POINTS;
   window.DRAWING_NAMES = NAMES;
   window.FIB_LEVELS = FIB;

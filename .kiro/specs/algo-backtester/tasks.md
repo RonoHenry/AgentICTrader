@@ -666,6 +666,20 @@ Numbered from 294, after market-narrative's 290–293. Tasks 294 and 295 need th
   - **RED:** `test_snapshot_source_serves_m1_only`, `test_a_session_replays_the_engine_at_each_close`, `test_bars_never_pass_the_time_asked`, `test_the_watch_server_round_trip`. The browser walk-through (scratchpad `uitest/watch_ui.js`): the session opens, next order, next event, play, timeframes, layers, drawings, no console errors.
   - **Validates: Requirements 15.1-15.4**
 
+- [x] 308. The engine's trades and choices on the chart (Requirement 16)
+  - Added 2026-10-15 at the trader's request.
+  - The backtest never moves a stop or takes a partial (`SimBroker.partial_close` is not simulated, and nothing calls `set_sl_tp`), so the trade's path is what there is to manage: the session keeps each filled trade's best and worst point, in R and at their times.
+  - `ranked_candidates` lists what the sequence detector ranks, built from the detector's own parts (`pools`, `_EntryWindow`). The engine's code is left alone, because its fingerprint keys the signal cache (539 MB of Phase A work).
+  - The page draws the path once the trade is closed (the best so far while it is open), lists the candidates with the engine's choice, and records the trader's pick to `data/journal/watch_picks.jsonl`.
+  - **RED:**
+    - `test_candidates_include_the_choice_and_leave_detect_unchanged`;
+    - `test_a_session_lists_the_candidates_at_each_close`;
+    - `test_a_session_keeps_each_trades_path`;
+    - `test_picks_are_appended_with_the_engine_choice`;
+    - the golden run is unchanged;
+    - the watch walk-through: candidates listed, a pick saved, events drawn.
+  - **Validates: Requirements 16.1-16.3**
+
 ---
 
 ## Task Dependency Graph

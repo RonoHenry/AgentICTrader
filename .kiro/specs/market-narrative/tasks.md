@@ -107,6 +107,42 @@ Tasks marked **(user review)** end with your review before the next one starts.
   - **RED:** `test_drawings_take_a_style_coloured_levels_and_freehand_paths`; the HTTP round trip serves `settings.js`; the browser walk-through (scratchpad `uitest/ui.js`) covers every step of Requirements 11 and 12 with no console errors.
   - **Validates: Requirements 12.1-12.6**
 
+- [x] 306. A chart that moves freely (Requirement 13)
+  - Added 2026-10-15 at the trader's request: "unlock price to bar ratio ... makes the charting intuitive".
+  - `static/motion.js`, shared by both pages:
+    - a manual price range kept by the series' autoscale provider;
+    - a vertical pan and price-axis stretch;
+    - the **A** button, lock price to bar ratio, and the bar countdown on the price scale.
+  - Drawings restore the chart's scroll and scale options after a drag, instead of switching them all back on.
+  - **RED:** the browser walk-throughs. A diagonal drag moves time and price and turns auto-fit off; **A** fits again; with the ratio locked, zooming time zooms price; the countdown follows the replay clock; a timeframe change keeps the manual range. No console errors.
+  - **Validates: Requirements 13.1-13.4**
+
+- [x] 307. Visibility intervals (Requirement 14)
+  - Visibility is kept on the drawing (`journal._visibility` checks it). `Drawings` shows a drawing only on timeframes inside its intervals, and the drawing dialog gets a Visibility tab. The engine layer uses intervals per array timeframe, with defaults.
+  - **RED:** `test_drawings_keep_visibility_intervals`; the walk-throughs check that an H4-only box hides on M15 and shows on H4, and that an engine M15 array hides on H4.
+  - **Validates: Requirements 14.1-14.3**
+
+- [x] 309. One chart, two analysts (Requirement 15)
+  - `replay/charts.py`: one server for both modes, You at `/` and Engine at `/engine`.
+    - A blind journal per instrument, opened when its tab is first chosen; the replay API takes `?inst=`.
+    - `/api/instruments`.
+    - `/api/watchlist`: the You mode names its instrument and the server reads that day's revealed time; the Engine mode names `t`, held to the session's end. No time is returned, so the blind day stays unnamed.
+    - `/api/blind`: a session's days still unread in the blind journal (`Journal.unrevealed`).
+  - `python -m algo_research.replay` (port 8765) and `python -m algo_backtester watch` (8767, opening on Engine) both serve it.
+  - `static/shell.js`: the mode switch, the instrument tabs (with each one's change) and the watchlist, for both pages.
+    - A You tab opens that instrument's own blind day.
+    - An Engine tab runs the same days on the other instrument. The watch keeps its last three sessions, so going back is instant.
+  - **RED:** `test_the_charts_serve_both_modes`, `test_the_watchlist_never_shows_a_price_after_the_clock`, `test_the_you_mode_watchlist_is_read_at_its_days_clock_and_names_no_time`, `test_each_instrument_has_its_own_blind_journal`, `test_the_engine_mode_is_warned_of_days_still_unread_in_the_blind_replay`, `test_a_watch_session_is_kept_for_its_tab`.
+  - The walk-through (scratchpad `uitest/charts_ui.js`) covers:
+    - tabs and watchlist;
+    - the You mode makes no engine call;
+    - a tab's own blind day;
+    - the watchlist follows play;
+    - the Engine mode keeps the instrument and warns of unread days;
+    - a session, a tab to another instrument and back in under a second.
+    Every earlier walk-through passes on the merged server.
+  - **Validates: Requirements 15.1-15.3**
+
 - [ ] 301. Pilot: 50 blind gold days **(user action)**
   - You read 50 exploration-slice gold days; then we look at the summary together, and at the days where your thesis and the engine's candle profile disagreed.
 
@@ -136,7 +172,7 @@ Tasks marked **(user review)** end with your review before the next one starts.
     },
     {
       "name": "Blind replay",
-      "tasks": ["299", "300", "303", "304", "301"],
+      "tasks": ["299", "300", "303", "304", "306", "307", "309", "301"],
       "description": "The trader's blind daily reads, scored (update 2026-10-14)",
       "dependencies": ["Narrative"]
     }

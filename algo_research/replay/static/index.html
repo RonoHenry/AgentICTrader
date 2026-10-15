@@ -3,11 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Blind Replay</title>
+<title>Charts · You</title>
 <link rel="stylesheet" href="/static/app.css">
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
+<div id="shell"></div>
 <header>
   <h1>Blind replay · <span id="inst">…</span></h1>
   <span class="pill" id="status">…</span>
@@ -38,6 +39,7 @@
     <div id="favbar" title="Favourite tools: right-click a tool on the left to add or remove it"></div>
   </section>
   <aside>
+    <div id="watchlist"></div>
     <div id="panel"></div>
     <div id="props"></div>
     <div id="msg"></div>
@@ -48,6 +50,8 @@
 </main>
 <script src="/static/drawings.js"></script>
 <script src="/static/settings.js"></script>
+<script src="/static/motion.js"></script>
+<script src="/static/shell.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

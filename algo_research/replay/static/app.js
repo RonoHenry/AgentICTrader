@@ -39,6 +39,7 @@ const TOOLS = [
 ];
 const KINDS = ["OB", "FVG", "BREAKER", "IFVG", "BPR", "LIQUIDITY", "OTHER"];
 const S = { meta: null, state: null, tf: Prefs.get("tf", "M15"), tfSec: 900, bars: [], playing: false,
+            inst: new URLSearchParams(location.search).get("inst") || Prefs.get("inst", null),
             speed: Prefs.get("speed", 1), pick: null, saveTimer: null, busy: false,
             chartPrefs: { ...CHART_DEFAULTS, ...Prefs.get("chart", {}) } };
 
@@ -110,7 +111,7 @@ const timeline = {
 
 const templates = Prefs.get("templates", {});
 const draw = new Drawings(chart, series, {
-  container: $("chart"), timeline, palette,
+  container: $("chart"), timeline, palette, tf: () => S.tf,
   digits: () => (S.meta ? S.meta.digits : 2),
   template: (type) => templates[type],
   onChange: (items) => { scheduleSave(items); renderObjects(); },
@@ -122,11 +123,16 @@ const draw = new Drawings(chart, series, {
   onError: (text) => say(text),
 });
 const uiCtx = {
-  palette, kinds: KINDS, timeframes: ALL_TFS, digits: () => (S.meta ? S.meta.digits : 2),
+  palette, kinds: KINDS, timeframes: ALL_TFS, tf: () => S.tf, digits: () => (S.meta ? S.meta.digits : 2),
   timeLabel: (t) => timeLabel(t, true), say: (t) => say(t),
   saveTemplate: (type, look) => { templates[type] = look; Prefs.set("templates", templates); draw.refresh(); },
 };
 function editDrawing(item, start) { window.ReplayUI.toolSettings(draw, item, uiCtx, start); }
+const motion = new Motion(chart, series, {
+  container: $("chart"), draw, prefs: Prefs, palette, bars: () => S.bars, tfSeconds: () => S.tfSec,
+  now: () => (S.state ? S.state.revealed_until_epoch : null),
+  onChange: () => { draw.refresh(); sessionsUpdate(); },
+});
 
 // ── sessions: day separators, the day and midnight opens, killzone shading ──
 let sessionsUpdate = () => {};
@@ -204,7 +210,7 @@ function applyChartPrefs(p) {
     layout: { background: { color: p.background || "transparent" }, textColor: css("--muted") },
     grid: { vertLines: { visible: p.gridV, color: css("--grid") }, horzLines: { visible: p.gridH, color: css("--grid") } },
     crosshair: { mode: p.crosshair === "magnet" ? LightweightCharts.CrosshairMode.Magnet : LightweightCharts.CrosshairMode.Normal },
-    rightPriceScale: { mode: modes[p.scaleMode] || modes.normal, autoScale: p.autoScale, borderColor: css("--line") },
+    rightPriceScale: { mode: modes[p.scaleMode] || modes.normal, autoScale: true, borderColor: css("--line") },   // a manual range: motion.js
     timeScale: { borderColor: css("--line") },
     watermark: { visible: !!p.watermark, text: `${S.meta ? S.meta.instrument : ""} · ${tfLabel(S.tf)}`, fontSize: 56,
                  color: rgba(hexOf(css("--muted")), 0.14), horzAlign: "center", vertAlign: "center" },
@@ -215,6 +221,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => appl
 
 // ── API ───────────────────────────────────────────────────────────────────
 async function api(path, body) {
+  if (S.inst) path += (path.includes("?") ? "&" : "?") + "inst=" + encodeURIComponent(S.inst);   // each instrument's own journal
   const init = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" },
                                           body: JSON.stringify(body) };
   const r = await fetch(path, init);
@@ -231,7 +238,9 @@ function scheduleSave(items) {
 
 // ── loading a day ─────────────────────────────────────────────────────────
 async function boot() {
-  S.meta = await api("/api/meta");
+  S.meta = await api("/api/meta").catch((e) => { if (!S.inst) throw e; S.inst = null; return api("/api/meta"); });
+  S.inst = S.meta.instrument; Prefs.set("inst", S.inst);
+  await Shell.init({ mode: "you", inst: S.inst, onPick: (i) => { location.href = "/?inst=" + encodeURIComponent(i); } });
   if (!ALL_TFS.includes(S.tf)) S.tf = "M15";
   S.tfSec = S.meta.timeframes.find((x) => x.tf === S.tf).seconds;
   buildTfs(); buildTools(); buildFavBar(); buildReplay();
@@ -242,6 +251,7 @@ async function loadDay(state) {
   S.state = state;
   draw.load(state.drawings);
   renderHeader(); renderPanel(); renderReplay(); renderProps(null); markLinked(); renderObjects();
+  Shell.refresh("inst=" + encodeURIComponent(S.inst));
   await loadBars(true);
   renderSummary();
 }
@@ -249,6 +259,7 @@ function onState(state) {
   const fresh = !S.state || state.status !== S.state.status || state.open_epoch !== S.state.open_epoch;
   S.state = state;
   renderHeader();
+  Shell.refresh("inst=" + encodeURIComponent(S.inst));
   if (fresh) { renderPanel(); renderReplay(); } else renderLive();
   markLinked();
 }
@@ -413,14 +424,15 @@ function drawingMenu(d, x, y) {
 function chartMenu(x, y) {
   window.ReplayUI.contextMenu(x, y, [
     { label: "Chart settings…", action: () => openChartSettings() },
-    { label: "Reset the chart view", action: () => { const n = S.bars.length; chart.priceScale("right").applyOptions({ autoScale: true });
+    { label: "Reset the chart view", action: () => { const n = S.bars.length; motion.fit();
                                                      chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 10 }); } },
+    ...motion.menu(),
     { label: draw.hidden ? "Show drawings" : "Hide drawings", action: () => { draw.hidden = !draw.hidden; buildTools(); draw.refresh(); } },
     "-",
     { label: "Remove all drawings", disabled: !draw.items.length, action: () => { if (confirm("Remove every drawing on this day?")) draw.clearAll(); } },
   ]);
 }
-function openChartSettings() { window.ReplayUI.chartSettings({ palette, apply: (p) => applyChartPrefs(p) }); }
+function openChartSettings() { window.ReplayUI.chartSettings({ palette, motion, apply: (p) => applyChartPrefs(p) }); }
 $("chartSettings").onclick = () => openChartSettings();
 
 // ── replay controls ───────────────────────────────────────────────────────

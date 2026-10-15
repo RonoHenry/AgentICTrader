@@ -88,6 +88,15 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     commands.add_parser("ledger", help="render docs/research/LEDGER.md from docs/research/ledger.csv")
     commands.add_parser("profile", help="write docs/research/VOLATILITY_PROFILE.md: where each instrument makes "
                                         "its range (exploration slice; descriptive, no ledger)")
+    model_a = commands.add_parser("model-a", help="write docs/research/MODEL_A_RECORD.md: how often each step of "
+                                                   "Model A happens (exploration slice; descriptive, no ledger)")
+    model_a.add_argument("--instrument", action="append", help="one instrument (repeatable; default: all)")
+    model_a.add_argument("--set", action="append", dest="sets",
+                         help="a frame set (repeatable; default the trader's: model_d1, model_h4)")
+    model_a.add_argument("--variants", action="store_true", help="also H4/M30/M1 and H4/M15/M3 (MA-D1)")
+    model_a.add_argument("--universal", action="store_true", help="also W1/D1/H4, D1/H4/M15, H1/M15/M1 (Req 16.4)")
+    model_a.add_argument("--rerender", action="store_true",
+                         help="write the report again from data/research/model_a_instances.jsonl, without reading")
     return parser.parse_args(argv)
 
 
@@ -113,6 +122,8 @@ def main(argv: Optional[Sequence[str]] = None, source_factory: Optional[SourceFa
             return _run(args, cfg, root, snapshots_dir, cache_dir, now)
         if args.command == "profile":
             return _profile(cfg, root, snapshots_dir)
+        if args.command == "model-a":
+            return _model_a(args, cfg, root, snapshots_dir)
     except (HoldoutError, SnapshotError, HypothesisError) as exc:
         print(f"refused: {exc}")
         return 2
@@ -214,6 +225,54 @@ def _profile(cfg: ResearchConfig, root: Path, snapshots_dir: Path) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8", newline="\n")
     print(f"wrote {out} (descriptive: no verdict, no ledger row)")
+    return 0
+
+
+def _model_a(args, cfg: ResearchConfig, root: Path, snapshots_dir: Path) -> int:
+    """Context-engine Req 16: the Model A record on the exploration slice, descriptive; no ledger."""
+    import pandas as pd
+
+    from algo_research.config import trading_date_open
+    from algo_research.model_a import load_instances, record, render
+    from algo_research.replay.bars import ReplayBars
+    from algo_research.replay.timeframes import wall_seconds
+    from liquidity_engine.context.model_a import MODEL_SETS, UNIVERSAL_SETS
+
+    names = args.sets or ["model_d1", "model_h4"]
+    if args.variants:
+        names += ["model_h4_m30", "model_h4_m3"]
+    if args.universal:
+        names += list(UNIVERSAL_SETS)
+    every = {**MODEL_SETS, **UNIVERSAL_SETS}
+    unknown = [n for n in names if n not in every]
+    if unknown:
+        raise SystemExit(f"unknown frame set(s) {unknown}; one of {sorted(every)}")
+    instruments = [i.upper() for i in (args.instrument or cfg.instruments)]
+    start, end = slices_of(cfg)["explore"]
+    meta = {"snapshot": cfg.snapshot, "slice": f"exploration slice, {start} to {end} (end exclusive)",
+            "frame sets": ", ".join(names), "code_commit": _commit(root)}
+    out = root / DOCS / "MODEL_A_RECORD.md"
+    kept = root / "data" / "research" / "model_a_instances.jsonl"          # every instance, for the review and the chart
+    if args.rerender:
+        instances = load_instances(kept)
+        instances = instances[instances["instrument"].isin(instruments) & instances["set"].isin(names)]
+        text = render(instances, [every[n] for n in names], meta=meta)
+    else:
+        m1 = {}
+        for inst in instruments:
+            path = snapshots_dir / cfg.snapshot / f"{inst}_M1.parquet"
+            if not path.exists():
+                raise SystemExit(f"no snapshot file {path}")
+            bars = ReplayBars(pd.read_parquet(path, columns=["time", "open", "high", "low", "close"]), inst)
+            m1[inst] = (bars._wall, *bars._ohlc)
+        wall = lambda d: int(wall_seconds([pd.Timestamp(trading_date_open(d))])[0])  # noqa: E731
+        text, instances = record(m1, [every[n] for n in names], wall(start), wall(end), meta=meta,
+                                 progress=lambda s: print(f"  {s}", flush=True))
+        kept.parent.mkdir(parents=True, exist_ok=True)
+        instances.to_json(kept, orient="records", lines=True, date_format="iso")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8", newline="\n")
+    print(f"wrote {out} and {kept} ({len(instances)} instances; descriptive: no verdict, no ledger row)")
     return 0
 
 
