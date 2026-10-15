@@ -231,6 +231,10 @@ Model A replaces the old selection (284) and orders (285) in the Model A modes. 
   - **312b. GREEN** — `algo_research/model_a.py`; the command `python -m algo_research model-a [--set model_d1] [--instrument XAUUSD]`; `docs/research/MODEL_A_RECORD.md`.
   - **312c. Your review.** Gold first, then the others. We read the funnel together, and the instances you'd label differently settle MA-D2 to MA-D11.
   - *Status 2026-10-15:* 312a and 312b are done. The report adds **the premise**: after C2 rejects, C1's opposite extreme before C2's extreme, against a coin flip from the same distances. It counts every rejected C2, not only the few fills. `--rerender` rebuilds the report from `data/research/model_a_instances.jsonl`. F's state is read from its last 600 candles (MA-D8). 312c, the review, is next.
+  - *The record (2026-10-15):* 4 instruments × 7 frame sets, 908,469 instances. With the working defaults, Model A's premise doesn't beat its coin flip consistently: most cells sit within ±5% with intervals spanning zero. It doesn't beat CRT or random POIs either.
+    - Three of 28 cells are positive: EURUSD H4/M30/M1 +6% [+1, +11], EURUSD D1/H4/M15 +17% [+4, +30] (n 35), GBPUSD D1/H1/M5 +8% [+1, +15]. With 28 cells, one or two would be expected by chance.
+    - Fills are few, 2 to 74 per cell in six months.
+    - The review decides whether the definitions miss the trader's selection.
   - **Validates: Requirements 16.1–16.5**
 
 - [x] 313. Model A on the chart (Requirement 17)
@@ -242,6 +246,28 @@ Model A replaces the old selection (284) and orders (285) in the Model A modes. 
     The panel shows each instance's state, reason, time window, inducement and levels. The log lists its state changes.
   - **RED:** `test_watch_session_keeps_model_a_instances`, and the walk-through (an instance drawn, its states logged, nothing after the clock).
   - **Validates: Requirements 17.1–17.3**
+
+- [x] 315. Volatility and time in the reader (Requirement 18)
+  - Added 2026-10-15 at the trader's request: "the mechanical aspect does not factor in the volatility aspect of the market".
+  - `day_phase`, `EARLY` and `MODEL_A_VT` in `context/model_a.py`; the `Variant` fields `size_basis`, `phases`, `max_adr_used`, `max_size_adr` and `room`. Each instance records its phase, ADR, ADR used, size and TP1's reach.
+  - The record's arms: Model A plain, + time, + volatility, + both, CRT and CRT + both, random POI + both. `--all-arms` adds the first record's variants. The breakdowns add the phase.
+  - The Engine chart reads `MODEL_A_VT`, and its panel shows the phase and the ADR figures.
+  - **RED:** `test_day_phase_labels`, `test_phase_gate_frames_only_in_its_phases`, `test_adr_and_its_gates`, `test_no_gate_without_enough_history`, `test_seasonal_sizes_read_the_same_hour_on_earlier_days`, `test_property_2_holds_with_volatility_and_time`. The record and watch tests pass with the new arms.
+  - **Validates: Requirements 18.1-18.6**
+  - *The record (2026-10-15b):* Volatility and time lifted most cells. Model A + time + volatility: XAUUSD D1/H1/M5 +16% [+1, +31], EURUSD H4/M30/M1 +10% [+1, +18], EURUSD H4/M15/M1 +8% [+2, +14]. Fills fell to 0–10 per cell.
+  - *The oracle split (scratchpad `oracle_split.py`, hindsight on purpose):* Model A's rejected C2s were on the side the day went only 27–29% of the time, against 49% for CRT. On that side the premise beat its coin by +19% [+12, +26] (D1/H1/M5), +8% (H4/M30/M1) and +5% (H4/M15/M1); against it, −1% to −4%. The reader needs a thesis (task 316).
+
+- [x] 316. A thesis first (Requirement 19)
+  - Added 2026-10-15 at the trader's request ("yes" to giving the reader a thesis).
+  - `ModelAReader(..., theses=)` and `Variant.thesis`: framing only on the thesis side; a thesis variant without theses is refused.
+  - `algo_research/model_a.py`: `day_directions`, `daily_theses` (PROFILE from `CandleProfileAnalyzer` at each 17:00 open; PREV_DAY; ORACLE), `thesis_accuracy` with a day-bootstrap interval, `THESIS_ARMS`, and the report's "theses on their own" table. `--arms main,thesis,extra` picks the arms.
+  - **RED:**
+    - `test_reader_frames_only_on_the_thesis_side`;
+    - `test_oracle_and_prev_day_theses`;
+    - `test_profile_thesis_reads_only_the_past` (Property 2: cut an hour into a day, and every thesis up to that day is unchanged);
+    - `test_thesis_accuracy_against_the_day`;
+    - `test_the_record_scores_each_thesis`.
+  - **Validates: Requirements 19.1-19.4**
 
 - [ ] 311. Nesting (Requirement 15)
   - **RED:** `test_d1_ote_is_an_h4_poi_while_live`, `test_depth_two_inside_a_live_ote`, `test_extended_targets_from_the_higher_instance`.
@@ -305,7 +331,7 @@ Dependencies are denoted as `prerequisite → dependent`. Liquidity-engine task 
     },
     {
       "name": "Model A",
-      "tasks": ["310", "312", "313", "311", "314"],
+      "tasks": ["310", "312", "313", "315", "316", "311", "314"],
       "description": "Model A: the reader, its measured record (your review), the chart, nesting, then orders (update 2026-10-15)",
       "dependencies": ["Context model"]
     },

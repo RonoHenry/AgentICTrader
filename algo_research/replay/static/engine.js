@@ -588,8 +588,8 @@ function renderEngine() {
     const lv = (y) => y.entry != null ? `<div class="muted">0.705 entry ${fmt(y.entry)} · stop ${fmt(y.stop)} · TP1 ${fmt(y.tp1)} · -1 SD ${fmt(y.sd1)} · -2 SD ${fmt(y.sd2)}</div>` : "";
     html += `<div class="card"><b>${esc(label)}</b>` + (S.ma.length ? S.ma.map((y) => `<div class="ma ${y.ended ? "muted" : ""}">
         <b>${esc(y.side)} · ${esc(y.ended || y.state)}</b> <span class="muted">POI ${esc(y.poi_label)} ${fmt(y.poi_near)}–${fmt(y.poi_far)}</span>
-        <div>${esc(y.reason)}</div>${y.time_sync != null ? `<div class="muted">C2 ${y.time_sync ? "in" : "outside"} your time window${y.inducement ? `; inducement: ${esc(y.inducement)}` : ""}</div>` : ""}${lv(y)}</div>`).join("")
-      : `<div class="muted">Nothing framed: price isn't in premium with a POI above (or discount with one below) on ${esc(label.split(": ")[1] || "")}.</div>`) + `</div>`;
+        <div>${esc(y.reason)}</div><div class="muted">C2's phase: ${esc(y.phase || "—")}${y.time_sync != null ? `; ${y.time_sync ? "in" : "outside"} your time window` : ""}${y.inducement ? `; inducement: ${esc(y.inducement)}` : ""}</div>${y.adr_used != null ? `<div class="muted">At C2's close: ${Math.round(100 * y.adr_used)}% of the ADR used; the setup ${y.size_adr.toFixed(2)} ADR; TP1 ${y.target_reach.toFixed(2)} ADR from the day's extreme</div>` : ""}${lv(y)}</div>`).join("")
+      : `<div class="muted">Nothing framed: price isn't in premium with a POI above (or discount with one below) on ${esc(label.split(": ")[1] || "")}, or C2 would open outside the early phases (20:00-07:00 New York).</div>`) + `</div>`;
   }
   const open = S.journal.find((r) => r.filled_at != null && r.filled_at <= S.t && (r.closed_at == null || r.closed_at > S.t));
   if (open) {
