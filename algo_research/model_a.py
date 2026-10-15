@@ -61,6 +61,16 @@ ARMS = (
     Arm("crt_vt", "CRT + time + volatility", replace(MODEL_A_VT, poi_mode="CRT")),
     Arm("random_poi_vt", "Random POI + time + volatility", replace(MODEL_A_VT, poi_mode="RANDOM_POI", seed=20261015)),
 )
+#: Requirement 19: Model A and CRT under each thesis.
+THESIS_ARMS = (
+    Arm("model_vt_profile", "+ time + volatility, PROFILE thesis", replace(MODEL_A_VT, thesis="PROFILE")),
+    Arm("model_vt_prev", "+ time + volatility, PREV_DAY thesis", replace(MODEL_A_VT, thesis="PREV_DAY")),
+    Arm("model_vt_oracle", "+ time + volatility, ORACLE (hindsight)", replace(MODEL_A_VT, thesis="ORACLE")),
+    Arm("model_profile", "Model A, PROFILE thesis", Variant(thesis="PROFILE")),
+    Arm("model_oracle", "Model A, ORACLE (hindsight)", Variant(thesis="ORACLE")),
+    Arm("crt_vt_profile", "CRT + time + volatility, PROFILE thesis", replace(MODEL_A_VT, poi_mode="CRT", thesis="PROFILE")),
+    Arm("crt_vt_oracle", "CRT + time + volatility, ORACLE (hindsight)", replace(MODEL_A_VT, poi_mode="CRT", thesis="ORACLE")),
+)
 #: The variants of the first record (MA-D4, MA-D5) and the plain random-POI baseline: ``--all-arms``.
 EXTRA_ARMS = (
     Arm("swing", "Model A, the leg runs to the swing low (MA-D5)", Variant(leg_end="SWING")),
@@ -75,18 +85,99 @@ def trading_date(wall: int) -> date:
 
 
 def read_instances(m1: Tuple[np.ndarray, ...], frames: FrameSet, variant: Variant, start: int, end: int,
-                   instrument: str) -> pd.DataFrame:
+                   instrument: str, theses: Optional[Dict[int, int]] = None) -> pd.DataFrame:
     """Both sides' instances, with the trading date and the premise."""
     wall, o, h, l, c = m1
+    if variant.thesis and theses is None:
+        theses = daily_theses(m1, variant.thesis, instrument)
     rows = []
     for side in ("SHORT", "LONG"):
-        rows += ModelAReader(frames, wall, o, h, l, c, side=side, variant=variant).run(start, end)
+        rows += ModelAReader(frames, wall, o, h, l, c, side=side, variant=variant, theses=theses).run(start, end)
     df = pd.DataFrame(rows)
     if df.empty:
         return df
     df["instrument"] = instrument
     df["trading_date"] = [trading_date(s["FRAMED"]) for s in df["states"]]
     return premise(df, m1)
+
+
+# ── the thesis (Requirement 19) ─────────────────────────────────────────
+
+_DAY, _OPEN = 86400, 61200
+THESES = ("PROFILE", "PREV_DAY", "ORACLE")
+
+
+def day_directions(m1: Tuple[np.ndarray, ...]) -> Dict[int, int]:
+    """Each trading day's direction (17:00 to 17:00 New York): +1 closed above its open, -1 below, 0 level."""
+    wall, o, _h, _l, c = m1
+    g = pd.DataFrame({"d": (np.asarray(wall) - _OPEN) // _DAY, "o": o, "c": c}).groupby("d").agg(o=("o", "first"), c=("c", "last"))
+    return {int(k): int(v) for k, v in np.sign(g["c"] - g["o"]).items()}
+
+
+def daily_theses(m1: Tuple[np.ndarray, ...], kind: str, instrument: str = "X") -> Dict[int, int]:
+    """One thesis per trading day: +1 bullish, -1 bearish, 0 none.
+    - PROFILE: the engine's D1 candle profile at the day's 17:00 open (liquidity-engine Requirement 21): the last
+      closed week's trend toward its weekly objective, else the nearer untaken H4, D1 or W1 objective.
+    - PREV_DAY: the day before closed that way (a naive baseline).
+    - ORACLE: the day's own close against its open. Hindsight: an upper bound, never tradeable."""
+    days = day_directions(m1)
+    if kind == "ORACLE":
+        return days
+    if kind == "PREV_DAY":
+        keys = sorted(days)
+        return {d: days[p] for p, d in zip(keys, keys[1:])}
+    if kind == "PROFILE":
+        return _profile_theses(m1, instrument)
+    raise ValueError(f"thesis: one of {', '.join(THESES)}")
+
+
+def _profile_theses(m1: Tuple[np.ndarray, ...], instrument: str) -> Dict[int, int]:
+    """The candle profile's direction at each trading day's open, from H4, D1 and W1 candles closed by then."""
+    from algo_research.replay.timeframes import aggregate
+    from liquidity_engine.models import BiasDirection, Candle, Timeframe
+    from liquidity_engine.profile.candle_profile import CandleProfileAnalyzer
+    wall, o, h, l, c = m1
+
+    def candles(tf: str) -> List:
+        b = aggregate(np.asarray(wall), o, h, l, c, tf)
+        utc = pd.to_datetime(b["time"], unit="s").dt.tz_localize("America/New_York", ambiguous=True,
+                                                                  nonexistent="shift_forward").dt.tz_convert("UTC")
+        return [Candle(timestamp=t.to_pydatetime(), open=r.open, high=r.high, low=r.low, close=r.close,
+                       timeframe=Timeframe[tf], instrument=instrument)
+                for t, r in zip(utc, b.itertuples())]
+
+    h4, d1, w1 = candles("H4"), candles("D1"), candles("W1")
+    analyzer, out = CandleProfileAnalyzer(), {}
+    for i, day in enumerate(d1):
+        if i < 25:
+            continue                                     # a few weeks of history first
+        forming = day.model_copy(update={"high": day.open, "low": day.open, "close": day.open})   # its open only
+        t = day.timestamp
+        view = {Timeframe.D1: d1[max(0, i - 120):i] + [forming],
+                Timeframe.W1: [w for w in w1 if w.timestamp < t][-60:],
+                Timeframe.H4: [x for x in h4[max(0, 6 * i - 900):6 * i + 6] if x.timestamp < t][-300:]}
+        profile = analyzer.analyze(view, t)
+        if profile is None:
+            continue
+        d = int((int(pd.Timestamp(t).tz_convert("America/New_York").tz_localize(None).value // 10**9) - _OPEN) // _DAY)
+        out[d] = 1 if profile.direction == BiasDirection.BULLISH else -1 if profile.direction == BiasDirection.BEARISH else 0
+    return out
+
+
+def thesis_accuracy(m1: Tuple[np.ndarray, ...], theses: Dict[int, int], start: int, end: int, seed: int = 17) -> dict:
+    """How often the thesis named the day's direction, among the days it named one, with a day-bootstrap interval;
+    and the share of days it named one at all."""
+    days = day_directions(m1)
+    lo_d, hi_d = (start - _OPEN) // _DAY, (end - _OPEN) // _DAY
+    named = [(d, v) for d, v in theses.items() if lo_d <= d < hi_d and v != 0 and days.get(d, 0) != 0]
+    all_days = [d for d in days if lo_d <= d < hi_d and days[d] != 0]
+    if not named:
+        return {"days": len(all_days), "named": 0, "right": np.nan, "lo": np.nan, "hi": np.nan}
+    hit = np.array([1.0 if v == days[d] else 0.0 for d, v in named])
+    rng = np.random.default_rng(seed)
+    boots = rng.choice(hit, size=(RESAMPLES, len(hit)), replace=True).mean(axis=1)
+    return {"days": len(all_days), "named": len(named), "right": float(hit.mean()),
+            "lo": float(np.percentile(boots, 2.5)), "hi": float(np.percentile(boots, 97.5))}
 
 
 def premise(df: pd.DataFrame, m1: Tuple[np.ndarray, ...]) -> pd.DataFrame:
@@ -321,10 +412,11 @@ def collect(m1_by_instrument: Dict[str, Tuple[np.ndarray, ...]], sets: Iterable[
     """Every instance read, per instrument, set and arm."""
     everything = []
     for inst, m1 in m1_by_instrument.items():
+        theses = {kind: daily_theses(m1, kind, inst) for kind in {a.variant.thesis for a in arms if a.variant.thesis}}
         for fs in sets:
             for arm in arms:
                 progress(f"{inst} {fs.name} {arm.key}")
-                df = read_instances(m1, fs, arm.variant, start, end, inst)
+                df = read_instances(m1, fs, arm.variant, start, end, inst, theses.get(arm.variant.thesis))
                 if not df.empty:
                     df["arm"], df["set"] = arm.key, fs.name
                     everything.append(df)
@@ -340,7 +432,7 @@ def _edge(p: dict) -> str:
 
 
 def render(instances: pd.DataFrame, sets: Sequence[FrameSet], arms: Sequence[Arm] = ARMS,
-           meta: Optional[dict] = None) -> str:
+           meta: Optional[dict] = None, thesis_rows: Sequence[Tuple[str, str, dict]] = ()) -> str:
     """The report, from the instances: a summary table first, then each instrument and set in full."""
     meta = meta or {}
     parts = ["# The Model A record", "",
@@ -356,12 +448,21 @@ def render(instances: pd.DataFrame, sets: Sequence[FrameSet], arms: Sequence[Arm
                                  & (instances["arm"] == arm.key)] if not instances.empty else instances
                 by[inst, fs.name, arm.key] = (arm, part, summarise(part))
     keys = [a.key for a in arms]
+    if thesis_rows:
+        parts += ["## The theses on their own", "",
+                  "How often each thesis named the trading day's direction (its D1 candle closing above or below its "
+                  "open), among the days it named one; a coin flip is 50%. ORACLE is that direction itself: hindsight, "
+                  "the upper bound.", "", "| Instrument | Thesis | Days named | Right |", "|---|---|---:|---|"]
+        for inst, kind, a in thesis_rows:
+            right = "–" if not a["named"] else f"{a['right']:.0%} [{a['lo']:.0%}, {a['hi']:.0%}]"
+            parts.append(f"| {inst} | {kind} | {a['named']} of {a['days']} | {right} |")
+        parts.append("")
     parts += ["## Summary: the premise against its coin flip", "",
               "Once C2 has rejected: C1's opposite extreme before C2's extreme, minus the coin flip from the same "
               "distances, with its day-cluster interval. The last arm with fills gives the fills and the R held to TP1.", "",
               "| Instrument | Frame set | " + " | ".join(a.label for a in arms) + " | Fills | R held to TP1 |",
               "|---|---|" + "---|" * len(arms) + "---:|---|"]
-    lead = "model_vt" if "model_vt" in keys else keys[0]
+    lead = next((k for k in ("model_vt", "model_vt_profile") if k in keys), keys[0])
     for inst in instruments:
         for fs in sets:
             cells = [_edge(by[inst, fs.name, k][2].get("premise", {})) for k in keys]
@@ -376,7 +477,7 @@ def render(instances: pd.DataFrame, sets: Sequence[FrameSet], arms: Sequence[Arm
         for fs in sets:
             results = {arm.key: by[inst, fs.name, arm.key] for arm in arms}
             parts.append(render_set(f"{fs.name}: F {fs.f}, C {fs.c}, E {fs.e}", results))
-            for key in ("model", "model_vt"):
+            for key in ("model", "model_vt", "model_vt_profile", "model_vt_oracle"):
                 part = results[key][1] if key in results else pd.DataFrame()
                 if not part.empty:
                     parts.append(f"\n**Breakdowns: {results[key][0].label}**\n")
@@ -389,7 +490,10 @@ def record(m1_by_instrument: Dict[str, Tuple[np.ndarray, ...]], sets: Iterable[F
     """The report and every instance read, per instrument, set and arm."""
     sets = list(sets)
     instances = collect(m1_by_instrument, sets, start, end, arms, progress)
-    return render(instances, sets, arms, meta), instances
+    kinds = sorted({a.variant.thesis for a in arms if a.variant.thesis})
+    rows = [(inst, kind, thesis_accuracy(m1, daily_theses(m1, kind, inst), start, end))
+            for inst, m1 in m1_by_instrument.items() for kind in kinds]
+    return render(instances, sets, arms, meta, rows), instances
 
 
 def load_instances(path: Path) -> pd.DataFrame:

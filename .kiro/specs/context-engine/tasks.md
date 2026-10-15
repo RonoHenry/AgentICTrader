@@ -257,6 +257,18 @@ Model A replaces the old selection (284) and orders (285) in the Model A modes. 
   - *The record (2026-10-15b):* Volatility and time lifted most cells. Model A + time + volatility: XAUUSD D1/H1/M5 +16% [+1, +31], EURUSD H4/M30/M1 +10% [+1, +18], EURUSD H4/M15/M1 +8% [+2, +14]. Fills fell to 0–10 per cell.
   - *The oracle split (scratchpad `oracle_split.py`, hindsight on purpose):* Model A's rejected C2s were on the side the day went only 27–29% of the time, against 49% for CRT. On that side the premise beat its coin by +19% [+12, +26] (D1/H1/M5), +8% (H4/M30/M1) and +5% (H4/M15/M1); against it, −1% to −4%. The reader needs a thesis (task 316).
 
+- [x] 316. A thesis first (Requirement 19)
+  - Added 2026-10-15 at the trader's request ("yes" to giving the reader a thesis).
+  - `ModelAReader(..., theses=)` and `Variant.thesis`: framing only on the thesis side; a thesis variant without theses is refused.
+  - `algo_research/model_a.py`: `day_directions`, `daily_theses` (PROFILE from `CandleProfileAnalyzer` at each 17:00 open; PREV_DAY; ORACLE), `thesis_accuracy` with a day-bootstrap interval, `THESIS_ARMS`, and the report's "theses on their own" table. `--arms main,thesis,extra` picks the arms.
+  - **RED:**
+    - `test_reader_frames_only_on_the_thesis_side`;
+    - `test_oracle_and_prev_day_theses`;
+    - `test_profile_thesis_reads_only_the_past` (Property 2: cut an hour into a day, and every thesis up to that day is unchanged);
+    - `test_thesis_accuracy_against_the_day`;
+    - `test_the_record_scores_each_thesis`.
+  - **Validates: Requirements 19.1-19.4**
+
 - [ ] 311. Nesting (Requirement 15)
   - **RED:** `test_d1_ote_is_an_h4_poi_while_live`, `test_depth_two_inside_a_live_ote`, `test_extended_targets_from_the_higher_instance`.
   - **GREEN:** `context/nesting.py`; the funnel gains depth.
@@ -319,7 +331,7 @@ Dependencies are denoted as `prerequisite → dependent`. Liquidity-engine task 
     },
     {
       "name": "Model A",
-      "tasks": ["310", "312", "313", "315", "311", "314"],
+      "tasks": ["310", "312", "313", "315", "316", "311", "314"],
       "description": "Model A: the reader, its measured record (your review), the chart, nesting, then orders (update 2026-10-15)",
       "dependencies": ["Context model"]
     },

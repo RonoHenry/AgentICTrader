@@ -94,11 +94,16 @@ class Variant:
     max_size_adr: Optional[float] = None        # MA-D16: C2's extreme to C1's opposite extreme, in ADR (TOO_LARGE)
     room: bool = False                          # MA-D17: C1's opposite extreme within one ADR of the day's extreme
                                                 # on C2's side (NO_ROOM otherwise)
+    # Requirement 19: a thesis first. Its name (PROFILE, PREV_DAY, ORACLE); the reader is handed the theses, one
+    # direction per trading day (+1, -1, 0), and frames only on the thesis side.
+    thesis: Optional[str] = None
 
     def name(self) -> str:
         extra = "+time" if self.phases else ""
         if self.size_basis == "SEASONAL" or self.max_adr_used or self.max_size_adr or self.room:
             extra += "+vol"
+        if self.thesis:
+            extra += f"+{self.thesis.lower()}"
         return f"{self.poi_mode.lower()}/{self.leg_end.lower()}/{self.cisd.lower()}{extra}"
 
 
@@ -207,7 +212,8 @@ class _Instance:
 
 class ModelAReader:
     def __init__(self, frames: FrameSet, wall, o, h, l, c, side: str = "SHORT", variant: Variant = Variant(),
-                 extra_pois: Optional[Callable[[int, str], List[POI]]] = None) -> None:
+                 extra_pois: Optional[Callable[[int, str], List[POI]]] = None,
+                 theses: Optional[Dict[int, int]] = None) -> None:
         from algo_research.replay.timeframes import aggregate, bucket, seconds_of
         self.frames, self.side, self.variant = frames, side.upper(), variant
         self.sign = 1.0 if self.side == "SHORT" else -1.0
@@ -222,6 +228,9 @@ class ModelAReader:
             self.bars[tf] = (b["time"].to_numpy(np.int64),) + tuple(b[k].to_numpy(float) for k in ("open", "high", "low", "close"))
         self.seconds, self.bucket = seconds_of, bucket
         self.extra_pois = extra_pois                    # nesting (Requirement 15): (t, side) -> a higher reader's POIs
+        if variant.thesis and theses is None:
+            raise ValueError(f"the variant reads a {variant.thesis} thesis: pass theses (trading day -> +1, -1 or 0)")
+        self.theses = theses                            # Requirement 19: trading day -> the thesis's direction
         self._rng = np.random.default_rng(variant.seed)
 
     # ── the run ──────────────────────────────────────────────────────────
@@ -339,6 +348,10 @@ class ModelAReader:
         phase = day_phase(self.frames.c, t)                  # C2 opens as C1 closes
         if self.variant.phases is not None and phase not in self.variant.phases:
             return None
+        if self.theses is not None:                         # a thesis first: only its side, and nothing without one
+            want = 1 if self.side == "LONG" else -1
+            if self.theses.get(int((t - _DAY_OPEN) // _DAY), 0) != want:
+                return None
         if self.variant.poi_mode == "CRT":                   # the baseline: no F; C1's high is the only "POI"
             inst = _Instance(c1, POI("C1_HIGH", c1[2], np.inf, -1, "C1's high"), ctx.favg if ctx else np.nan,
                              np.nan, (-1, -1))

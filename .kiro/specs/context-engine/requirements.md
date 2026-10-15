@@ -480,3 +480,35 @@ The reader's sizes also adapted to quiet markets: "large" was measured against E
 | MA-D15 | Range spent | ADR: the mean daily range (17:00 to 17:00) of the previous 20 trading days, at least 10. `RANGE_SPENT` past 70% by C2's close. |
 | MA-D16 | Setup size | `TOO_LARGE` past 0.35 ADR, from C2's extreme to C1's opposite extreme. |
 | MA-D17 | Room | `NO_ROOM` when C1's opposite extreme lies more than one ADR from the day's extreme on C2's side. |
+
+---
+
+## Update 2026-10-15c: A Thesis First
+
+The trader asked how a trader with their experience would turn it into a model. The answer: split the skill into three predictions, each scored against its own baseline, in order:
+1. where the day is going (the thesis);
+2. where and when it turns to get there (location and time);
+3. how to get on (execution).
+
+The oracle split showed why the order matters:
+- **On the day's side, the sequence works.** Model A's rejected C2s on the side the day went (hindsight) beat their coin by +19% [+12, +26] on D1/H1/M5.
+- **The reader rarely picks that side.** Only 27–29% of its rejected C2s were on it. "Premium with a POI above, so sell" fires all through up days, because price spends them in premium.
+- **The trader does it differently.** They sell premium only when they already expect the day down, with one thesis per day or none (*thesis first, not every move*). The reader had no thesis and traded both sides.
+
+### Requirement 19: A Thesis First
+
+**User Story:** As the trader, I want Model A to trade only the side my daily thesis names, so that the sequence I read is the manipulation before the move I expect, not every counter-move.
+
+#### Acceptance Criteria
+
+1. A reader MAY be handed a thesis: one direction per trading day (17:00 to 17:00 New York), bullish, bearish or none. It SHALL frame only on the thesis side, and SHALL start nothing on a day without one.
+2. THE theses SHALL be:
+   - **PROFILE:** the engine's D1 candle profile at the day's 17:00 open (liquidity-engine Requirement 21), read only from the H4, D1 and W1 candles closed by then (Property 2);
+   - **PREV_DAY:** the day before's direction, a naive baseline;
+   - **ORACLE:** the day's own direction (its D1 candle closing above or below its open). This is hindsight, never tradeable: it is the upper bound, so the gap between it and PROFILE is what a better thesis can win.
+3. THE record SHALL score each thesis on its own: how often it named the day's direction among the days it named one, against 50%. It SHALL read Model A (plain, and with time and volatility) and CRT under each thesis, in arms chosen with `--arms thesis`.
+4. A thesis that beats its coin is the precondition for trading Model A in a mode. The trader's own blind reads (market-narrative task 301) set the bar the engine's thesis must reach.
+
+**First scores (exploration slice), the theses alone:**
+- **PROFILE:** XAUUSD 53% [44, 61], EURUSD 48%, GBPUSD 47%, USDJPY 53%. A coin flip.
+- **PREV_DAY:** 40% to 51%.

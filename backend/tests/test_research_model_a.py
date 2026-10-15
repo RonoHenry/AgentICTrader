@@ -130,3 +130,51 @@ def test_the_record_renders_again_from_saved_instances(tmp_path):
     instances.to_json(path, orient="records", lines=True, date_format="iso")
     again = render(load_instances(path), [DAYMOD.SMALL])
     assert again == text and "## Summary: the premise against its coin flip" in again
+
+
+# ── the thesis (Requirement 19) ────────────────────────────────────────────
+
+def walk_days(seed=4, days=45):
+    return DAYMOD.walk(seed, minutes=days * 1440)
+
+
+def test_oracle_and_prev_day_theses():
+    from algo_research.model_a import daily_theses, day_directions
+    m1 = walk_days()
+    days = day_directions(m1)
+    assert daily_theses(m1, "ORACLE") == days
+    prev = daily_theses(m1, "PREV_DAY")
+    keys = sorted(days)
+    assert all(prev[d] == days[p] for p, d in zip(keys, keys[1:])) and keys[0] not in prev
+    with pytest.raises(ValueError):
+        daily_theses(m1, "TOMORROW")
+
+
+def test_profile_thesis_reads_only_the_past():
+    from algo_research.model_a import daily_theses
+    t, o, h, l, c = walk_days(seed=9)
+    full = daily_theses((t, o, h, l, c), "PROFILE")
+    assert full and set(full.values()) <= {-1, 0, 1}
+    day = sorted(full)[len(full) // 2]
+    cut = int(np.searchsorted(t, day * 86400 + 61200 + 3600))           # an hour into that day
+    part = daily_theses((t[:cut], o[:cut], h[:cut], l[:cut], c[:cut]), "PROFILE")
+    assert {d: v for d, v in full.items() if d <= day} == {d: v for d, v in part.items() if d <= day}
+
+
+def test_thesis_accuracy_against_the_day():
+    from algo_research.model_a import day_directions, thesis_accuracy
+    m1 = walk_days()
+    days = day_directions(m1)
+    right = thesis_accuracy(m1, days, int(m1[0][0]), int(m1[0][-1]))
+    wrong = thesis_accuracy(m1, {d: -v for d, v in days.items()}, int(m1[0][0]), int(m1[0][-1]))
+    assert right["right"] == 1.0 and wrong["right"] == 0.0 and right["named"] == wrong["named"] > 30
+
+
+def test_the_record_scores_each_thesis():
+    from algo_research.model_a import THESIS_ARMS
+    m1 = walk_days(days=40)
+    text, instances = record({"X": m1}, [DAYMOD.SMALL], int(m1[0][0]) + 30 * 86400, int(m1[0][-1]),
+                             arms=[a for a in THESIS_ARMS if a.key in ("model_vt_oracle", "crt_vt_profile")],
+                             progress=lambda s: None)
+    assert "## The theses on their own" in text and "| X | ORACLE |" in text and "| X | PROFILE |" in text
+    assert "100%" in text.split("| X | ORACLE |")[1].split("\n")[0]          # the oracle names every day right

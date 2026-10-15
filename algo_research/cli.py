@@ -95,8 +95,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                          help="a frame set (repeatable; default the trader's: model_d1, model_h4)")
     model_a.add_argument("--variants", action="store_true", help="also H4/M30/M1 and H4/M15/M3 (MA-D1)")
     model_a.add_argument("--universal", action="store_true", help="also W1/D1/H4, D1/H4/M15, H1/M15/M1 (Req 16.4)")
-    model_a.add_argument("--all-arms", action="store_true",
-                         help="also the first record's variants (MA-D4, MA-D5) and the plain random-POI baseline")
+    model_a.add_argument("--arms", default="main",
+                         help="which arms, comma-separated: main (plain, time, volatility, both, and the baselines), "
+                              "thesis (Model A and CRT under each thesis, Req 19), extra (MA-D4, MA-D5 variants); "
+                              "default main")
     model_a.add_argument("--rerender", action="store_true",
                          help="write the report again from data/research/model_a_instances.jsonl, without reading")
     return parser.parse_args(argv)
@@ -235,7 +237,7 @@ def _model_a(args, cfg: ResearchConfig, root: Path, snapshots_dir: Path) -> int:
     import pandas as pd
 
     from algo_research.config import trading_date_open
-    from algo_research.model_a import ARMS, EXTRA_ARMS, load_instances, record, render
+    from algo_research.model_a import ARMS, EXTRA_ARMS, THESIS_ARMS, load_instances, record, render
     from algo_research.replay.bars import ReplayBars
     from algo_research.replay.timeframes import wall_seconds
     from liquidity_engine.context.model_a import MODEL_SETS, UNIVERSAL_SETS
@@ -258,7 +260,7 @@ def _model_a(args, cfg: ResearchConfig, root: Path, snapshots_dir: Path) -> int:
     if args.rerender:
         instances = load_instances(kept)
         instances = instances[instances["instrument"].isin(instruments) & instances["set"].isin(names)]
-        arms = [a for a in (*ARMS, *EXTRA_ARMS) if a.key in set(instances["arm"])]
+        arms = [a for a in (*ARMS, *THESIS_ARMS, *EXTRA_ARMS) if a.key in set(instances["arm"])]
         text = render(instances, [every[n] for n in names], arms, meta=meta)
     else:
         m1 = {}
@@ -269,7 +271,11 @@ def _model_a(args, cfg: ResearchConfig, root: Path, snapshots_dir: Path) -> int:
             bars = ReplayBars(pd.read_parquet(path, columns=["time", "open", "high", "low", "close"]), inst)
             m1[inst] = (bars._wall, *bars._ohlc)
         wall = lambda d: int(wall_seconds([pd.Timestamp(trading_date_open(d))])[0])  # noqa: E731
-        arms = (*ARMS, *EXTRA_ARMS) if args.all_arms else ARMS
+        groups = {"main": ARMS, "thesis": THESIS_ARMS, "extra": EXTRA_ARMS}
+        unknown_groups = [g for g in args.arms.split(",") if g not in groups]
+        if unknown_groups:
+            raise SystemExit(f"--arms: one or more of {', '.join(groups)}")
+        arms = tuple(a for g in args.arms.split(",") for a in groups[g])
         text, instances = record(m1, [every[n] for n in names], wall(start), wall(end), arms, meta=meta,
                                  progress=lambda s: print(f"  {s}", flush=True))
         kept.parent.mkdir(parents=True, exist_ok=True)

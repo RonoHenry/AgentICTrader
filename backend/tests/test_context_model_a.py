@@ -55,9 +55,9 @@ def m1(points, wick=WICK):
     return np.array(t, dtype=np.int64), np.array(o), np.array(h), np.array(l), np.array(c)
 
 
-def read(points, side="SHORT", variant=Variant(), frames=SMALL):
+def read(points, side="SHORT", variant=Variant(), frames=SMALL, theses_=None):
     t, o, h, l, c = m1(points)
-    return ModelAReader(frames, t, o, h, l, c, side=side, variant=variant).run(int(t[0]), int(t[-1]) + 60)
+    return ModelAReader(frames, t, o, h, l, c, side=side, variant=variant, theses=theses_).run(int(t[0]), int(t[-1]) + 60)
 
 
 def the_one(instances, c1_minute=720):
@@ -382,3 +382,16 @@ def test_property_2_holds_with_volatility_and_time(seed, cut):
     done = [x for x in full if x["end_at"] < end - 3600]
     assert [x["events"] for x in done] == [x["events"] for x in part[:len(done)]]
     assert all(x["phase"] in ("ASIA", "MIDNIGHT", "LONDON", "PRE_NY") for x in full)
+
+
+# ── a thesis first (Requirement 19, update 2026-10-15c) ────────────────────
+
+def test_reader_frames_only_on_the_thesis_side():
+    noon_day = int((wall(725) - 61200) // 86400)
+    bearish = the_one(read(day(), variant=Variant(thesis="ORACLE"), theses_=({noon_day: -1})))
+    assert "ENTERED" in bearish["states"]
+    for theses in ({noon_day: 1}, {noon_day: 0}, {}):
+        assert not [x for x in read(day(), variant=Variant(thesis="ORACLE"), theses_=theses) if x["c1_open"] == wall(720)]
+    with pytest.raises(ValueError):
+        t, o, h, l, c = m1(day())
+        ModelAReader(SMALL, t, o, h, l, c, variant=Variant(thesis="PROFILE"))
