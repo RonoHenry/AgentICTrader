@@ -51,6 +51,8 @@ DRAWING_POINTS: dict[str, object] = {
 }
 MAX_DRAWINGS = 400
 MAX_STYLE_KEYS = 32
+#: A drawing's visibility intervals (update 2026-10-15): the chart timeframes it shows on, per unit, as TradingView's.
+VISIBILITY_UNITS = {"minutes": 59, "hours": 24, "days": 366, "weeks": 52, "months": 12}
 _PHASE = {"READING": "read", "INTRADAY": "intraday", "REVEALED": "narrative"}
 MAX_TRADES = 3
 
@@ -103,6 +105,8 @@ def _drawing(raw) -> dict:
         clean["levels"] = _levels(raw["levels"])
     if raw.get("style") is not None:
         clean["style"] = _style(raw["style"])
+    if raw.get("visibility") is not None:
+        clean["visibility"] = _visibility(raw["visibility"])
     return clean
 
 
@@ -145,6 +149,29 @@ def _style(raw) -> dict:
             out[key] = value[:64]
         else:
             raise ReplayError(f"drawings: style {key} must be a number, text, true/false or empty")
+    return out
+
+
+def _visibility(raw) -> dict:
+    """The chart timeframes a drawing shows on: per unit, on or off with a from-to range inside the unit's bounds."""
+    if not isinstance(raw, dict):
+        raise ReplayError("drawings: visibility is an object of units")
+    out = {}
+    for unit, interval in raw.items():
+        if unit not in VISIBILITY_UNITS:
+            raise ReplayError(f"drawings: visibility unit one of {', '.join(VISIBILITY_UNITS)}")
+        top = VISIBILITY_UNITS[unit]
+        if not isinstance(interval, dict) or not {"on", "from", "to"} <= interval.keys():
+            raise ReplayError(f"drawings: visibility {unit} needs on, from, to")
+        try:
+            low, high = int(interval["from"]), int(interval["to"])
+        except (TypeError, ValueError):
+            raise ReplayError(f"drawings: visibility {unit} from and to are whole numbers") from None
+        if not 1 <= low <= top or not 1 <= high <= top:
+            raise ReplayError(f"drawings: visibility {unit} runs 1 to {top}")
+        if low > high:
+            raise ReplayError(f"drawings: visibility {unit} from must not pass to")
+        out[unit] = {"on": bool(interval["on"]), "from": low, "to": high}
     return out
 
 

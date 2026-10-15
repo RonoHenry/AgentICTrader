@@ -117,7 +117,7 @@ Tasks marked **(user review)** end with your review before the next one starts.
   - **RED:** the browser walk-throughs. A diagonal drag moves time and price and turns auto-fit off; **A** fits again; with the ratio locked, zooming time zooms price; the countdown follows the replay clock; a timeframe change keeps the manual range. No console errors.
   - **Validates: Requirements 13.1-13.4**
 
-- [ ] 307. Visibility intervals (Requirement 14)
+- [x] 307. Visibility intervals (Requirement 14)
   - Visibility is kept on the drawing (`journal._visibility` checks it). `Drawings` shows a drawing only on timeframes inside its intervals, and the drawing dialog gets a Visibility tab. The engine layer uses intervals per array timeframe, with defaults.
   - **RED:** `test_drawings_keep_visibility_intervals`; the walk-throughs check that an H4-only box hides on M15 and shows on H4, and that an engine M15 array hides on H4.
   - **Validates: Requirements 14.1-14.3**

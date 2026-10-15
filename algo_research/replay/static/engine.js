@@ -25,7 +25,12 @@ const TOOLS = [
 const LAYERS = [["arrays", "Arrays"], ["pools", "Pools"], ["profile", "Day bias & draw"], ["sequence", "Setup"], ["orders", "Orders & trades"]];
 const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, journal: [], playing: false, busy: false,
             speed: 1, digits: 5, layers: Prefs.get("watch.layers", { arrays: true, pools: true, profile: true, sequence: true, orders: true }),
-            arrayTfs: Prefs.get("watch.arrayTfs", "M15") };
+            arrayMode: Prefs.get("watch.arrayMode", "interval"), arrayVis: Prefs.get("watch.arrayVis", {}) };
+// The chart timeframes each array timeframe shows on by default (Requirement 14.3); the trader can change them.
+const ARRAY_SHOWS = { M1: ["M1", "M5"], M3: ["M1", "M10"], M5: ["M1", "M15"], M15: ["M1", "H1"], M30: ["M5", "H3"],
+                      H1: ["M5", "H4"], H3: ["M15", "H8"], H4: ["M15", "D1"], H6: ["M30", "D1"], H8: ["M30", "D1"],
+                      H12: ["H1", "W1"], D1: ["H1", "W1"], W1: ["H4", "W1"] };
+const arrayInterval = (tf) => S.arrayVis[tf] || ARRAY_SHOWS[tf] || null;
 
 // ── the chart ─────────────────────────────────────────────────────────────
 const chart = LightweightCharts.createChart($("chart"), {
@@ -82,7 +87,7 @@ const timeline = {
 const templates = Prefs.get("templates", {});
 const drawKey = () => S.status ? `watch.drawings.${S.status.instrument}.${S.status.first_day}` : "watch.drawings";
 const draw = new Drawings(chart, series, {
-  container: $("chart"), timeline, palette, digits: () => S.digits, template: (type) => templates[type],
+  container: $("chart"), timeline, palette, tf: () => S.tf, digits: () => S.digits, template: (type) => templates[type],
   onChange: (items) => Prefs.set(drawKey(), items), onSelect: () => {}, onEdit: (item, start) => window.ReplayUI.toolSettings(draw, item, uiCtx, start),
   onContext: (item, x, y) => { if (item) window.ReplayUI.contextMenu(x, y, [{ label: "Settings…", action: () => window.ReplayUI.toolSettings(draw, item, uiCtx) },
     { label: "Delete", action: () => draw.remove(item) }]);
@@ -94,7 +99,7 @@ const motion = new Motion(chart, series, {
   container: $("chart"), draw, prefs: Prefs, palette, bars: () => S.bars, tfSeconds: () => SECONDS[S.tf],
   now: () => (S.status ? S.t : null), onChange: () => refresh(),
 });
-const uiCtx = { palette, kinds: ["OB", "FVG", "BREAKER", "IFVG", "BPR", "LIQUIDITY", "OTHER"], timeframes: Object.keys(SECONDS),
+const uiCtx = { palette, kinds: ["OB", "FVG", "BREAKER", "IFVG", "BPR", "LIQUIDITY", "OTHER"], timeframes: Object.keys(SECONDS), tf: () => S.tf,
                 digits: () => S.digits, timeLabel: (t) => fmtTime(t), say: (t) => say(t),
                 saveTemplate: (type, look) => { templates[type] = look; Prefs.set("templates", templates); draw.refresh(); } };
 
@@ -108,8 +113,9 @@ function X(t) { return logicalX(chart.timeScale(), timeline.toLogical(t)); }
 function Y(p) { const y = series.priceToCoordinate(p); return y === null ? NaN : y; }
 const TF_RANK = { M1: 1, M3: 2, M5: 3, M15: 4, M30: 5, H1: 6, H3: 7, H4: 8, H6: 9, H8: 10, H12: 11, D1: 12, W1: 13, MN1: 14 };
 function showArray(a) {
-  const min = { all: 0, M15: 4, H1: 6, H4: 8 }[S.arrayTfs] || 0;
-  return a.entry || (TF_RANK[a.tf] || 0) >= min;
+  if (a.entry || S.arrayMode === "all") return true;
+  if (S.arrayMode === "interval") { const iv = arrayInterval(a.tf); return !iv || Visibility.shows(Visibility.between(iv[0], iv[1]), S.tf); }
+  return (TF_RANK[a.tf] || 0) >= ({ M15: 4, H1: 6, H4: 8 }[S.arrayMode] || 0);
 }
 function paintEngine(ctx, size) {
   const st = S.state, pal = palette(), W = size.width;
@@ -368,10 +374,36 @@ function buildLayers() {
     l.append(c, " " + name); box.append(l);
   }
   const sel = document.createElement("select");
-  sel.innerHTML = [["all", "arrays: every TF"], ["M15", "arrays: M15 and up"], ["H1", "arrays: H1 and up"], ["H4", "arrays: H4 and up"]]
-    .map(([v, t]) => `<option value="${v}" ${S.arrayTfs === v ? "selected" : ""}>${t}</option>`).join("");
-  sel.onchange = () => { S.arrayTfs = sel.value; Prefs.set("watch.arrayTfs", sel.value); refresh(); };
-  box.append(sel);
+  sel.title = "Which of the engine's arrays to draw";
+  sel.innerHTML = [["interval", "arrays: by visibility interval"], ["all", "arrays: every one"], ["M15", "arrays: M15 and up"],
+                   ["H1", "arrays: H1 and up"], ["H4", "arrays: H4 and up"]]
+    .map(([v, t]) => `<option value="${v}" ${S.arrayMode === v ? "selected" : ""}>${t}</option>`).join("");
+  sel.onchange = () => { S.arrayMode = sel.value; Prefs.set("watch.arrayMode", sel.value); refresh(); };
+  const iv = document.createElement("button");
+  iv.className = "boxed"; iv.id = "arrayIntervals"; iv.textContent = "Intervals…";
+  iv.title = "The chart timeframes each array timeframe shows on";
+  iv.onclick = () => arrayIntervalsDialog();
+  box.append(sel, iv);
+}
+function arrayIntervalsDialog() {
+  const { el, dialog, row, choose } = window.ReplayUI;
+  const tfs = Object.keys(SECONDS);
+  const tabs = [{ name: "Intervals", build(b) {
+    b.append(el("div", { class: "hint" }, "Each kind of array shows only on the chart timeframes from–to. The entry array always shows."));
+    for (const tf of Object.keys(ARRAY_SHOWS)) {
+      const [lo, hi] = arrayInterval(tf);
+      const put = (i, v) => {
+        const cur = [...arrayInterval(tf)]; cur[i] = v;
+        if (tfs.indexOf(cur[0]) > tfs.indexOf(cur[1])) cur[1 - i] = v;
+        S.arrayVis = { ...S.arrayVis, [tf]: cur }; Prefs.set("watch.arrayVis", S.arrayVis); refresh(); dlg.close(); arrayIntervalsDialog();
+      };
+      b.append(row(`${tf} arrays`, choose(lo, tfs.map((x) => [x, x]), (v) => put(0, v)), el("span", { class: "muted" }, "to"),
+                   choose(hi, tfs.map((x) => [x, x]), (v) => put(1, v))));
+    }
+  } }];
+  const footer = [el("button", { class: "boxed", onclick: () => { S.arrayVis = {}; Prefs.set("watch.arrayVis", {}); refresh(); dlg.close(); arrayIntervalsDialog(); } }, "Defaults"),
+                  el("span", { class: "spacer" }), el("button", { class: "primary", onclick: () => dlg.close() }, "OK")];
+  const dlg = dialog("Array visibility", tabs, footer);
 }
 function buildControls() {
   $("speed").innerHTML = SPEEDS.map((s, i) => `<option value="${i}" ${i === S.speed ? "selected" : ""}>${s.label}</option>`).join("");

@@ -144,6 +144,32 @@
       };
       render();
     } });
+    tabs.push({ name: "Visibility", build(b) {
+      const V = window.Visibility, tf = ctx.tf ? ctx.tf() : null, tfs = ctx.timeframes;
+      const render = () => {
+        b.replaceChildren();
+        const vis = JSON.parse(JSON.stringify(draw.visibilityOf(item) || V.all()));
+        const save = () => meta({ visibility: vis });
+        for (const [unit, top] of V.UNITS) {
+          const v = vis[unit] || (vis[unit] = { on: true, from: 1, to: top });
+          const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, Math.round(Number.isFinite(n) ? n : lo)));
+          b.append(el("div", { class: "row level" },
+            check(unit[0].toUpperCase() + unit.slice(1), v.on, (on) => { v.on = on; save(); }),
+            numberIn(v.from, { min: 1, max: top, step: 1, style: "width:70px" }, (n) => { v.from = clamp(n, 1, v.to); save(); render(); }),
+            el("span", { class: "muted" }, "to"),
+            numberIn(v.to, { min: 1, max: top, step: 1, style: "width:70px" }, (n) => { v.to = clamp(n, v.from, top); save(); render(); })));
+        }
+        const span = (lo, hi) => { meta({ visibility: V.between(lo, hi) }); render(); };
+        b.append(el("div", { class: "row" },
+          el("button", { class: "boxed", onclick: () => { meta({ visibility: V.all() }); render(); } }, "All timeframes"),
+          tf ? el("button", { class: "boxed", onclick: () => span(tf, tf) }, `Only ${tf}`) : null),
+          tf ? el("div", { class: "row" }, el("button", { class: "boxed", onclick: () => span(tfs[0], tf) }, `${tf} and lower`),
+                  el("button", { class: "boxed", onclick: () => span(tf, tfs[tfs.length - 1]) }, `${tf} and higher`)) : null,
+          el("div", { class: "hint" }, `The chart is on ${tf || "—"}${tf && !draw.shows(item) ? ", where this drawing is hidden" : ""}. `
+             + "A drawing shows only on the timeframes ticked here."));
+      };
+      render();
+    } });
     tabs.push({ name: "Coordinates", build(b) {
       const names = t === "long" || t === "short" ? ["Entry", "Stop", "Target"] : t === "fib" ? ["Level 1", "Level 0"] :
         t === "fibext" ? ["A", "B", "C"] : t === "channel" ? ["Start", "End", "Width"] : ["Point 1", "Point 2", "Point 3"];
@@ -162,6 +188,7 @@
                          "textColor", "fontSize", "showLabels", "showPrices", "profit", "loss", "background"]) keep[k] = L[k];
         if (t === "rect") keep.color = item.style && item.style.color ? item.style.color : "";
         if (t === "fib" || t === "fibext") keep.levels = draw.levelsOf(item);
+        if (item.visibility) keep.visibility = item.visibility;
         ctx.saveTemplate(t, keep); ctx.say(`Saved as the default ${window.DRAWING_NAMES[t].toLowerCase()}.`);
       } }, "Save as default"),
       el("button", { class: "boxed", title: "Back to the default look", onclick: () => { delete item.style; draw.changed(); dlg.close(); toolSettings(draw, item, ctx); } }, "Reset look"),
@@ -244,13 +271,15 @@
     if (!draw.items.length) { box.append(el("div", { class: "muted" }, "No drawings.")); return; }
     for (const d of [...draw.items].reverse()) {
       const name = [window.DRAWING_NAMES[d.type], d.tf, d.kind, d.label || d.text].filter(Boolean).join(" · ");
-      box.append(el("div", { class: "obj" + (d === draw.selected ? " on" : "") },
-        el("button", { class: "name", title: "Select", onclick: () => { draw.select(d); ctx.refresh(); } }, name),
+      const off = !d.hidden && !draw.shows(d);                 // outside its visibility intervals on this timeframe
+      box.append(el("div", { class: "obj" + (d === draw.selected ? " on" : "") + (off ? " off" : "") },
+        el("button", { class: "name", title: off ? "Not shown on this timeframe (see its Visibility tab)" : "Select",
+                       onclick: () => { draw.select(d); ctx.refresh(); } }, name),
         el("button", { title: d.hidden ? "Show" : "Hide", onclick: () => { draw.toggle(d, "hidden"); ctx.refresh(); } }, d.hidden ? "◌" : "👁"),
         el("button", { title: d.locked ? "Unlock" : "Lock", onclick: () => { draw.toggle(d, "locked"); ctx.refresh(); } }, d.locked ? "🔒" : "🔓"),
         el("button", { title: "Delete", onclick: () => { draw.remove(d); ctx.refresh(); } }, "✕")));
     }
   }
 
-  window.ReplayUI = { Prefs, CHART_DEFAULTS, toolSettings, chartSettings, contextMenu, closeMenu, objectTree, el };
+  window.ReplayUI = { Prefs, CHART_DEFAULTS, toolSettings, chartSettings, contextMenu, closeMenu, objectTree, el, dialog, row, choose };
 })();

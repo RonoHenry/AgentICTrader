@@ -110,7 +110,7 @@ const timeline = {
 
 const templates = Prefs.get("templates", {});
 const draw = new Drawings(chart, series, {
-  container: $("chart"), timeline, palette,
+  container: $("chart"), timeline, palette, tf: () => S.tf,
   digits: () => (S.meta ? S.meta.digits : 2),
   template: (type) => templates[type],
   onChange: (items) => { scheduleSave(items); renderObjects(); },
@@ -122,7 +122,7 @@ const draw = new Drawings(chart, series, {
   onError: (text) => say(text),
 });
 const uiCtx = {
-  palette, kinds: KINDS, timeframes: ALL_TFS, digits: () => (S.meta ? S.meta.digits : 2),
+  palette, kinds: KINDS, timeframes: ALL_TFS, tf: () => S.tf, digits: () => (S.meta ? S.meta.digits : 2),
   timeLabel: (t) => timeLabel(t, true), say: (t) => say(t),
   saveTemplate: (type, look) => { templates[type] = look; Prefs.set("templates", templates); draw.refresh(); },
 };
