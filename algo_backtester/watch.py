@@ -415,9 +415,9 @@ class WatchSession:
                 "summary": self.summary, "closes": len(self._keys)}
 
     def _read_model_a(self) -> dict[str, list[dict]]:
-        """Model A's instances over the session, both of the trader's frame sets, both sides (Requirement 17), on
-        the snapshot's prices with 100 days of history for the context frame."""
-        from liquidity_engine.context.model_a import MODEL_SETS, ModelAReader
+        """Model A's instances over the session, both of the trader's frame sets, both sides (Requirement 17), with
+        volatility and time (``MODEL_A_VT``, Requirement 18), on the snapshot's prices with 100 days of history."""
+        from liquidity_engine.context.model_a import MODEL_A_VT, MODEL_SETS, ModelAReader
         frame = SnapshotSource(self.snapshot)._frame(self.instrument)
         frame = frame[(frame["time"] >= self.start - _MODEL_A_HISTORY) & (frame["time"] < self.end)]
         if frame.empty:
@@ -428,7 +428,8 @@ class WatchSession:
         for name in MODEL_A_SETS:
             rows = []
             for side in ("SHORT", "LONG"):
-                rows += ModelAReader(MODEL_SETS[name], walls, o, h, l, c, side=side).run(wall(self.start), wall(self.end))
+                rows += ModelAReader(MODEL_SETS[name], walls, o, h, l, c, side=side,
+                                     variant=MODEL_A_VT).run(wall(self.start), wall(self.end))
             out[name] = sorted(rows, key=lambda x: x["states"]["FRAMED"])
         return out
 
@@ -441,7 +442,7 @@ class WatchSession:
             raise ValueError(f"set: one of {', '.join(self.model_a) or MODEL_A_SETS}")
         keep, out = _MODEL_A_KEEP.get(name, 86400), []
         base = ("side", "set", "f", "c", "e", "poi_kind", "poi_label", "poi_near", "poi_far", "f_range", "c1_open",
-                "c1_extreme", "c1_opposite")
+                "c1_extreme", "c1_opposite", "phase")
         for x in self.model_a[name]:
             if x["states"]["FRAMED"] > w:
                 break
@@ -455,8 +456,8 @@ class WatchSession:
                      end_at=x["end_at"] if ended else None)
             if "MANIPULATED" in reached:
                 y.update(time_sync=x["time_sync"], inducement=x["inducement"])
-            if "REJECTED" in reached:
-                y["c2_extreme"] = x["c2_extreme"]
+            if "REJECTED" in reached or (ended and x["end"] in ("RANGE_SPENT", "TOO_LARGE", "NO_ROOM")):
+                y.update({k: x[k] for k in ("c2_extreme", "adr_used", "size_adr", "target_reach")})   # C2 has closed
             if "REJECTED" in reached and "DISPLACED" in reached and x["entry"] is not None:
                 y.update({k: x[k] for k in ("range_end", "entry", "stop", "ote_near", "ote_far", "tp1", "sd1", "sd2", "sd25")})
                 y["order_at"] = max(x["states"]["REJECTED"], x["states"]["DISPLACED"])

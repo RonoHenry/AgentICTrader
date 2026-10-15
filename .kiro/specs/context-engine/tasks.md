@@ -247,6 +247,14 @@ Model A replaces the old selection (284) and orders (285) in the Model A modes. 
   - **RED:** `test_watch_session_keeps_model_a_instances`, and the walk-through (an instance drawn, its states logged, nothing after the clock).
   - **Validates: Requirements 17.1–17.3**
 
+- [x] 315. Volatility and time in the reader (Requirement 18)
+  - Added 2026-10-15 at the trader's request: "the mechanical aspect does not factor in the volatility aspect of the market".
+  - `day_phase`, `EARLY` and `MODEL_A_VT` in `context/model_a.py`; the `Variant` fields `size_basis`, `phases`, `max_adr_used`, `max_size_adr` and `room`. Each instance records its phase, ADR, ADR used, size and TP1's reach.
+  - The record's arms: Model A plain, + time, + volatility, + both, CRT and CRT + both, random POI + both. `--all-arms` adds the first record's variants. The breakdowns add the phase.
+  - The Engine chart reads `MODEL_A_VT`, and its panel shows the phase and the ADR figures.
+  - **RED:** `test_day_phase_labels`, `test_phase_gate_frames_only_in_its_phases`, `test_adr_and_its_gates`, `test_no_gate_without_enough_history`, `test_seasonal_sizes_read_the_same_hour_on_earlier_days`, `test_property_2_holds_with_volatility_and_time`. The record and watch tests pass with the new arms.
+  - **Validates: Requirements 18.1-18.6**
+
 - [ ] 311. Nesting (Requirement 15)
   - **RED:** `test_d1_ote_is_an_h4_poi_while_live`, `test_depth_two_inside_a_live_ote`, `test_extended_targets_from_the_higher_instance`.
   - **GREEN:** `context/nesting.py`; the funnel gains depth.
@@ -309,7 +317,7 @@ Dependencies are denoted as `prerequisite → dependent`. Liquidity-engine task 
     },
     {
       "name": "Model A",
-      "tasks": ["310", "312", "313", "311", "314"],
+      "tasks": ["310", "312", "313", "315", "311", "314"],
       "description": "Model A: the reader, its measured record (your review), the chart, nesting, then orders (update 2026-10-15)",
       "dependencies": ["Context model"]
     },

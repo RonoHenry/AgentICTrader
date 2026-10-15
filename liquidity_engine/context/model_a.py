@@ -14,6 +14,11 @@ One frame set (F, the context; C, the CRT candles; E, execution) and one directi
 
 and its invalidations: POI_FAILED, NO_REJECTION, NO_MANIPULATION, MISSED, RETRACE_INVALID, EXPIRED. (REFRAMED
 can't occur: before MANIPULATED an instance lives one C candle, and C candles nest inside F's.)
+
+Volatility and time (Requirement 18, update 2026-10-15b): each instance records the phase of the day C2 opened in,
+how much of the average daily range (ADR) the day had used by C2's close, the setup's size and TP1's reach in ADR.
+A variant can gate on each (``MODEL_A_VT``: early phases, 70% of the ADR, 0.35 ADR, TP1 within reach) and measure
+E's sizes against the same time of day over the previous 20 days instead of the last 20 candles.
 Sizes are read in each frame's own average range and durations in its own candles, so one reader serves every
 frame set (Property 1). It is written for shorts; ``side="LONG"`` reads the mirrored bars and mirrors the prices
 back. Bars are New York wall-clock seconds; C and F candles are aggregated from the same M1 bars on the 17:00 New
@@ -35,7 +40,8 @@ from liquidity_engine.context.frame_state import (POI, Candidate, DealingRange, 
 from liquidity_engine.context.measures import (average_range, bearish_cisd, equal_highs, mirror,
                                                rolling_average_range, tight_range)
 
-__all__ = ["FrameSet", "MODEL_SETS", "UNIVERSAL_SETS", "ModelAReader", "Variant", "in_time_window"]
+__all__ = ["DAY_PHASES", "EARLY", "FrameSet", "MODEL_A_VT", "MODEL_SETS", "UNIVERSAL_SETS", "ModelAReader", "Variant",
+           "day_phase", "in_time_window"]
 
 
 @dataclass(frozen=True)
@@ -62,6 +68,7 @@ UNIVERSAL_SETS = {
 _SIZE = {"M1": 0, "M2": 0, "M3": 0, "M4": 0, "M5": 0, "M10": 0, "M15": 0, "M20": 0, "M30": 0, "M45": 0,
          "H1": 1, "H3": 1, "H4": 2, "H6": 2, "H7": 2, "H8": 2, "H12": 2, "D1": 3, "W1": 4, "MN1": 5}
 _PREVIOUS = {"D1": "PDH", "W1": "PWH", "MN1": "PMH"}
+_DAY, _DAY_OPEN = 86400, 61200                          # trading days open at 17:00 New York
 #: F's state is read from its last 600 closed candles: on D1 the whole history, on H4 about four months, on H1
 #: about a month. Older arrays and swings are far from price, and reading all of them at every F close is slow.
 CONTEXT_CANDLES = 600
@@ -79,13 +86,49 @@ class Variant:
     horizon_f_candles: int = 1        # MA-D11: to the close of the F candle the entry filled in
     poi_mode: str = "MODEL"           # MODEL, or the baselines CRT (no F) and RANDOM_POI (Requirement 16.3)
     seed: int = 0
+    # Requirement 18: volatility and time
+    size_basis: str = "ROLLING"       # MA-D14: E's sizes against its last 20 candles (ROLLING), or against its candles at
+                                      # the same time of day over the previous 20 trading days (SEASONAL)
+    phases: Optional[Tuple[str, ...]] = None    # MA-D13: the phases of the day C2 may open in; None: any
+    max_adr_used: Optional[float] = None        # MA-D15: the day's range by C2's close, in ADR (RANGE_SPENT beyond)
+    max_size_adr: Optional[float] = None        # MA-D16: C2's extreme to C1's opposite extreme, in ADR (TOO_LARGE)
+    room: bool = False                          # MA-D17: C1's opposite extreme within one ADR of the day's extreme
+                                                # on C2's side (NO_ROOM otherwise)
 
     def name(self) -> str:
-        return f"{self.poi_mode.lower()}/{self.leg_end.lower()}/{self.cisd.lower()}"
+        extra = "+time" if self.phases else ""
+        if self.size_basis == "SEASONAL" or self.max_adr_used or self.max_size_adr or self.room:
+            extra += "+vol"
+        return f"{self.poi_mode.lower()}/{self.leg_end.lower()}/{self.cisd.lower()}{extra}"
 
 
 def _wall(t: int) -> datetime:
     return datetime.fromtimestamp(int(t), tz=timezone.utc)
+
+
+#: MA-D13: the phases of the trading day, New York wall hours.
+DAY_PHASES = (("ASIA", 20.0, 24.0), ("MIDNIGHT", 0.0, 2.0), ("LONDON", 2.0, 5.0), ("PRE_NY", 5.0, 7.0),
+              ("NY_AM", 7.0, 10.0), ("NY_MID", 10.0, 13.5), ("NY_PM", 13.5, 16.0), ("CLOSE", 16.0, 20.0))
+_WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
+#: The early part of the cycle: 20:00 to 07:00 New York for intraday C candles; Monday to Wednesday for D1; weeks
+#: 1-2 of the month for W1 (the record of 2026-10-15: Model A's context helps there and hurts later).
+EARLY = ("ASIA", "MIDNIGHT", "LONDON", "PRE_NY", "MON", "TUE", "WED", "WEEK1", "WEEK2")
+
+
+def day_phase(tf: str, wall_open: int) -> str:
+    """The phase of its cycle a C candle opening at ``wall_open`` belongs to: the phase of the day for intraday
+    candles, the trading date's weekday for D1, the week of the month for W1."""
+    if _SIZE.get(tf, 0) >= _SIZE["W1"]:
+        return f"WEEK{min(5, (_wall(int(wall_open) + 7 * 3600).day - 1) // 7 + 1)}"
+    if _SIZE.get(tf, 0) >= _SIZE["D1"]:
+        return _WEEKDAYS[_wall(int(wall_open) + 7 * 3600).weekday()]
+    hour = (int(wall_open) % 86400) / 3600.0
+    return next(name for name, a, b in DAY_PHASES if a <= hour < b)
+
+
+#: Model A with volatility and time (Requirement 18): the early phases, sizes against the same hour, 70% of the ADR,
+#: setups up to 0.35 ADR, C1's opposite extreme within reach.
+MODEL_A_VT = Variant(size_basis="SEASONAL", phases=EARLY, max_adr_used=0.7, max_size_adr=0.35, room=True)
 
 
 def in_time_window(tf: str, wall_open: int) -> bool:
@@ -148,6 +191,11 @@ class _Instance:
     ended: Optional[Tuple[str, int, str]] = None
     inducement: Optional[str] = None
     time_sync: Optional[bool] = None
+    phase: Optional[str] = None
+    adr: float = np.nan                                  # the day's ADR (the previous 20 trading days' mean range)
+    adr_used: float = np.nan                             # the day's range by C2's close, in ADR
+    size_adr: float = np.nan                             # C2's extreme to C1's opposite extreme, in ADR
+    target_reach: float = np.nan                         # the day's extreme on C2's side to C1's opposite extreme, in ADR
 
     def event(self, state: str, t: int, reason: str = "") -> None:
         self.events.append((state, int(t), reason))
@@ -183,7 +231,11 @@ class ModelAReader:
         ct, co, ch, cl, cc = self.bars[fs.c]
         ft, fo, fh, fl, fc = self.bars[fs.f]
         c_sec, e_sec = self.seconds(fs.c), self.seconds(fs.e)
-        e_avg = rolling_average_range(eh, el)
+        e_avg = self._sizes(et, eh, el, e_sec)
+        day_of = (et - _DAY_OPEN) // _DAY
+        adr_of = self._adr(day_of, eh, el)
+        self._day = [None, -np.inf, np.inf]                  # the trading day, its high and low so far (closed E bars)
+        self._adr_of = adr_of
         c_of, f_of = self.bucket(et, fs.c), self.bucket(et, fs.f)
         c_index = {int(t): i for i, t in enumerate(ct)}
         f_index = {int(t): i for i, t in enumerate(ft)}
@@ -228,10 +280,39 @@ class ModelAReader:
             forming_hi, forming_lo = max(forming_hi, eh[i]), min(forming_lo, el[i])
             for tf in self.higher:
                 higher_hi[tf] = max(higher_hi[tf], eh[i])
+            d = int(day_of[i])
+            if d != self._day[0]:
+                self._day = [d, -np.inf, np.inf]
+            self._day[1], self._day[2] = max(self._day[1], eh[i]), min(self._day[2], el[i])
         if inst is not None:
             inst.end("UNFINISHED", int(et[last - 1]) + e_sec if last else int(end), "the data ended")
             out.append(self._export(inst))
         return out
+
+    # ── volatility: E's sizes and the day's ADR ─────────────────────────
+    def _sizes(self, et, eh, el, e_sec) -> np.ndarray:
+        """E's average range for each E candle (MA-D8, MA-D14): over its last 20 candles, or, SEASONAL, over its
+        candles in the same slot of the day (15 minutes, or the candle itself when longer) on the previous 20
+        trading days. The seasonal size falls back to the rolling one where the history is short."""
+        rolling = rolling_average_range(eh, el)
+        if self.variant.size_basis != "SEASONAL":
+            return rolling
+        import pandas as pd
+        day = (et - _DAY_OPEN) // _DAY
+        slot = ((et - _DAY_OPEN) % _DAY) // max(900, e_sec)
+        frame = pd.DataFrame({"day": day, "slot": slot, "r": np.asarray(eh) - np.asarray(el)})
+        table = frame.groupby(["day", "slot"])["r"].mean().unstack("slot").sort_index()
+        normal = table.shift(1).rolling(20, min_periods=5).mean()            # the 20 trading days before, per slot
+        seasonal = normal.stack().reindex(pd.MultiIndex.from_arrays([day, slot])).to_numpy()
+        return np.where(np.isfinite(seasonal), seasonal, rolling)
+
+    @staticmethod
+    def _adr(day_of, eh, el) -> dict:
+        """Each trading day's ADR: the mean range of the 20 trading days before it (at least 10)."""
+        import pandas as pd
+        frame = pd.DataFrame({"day": day_of, "h": eh, "l": el}).groupby("day").agg(h=("h", "max"), l=("l", "min"))
+        adr = (frame["h"] - frame["l"]).shift(1).rolling(20, min_periods=10).mean()
+        return {int(k): float(v) for k, v in adr.items()}
 
     # ── F: the context ───────────────────────────────────────────────────
     def _context(self, n: int, cur_higher, higher_hi, now) -> _FContext:
@@ -255,9 +336,13 @@ class ModelAReader:
         """A C candle has closed: C1 of a new instance, if price is in F's premium with a POI above."""
         c1 = (int(ct[k]), float(co[k]), float(ch[k]), float(cl[k]), float(cc[k]))
         t = int(ct[k]) + c_sec
+        phase = day_phase(self.frames.c, t)                  # C2 opens as C1 closes
+        if self.variant.phases is not None and phase not in self.variant.phases:
+            return None
         if self.variant.poi_mode == "CRT":                   # the baseline: no F; C1's high is the only "POI"
             inst = _Instance(c1, POI("C1_HIGH", c1[2], np.inf, -1, "C1's high"), ctx.favg if ctx else np.nan,
                              np.nan, (-1, -1))
+            inst.phase = phase
             inst.armed = True
             inst.event("FRAMED", t, "CRT baseline: no context")
             inst.event("ARMED", t, "")
@@ -282,6 +367,7 @@ class ModelAReader:
             return None
         poi = min(reachable, key=lambda p: (max(p.low, c1[2]), p.high))
         inst = _Instance(c1, poi, ctx.favg, rng.position(price), rng.anchors, (rng.low, rng.high))
+        inst.phase = phase
         inst.event("FRAMED", t, f"{rng.reason()}, price at {rng.position(price):.0%}; POI {poi.reason()}")
         if c1[2] >= poi.low - ctx.favg:
             inst.armed = True
@@ -299,6 +385,8 @@ class ModelAReader:
                 inst.end("POI_FAILED", t, f"C2 closed {close:.5g} through the POI")
             elif close > c1_high:
                 inst.end("NO_REJECTION", t, f"C2 closed {close:.5g} above C1's high {c1_high:.5g}")
+            elif self._spent(inst, t):
+                pass                                             # ended RANGE_SPENT, TOO_LARGE or NO_ROOM
             else:
                 inst.rejected = True
                 inst.event("REJECTED", t, f"C2 closed {close:.5g} back under C1's high {c1_high:.5g}")
@@ -309,6 +397,25 @@ class ModelAReader:
                 inst.stage = "TRADE"
             else:
                 inst.end("EXPIRED", t, "C3 closed without a fill" if inst.displaced else "C3 closed without displacement")
+
+    def _spent(self, inst: _Instance, t: int) -> bool:
+        """Requirement 18 at C2's close: the day's range used, the setup's size and C1's opposite extreme's reach,
+        in ADR, recorded; with the variant's limits, the first one exceeded ends the instance."""
+        v, (day, hi, lo) = self.variant, self._day
+        adr = self._adr_of.get(day, np.nan) if day is not None else np.nan
+        inst.adr = adr
+        if not (np.isfinite(adr) and adr > 0):
+            return False                                     # too little history: recorded as unknown, never gated
+        inst.adr_used = (hi - lo) / adr
+        inst.size_adr = (inst.c2_high - inst.c1[3]) / adr
+        inst.target_reach = (max(hi, inst.c2_high) - inst.c1[3]) / adr
+        if v.max_adr_used is not None and inst.adr_used > v.max_adr_used:
+            inst.end("RANGE_SPENT", t, f"the day had used {inst.adr_used:.0%} of its ADR by C2's close")
+        elif v.max_size_adr is not None and inst.size_adr > v.max_size_adr:
+            inst.end("TOO_LARGE", t, f"the setup spans {inst.size_adr:.2f} ADR")
+        elif v.room and inst.target_reach > 1.0:
+            inst.end("NO_ROOM", t, f"C1's opposite extreme is {inst.target_reach:.2f} ADR from the day's extreme")
+        return inst.ended is not None
 
     # ── E: inside the candles ────────────────────────────────────────────
     def _e_bar(self, inst: _Instance, i, et, eo, eh, el, ec, e_sec, e_avg, fb) -> None:
@@ -456,7 +563,11 @@ class ModelAReader:
             "zone_position": inst.zone_position, "favg": inst.favg, "states": states, "events": list(inst.events),
             "f_range": sorted(p(x) for x in inst.f_range) if np.all(np.isfinite(inst.f_range)) else None,
             "end": end, "end_at": inst.ended[1] if inst.ended else None, "end_reason": inst.ended[2] if inst.ended else "",
-            "time_sync": inst.time_sync, "inducement": inst.inducement,
+            "time_sync": inst.time_sync, "inducement": inst.inducement, "phase": inst.phase,
+            "adr": float(inst.adr) if np.isfinite(inst.adr) else None,
+            "adr_used": float(inst.adr_used) if np.isfinite(inst.adr_used) else None,
+            "size_adr": float(inst.size_adr) if np.isfinite(inst.size_adr) else None,
+            "target_reach": float(inst.target_reach) if np.isfinite(inst.target_reach) else None,
             "c2_extreme": p(inst.c2_high) if inst.manipulated else None,
             "range_end": p(o.get("low")), "entry": p(o.get("entry")), "stop": p(o.get("stop")), "tp1": p(o.get("tp1")),
             "sd1": p(o.get("sd1")), "sd2": p(o.get("sd2")), "sd25": p(o.get("sd25")),

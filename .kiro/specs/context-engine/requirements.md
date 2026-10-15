@@ -433,3 +433,50 @@ Where the trader's model leaves a definition open, its working defaults apply (M
 | MA-D10 | Instances | One per direction per frame set at a time. |
 | MA-D11 | Outcome horizon | The close of the F candle in which the entry filled. Variant: the next F candle's close. |
 | MA-D12 | Cache key | `legacy`'s key excludes `liquidity_engine/context/`, so adding Model A leaves the cached legacy runs valid. The Model A modes carry their own key. |
+
+---
+
+## Update 2026-10-15b: Volatility and Time in the Reader
+
+The first record (task 312) found that Model A's premise doesn't beat its coin flip with the working definitions. The trader's diagnosis: the mechanical model ignores the market's volatility. Split by the phase of the day, the record agreed:
+- **Early is better.** With C2 opening between 20:00 and 07:00 New York, the premise beat its coin on the H4 sets: H4/M30/M1 +7% [+4, +11], H4/M15/M1 +3% [0, +6].
+- **Late is worse.** From 07:00 to 20:00 it lost: −5% [−9, −1] and −3% [−7, 0], NY PM worst at −9% on both.
+- **The context is what flips.** Plain CRT moved by 1–2 points across the day, so it's the context that changes value with time.
+- **The range spent.** Setups after the day's average range was spent, and setups larger than about a third of it, did worse.
+
+The split was chosen after seeing the data, across about 60 comparisons. It is a lead to build in and confirm, not an edge.
+
+The reader's sizes also adapted to quiet markets: "large" was measured against E's last 20 candles, so in a dead hour ordinary noise could pass as displacement.
+
+### Requirement 18: Volatility and Time in the Reader
+
+**User Story:** As the trader, I want the reader to know the phase of the day and how much range the day has left, so that it reads my sequence where it delivers, and not where it is noise or continuation.
+
+#### Acceptance Criteria
+
+1. EACH instance SHALL record the phase of its cycle that C2 opened in (MA-D13): the phase of the day for intraday C candles, the trading date's weekday for D1, the week of the month for W1. A variant MAY allow only some phases; C1s whose C2 would open outside them start no instance.
+2. AT C2's close, each instance SHALL record, in the ADR (the mean range of the 20 trading days before, MA-D15):
+   - the day's range so far;
+   - the setup's size, C2's extreme to C1's opposite extreme;
+   - the reach of C1's opposite extreme from the day's extreme on C2's side.
+
+   A variant MAY end the instance there with `RANGE_SPENT`, `TOO_LARGE` or `NO_ROOM` (MA-D15 to MA-D17), before REJECTED, so a gated instance doesn't count in the premise. Without enough history (10 trading days), nothing is gated.
+3. A variant MAY measure E's sizes (the displacement body, inducement's tolerances, the stop buffer) against E's candles in the same slot of the day over the previous 20 trading days, instead of its last 20 candles (MA-D14).
+4. `MODEL_A_VT` SHALL combine them:
+   - the early phases;
+   - sizes against the same hour;
+   - 70% of the ADR;
+   - setups up to 0.35 ADR;
+   - C1's opposite extreme within one ADR.
+
+   The Engine chart SHALL read it, and show each instance's phase and ADR figures.
+5. THE record SHALL read Model A plain, with time, with volatility and with both, beside CRT and random POIs under the same gates as both. Then the context has to beat its baselines where the gates let it trade.
+6. NOTHING here is a verdict. Whether "early" holds is decided once, on the confirmation slice, by a hypothesis the trader confirms before it runs.
+
+| # | Decision | Proposed default |
+|---|---|---|
+| MA-D13 | Phases | New York wall time: ASIA 20–24, MIDNIGHT 0–2, LONDON 2–5, PRE_NY 5–7, NY_AM 7–10, NY_MID 10–13:30, NY_PM 13:30–16, CLOSE 16–20. Early = ASIA to PRE_NY; for D1 C candles Monday to Wednesday; for W1 weeks 1–2. |
+| MA-D14 | Sizes | `SEASONAL`: E's average range in the same 15-minute slot (or the candle itself when longer) over the previous 20 trading days (at least 5), falling back to the rolling 20 candles. |
+| MA-D15 | Range spent | ADR: the mean daily range (17:00 to 17:00) of the previous 20 trading days, at least 10. `RANGE_SPENT` past 70% by C2's close. |
+| MA-D16 | Setup size | `TOO_LARGE` past 0.35 ADR, from C2's extreme to C1's opposite extreme. |
+| MA-D17 | Room | `NO_ROOM` when C1's opposite extreme lies more than one ADR from the day's extreme on C2's side. |

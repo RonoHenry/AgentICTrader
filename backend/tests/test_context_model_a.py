@@ -307,3 +307,78 @@ def test_legacy_fingerprint_leaves_the_context_package_out(tmp_path):
     assert engine_code_fingerprint(tmp_path) == before
     (tmp_path / "liquidity_engine" / "engine.py").write_text("legacy = 2\n", encoding="utf-8")
     assert engine_code_fingerprint(tmp_path) != before
+
+
+# ── volatility and time (Requirement 18, update 2026-10-15b) ───────────────
+
+def with_history(points, daily_range, days=15):
+    """``points`` after ``days`` of a plain daily swing of ``daily_range``, ending at 100 at 00:00 on the day."""
+    import math
+    hist = [(-days * 1440 + k, 100 + daily_range / 2 * math.sin(2 * math.pi * k / 1440)) for k in range(0, days * 1440, 10)]
+    return hist + points
+
+
+def test_day_phase_labels():
+    from liquidity_engine.context.model_a import day_phase
+    at = lambda h, m=0: int(datetime(2025, 1, 7, h, m, tzinfo=timezone.utc).timestamp())  # noqa: E731
+    assert [day_phase("M15", at(h, m)) for h, m in ((21, 0), (1, 0), (3, 0), (6, 0), (8, 0), (12, 5), (14, 0), (17, 30))] == \
+           ["ASIA", "MIDNIGHT", "LONDON", "PRE_NY", "NY_AM", "NY_MID", "NY_PM", "CLOSE"]
+    assert day_phase("H1", at(13, 30)) == "NY_PM" and day_phase("D1", at(17) - 86400) == "TUE"
+    assert day_phase("W1", int(datetime(2025, 1, 19, 17, tzinfo=timezone.utc).timestamp())) == "WEEK3"
+
+
+def test_phase_gate_frames_only_in_its_phases():
+    from liquidity_engine.context.model_a import EARLY
+    early = [x for x in read(day(), variant=Variant(phases=EARLY)) if x["c1_open"] == wall(720)]
+    noon = the_one(read(day(), variant=Variant(phases=("NY_MID",))))
+    assert not early and noon["phase"] == "NY_MID" and "ENTERED" in noon["states"]
+    assert the_one(read(day()))["phase"] == "NY_MID"                      # recorded without a gate too
+
+
+def test_adr_and_its_gates():
+    pts = with_history(day(), 60)
+    x = the_one(read(pts, variant=Variant(size_basis="SEASONAL")))
+    assert x["adr"] == pytest.approx(60, rel=0.05) and "ENTERED" in x["states"]
+    day_low = 100 + 30 * np.sin(2 * np.pi * np.arange(-420, 0, 10) / 1440).min() - WICK      # since 17:00
+    assert x["adr_used"] == pytest.approx((110.22 - day_low) / x["adr"], rel=0.02)
+    assert x["size_adr"] == pytest.approx((110.22 - 108.38) / x["adr"], rel=0.01)
+    assert the_one(read(pts, variant=Variant(max_adr_used=0.5)))["end"] == "RANGE_SPENT"
+    assert the_one(read(pts, variant=Variant(max_size_adr=0.01)))["end"] == "TOO_LARGE"
+    small = the_one(read(with_history(day(), 1.5), variant=Variant(room=True)))
+    assert small["end"] == "NO_ROOM" and small["target_reach"] > 1
+    assert "REJECTED" not in small["states"]                               # gated before REJECTED: no premise counted
+
+
+def test_no_gate_without_enough_history():
+    x = the_one(read(day(), variant=Variant(max_adr_used=0.1, max_size_adr=0.01, room=True)))
+    assert x["adr"] is None and "ENTERED" in x["states"]                    # one day of data: no ADR, never gated
+
+
+def test_seasonal_sizes_read_the_same_hour_on_earlier_days():
+    t, o, h, l, c = m1(day())
+    r = ModelAReader(SMALL, t, o, h, l, c, variant=Variant(size_basis="SEASONAL"))
+    days, per = 8, 1440
+    et = np.array([DAY - (days - d) * 86400 + 60 * k for d in range(days) for k in range(per)], dtype=np.int64)
+    width = np.array([(1.0 + d) * (2.0 if 600 <= k < 615 else 1.0) for d in range(days) for k in range(per)])
+    sizes = r._sizes(et, 100 + width / 2, 100 - width / 2, 60)
+    last = (days - 1) * per
+    slot = ((et - 61200) % 86400) // 900
+    k = last + 605                                                           # 10:05 on the last day: slot 10:00-10:15
+    same_slot_before = [width[i] for i in range(last) if slot[i] == slot[k] and (et[i] - 61200) // 86400 < (et[k] - 61200) // 86400]
+    days_before = sorted({(et[i] - 61200) // 86400 for i in range(last) if slot[i] == slot[k]})[-20:]
+    expect = np.mean([np.mean([width[i] for i in range(last) if slot[i] == slot[k] and (et[i] - 61200) // 86400 == dd])
+                      for dd in days_before])
+    assert sizes[k] == pytest.approx(expect) and same_slot_before
+
+
+@settings(max_examples=5, deadline=None)
+@given(st.integers(0, 10_000), st.integers(9 * 1440, 12 * 1440 - 60))
+def test_property_2_holds_with_volatility_and_time(seed, cut):
+    from liquidity_engine.context.model_a import MODEL_A_VT
+    t, o, h, l, c = walk(seed, minutes=12 * 1440)
+    full = ModelAReader(SMALL, t, o, h, l, c, variant=MODEL_A_VT).run(int(t[0]), int(t[-1]))
+    part = ModelAReader(SMALL, t[:cut], o[:cut], h[:cut], l[:cut], c[:cut], variant=MODEL_A_VT).run(int(t[0]), int(t[-1]))
+    end = int(t[cut - 1])
+    done = [x for x in full if x["end_at"] < end - 3600]
+    assert [x["events"] for x in done] == [x["events"] for x in part[:len(done)]]
+    assert all(x["phase"] in ("ASIA", "MIDNIGHT", "LONDON", "PRE_NY") for x in full)

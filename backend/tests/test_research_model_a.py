@@ -116,7 +116,9 @@ def test_the_record_renders():
     text, instances = record({"XAUUSD": (t, o, h, l, c)}, [DAYMOD.SMALL], int(t[0]), int(t[-1]) + 60,
                              meta={"slice": "the hand-built day"}, progress=lambda s: None)
     assert "## XAUUSD" in text and "### small: F H1, C M5, E M1" in text and "**Premise**" in text
-    assert set(instances["arm"]) == {a.key for a in ARMS} and "premise" in instances
+    arms = set(instances["arm"])                       # the time-gated arms find nothing at noon on this day
+    assert {"model", "crt", "model_vol"} <= arms <= {a.key for a in ARMS} and "premise" in instances
+    assert "+ time + volatility" in text and "C2's phase of the day" in text
     assert summarise(instances[instances["arm"] == "model"])["funnel"]["ENTERED"] >= 1
 
 

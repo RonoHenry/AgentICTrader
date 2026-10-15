@@ -19,7 +19,7 @@ It feeds the review with the trader (task 312) and the next spec update.
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -28,15 +28,16 @@ import numpy as np
 import pandas as pd
 
 from algo_research.stats import Bootstrap, series_table
-from liquidity_engine.context.model_a import MODEL_SETS, UNIVERSAL_SETS, FrameSet, ModelAReader, Variant
+from liquidity_engine.context.model_a import (EARLY, MODEL_A_VT, MODEL_SETS, UNIVERSAL_SETS, FrameSet, ModelAReader,
+                                              Variant)
 
 __all__ = ["ARMS", "Arm", "collect", "funnel", "load_instances", "premise", "read_instances", "record", "render",
            "summarise"]
 
 STATES = ["FRAMED", "ARMED", "MANIPULATED", "REJECTED", "DISPLACED", "IN_OTE", "ENTERED", "TP1", "SD_1", "SD_2",
           "SD_2.5"]
-ENDS = ["NO_MANIPULATION", "POI_FAILED", "NO_REJECTION", "RETRACE_INVALID", "MISSED", "EXPIRED", "STOPPED",
-        "HORIZON", "TARGETS_DONE", "UNFINISHED"]
+ENDS = ["NO_MANIPULATION", "POI_FAILED", "NO_REJECTION", "RANGE_SPENT", "TOO_LARGE", "NO_ROOM", "RETRACE_INVALID",
+        "MISSED", "EXPIRED", "STOPPED", "HORIZON", "TARGETS_DONE", "UNFINISHED"]
 RESAMPLES = 2000
 
 
@@ -47,11 +48,23 @@ class Arm:
     variant: Variant
 
 
+_VOL = Variant(size_basis="SEASONAL", max_adr_used=MODEL_A_VT.max_adr_used, max_size_adr=MODEL_A_VT.max_size_adr,
+               room=True)
+#: Requirement 18: Model A plain, with time, with volatility, with both; and the two baselines under the same gates,
+#: so the context still has to earn its edge where the time and volatility gates let it trade.
 ARMS = (
     Arm("model", "Model A", Variant()),
+    Arm("model_time", "+ time", Variant(phases=EARLY)),
+    Arm("model_vol", "+ volatility", _VOL),
+    Arm("model_vt", "+ time + volatility", MODEL_A_VT),
+    Arm("crt", "CRT: no context", Variant(poi_mode="CRT")),
+    Arm("crt_vt", "CRT + time + volatility", replace(MODEL_A_VT, poi_mode="CRT")),
+    Arm("random_poi_vt", "Random POI + time + volatility", replace(MODEL_A_VT, poi_mode="RANDOM_POI", seed=20261015)),
+)
+#: The variants of the first record (MA-D4, MA-D5) and the plain random-POI baseline: ``--all-arms``.
+EXTRA_ARMS = (
     Arm("swing", "Model A, the leg runs to the swing low (MA-D5)", Variant(leg_end="SWING")),
     Arm("next_cisd", "Model A, the engine's next-candle CISD (MA-D4)", Variant(cisd="NEXT")),
-    Arm("crt", "CRT baseline: no F context", Variant(poi_mode="CRT")),
     Arm("random_poi", "Random-POI baseline", Variant(poi_mode="RANDOM_POI", seed=20261015)),
 )
 
@@ -277,7 +290,8 @@ def render_set(title: str, results: Dict[str, Tuple[Arm, pd.DataFrame, dict]]) -
 
 def render_breakdowns(df: pd.DataFrame) -> str:
     lines = []
-    for by, title in (("time_sync", "C2 in the trader's time window (MA-D9)"), ("inducement", "Inducement (MA-D3)"),
+    for by, title in (("phase", "C2's phase of the day (MA-D13)"), ("time_sync", "C2 in the trader's time window (MA-D9)"),
+                      ("inducement", "Inducement (MA-D3)"),
                       ("poi_kind", "The POI's kind (MA-D2)"), ("side", "Side")):
         rows = breakdown(df, by)
         if not rows:
@@ -341,28 +355,32 @@ def render(instances: pd.DataFrame, sets: Sequence[FrameSet], arms: Sequence[Arm
                 part = instances[(instances["instrument"] == inst) & (instances["set"] == fs.name)
                                  & (instances["arm"] == arm.key)] if not instances.empty else instances
                 by[inst, fs.name, arm.key] = (arm, part, summarise(part))
+    keys = [a.key for a in arms]
     parts += ["## Summary: the premise against its coin flip", "",
               "Once C2 has rejected: C1's opposite extreme before C2's extreme, minus the coin flip from the same "
-              "distances, with its day-cluster interval. Fills: how many reached the 0.705 entry in six months.", "",
-              "| Instrument | Frame set | Model A | CRT (no context) | Random POI | Model A fills | R held to TP1 |",
-              "|---|---|---|---|---|---:|---|"]
+              "distances, with its day-cluster interval. The last arm with fills gives the fills and the R held to TP1.", "",
+              "| Instrument | Frame set | " + " | ".join(a.label for a in arms) + " | Fills | R held to TP1 |",
+              "|---|---|" + "---|" * len(arms) + "---:|---|"]
+    lead = "model_vt" if "model_vt" in keys else keys[0]
     for inst in instruments:
         for fs in sets:
-            m, c, r = (by[inst, fs.name, k][2] for k in ("model", "crt", "random_poi"))
+            cells = [_edge(by[inst, fs.name, k][2].get("premise", {})) for k in keys]
+            m = by[inst, fs.name, lead][2]
             fills = m.get("funnel", {}).get("ENTERED", 0)
             r_tp1 = m.get("after_fill", {}).get("R held to TP1", {})
-            parts.append(f"| {inst} | {fs.name} ({fs.f}/{fs.c}/{fs.e}) | {_edge(m.get('premise', {}))} | "
-                         f"{_edge(c.get('premise', {}))} | {_edge(r.get('premise', {}))} | {fills} | "
-                         f"{_ci(r_tp1, 'mean', pct=False) if r_tp1.get('n') else '–'} |")
-    parts.append("")
+            parts.append(f"| {inst} | {fs.name} ({fs.f}/{fs.c}/{fs.e}) | " + " | ".join(cells) +
+                         f" | {fills} | {_ci(r_tp1, 'mean', pct=False) if r_tp1.get('n') else '–'} |")
+    parts += ["", f"*Fills and R are for {next(a.label for a in arms if a.key == lead)}.*", ""]
     for inst in instruments:
         parts.append(f"## {inst}\n")
         for fs in sets:
             results = {arm.key: by[inst, fs.name, arm.key] for arm in arms}
             parts.append(render_set(f"{fs.name}: F {fs.f}, C {fs.c}, E {fs.e}", results))
-            model_df = results["model"][1] if "model" in results else pd.DataFrame()
-            if not model_df.empty:
-                parts.append(render_breakdowns(model_df))
+            for key in ("model", "model_vt"):
+                part = results[key][1] if key in results else pd.DataFrame()
+                if not part.empty:
+                    parts.append(f"\n**Breakdowns: {results[key][0].label}**\n")
+                    parts.append(render_breakdowns(part))
     return "\n".join(parts)
 
 
