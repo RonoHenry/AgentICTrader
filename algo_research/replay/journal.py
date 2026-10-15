@@ -220,6 +220,11 @@ class Journal:
     def records(self) -> list[dict]:
         return [r for r in (self._load(d) for d in self.order) if r is not None]
 
+    def unrevealed(self, days: Sequence[date]) -> list[date]:
+        """Those of ``days`` that are in this journal and not yet revealed: seeing them elsewhere spoils them."""
+        mine = set(self.order)
+        return [d for d in days if d in mine and (self._load(d) or {}).get("status") != "REVEALED"]
+
     def remaining(self) -> int:
         """Days not yet revealed."""
         return sum(1 for d in self.order if (self._load(d) or {}).get("status") != "REVEALED")

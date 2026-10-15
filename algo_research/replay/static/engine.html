@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Engine Watch</title>
+<title>Charts · Engine</title>
 <link rel="stylesheet" href="/static/app.css">
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
@@ -30,6 +30,7 @@
 </style>
 </head>
 <body>
+<div id="shell"></div>
 <header>
   <h1>Engine watch · <span id="inst">—</span></h1>
   <span class="pill" id="status">no session</span>
@@ -57,12 +58,14 @@
     <div class="muted" id="ovText">Pick an instrument and days on the right, then Start session.</div>
     <div class="progress"><div id="ovProg"></div></div></div></div></section>
   <aside>
+    <div id="watchlist"></div>
     <h2>Session</h2>
     <div class="row"><label>Instrument</label><select id="sInst"></select></div>
     <div class="row"><label>First day</label><input type="date" id="sDay"></div>
     <div class="row"><label>Days</label><select id="sDays"></select></div>
     <div class="row"><label>Strategy</label><select id="sVariant"></select></div>
     <div class="row"><button class="primary" id="sStart">Start session</button></div>
+    <div class="hint bad" id="blindWarn"></div>
     <div class="progress"><div id="prog"></div></div>
     <div class="hint" id="sMsg">Days come from the exploration slice. The backtest runs over them exactly as a real run, then plays here.</div>
     <div id="engine"></div>
@@ -74,6 +77,7 @@
 <script src="/static/drawings.js"></script>
 <script src="/static/settings.js"></script>
 <script src="/static/motion.js"></script>
+<script src="/static/shell.js"></script>
 <script src="/static/engine.js"></script>
 </body>
 </html>

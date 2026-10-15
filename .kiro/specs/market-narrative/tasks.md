@@ -122,10 +122,26 @@ Tasks marked **(user review)** end with your review before the next one starts.
   - **RED:** `test_drawings_keep_visibility_intervals`; the walk-throughs check that an H4-only box hides on M15 and shows on H4, and that an engine M15 array hides on H4.
   - **Validates: Requirements 14.1-14.3**
 
-- [ ] 309. One chart, two analysts (Requirement 15)
-  - The replay and watch pages merge into one app with a You / Engine mode and TradingView's layout: instrument tabs, a watchlist as of the replay clock, and the mode panel. Both servers are served from one process.
-  - **RED:** the HTTP round trip serves both modes; the watchlist never shows a price after the clock; the You mode shows no engine layer before the reveal; the walk-throughs of both modes pass.
-  - **Validates: Requirements 15.1-15.2**
+- [x] 309. One chart, two analysts (Requirement 15)
+  - `replay/charts.py`: one server for both modes, You at `/` and Engine at `/engine`.
+    - A blind journal per instrument, opened when its tab is first chosen; the replay API takes `?inst=`.
+    - `/api/instruments`.
+    - `/api/watchlist`: the You mode names its instrument and the server reads that day's revealed time; the Engine mode names `t`, held to the session's end. No time is returned, so the blind day stays unnamed.
+    - `/api/blind`: a session's days still unread in the blind journal (`Journal.unrevealed`).
+  - `python -m algo_research.replay` (port 8765) and `python -m algo_backtester watch` (8767, opening on Engine) both serve it.
+  - `static/shell.js`: the mode switch, the instrument tabs (with each one's change) and the watchlist, for both pages.
+    - A You tab opens that instrument's own blind day.
+    - An Engine tab runs the same days on the other instrument. The watch keeps its last three sessions, so going back is instant.
+  - **RED:** `test_the_charts_serve_both_modes`, `test_the_watchlist_never_shows_a_price_after_the_clock`, `test_the_you_mode_watchlist_is_read_at_its_days_clock_and_names_no_time`, `test_each_instrument_has_its_own_blind_journal`, `test_the_engine_mode_is_warned_of_days_still_unread_in_the_blind_replay`, `test_a_watch_session_is_kept_for_its_tab`.
+  - The walk-through (scratchpad `uitest/charts_ui.js`) covers:
+    - tabs and watchlist;
+    - the You mode makes no engine call;
+    - a tab's own blind day;
+    - the watchlist follows play;
+    - the Engine mode keeps the instrument and warns of unread days;
+    - a session, a tab to another instrument and back in under a second.
+    Every earlier walk-through passes on the merged server.
+  - **Validates: Requirements 15.1-15.3**
 
 - [ ] 301. Pilot: 50 blind gold days **(user action)**
   - You read 50 exploration-slice gold days; then we look at the summary together, and at the days where your thesis and the engine's candle profile disagreed.

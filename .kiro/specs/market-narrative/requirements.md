@@ -324,3 +324,4 @@ The trader wants AgentICTrader to become "a technical analyst living in the char
    - the timeframe and tool bars;
    - the drawing strip on the left;
    - a right-hand panel with a watchlist (each instrument's last price and change as of the replay's clock, never later) above the mode's own panel.
+3. THE Engine mode plays days from the same exploration slice the blind replay serves. Before a session starts on days still unread in that instrument's blind journal, the page SHALL say how many, and ask; watching a day spoils it for a blind read.

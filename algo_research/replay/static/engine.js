@@ -275,13 +275,33 @@ async function boot() {
   $("sVariant").innerHTML = S.meta.variants.map((v) => `<option>${v}</option>`).join("");
   $("sDays").innerHTML = Array.from({ length: S.meta.max_days }, (_, i) => `<option ${i === 2 ? "selected" : ""}>${i + 1}</option>`).join("");
   Object.assign($("sDay"), { min: S.meta.first, max: S.meta.last, value: Prefs.get("watch.day", "2025-01-27") });
+  const want = (new URLSearchParams(location.search).get("inst") || "").toUpperCase();
+  if (S.meta.instruments.includes(want)) $("sInst").value = want;
+  await Shell.init({ mode: "engine", inst: $("sInst").value, onPick: (i) => act(async () => {
+    $("sInst").value = i; Shell.setInstrument(i);
+    if (S.status) await startSession();            // TradingView's tabs: the same days, the other instrument
+    else overlay("No session yet", `Start a session for ${i} on the right.`);
+  }) });
+  for (const id of ["sInst", "sDay", "sDays"]) $(id).addEventListener("change", () => { Shell.setInstrument($("sInst").value); blindCheck(); });
+  blindCheck();
   $("sStart").onclick = () => act(startSession);
   buildTfs(); buildTools(); buildLayers(); buildControls();
   const st = await api("/api/watch/status");
   if (st.state === "ready") await openSession(st); else if (st.state === "preparing") await waitReady();
   else overlay("No session yet", "Pick an instrument, a first day and how many days on the right, then Start session.");
 }
+async function blindCheck() {                         // days still unread in the blind replay
+  try {
+    const b = await api(`/api/blind?inst=${$("sInst").value}&first_day=${$("sDay").value}&days=${$("sDays").value}`);
+    S.unread = b.unread;
+    $("blindWarn").textContent = b.unread ? `${b.unread} of these ${b.days} day(s) are still unread in your blind replay: `
+      + "watching the engine on them spoils them for a blind read." : "";
+  } catch (e) { S.unread = 0; $("blindWarn").textContent = ""; }
+}
 async function startSession() {
+  await blindCheck();
+  if (S.unread && !confirm(`${S.unread} of these days are still unread in your blind replay. Watching the engine on them spoils `
+                           + "them for a blind read. Start anyway?")) return;
   Prefs.set("watch.day", $("sDay").value);
   stop();
   await api("/api/watch/start", { instrument: $("sInst").value, first_day: $("sDay").value, days: Number($("sDays").value), variant: $("sVariant").value });
@@ -313,6 +333,7 @@ async function waitReady() {
 async function openSession(st) {
   overlay(null);
   S.status = st; S.digits = st.digits;
+  $("sInst").value = st.instrument; Shell.setInstrument(st.instrument);
   $("inst").textContent = `${st.instrument} · ${st.variant}`;
   $("status").textContent = "ready"; $("status").className = "pill REVEALED";
   $("summaryTop").textContent = `${st.days} day(s) from ${st.first_day}: ${st.summary.orders} orders, ${st.summary.trades} trades, ${st.summary.total_r >= 0 ? "+" : ""}${st.summary.total_r}R`;
@@ -335,6 +356,7 @@ async function loadBars(fit) {
 }
 async function loadState() {
   S.state = (await api(`/api/watch/state?t=${S.t}`)).state;
+  Shell.refresh("t=" + S.t);
   renderEngine(); renderLog(); refresh();
 }
 async function jumpTo(t) {

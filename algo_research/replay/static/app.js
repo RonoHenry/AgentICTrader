@@ -39,6 +39,7 @@ const TOOLS = [
 ];
 const KINDS = ["OB", "FVG", "BREAKER", "IFVG", "BPR", "LIQUIDITY", "OTHER"];
 const S = { meta: null, state: null, tf: Prefs.get("tf", "M15"), tfSec: 900, bars: [], playing: false,
+            inst: new URLSearchParams(location.search).get("inst") || Prefs.get("inst", null),
             speed: Prefs.get("speed", 1), pick: null, saveTimer: null, busy: false,
             chartPrefs: { ...CHART_DEFAULTS, ...Prefs.get("chart", {}) } };
 
@@ -220,6 +221,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => appl
 
 // ── API ───────────────────────────────────────────────────────────────────
 async function api(path, body) {
+  if (S.inst) path += (path.includes("?") ? "&" : "?") + "inst=" + encodeURIComponent(S.inst);   // each instrument's own journal
   const init = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" },
                                           body: JSON.stringify(body) };
   const r = await fetch(path, init);
@@ -236,7 +238,9 @@ function scheduleSave(items) {
 
 // ── loading a day ─────────────────────────────────────────────────────────
 async function boot() {
-  S.meta = await api("/api/meta");
+  S.meta = await api("/api/meta").catch((e) => { if (!S.inst) throw e; S.inst = null; return api("/api/meta"); });
+  S.inst = S.meta.instrument; Prefs.set("inst", S.inst);
+  await Shell.init({ mode: "you", inst: S.inst, onPick: (i) => { location.href = "/?inst=" + encodeURIComponent(i); } });
   if (!ALL_TFS.includes(S.tf)) S.tf = "M15";
   S.tfSec = S.meta.timeframes.find((x) => x.tf === S.tf).seconds;
   buildTfs(); buildTools(); buildFavBar(); buildReplay();
@@ -247,6 +251,7 @@ async function loadDay(state) {
   S.state = state;
   draw.load(state.drawings);
   renderHeader(); renderPanel(); renderReplay(); renderProps(null); markLinked(); renderObjects();
+  Shell.refresh("inst=" + encodeURIComponent(S.inst));
   await loadBars(true);
   renderSummary();
 }
@@ -254,6 +259,7 @@ function onState(state) {
   const fresh = !S.state || state.status !== S.state.status || state.open_epoch !== S.state.open_epoch;
   S.state = state;
   renderHeader();
+  Shell.refresh("inst=" + encodeURIComponent(S.inst));
   if (fresh) { renderPanel(); renderReplay(); } else renderLive();
   markLinked();
 }

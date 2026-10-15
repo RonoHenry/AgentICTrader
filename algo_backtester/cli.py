@@ -164,8 +164,8 @@ def main(argv: Optional[Sequence[str]] = None, source_factory: Optional[SourceFa
     if args.command == "pine":
         return _pine(args)
     if args.command == "watch":
-        from algo_backtester.watch import serve
-        return serve(Path(args.config), args.port, not args.no_browser, args.picks)
+        from algo_research.replay.charts import serve        # the charts, opened on the Engine mode
+        return serve(Path(args.config), args.port, not args.no_browser, picks=args.picks, page="/engine")
 
     names = args.variant if args.command == "run" else [args.variant]
     if args.command == "run" and not names:
