@@ -85,8 +85,14 @@ const draw = new Drawings(chart, series, {
   container: $("chart"), timeline, palette, digits: () => S.digits, template: (type) => templates[type],
   onChange: (items) => Prefs.set(drawKey(), items), onSelect: () => {}, onEdit: (item, start) => window.ReplayUI.toolSettings(draw, item, uiCtx, start),
   onContext: (item, x, y) => { if (item) window.ReplayUI.contextMenu(x, y, [{ label: "Settings…", action: () => window.ReplayUI.toolSettings(draw, item, uiCtx) },
-    { label: "Delete", action: () => draw.remove(item) }]); },
+    { label: "Delete", action: () => draw.remove(item) }]);
+    else window.ReplayUI.contextMenu(x, y, [{ label: "Reset the chart view", action: () => { const n = S.bars.length; motion.fit();
+      chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 140), to: n + 12 }); } }, ...motion.menu()]); },
   picking: () => false, onPick: () => {}, onError: (t) => say(t),
+});
+const motion = new Motion(chart, series, {
+  container: $("chart"), draw, prefs: Prefs, palette, bars: () => S.bars, tfSeconds: () => SECONDS[S.tf],
+  now: () => (S.status ? S.t : null), onChange: () => refresh(),
 });
 const uiCtx = { palette, kinds: ["OB", "FVG", "BREAKER", "IFVG", "BPR", "LIQUIDITY", "OTHER"], timeframes: Object.keys(SECONDS),
                 digits: () => S.digits, timeLabel: (t) => fmtTime(t), say: (t) => say(t),

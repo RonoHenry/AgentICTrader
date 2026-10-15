@@ -107,6 +107,26 @@ Tasks marked **(user review)** end with your review before the next one starts.
   - **RED:** `test_drawings_take_a_style_coloured_levels_and_freehand_paths`; the HTTP round trip serves `settings.js`; the browser walk-through (scratchpad `uitest/ui.js`) covers every step of Requirements 11 and 12 with no console errors.
   - **Validates: Requirements 12.1-12.6**
 
+- [x] 306. A chart that moves freely (Requirement 13)
+  - Added 2026-10-15 at the trader's request: "unlock price to bar ratio ... makes the charting intuitive".
+  - `static/motion.js`, shared by both pages:
+    - a manual price range kept by the series' autoscale provider;
+    - a vertical pan and price-axis stretch;
+    - the **A** button, lock price to bar ratio, and the bar countdown on the price scale.
+  - Drawings restore the chart's scroll and scale options after a drag, instead of switching them all back on.
+  - **RED:** the browser walk-throughs. A diagonal drag moves time and price and turns auto-fit off; **A** fits again; with the ratio locked, zooming time zooms price; the countdown follows the replay clock; a timeframe change keeps the manual range. No console errors.
+  - **Validates: Requirements 13.1-13.4**
+
+- [ ] 307. Visibility intervals (Requirement 14)
+  - Visibility is kept on the drawing (`journal._visibility` checks it). `Drawings` shows a drawing only on timeframes inside its intervals, and the drawing dialog gets a Visibility tab. The engine layer uses intervals per array timeframe, with defaults.
+  - **RED:** `test_drawings_keep_visibility_intervals`; the walk-throughs check that an H4-only box hides on M15 and shows on H4, and that an engine M15 array hides on H4.
+  - **Validates: Requirements 14.1-14.3**
+
+- [ ] 309. One chart, two analysts (Requirement 15)
+  - The replay and watch pages merge into one app with a You / Engine mode and TradingView's layout: instrument tabs, a watchlist as of the replay clock, and the mode panel. Both servers are served from one process.
+  - **RED:** the HTTP round trip serves both modes; the watchlist never shows a price after the clock; the You mode shows no engine layer before the reveal; the walk-throughs of both modes pass.
+  - **Validates: Requirements 15.1-15.2**
+
 - [ ] 301. Pilot: 50 blind gold days **(user action)**
   - You read 50 exploration-slice gold days; then we look at the summary together, and at the days where your thesis and the engine's candle profile disagreed.
 
@@ -136,7 +156,7 @@ Tasks marked **(user review)** end with your review before the next one starts.
     },
     {
       "name": "Blind replay",
-      "tasks": ["299", "300", "303", "304", "301"],
+      "tasks": ["299", "300", "303", "304", "306", "307", "309", "301"],
       "description": "The trader's blind daily reads, scored (update 2026-10-14)",
       "dependencies": ["Narrative"]
     }

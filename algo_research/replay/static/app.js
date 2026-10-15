@@ -127,6 +127,11 @@ const uiCtx = {
   saveTemplate: (type, look) => { templates[type] = look; Prefs.set("templates", templates); draw.refresh(); },
 };
 function editDrawing(item, start) { window.ReplayUI.toolSettings(draw, item, uiCtx, start); }
+const motion = new Motion(chart, series, {
+  container: $("chart"), draw, prefs: Prefs, palette, bars: () => S.bars, tfSeconds: () => S.tfSec,
+  now: () => (S.state ? S.state.revealed_until_epoch : null),
+  onChange: () => { draw.refresh(); sessionsUpdate(); },
+});
 
 // ── sessions: day separators, the day and midnight opens, killzone shading ──
 let sessionsUpdate = () => {};
@@ -204,7 +209,7 @@ function applyChartPrefs(p) {
     layout: { background: { color: p.background || "transparent" }, textColor: css("--muted") },
     grid: { vertLines: { visible: p.gridV, color: css("--grid") }, horzLines: { visible: p.gridH, color: css("--grid") } },
     crosshair: { mode: p.crosshair === "magnet" ? LightweightCharts.CrosshairMode.Magnet : LightweightCharts.CrosshairMode.Normal },
-    rightPriceScale: { mode: modes[p.scaleMode] || modes.normal, autoScale: p.autoScale, borderColor: css("--line") },
+    rightPriceScale: { mode: modes[p.scaleMode] || modes.normal, autoScale: true, borderColor: css("--line") },   // a manual range: motion.js
     timeScale: { borderColor: css("--line") },
     watermark: { visible: !!p.watermark, text: `${S.meta ? S.meta.instrument : ""} · ${tfLabel(S.tf)}`, fontSize: 56,
                  color: rgba(hexOf(css("--muted")), 0.14), horzAlign: "center", vertAlign: "center" },
@@ -413,14 +418,15 @@ function drawingMenu(d, x, y) {
 function chartMenu(x, y) {
   window.ReplayUI.contextMenu(x, y, [
     { label: "Chart settings…", action: () => openChartSettings() },
-    { label: "Reset the chart view", action: () => { const n = S.bars.length; chart.priceScale("right").applyOptions({ autoScale: true });
+    { label: "Reset the chart view", action: () => { const n = S.bars.length; motion.fit();
                                                      chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 10 }); } },
+    ...motion.menu(),
     { label: draw.hidden ? "Show drawings" : "Hide drawings", action: () => { draw.hidden = !draw.hidden; buildTools(); draw.refresh(); } },
     "-",
     { label: "Remove all drawings", disabled: !draw.items.length, action: () => { if (confirm("Remove every drawing on this day?")) draw.clearAll(); } },
   ]);
 }
-function openChartSettings() { window.ReplayUI.chartSettings({ palette, apply: (p) => applyChartPrefs(p) }); }
+function openChartSettings() { window.ReplayUI.chartSettings({ palette, motion, apply: (p) => applyChartPrefs(p) }); }
 $("chartSettings").onclick = () => openChartSettings();
 
 // ── replay controls ───────────────────────────────────────────────────────

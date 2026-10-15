@@ -79,6 +79,7 @@
       this.items = []; this.selected = null; this.tool = null; this.pending = null; this.mouse = null;
       this.drag = null; this.measure = null; this.magnet = true; this.hidden = false; this.keepTool = false;
       this.history = [];
+      this.restore = { handleScroll: true, handleScale: true };   // the chart's own options, back after a drag
       this.requestUpdate = () => {};
       const owner = this;
       series.attachPrimitive({
@@ -462,7 +463,7 @@
     bind(el) {
       const local = (e) => { const r = el.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
       const paneWidth = () => this.chart.timeScale().width();
-      const freeze = (on) => this.chart.applyOptions({ handleScroll: !on, handleScale: !on });
+      const freeze = (on) => this.chart.applyOptions(on ? { handleScroll: false, handleScale: false } : this.restore);
       el.addEventListener("mousedown", (e) => {
         if (e.button !== 0) return;
         const { x, y } = local(e);

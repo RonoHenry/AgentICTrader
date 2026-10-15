@@ -195,8 +195,16 @@
                  row("Watermark", check("instrument and timeframe", p.watermark, (v) => set({ watermark: v }))));
       } },
       { name: "Scales", build(b) {
-        b.append(row("Price scale", choose(p.scaleMode, [["normal", "Regular"], ["log", "Logarithmic"], ["percent", "Percent"]], (v) => set({ scaleMode: v }))),
-                 row("", check("Auto-scale", p.autoScale, (v) => set({ autoScale: v }))));
+        b.append(row("Price scale", choose(p.scaleMode, [["normal", "Regular"], ["log", "Logarithmic"], ["percent", "Percent"]], (v) => set({ scaleMode: v }))));
+        const m = ctx.motion;
+        if (m) {
+          let lockBox = null;
+          const auto = check("Auto: fit the data to the screen", m.isAuto(), (v) => { if (v) m.fit(); else m.freeze(); lockBox.querySelector("input").checked = m.lock; });
+          lockBox = check("Lock price to bar ratio", m.lock, (v) => { m.setLock(v); auto.querySelector("input").checked = m.isAuto(); });
+          b.append(row("", auto), row("", lockBox),
+                   el("div", { class: "hint" }, "Drag the chart up or down, or drag the price scale, to set the range by hand. "
+                      + "Double-click the price scale, or press A at its foot, to fit the data again."));
+        }
       } },
       { name: "Sessions", build(b) {
         b.append(row("Days", check("separators at 17:00 New York", p.separators, (v) => set({ separators: v }))),

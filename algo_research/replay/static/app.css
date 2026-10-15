@@ -109,3 +109,6 @@ input[type=range] { width: 130px; }
   aside { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); }
   #chartWrap { height: 60vh; }
 }
+.motion-corner { position: absolute; right: 0; bottom: 0; z-index: 3; display: flex; gap: 2px; align-items: center; justify-content: center; }
+.motion-corner button { font-size: 11px; line-height: 1; padding: 3px 5px; color: var(--muted); border: 1px solid transparent; }
+.motion-corner button.on { background: transparent; color: var(--accent); border-color: var(--accent); font-weight: 700; }

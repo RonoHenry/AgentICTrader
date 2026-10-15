@@ -296,3 +296,31 @@ TradingView's own chart can't be used: its charting library is licensed to compa
 4. THE chart settings SHALL set: candle and wick colours, borders; background, grid, theme (system, light, dark), crosshair, watermark; price scale (regular, logarithmic, percent) and auto-scale; day separators, the day (17:00) and midnight (00:00) opens per day, and shading of the engine's killzones (London 02–05, NY AM 07–10, NY PM 13:30–16, New York time) and the Asian range (20–00).
 5. A right-click on a drawing SHALL offer settings, clone, lock, hide, bring to front, send to back and delete; on the chart, chart settings, reset view, hide drawings and remove all. An object list SHALL show, select, hide, lock and delete drawings.
 6. PREFERENCES (chart settings, favourites, defaults per tool, the last timeframe and speed) SHALL be kept in this browser only; the page SHALL work without them. Drawings and their styles are stored with the day (Requirement 11.5).
+
+---
+
+## Update 2026-10-15: The Analyst's Chart
+
+The trader wants AgentICTrader to become "a technical analyst living in the charts". The engine would mark up, execute and manage its trades on the same chart where the trader marks up their own read. They asked for TradingView itself. Its charting library is free only for public deployments with TradingView's attribution, not for private use, so the chart stays on Lightweight Charts and takes on the free tier's behaviour. The chart code stays separate from the pages, so the library could replace it if AgentICTrader is ever published.
+
+### Requirement 13: A Chart That Moves Freely
+
+1. THE chart SHALL move in any direction. Dragging the pane moves time and price together, and a vertical drag switches the price scale from auto-fit to manual, as TradingView does. Dragging the price axis stretches or squeezes the price range, and a double-click on it fits the data again.
+2. AN **A** button at the price scale SHALL show whether the scale fits the data, and switch it back. The chart's right-click menu and the Scales settings SHALL offer the same, and **Lock price to bar ratio**: while it is on, zooming time zooms price by the same factor, so candles keep their shape.
+3. THE price scale SHALL show the time left in the current bar under the last price, measured from the replay's clock, not the computer's.
+4. THE page's own controls (reset view, timeframe change, play) SHALL leave a manual price range as the trader set it, until they fit it again.
+
+### Requirement 14: Visibility Intervals
+
+1. EACH drawing SHALL have a Visibility tab, as TradingView's: minutes 1-59, hours 1-24, days, weeks and months, each switched on or off with its own from-to range. A drawing shows only on the chart timeframes inside its intervals. A new drawing is visible everywhere, unless the tool's saved default says otherwise.
+2. THE intervals SHALL be kept with the drawing (Requirement 11.5), and checked by the server like its other options.
+3. THE engine's PD arrays SHALL follow the same rule. Each array timeframe has an interval of chart timeframes it shows on, M15 arrays from M1 to H1 by default, for example. The trader can change the intervals; they are kept in this browser.
+
+### Requirement 15: One Chart, Two Analysts
+
+1. THE replay page and the engine watch SHALL become one app with a mode: **You** (the blind replay, Requirements 10-12) and **Engine** (the watch, algo-backtester Requirement 15). Both modes use the same chart, tools, settings, favourites and visibility intervals. Blindness holds: the You mode never shows an engine layer for a day the trader has not revealed.
+2. THE layout SHALL follow TradingView's:
+   - instrument tabs along the top;
+   - the timeframe and tool bars;
+   - the drawing strip on the left;
+   - a right-hand panel with a watchlist (each instrument's last price and change as of the replay's clock, never later) above the mode's own panel.

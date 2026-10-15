@@ -53,7 +53,7 @@ NY = "America/New_York"
 STATIC = REPO_ROOT / "algo_research" / "replay" / "static"
 FILES = {"engine.html": "text/html; charset=utf-8", "engine.js": "text/javascript; charset=utf-8",
          "drawings.js": "text/javascript; charset=utf-8", "settings.js": "text/javascript; charset=utf-8",
-         "app.css": "text/css; charset=utf-8"}
+         "motion.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8"}
 MAX_DAYS = 5
 _CALENDAR = StrategyCalendar()
 _ARRAYS_SHOWN, _POOLS_SHOWN = 80, 50
