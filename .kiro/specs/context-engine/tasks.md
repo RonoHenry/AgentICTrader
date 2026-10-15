@@ -254,6 +254,8 @@ Model A replaces the old selection (284) and orders (285) in the Model A modes. 
   - The Engine chart reads `MODEL_A_VT`, and its panel shows the phase and the ADR figures.
   - **RED:** `test_day_phase_labels`, `test_phase_gate_frames_only_in_its_phases`, `test_adr_and_its_gates`, `test_no_gate_without_enough_history`, `test_seasonal_sizes_read_the_same_hour_on_earlier_days`, `test_property_2_holds_with_volatility_and_time`. The record and watch tests pass with the new arms.
   - **Validates: Requirements 18.1-18.6**
+  - *The record (2026-10-15b):* Volatility and time lifted most cells. Model A + time + volatility: XAUUSD D1/H1/M5 +16% [+1, +31], EURUSD H4/M30/M1 +10% [+1, +18], EURUSD H4/M15/M1 +8% [+2, +14]. Fills fell to 0–10 per cell.
+  - *The oracle split (scratchpad `oracle_split.py`, hindsight on purpose):* Model A's rejected C2s were on the side the day went only 27–29% of the time, against 49% for CRT. On that side the premise beat its coin by +19% [+12, +26] (D1/H1/M5), +8% (H4/M30/M1) and +5% (H4/M15/M1); against it, −1% to −4%. The reader needs a thesis (task 316).
 
 - [ ] 311. Nesting (Requirement 15)
   - **RED:** `test_d1_ote_is_an_h4_poi_while_live`, `test_depth_two_inside_a_live_ote`, `test_extended_targets_from_the_higher_instance`.
