@@ -346,7 +346,8 @@ Where the trader's model leaves a definition open, its working defaults apply (M
    - `MISSED`: price breaks the new range's low before reaching the OTE.
    - `RETRACE_INVALID`: price trades above C2's high before the entry fills.
    - `EXPIRED`: C3 closes without a fill, or without displacement.
-   - `REFRAMED`: F's dealing range changes before MANIPULATED.
+
+   The trader's `REFRAMED` (F's range changes before the manipulation) can't occur. Before MANIPULATED an instance lives one C candle, and C candles nest inside F candles, so F never closes under it.
 3. EVERY size SHALL be measured in the frame's own average range (MA-D8), and every duration in the frame's own candles. So the reader is the same code on every frame set, and relabelling the candles as another timeframe leaves its states unchanged (Property 1).
 4. THE reader SHALL read only bars closed by t (Property 2). It SHALL carry its instances from close to close; it does not re-derive them each time.
 5. **Time.** EACH MANIPULATED SHALL record whether C2 opened in the trader's window for its parent candle (MA-D9), and in a measured active slot (Requirement 5). Neither gates the reader; both are recorded.
@@ -422,7 +423,7 @@ Where the trader's model leaves a definition open, its working defaults apply (M
 | MA-D1 | Frame sets | `model_d1` D1 / H1 / M5. `model_h4` H4 / M15 / M1, with variants C = M30 and E = M3. |
 | MA-D2 | POI | F's unfilled order block, FVG or breaker of the trade's direction, in the matching zone (Requirement 3, CE-D2). Also untaken liquidity on that side: the previous month, week and day high (low), F's swing highs (lows), and F's equal highs (lows) within 0.1 F average ranges. A liquidity POI is the level ± 0.1 F average ranges. NWOG/NDOG and trendline liquidity come later. |
 | MA-D3 | Inducement | Between price and the POI on E: equal highs within 0.1 E average ranges, or at least 6 E candles inside a range smaller than one E average range. Recorded, not gating. |
-| MA-D4 | Displacement | A CISD on E (the engine's `CISDDetector`), the confirming candle's body ≥ 1.5 E average ranges, and an FVG in the leg. |
+| MA-D4 | Displacement | In the leg down from C2's high: a CISD, a candle body ≥ 1.5 E average ranges, and an FVG. The CISD (`RUN`) is a close below the open of the up-close run that made C2's high, at any time after it. The engine's `CISDDetector` needs the very next candle to break the run (`NEXT`, kept as a variant). On gold, `NEXT` let 14 of 114 rejected C2s displace (model_d1), against 44 for `RUN`. |
 | MA-D5 | Where the new range ends | The trader's default, `CISD`: the lowest low between C2's high and the CISD's confirmation. Variant `SWING`: the leg extends to the first confirmed E swing low (lookback 2), so a continuation isn't counted as MISSED. Both are measured; the trader picks. |
 | MA-D6 | Entry | 0.705 of the new range. Variant: the near edge of a bearish array inside the OTE. |
 | MA-D7 | SD anchor | The new range. Variant: the manipulation leg, from C2's open to its high. |

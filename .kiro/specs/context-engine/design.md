@@ -425,4 +425,4 @@ algo_backtester/watch.py           # the Engine chart's Model A layer (Requireme
 
 - Property 1 (frame invariance) covers the reader: relabelled candles, the same states.
 - Property 2 (only the past) covers it: truncating the bars after t leaves every state up to t unchanged.
-- **Property 10: the sequence holds.** Every instance's states appear in Model A's order. No state follows an invalidation. ENTERED implies REJECTED and DISPLACED.
+- **Property 10: the sequence holds.** Every instance starts FRAMED. MANIPULATED precedes REJECTED and DISPLACED; the displacement may come inside C2, before its close. ENTERED follows both. No state follows the instance's end.

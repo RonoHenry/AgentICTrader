@@ -58,6 +58,10 @@ ENGINE_SOURCES = (
     "services/market_data/mt5_clock.py",
 )
 
+# Engine code the legacy path never imports (context-engine MA-D12): the Model A modes carry their own key,
+# so adding them leaves the cached legacy runs valid.
+ENGINE_EXCLUDED = ("liquidity_engine/context/",)
+
 # Read by the fill model only, never by Phase A: variants on them share entries.
 _EXECUTION_ONLY = frozenset({"pending_expiry", "fallback_ttl_minutes"})
 
@@ -69,7 +73,8 @@ def engine_code_fingerprint(root: Path = REPO_ROOT) -> str:
     files = set()
     for pattern in ENGINE_SOURCES:
         if "*" in pattern:
-            files.update(p for p in root.glob(pattern) if p.is_file())
+            files.update(p for p in root.glob(pattern) if p.is_file()
+                         and not p.relative_to(root).as_posix().startswith(ENGINE_EXCLUDED))
         elif (root / pattern).is_file():
             files.add(root / pattern)
         else:

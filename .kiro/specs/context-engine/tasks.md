@@ -205,11 +205,11 @@ Tasks marked **(user action)** need Docker, the MT5 terminal, data or a decision
 
 Model A replaces the old selection (284) and orders (285) in the Model A modes. The plan builds what the record needs first, measures it, and reviews it with you before anything is traded. Order: 275 → 277 → 279 (the trader's windows) → 310 → 312 → 313 → 311 → your review → 314.
 
-- [ ] 310. The Model A reader (Requirement 13)
+- [x] 310. The Model A reader (Requirement 13)
   - **310a. RED** (`backend/tests/test_context_model_a.py`, hand-built candle series)
     - `test_short_runs_framed_to_tp1` and `test_long_mirrors_it`
     - `test_no_manipulation_without_c1_high_into_poi`
-    - One test per invalidation: `POI_FAILED`, `NO_REJECTION`, `NO_MANIPULATION`, `MISSED`, `RETRACE_INVALID`, `EXPIRED`, `REFRAMED`.
+    - One test per invalidation: `POI_FAILED`, `NO_REJECTION`, `NO_MANIPULATION`, `MISSED`, `RETRACE_INVALID`, `EXPIRED`.
     - `test_new_range_end_cisd_and_swing` (MA-D5)
     - `test_displacement_needs_body_and_fvg` (MA-D4)
     - `test_inducement_recorded_not_gating` (MA-D3)
