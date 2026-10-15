@@ -22,9 +22,12 @@ const TOOLS = [
   { type: "fib", icon: "≣", title: "Fib / SD (Alt+F)", key: "f" }, { type: "range", icon: "⇕", title: "Range (or Shift + drag)", key: "m" },
   { type: "text", icon: "T", title: "Text (Alt+N)", key: "n" },
 ];
-const LAYERS = [["arrays", "Arrays"], ["pools", "Pools"], ["profile", "Day bias & draw"], ["sequence", "Setup"], ["candidates", "Candidates"],
-                ["orders", "Orders & trades"]];
+const LAYERS = [["modelA", "Model A"], ["arrays", "Arrays"], ["pools", "Pools"], ["profile", "Day bias & draw"], ["sequence", "Setup"],
+                ["candidates", "Candidates"], ["orders", "Orders & trades"]];
+// Model A (context-engine Requirement 17): the trader's frame sets.
+const MA_SETS = [["model_d1", "Model A: D1 / H1 / M5"], ["model_h4", "Model A: H4 / M15 / M1"]];
 const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, journal: [], playing: false, busy: false, picks: {}, hl: null,
+            ma: [], maSet: Prefs.get("watch.maSet", "model_d1"), maAt: null,
             speed: 1, digits: 5, layers: Prefs.get("watch.layers", { arrays: true, pools: true, profile: true, sequence: true, orders: true }),
             arrayMode: Prefs.get("watch.arrayMode", "interval"), arrayVis: Prefs.get("watch.arrayVis", {}) };
 // The chart timeframes each array timeframe shows on by default (Requirement 14.3); the trader can change them.
@@ -32,6 +35,7 @@ const ARRAY_SHOWS = { M1: ["M1", "M5"], M3: ["M1", "M10"], M5: ["M1", "M15"], M1
                       H1: ["M5", "H4"], H3: ["M15", "H8"], H4: ["M15", "D1"], H6: ["M30", "D1"], H8: ["M30", "D1"],
                       H12: ["H1", "W1"], D1: ["H1", "W1"], W1: ["H4", "W1"] };
 const arrayInterval = (tf) => S.arrayVis[tf] || ARRAY_SHOWS[tf] || null;
+if (S.layers.modelA === undefined) S.layers.modelA = true;      // new in 2026-10-15: on until switched off
 
 // ── the chart ─────────────────────────────────────────────────────────────
 const chart = LightweightCharts.createChart($("chart"), {
@@ -172,6 +176,7 @@ function paintEngine(ctx, size) {
       ctx.fill(); text("protected swing", px + 8, sq.direction === "BULLISH" ? py + 14 : py - 6, c);
     }
   }
+  if (S.layers.modelA) paintModelA(ctx, size, pal, text, line);
   if (st && !st.error && st.candidates) {               // what the sequence detector ranked; the hovered one always
     for (const c of [...st.candidates.ranked].reverse()) {
       if (!S.layers.candidates && c.id !== S.hl) continue;
@@ -255,6 +260,60 @@ function paintEngine(ctx, size) {
     }
   }
   ctx.restore();
+}
+function paintModelA(ctx, size, pal, text, line) {
+  const W = size.width;
+  for (const y of S.ma) {
+    const short = y.side === "SHORT", col = short ? pal.bad : pal.up, hex = col.startsWith("#") ? col : "#888888";
+    const alpha = y.ended ? 0.35 : 1, c = (a) => rgba(hex, a * alpha);
+    const x0 = Math.max(X(y.c1_open), -10), xr = y.end_at ? X(y.end_at) : W, cSec = SECONDS[y.c] || 900;
+    if (y.f_range) {                                  // F's equilibrium: premium above it for shorts, discount below for longs
+      const mid = (y.f_range[0] + y.f_range[1]) / 2;
+      line(x0, Y(mid), xr, Y(mid), rgba(hexOf(pal.muted), 0.6 * alpha), [8, 4]); text(`${y.f} 50%`, x0 + 3, Y(mid) - 2, pal.muted);
+    }
+    const p1 = Y(y.poi_near), p2 = Y(isFinite(y.poi_far) ? y.poi_far : y.poi_near);
+    ctx.fillStyle = c(0.12); ctx.fillRect(x0, Math.min(p1, p2), xr - x0, Math.abs(p2 - p1));
+    ctx.strokeStyle = c(0.8); ctx.lineWidth = 1; ctx.setLineDash([]); ctx.strokeRect(x0, Math.min(p1, p2), xr - x0, Math.abs(p2 - p1));
+    text(`POI · ${y.poi_label}`, x0 + 3, (short ? Math.min(p1, p2) : Math.max(p1, p2) + 11) - 1, col);
+    const c1x2 = X(y.c1_open + cSec);
+    line(x0, Y(y.c1_extreme), Math.max(c1x2, x0 + 12), Y(y.c1_extreme), c(1), [], 2);
+    line(x0, Y(y.c1_opposite), xr, Y(y.c1_opposite), c(0.7), [4, 3]);
+    text(`C1 ${short ? "high" : "low"}`, x0 + 3, Y(y.c1_extreme) + (short ? 11 : -2), col);
+    text(`C1 ${short ? "low" : "high"}: TP1`, x0 + 3, Y(y.c1_opposite) + (short ? 11 : -2), col);
+    const manip = y.events.find((e) => e[0] === "MANIPULATED");
+    if (manip) { const mx = X(manip[1]); line(mx, Y(y.poi_near) + (short ? -14 : 14), mx, Y(y.poi_near), col, [], 2); }
+    if (y.c2_extreme != null) {
+      line(c1x2, Y(y.c2_extreme), xr, Y(y.c2_extreme), c(0.9), [], 1.5);
+      text(`C2 ${short ? "high" : "low"}`, Math.max(c1x2, 0) + 3, Y(y.c2_extreme) + (short ? -2 : 11), col);
+    }
+    if (y.entry != null) {
+      const ox = Math.max(X(y.order_at), x0);
+      const a = Y(y.ote_near), b = Y(y.ote_far);
+      ctx.fillStyle = c(0.18); ctx.fillRect(ox, Math.min(a, b), xr - ox, Math.abs(b - a));
+      text("OTE 0.62-0.79", ox + 3, Math.min(a, b) - 2, col);
+      line(ox, Y(y.entry), xr, Y(y.entry), c(1), [], 2); text(`0.705 entry ${fmt(y.entry)}`, ox + 3, Y(y.entry) - 2, col);
+      line(ox, Y(y.stop), xr, Y(y.stop), rgba(hexOf(pal.bad), alpha), [2, 2]); text("stop", ox + 3, Y(y.stop) - 2, pal.bad);
+      line(ox, Y(y.range_end), xr, Y(y.range_end), c(0.6), [1, 3]);
+      for (const [k, name] of [["sd1", "-1 SD"], ["sd2", "-2 SD"], ["sd25", "-2.5 SD"]]) {
+        line(ox, Y(y[k]), xr, Y(y[k]), rgba(hexOf(pal.good), 0.7 * alpha), [6, 3]); text(name, ox + 3, Y(y[k]) - 2, pal.good);
+      }
+    }
+    if (y.fill != null) {
+      const ent = y.events.find((e) => e[0] === "ENTERED");
+      if (ent) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X(ent[1]), Y(y.fill), 4, 0, 2 * Math.PI); ctx.fill(); }
+    }
+    ctx.font = "11px system-ui, sans-serif";
+    const badge = `${y.side} · ${y.ended || y.state}`;
+    text(badge, Math.max(x0, 0) + 3, (short ? Math.min(p1, p2) : Math.max(p1, p2)) + (short ? -14 : 25), col);
+    ctx.font = "10px system-ui, sans-serif";
+  }
+}
+async function loadModelA() {
+  if (!S.status || !S.layers.modelA) { S.ma = []; return; }
+  const key = `${S.maSet}@${S.t}`;
+  if (S.maAt === key) return;
+  S.maAt = key;
+  S.ma = (await api(`/api/watch/model-a?set=${S.maSet}&t=${S.t}`)).instances;
 }
 function refresh() { engineUpdate(); draw.refresh(); }
 
@@ -356,6 +415,7 @@ async function loadBars(fit) {
 }
 async function loadState() {
   S.state = (await api(`/api/watch/state?t=${S.t}`)).state;
+  await loadModelA();
   Shell.refresh("t=" + S.t);
   renderEngine(); renderLog(); refresh();
 }
@@ -378,7 +438,8 @@ async function advance(dt) {
     const last = S.bars[S.bars.length - 1];
     const got = (await api(`/api/watch/bars?tf=${S.tf}&until=${S.t}&since=${last ? last.time : S.t - 86400}`)).bars;
     try { for (const b of got) put(b); } catch (e) { await loadBars(false); }
-    if (Math.floor(S.t / 900) !== Math.floor(before / 900)) await loadState(); else refresh();
+    if (Math.floor(S.t / 900) !== Math.floor(before / 900)) await loadState();
+    else { await loadModelA(); renderEngine(); renderLog(); refresh(); }
     renderHeader();
   } finally { S.busy = false; }
 }
@@ -434,9 +495,15 @@ function buildLayers() {
   for (const [key, name] of LAYERS) {
     const l = document.createElement("label"), c = document.createElement("input");
     c.type = "checkbox"; c.checked = !!S.layers[key];
-    c.onchange = () => { S.layers[key] = c.checked; Prefs.set("watch.layers", S.layers); refresh(); };
+    c.onchange = () => act(async () => { S.layers[key] = c.checked; Prefs.set("watch.layers", S.layers); S.maAt = null;
+                                         await loadModelA(); renderEngine(); renderLog(); refresh(); });
     l.append(c, " " + name); box.append(l);
   }
+  const ma = document.createElement("select");
+  ma.id = "maSet"; ma.title = "Which of your frame sets Model A reads";
+  ma.innerHTML = MA_SETS.map(([v, t]) => `<option value="${v}" ${S.maSet === v ? "selected" : ""}>${t}</option>`).join("");
+  ma.onchange = () => act(async () => { S.maSet = ma.value; Prefs.set("watch.maSet", ma.value); S.maAt = null; await loadModelA(); renderEngine(); renderLog(); refresh(); });
+  box.append(ma);
   const sel = document.createElement("select");
   sel.title = "Which of the engine's arrays to draw";
   sel.innerHTML = [["interval", "arrays: by visibility interval"], ["all", "arrays: every one"], ["M15", "arrays: M15 and up"],
@@ -516,6 +583,14 @@ function renderEngine() {
     html += `<div class="card"><b>Setup</b>: ${esc(sq.direction)} after a raid of ${esc(sq.pool.source)} ${esc(sq.pool.tf)} ${fmt(sq.pool.price)} at ${fmtTime(sq.raided)}<br>
       CISD at ${fmtTime(sq.cisd)} · protected swing ${fmt(sq.protected.wick)} (${fmtTime(sq.protected.at)})</div>`;
   }
+  if (S.layers.modelA) {
+    const label = (MA_SETS.find(([v]) => v === S.maSet) || ["", S.maSet])[1];
+    const lv = (y) => y.entry != null ? `<div class="muted">0.705 entry ${fmt(y.entry)} · stop ${fmt(y.stop)} · TP1 ${fmt(y.tp1)} · -1 SD ${fmt(y.sd1)} · -2 SD ${fmt(y.sd2)}</div>` : "";
+    html += `<div class="card"><b>${esc(label)}</b>` + (S.ma.length ? S.ma.map((y) => `<div class="ma ${y.ended ? "muted" : ""}">
+        <b>${esc(y.side)} · ${esc(y.ended || y.state)}</b> <span class="muted">POI ${esc(y.poi_label)} ${fmt(y.poi_near)}–${fmt(y.poi_far)}</span>
+        <div>${esc(y.reason)}</div>${y.time_sync != null ? `<div class="muted">C2 ${y.time_sync ? "in" : "outside"} your time window${y.inducement ? `; inducement: ${esc(y.inducement)}` : ""}</div>` : ""}${lv(y)}</div>`).join("")
+      : `<div class="muted">Nothing framed: price isn't in premium with a POI above (or discount with one below) on ${esc(label.split(": ")[1] || "")}.</div>`) + `</div>`;
+  }
   const open = S.journal.find((r) => r.filled_at != null && r.filled_at <= S.t && (r.closed_at == null || r.closed_at > S.t));
   if (open) {
     html += `<div class="card"><b>Open trade</b>: ${esc(open.direction)} from ${fmt(open.fill)}, stop ${fmt(open.stop)}, target ${fmt(open.target)}.
@@ -562,6 +637,12 @@ function renderLog() {
                                                                + (r.path ? ` (best +${r.path.best_r.toFixed(2)}R at ${fmtTime(r.path.best_at)})` : ""),
                                                                cls: (r.net_r || 0) > 0 ? "good" : "bad" });
     else if (r.filled_at == null && r.expires_at != null && r.expires_at <= S.t) items.push({ t: r.expires_at, text: "order expired unfilled", cls: "muted" });
+  }
+  if (S.layers.modelA) {
+    for (const y of S.ma) for (const [state, t, why] of y.events) {
+      if (state === "FRAMED" || state === "ARMED") continue;
+      items.push({ t, text: `Model A ${y.side.toLowerCase()} ${state}: ${why}`, cls: /STOPPED|MISSED|INVALID|FAILED|NO_/.test(state) ? "bad" : /TP1|SD_/.test(state) ? "good" : "" });
+    }
   }
   items.sort((a, b) => b.t - a.t);
   $("log").innerHTML = items.length ? items.map((i) => `<div data-t="${i.t}" class="${i.cls}">${fmtTime(i.t)} · ${esc(i.text)}</div>`).join("")

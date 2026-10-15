@@ -153,6 +153,39 @@ def test_picks_are_appended_with_the_engine_choice(session, tmp_path):
     assert len(out.read_text(encoding="utf-8").splitlines()) == 2
 
 
+@pytest.fixture(scope="module")
+def week(setup):
+    """The fixture week's last three trading days: Model A needs a few days of context."""
+    root, snap = setup
+    s = WatchSession(root / "base.toml", None, "EURUSD", DAY, 3, snap, studies_root=root)
+    s.prepare()
+    assert s.state == "ready", s.message
+    return s
+
+
+def test_watch_session_keeps_model_a_instances(week):
+    """Context-engine Requirement 17: Model A on the chart, nothing from after the clock."""
+    session = week
+    assert set(session.model_a) == {"model_d1", "model_h4"}
+    every = [x for xs in session.model_a.values() for x in xs]
+    assert every and all(x["states"]["FRAMED"] >= wall(session.start) for x in every)
+    for name, xs in session.model_a.items():
+        for x in xs:
+            if "MANIPULATED" not in x["states"]:
+                continue
+            t = x["states"]["MANIPULATED"]
+            shown = [y for y in session.model_a_at(name, t) if y["c1_open"] == x["c1_open"] and y["side"] == x["side"]]
+            assert shown, (name, x["c1_open"])
+            y = shown[0]
+            assert all(e[1] <= t for e in y["events"]) and "c2_extreme" not in y and "entry" not in y
+            if "ENTERED" in x["states"]:
+                at = x["states"]["ENTERED"]
+                y = [z for z in session.model_a_at(name, at) if z["c1_open"] == x["c1_open"] and z["side"] == x["side"]][0]
+                assert y["entry"] == x["entry"] and y["fill"] == x["fill"] and y["order_at"] <= at
+    with pytest.raises(ValueError):
+        session.model_a_at("model_w1", wall(session.start))
+
+
 def test_bars_never_pass_the_time_asked(session):
     t = wall(pd.Timestamp("2026-09-30 10:41", tz="America/New_York"))
     for tf in ("M1", "M15", "H1", "H4"):

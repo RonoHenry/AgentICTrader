@@ -61,6 +61,11 @@ KEPT_SESSIONS = 3
 PICKS = REPO_ROOT / "data" / "journal" / "watch_picks.jsonl"
 _CALENDAR = StrategyCalendar()
 _ARRAYS_SHOWN, _POOLS_SHOWN, _CANDIDATES_SHOWN = 80, 50, 30
+#: Model A on the chart (context-engine Requirement 17): the trader's frame sets, and how long an ended instance
+#: that reached the manipulation stays drawn (one F candle).
+MODEL_A_SETS = ("model_d1", "model_h4")
+_MODEL_A_KEEP = {"model_d1": 86400, "model_h4": 4 * 3600}
+_MODEL_A_HISTORY = pd.Timedelta(days=100)
 
 
 def wall(t) -> int:
@@ -167,6 +172,7 @@ class WatchSession:
         self.states: dict[int, dict] = {}
         self._keys: list[int] = []
         self.summary: dict = {}
+        self.model_a: dict[str, list[dict]] = {}
 
     # ── preparing ───────────────────────────────────────────────────────────
     def prepare(self) -> None:
@@ -228,6 +234,8 @@ class WatchSession:
         self.summary = {"orders": sum(1 for r in self.journal if r["decision"] == "EXECUTE"), "trades": len(filled),
                         "total_r": round(sum(r["net_r"] for r in filled), 2)}
         self.states, self._keys = states, sorted(states)
+        self.message = "reading Model A"
+        self.model_a = self._read_model_a()
 
     def _paths(self, m1) -> None:
         """Each filled trade's best and worst point from the fill to the exit (or the session's end), in R and at
@@ -406,6 +414,57 @@ class WatchSession:
                 "start": wall(self.start), "end": wall(self.end), "digits": self.bars.digits if self.bars else 5,
                 "summary": self.summary, "closes": len(self._keys)}
 
+    def _read_model_a(self) -> dict[str, list[dict]]:
+        """Model A's instances over the session, both of the trader's frame sets, both sides (Requirement 17), on
+        the snapshot's prices with 100 days of history for the context frame."""
+        from liquidity_engine.context.model_a import MODEL_SETS, ModelAReader
+        frame = SnapshotSource(self.snapshot)._frame(self.instrument)
+        frame = frame[(frame["time"] >= self.start - _MODEL_A_HISTORY) & (frame["time"] < self.end)]
+        if frame.empty:
+            return {}
+        walls = wall_seconds(frame["time"])
+        o, h, l, c = (frame[k].to_numpy(float) for k in ("open", "high", "low", "close"))
+        out = {}
+        for name in MODEL_A_SETS:
+            rows = []
+            for side in ("SHORT", "LONG"):
+                rows += ModelAReader(MODEL_SETS[name], walls, o, h, l, c, side=side).run(wall(self.start), wall(self.end))
+            out[name] = sorted(rows, key=lambda x: x["states"]["FRAMED"])
+        return out
+
+    def model_a_at(self, name: str, w: int) -> list[dict]:
+        """The instances of a frame set as the chart may show them at ``w``: the live one, and those that reached
+        the manipulation and ended within one F candle. Every level appears only once its state is reached (C2's
+        extreme once C2 has closed; the order once C2 has rejected and price displaced), so nothing comes from
+        after the clock."""
+        if name not in self.model_a:
+            raise ValueError(f"set: one of {', '.join(self.model_a) or MODEL_A_SETS}")
+        keep, out = _MODEL_A_KEEP.get(name, 86400), []
+        base = ("side", "set", "f", "c", "e", "poi_kind", "poi_label", "poi_near", "poi_far", "f_range", "c1_open",
+                "c1_extreme", "c1_opposite")
+        for x in self.model_a[name]:
+            if x["states"]["FRAMED"] > w:
+                break
+            ended = x["end_at"] is not None and x["end_at"] <= w
+            if ended and ("MANIPULATED" not in x["states"] or x["end_at"] < w - keep):
+                continue
+            events = [list(e) for e in x["events"] if e[1] <= w]
+            reached = {e[0] for e in events}
+            y = {k: x[k] for k in base}
+            y.update(events=events, state=events[-1][0], reason=events[-1][2], ended=x["end"] if ended else None,
+                     end_at=x["end_at"] if ended else None)
+            if "MANIPULATED" in reached:
+                y.update(time_sync=x["time_sync"], inducement=x["inducement"])
+            if "REJECTED" in reached:
+                y["c2_extreme"] = x["c2_extreme"]
+            if "REJECTED" in reached and "DISPLACED" in reached and x["entry"] is not None:
+                y.update({k: x[k] for k in ("range_end", "entry", "stop", "ote_near", "ote_far", "tp1", "sd1", "sd2", "sd25")})
+                y["order_at"] = max(x["states"]["REJECTED"], x["states"]["DISPLACED"])
+            if "ENTERED" in reached:
+                y["fill"] = x["fill"]
+            out.append(y)
+        return out
+
     def state_at(self, w: int) -> Optional[dict]:
         i = bisect_right(self._keys, int(w)) - 1
         return self.states[self._keys[i]] if i >= 0 else None
@@ -513,6 +572,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: {"state": self.app.need().state_at(int(q["t"]))})
         elif url.path == "/api/watch/journal":
             self._answer(lambda: {"rows": self.app.need().journal})
+        elif url.path == "/api/watch/model-a":
+            self._answer(lambda: {"set": q.get("set", "model_d1"),
+                                  "instances": self.app.need().model_a_at(q.get("set", "model_d1"), int(q["t"]))})
         elif url.path == "/api/watch/picks":
             self._answer(lambda: {"picks": self.app.need().picks(self.app.picks_path)})
         else:
