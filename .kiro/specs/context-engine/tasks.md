@@ -231,6 +231,10 @@ Model A replaces the old selection (284) and orders (285) in the Model A modes. 
   - **312b. GREEN** — `algo_research/model_a.py`; the command `python -m algo_research model-a [--set model_d1] [--instrument XAUUSD]`; `docs/research/MODEL_A_RECORD.md`.
   - **312c. Your review.** Gold first, then the others. We read the funnel together, and the instances you'd label differently settle MA-D2 to MA-D11.
   - *Status 2026-10-15:* 312a and 312b are done. The report adds **the premise**: after C2 rejects, C1's opposite extreme before C2's extreme, against a coin flip from the same distances. It counts every rejected C2, not only the few fills. `--rerender` rebuilds the report from `data/research/model_a_instances.jsonl`. F's state is read from its last 600 candles (MA-D8). 312c, the review, is next.
+  - *The record (2026-10-15):* 4 instruments × 7 frame sets, 908,469 instances. With the working defaults, Model A's premise doesn't beat its coin flip consistently: most cells sit within ±5% with intervals spanning zero. It doesn't beat CRT or random POIs either.
+    - Three of 28 cells are positive: EURUSD H4/M30/M1 +6% [+1, +11], EURUSD D1/H4/M15 +17% [+4, +30] (n 35), GBPUSD D1/H1/M5 +8% [+1, +15]. With 28 cells, one or two would be expected by chance.
+    - Fills are few, 2 to 74 per cell in six months.
+    - The review decides whether the definitions miss the trader's selection.
   - **Validates: Requirements 16.1–16.5**
 
 - [x] 313. Model A on the chart (Requirement 17)

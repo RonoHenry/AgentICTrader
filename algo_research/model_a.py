@@ -376,7 +376,11 @@ def record(m1_by_instrument: Dict[str, Tuple[np.ndarray, ...]], sets: Iterable[F
 
 def load_instances(path: Path) -> pd.DataFrame:
     """Instances saved by ``python -m algo_research model-a``, ready to render again."""
-    df = pd.read_json(path, orient="records", lines=True)
+    parts = [chunk.drop(columns=["events"], errors="ignore")       # the report doesn't read the event lists
+             for chunk in pd.read_json(path, orient="records", lines=True, chunksize=50_000)]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        df = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
     if not df.empty:
         df["trading_date"] = pd.to_datetime(df["trading_date"]).dt.date
         for col in ("states", "hits"):
