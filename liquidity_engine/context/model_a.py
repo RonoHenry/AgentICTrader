@@ -62,6 +62,9 @@ UNIVERSAL_SETS = {
 _SIZE = {"M1": 0, "M2": 0, "M3": 0, "M4": 0, "M5": 0, "M10": 0, "M15": 0, "M20": 0, "M30": 0, "M45": 0,
          "H1": 1, "H3": 1, "H4": 2, "H6": 2, "H7": 2, "H8": 2, "H12": 2, "D1": 3, "W1": 4, "MN1": 5}
 _PREVIOUS = {"D1": "PDH", "W1": "PWH", "MN1": "PMH"}
+#: F's state is read from its last 600 closed candles: on D1 the whole history, on H4 about four months, on H1
+#: about a month. Older arrays and swings are far from price, and reading all of them at every F close is slow.
+CONTEXT_CANDLES = 600
 
 
 @dataclass(frozen=True)
@@ -116,6 +119,7 @@ class _Instance:
     favg: float
     zone_position: float
     anchors: Tuple[int, int]
+    f_range: Tuple[float, float] = (np.nan, np.nan)      # F's dealing range at FRAMED (low, high)
     events: List[Tuple[str, int, str]] = field(default_factory=list)
     stage: str = "C2"                                    # C2, C3, TRADE
     c2_open: Optional[int] = None
@@ -236,6 +240,7 @@ class ModelAReader:
         if n < 5:
             return _FContext(None, [], np.nan)
         favg = average_range(fh, fl, n)
+        lo = max(0, n - CONTEXT_CANDLES)
         levels = [(f"previous {self.frames.f} high", float(fh[n - 1]))]
         for tf in self.higher:                               # the frames above: their previous candle's high
             bt = self.bars[tf][0]
@@ -243,8 +248,8 @@ class ModelAReader:
             idx = int(np.searchsorted(bt, hb if hb is not None else now, side="left"))
             if idx >= 1:
                 levels.append((_PREVIOUS[tf], float(self.bars[tf][2][idx - 1])))
-        cands = bearish_candidates(fo, fh, fl, fc, n, favg, levels, self.frames.f)
-        return _FContext(dealing_range(fh, fl, n), cands, favg)
+        cands = bearish_candidates(fo[lo:n], fh[lo:n], fl[lo:n], fc[lo:n], n - lo, favg, levels, self.frames.f)
+        return _FContext(dealing_range(fh[lo:n], fl[lo:n], n - lo), cands, favg)
 
     def _frame(self, k, ct, co, ch, cl, cc, c_sec, ctx, forming_hi, forming_lo) -> Optional[_Instance]:
         """A C candle has closed: C1 of a new instance, if price is in F's premium with a POI above."""
@@ -276,7 +281,7 @@ class ModelAReader:
         if not reachable:
             return None
         poi = min(reachable, key=lambda p: (max(p.low, c1[2]), p.high))
-        inst = _Instance(c1, poi, ctx.favg, rng.position(price), rng.anchors)
+        inst = _Instance(c1, poi, ctx.favg, rng.position(price), rng.anchors, (rng.low, rng.high))
         inst.event("FRAMED", t, f"{rng.reason()}, price at {rng.position(price):.0%}; POI {poi.reason()}")
         if c1[2] >= poi.low - ctx.favg:
             inst.armed = True
@@ -449,6 +454,7 @@ class ModelAReader:
             "c1_open": inst.c1[0], "c1_extreme": p(inst.c1[2]), "c1_opposite": p(inst.c1[3]),
             "poi_kind": inst.poi.kind, "poi_label": inst.poi.label, "poi_near": p(poi_lo), "poi_far": p(poi_hi),
             "zone_position": inst.zone_position, "favg": inst.favg, "states": states, "events": list(inst.events),
+            "f_range": sorted(p(x) for x in inst.f_range) if np.all(np.isfinite(inst.f_range)) else None,
             "end": end, "end_at": inst.ended[1] if inst.ended else None, "end_reason": inst.ended[2] if inst.ended else "",
             "time_sync": inst.time_sync, "inducement": inst.inducement,
             "c2_extreme": p(inst.c2_high) if inst.manipulated else None,

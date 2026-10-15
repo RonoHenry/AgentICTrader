@@ -384,6 +384,7 @@ Where the trader's model leaves a definition open, its working defaults apply (M
 
 1. AlgoResearch SHALL run the readers over the exploration slice (AR-D3) per instrument and frame set. It SHALL report the funnel:
    - how many instances reached each state, and each invalidation's count;
+   - **the premise**: once C2 has rejected, how often price reaches C1's opposite extreme before C2's extreme, within the F candle. It is compared with a coin flip from the same distances (the chance a driftless walk gets there first), paired by trading date. It counts every rejected C2, not only the few that fill;
    - after ENTERED, how often TP1 and each SD level were reached before the stop, and the mean R at TP1 and at TP2;
    - day-cluster intervals for every rate (AlgoResearch's statistics).
 2. THE report SHALL break the funnel down by:
@@ -427,7 +428,7 @@ Where the trader's model leaves a definition open, its working defaults apply (M
 | MA-D5 | Where the new range ends | The trader's default, `CISD`: the lowest low between C2's high and the CISD's confirmation. Variant `SWING`: the leg extends to the first confirmed E swing low (lookback 2), so a continuation isn't counted as MISSED. Both are measured; the trader picks. |
 | MA-D6 | Entry | 0.705 of the new range. Variant: the near edge of a bearish array inside the OTE. |
 | MA-D7 | SD anchor | The new range. Variant: the manipulation leg, from C2's open to its high. |
-| MA-D8 | Average range | The mean high minus low of the frame's last 20 closed candles. |
+| MA-D8 | Average range | The mean high minus low of the frame's last 20 closed candles. F's state (dealing range, POI candidates) is read from its last 600 closed candles: on D1 the whole history, on H4 about four months, on H1 about a month. |
 | MA-D9 | The trader's time windows | H1 C2: opening at 02:00, 03:00, 07:00 or 08:00 New York (the first hours of London and NY AM). M15 or M30 C2: opening at :45 or :00, around the hour's macro. D1 C2: Monday to Wednesday. H4 C2: the 01:00, 05:00 and 09:00 candles. *(The trader confirms these.)* |
 | MA-D10 | Instances | One per direction per frame set at a time. |
 | MA-D11 | Outcome horizon | The close of the F candle in which the entry filled. Variant: the next F candle's close. |

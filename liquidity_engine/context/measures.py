@@ -45,15 +45,15 @@ def rolling_average_range(h, l, n: int = AVERAGE_RANGE_CANDLES) -> np.ndarray:
 
 def swing_highs(h, lookback: int = 2) -> List[int]:
     """Indices of highs above the ``lookback`` highs on each side (``find_swing_highs`` on arrays)."""
-    h = np.asarray(h, float)
+    h = [float(x) for x in h]
     return [i for i in range(lookback, len(h) - lookback)
-            if h[i] > h[i - lookback:i].max() and h[i] > h[i + 1:i + lookback + 1].max()]
+            if h[i] > max(h[i - lookback:i]) and h[i] > max(h[i + 1:i + lookback + 1])]
 
 
 def swing_lows(l, lookback: int = 2) -> List[int]:
-    l = np.asarray(l, float)
+    l = [float(x) for x in l]
     return [i for i in range(lookback, len(l) - lookback)
-            if l[i] < l[i - lookback:i].min() and l[i] < l[i + 1:i + lookback + 1].min()]
+            if l[i] < min(l[i - lookback:i]) and l[i] < min(l[i + 1:i + lookback + 1])]
 
 
 def bearish_fvgs(h, l, lo: int, hi: int) -> List[Tuple[int, float, float]]:
@@ -77,39 +77,31 @@ def bearish_cisd(o, h, l, c, j: int) -> bool:
     return len(seq_h) >= 3 and (bool(swing_highs(seq_h, 1)) or bool(swing_lows(seq_l, 1)))
 
 
-def _true_ranges(h, l, c) -> np.ndarray:
-    n = len(h)
-    tr = np.zeros(n)
-    if n > 1:
-        tr[1:] = np.maximum.reduce([h[1:] - l[1:], np.abs(h[1:] - c[:-1]), np.abs(l[1:] - c[:-1])])
+def _true_ranges(h, l, c) -> List[float]:
+    """``atr_series``'s true ranges, as plain floats (index 0 has none)."""
+    tr = [0.0] * len(h)
+    for i in range(1, len(h)):
+        tr[i] = max(h[i] - l[i], abs(h[i] - c[i - 1]), abs(l[i] - c[i - 1]))
     return tr
-
-
-def _atr_at(tr: np.ndarray, i: int, period: int = 14) -> float:
-    """``atr_series`` element i: the mean true range of the min(period, i) candles before i (from index 1)."""
-    if i < 2:
-        return 0.0
-    window = tr[max(1, i - min(period, i)):i]
-    return float(window.mean())
 
 
 def bearish_order_blocks(o, h, l, c, hi: Optional[int] = None) -> List[Tuple[int, int, float, float]]:
     """The engine's bearish order blocks (``PDArrayDetector._detect_order_blocks``) among candles [0, hi): a
     bearish candle of at least 1.5 ATR, and the last bullish candle before it. As (ob index, expansion index,
-    low, high)."""
-    o, h, l, c = (np.asarray(x, float) for x in (o, h, l, c))
+    low, high). The ATR is summed as ``atr_series`` sums it, so borderline candles decide alike."""
     hi = len(h) if hi is None else hi
-    tr = _true_ranges(h[:hi], l[:hi], c[:hi])
+    o, h, l, c = ([float(x) for x in a[:hi]] for a in (o, h, l, c))
+    tr = _true_ranges(h, l, c)
     out = []
-    for i in range(2, hi):
-        atr = _atr_at(tr, i)
-        if atr <= 0 or not c[i] < o[i] or h[i] - l[i] < OB_EXPANSION_ATR_MULTIPLE * atr:
-            continue
-        j = i - 1
-        while j >= 0 and not c[j] > o[j]:
-            j -= 1
-        if j >= 0 and h[j] > l[j]:
-            out.append((j, i, float(l[j]), float(h[j])))
+    last_bull = -1                                       # the last bullish candle before i
+    for i in range(hi):
+        if i >= 2 and c[i] < o[i]:
+            lo = max(1, i - min(14, i))
+            atr = sum(tr[lo:i]) / (i - lo)
+            if atr > 0 and h[i] - l[i] >= OB_EXPANSION_ATR_MULTIPLE * atr and last_bull >= 0 and h[last_bull] > l[last_bull]:
+                out.append((last_bull, i, l[last_bull], h[last_bull]))
+        if c[i] > o[i]:
+            last_bull = i
     return out
 
 
