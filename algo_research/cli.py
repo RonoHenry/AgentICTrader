@@ -99,6 +99,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                          help="which arms, comma-separated: main (plain, time, volatility, both, and the baselines), "
                               "thesis (Model A and CRT under each thesis, Req 19), extra (MA-D4, MA-D5 variants); "
                               "default main")
+    model_a.add_argument("--report", default="MODEL_A_RECORD",
+                         help="the report's name under docs/research/ (and its instances under data/research/); "
+                              "default MODEL_A_RECORD")
     model_a.add_argument("--rerender", action="store_true",
                          help="write the report again from data/research/model_a_instances.jsonl, without reading")
     return parser.parse_args(argv)
@@ -255,8 +258,9 @@ def _model_a(args, cfg: ResearchConfig, root: Path, snapshots_dir: Path) -> int:
     start, end = slices_of(cfg)["explore"]
     meta = {"snapshot": cfg.snapshot, "slice": f"exploration slice, {start} to {end} (end exclusive)",
             "frame sets": ", ".join(names), "code_commit": _commit(root)}
-    out = root / DOCS / "MODEL_A_RECORD.md"
-    kept = root / "data" / "research" / "model_a_instances.jsonl"          # every instance, for the review and the chart
+    out = root / DOCS / f"{args.report}.md"
+    suffix = "" if args.report == "MODEL_A_RECORD" else "_" + args.report.lower()
+    kept = root / "data" / "research" / f"model_a_instances{suffix}.jsonl"   # every instance, for the review and the chart
     if args.rerender:
         instances = load_instances(kept)
         instances = instances[instances["instrument"].isin(instruments) & instances["set"].isin(names)]
