@@ -23,7 +23,7 @@ from bisect import bisect_right
 from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 from urllib.parse import parse_qs, urlparse
 
 import numpy as np
@@ -42,8 +42,9 @@ from algo_research.replay.bars import ReplayBars
 from algo_research.replay.timeframes import TIMEFRAMES, seconds_of, wall_seconds
 from algo_research.snapshot import SNAPSHOTS_DIR
 from liquidity_engine import LiquidityMappingEngine
-from liquidity_engine.grader.sequence import SetupSequenceDetector
-from liquidity_engine.models import Timeframe
+from liquidity_engine.grader.sequence import SetupSequenceDetector, _EntryWindow
+from liquidity_engine.grader.setup_grader import _ENTRY_ELIGIBLE_TIMEFRAMES
+from liquidity_engine.models import BiasDirection, PDArray, SetupSequence, Timeframe
 from services.market_data.as_of_view import compose_as_of_view
 from services.market_data.strategy_calendar import StrategyCalendar
 
@@ -55,8 +56,11 @@ FILES = {"engine.html": "text/html; charset=utf-8", "engine.js": "text/javascrip
          "drawings.js": "text/javascript; charset=utf-8", "settings.js": "text/javascript; charset=utf-8",
          "motion.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8"}
 MAX_DAYS = 5
+KEPT_SESSIONS = 3
+#: The trader's picks against the engine's choice (Requirement 16.3): local, git-ignored.
+PICKS = REPO_ROOT / "data" / "journal" / "watch_picks.jsonl"
 _CALENDAR = StrategyCalendar()
-_ARRAYS_SHOWN, _POOLS_SHOWN = 80, 50
+_ARRAYS_SHOWN, _POOLS_SHOWN, _CANDIDATES_SHOWN = 80, 50, 30
 
 
 def wall(t) -> int:
@@ -111,6 +115,40 @@ def _num(value) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     return None if np.isnan(v) else v
+
+
+class Candidate(NamedTuple):
+    """An entry-eligible array the sequence detector looks at (Requirement 16.2): the sequence that leads to it and
+    the key it is ranked by, or None for both when no raid, CISD and intact swing lead to it."""
+    array: PDArray
+    sequence: Optional[SetupSequence]
+    key: Optional[tuple]
+
+
+def ranked_candidates(candles_by_tf, pd_arrays, as_of) -> list[Candidate]:
+    """``SetupSequenceDetector.detect``'s own ranking, from its own parts, listing every array instead of keeping
+    the best: those with a sequence first, best first (the engine's choice leads), then those without. The engine's
+    code stays as it is (its fingerprint keys the signal cache); the tests hold the two to the same choice."""
+    arrays_by_tf: dict = {}
+    for array in pd_arrays:
+        if (not array.is_filled and array.timeframe in _ENTRY_ELIGIBLE_TIMEFRAMES
+                and array.direction != BiasDirection.NEUTRAL and candles_by_tf.get(array.timeframe)):
+            arrays_by_tf.setdefault(array.timeframe, []).append(array)
+    if not arrays_by_tf:
+        return []
+    pools = SetupSequenceDetector().pools(candles_by_tf, as_of)
+    ranked, without = [], []
+    for tf, arrays in arrays_by_tf.items():
+        window = _EntryWindow(tf, candles_by_tf, pools)
+        for array in arrays:
+            found = window.sequence_for(array)
+            if found is None:
+                without.append(Candidate(array, None, None))
+                continue
+            sequence, weight = found
+            ranked.append(Candidate(array, sequence,
+                                    (sequence.raid.raided_at, weight, array.strength_score, array.formed_at, array.array_id)))
+    return sorted(ranked, key=lambda c: c.key, reverse=True) + without
 
 
 class WatchSession:
@@ -182,6 +220,7 @@ class WatchSession:
             result = run_backtest(cfg, study, False, {self.instrument: data}, specs, cache=cache, workers=1)
         frame = pd.read_csv(io.StringIO(journal_csv(result.journal, result.open_orders)))
         self.journal = [self._journal_row(r) for r in frame.to_dict("records")]
+        self._paths(data.m1)
         decisions = {r["t"]: r for r in self.journal}
         for w_, state in states.items():
             state["decision"] = decisions.get(w_)
@@ -189,6 +228,75 @@ class WatchSession:
         self.summary = {"orders": sum(1 for r in self.journal if r["decision"] == "EXECUTE"), "trades": len(filled),
                         "total_r": round(sum(r["net_r"] for r in filled), 2)}
         self.states, self._keys = states, sorted(states)
+
+    def _paths(self, m1) -> None:
+        """Each filled trade's best and worst point from the fill to the exit (or the session's end), in R and at
+        their times (Requirement 16.1). The backtest never moves a stop or takes a partial, so this is all the
+        managing there was to see. Within the fill's minute the extremes may precede the fill."""
+        times = np.array(wall_seconds([b.timestamp for b in m1])) if m1 else np.array([], dtype=np.int64)
+        highs = np.array([b.high for b in m1]); lows = np.array([b.low for b in m1])
+        end_of_session = wall(self.end)
+        for r in self.journal:
+            r["path"] = None
+            if r["filled_at"] is None or r["fill"] is None or r["stop"] is None or r["fill"] == r["stop"]:
+                continue
+            end = r["closed_at"] if r["closed_at"] is not None else end_of_session
+            lo_i = max(0, int(np.searchsorted(times, r["filled_at"], side="right")) - 1)
+            hi_i = int(np.searchsorted(times, end, side="right"))
+            long_ = r["direction"] == "LONG"
+            risk = abs(r["fill"] - r["stop"])
+            best, best_at, worst, worst_at = r["fill"], r["filled_at"], r["fill"], r["filled_at"]
+            if hi_i > lo_i:
+                up, down = highs[lo_i:hi_i], lows[lo_i:hi_i]
+                i_up, i_down = int(np.argmax(up)), int(np.argmin(down))
+                fav, adv = (up, down) if long_ else (down, up)
+                i_fav, i_adv = (i_up, i_down) if long_ else (i_down, i_up)
+                if (fav[i_fav] > best) if long_ else (fav[i_fav] < best):
+                    best, best_at = float(fav[i_fav]), max(int(times[lo_i + i_fav]), r["filled_at"])
+                if (adv[i_adv] < worst) if long_ else (adv[i_adv] > worst):
+                    worst, worst_at = float(adv[i_adv]), max(int(times[lo_i + i_adv]), r["filled_at"])
+            sign = 1 if long_ else -1
+            r["path"] = {"best": best, "best_at": min(best_at, end), "best_r": round(sign * (best - r["fill"]) / risk, 2),
+                         "worst": worst, "worst_at": min(worst_at, end), "worst_r": round(sign * (worst - r["fill"]) / risk, 2)}
+
+    def save_pick(self, body: dict, path: Optional[Path] = None) -> dict:
+        """The trader's pick at a close: one of the ranked candidates, "none" or "other" (Requirement 16.3)."""
+        t = int(body["t"])
+        if t not in self.states:
+            raise KeyError(f"t: {t} is not one of the session's closes")
+        state = self.states[t]
+        ranked = (state.get("candidates") or {}).get("ranked", [])
+        pick = str(body.get("pick") or "")
+        by_id = {c["id"]: c for c in ranked}
+        if pick not in by_id and pick not in ("none", "other"):
+            raise ValueError("pick: one of the close's candidates, none or other")
+        chosen = next((c for c in ranked if c["chosen"]), None)
+        brief = lambda c: None if c is None else {k: c[k] for k in ("id", "rank", "tf", "type", "dir", "low", "high", "raid")}  # noqa: E731
+        line = {"written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "instrument": self.instrument,
+                "variant": self.variant or "base", "first_day": self.first_day.isoformat(), "t": t,
+                "t_ny": from_wall(t).tz_convert(NY).isoformat(), "pick": pick, "picked": brief(by_id.get(pick)),
+                "engine": chosen["id"] if chosen else None, "engine_choice": brief(chosen),
+                "decision": (state.get("decision") or {}).get("decision"), "note": str(body.get("note") or "")[:1000]}
+        path = Path(path or PICKS)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(line) + "\n")
+        return line
+
+    def picks(self, path: Optional[Path] = None) -> list[dict]:
+        """This session's picks, latest per close."""
+        path = Path(path or PICKS)
+        if not path.exists():
+            return []
+        latest: dict[int, dict] = {}
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            try:
+                line = json.loads(raw)
+            except ValueError:
+                continue
+            if line.get("instrument") == self.instrument and int(line.get("t", -1)) in self.states:
+                latest[int(line["t"])] = line
+        return [latest[k] for k in sorted(latest)]
 
     @staticmethod
     def _journal_row(r: dict) -> dict:
@@ -201,14 +309,15 @@ class WatchSession:
                 "exit": _num(r.get("exit")), "exit_reason": r.get("exit_reason") if isinstance(r.get("exit_reason"), str) else None,
                 "net_r": _num(r.get("net_r")), "mfe_r": _num(r.get("mfe_r"))}
 
-    def _state(self, lm, view, t: datetime, entry_tf: Timeframe) -> dict:
+    def _state(self, lm, view, seen, t: datetime, entry_tf: Timeframe) -> dict:
         price = view[entry_tf][-1].close if view.get(entry_tf) else None
         days = view.get(Timeframe.D1, [])[-6:]
         lo = min((c.low for c in days), default=price) if price else None
         hi = max((c.high for c in days), default=price) if price else None
         pad = (hi - lo) * 0.6 if lo is not None else 0
         near = (lambda p: lo - pad <= p <= hi + pad) if lo is not None else (lambda p: True)
-        arrays = [a for a in lm.pd_arrays if not a.is_filled and (near(a.high) or near(a.low))]
+        unique = {a.array_id: a for a in reversed(lm.pd_arrays)}           # one of each: the list can repeat an array
+        arrays = [a for a in unique.values() if not a.is_filled and (near(a.high) or near(a.low))]
         arrays.sort(key=lambda a: a.formed_at, reverse=True)
         seq = lm.setup_sequence
         keep = {seq.entry_array_id} if seq else set()
@@ -261,7 +370,34 @@ class WatchSession:
         bias = {tf: {"direction": b.direction.value, "open": b.reference_open} for tf, b in lm.htf_bias.items()
                 if tf in ("W1", "D1", "H4", "H1")}
         return {"price": price, "arrays": out_arrays, "pools": pools[:_POOLS_SHOWN], "profile": profile, "sequence": sequence,
-                "grade": grade, "bias": bias}
+                "grade": grade, "bias": bias, "candidates": self._candidates(seen, seq, t)}
+
+    @staticmethod
+    def _candidates(seen, chosen_sequence, t: datetime) -> dict:
+        """The arrays the sequence detector ranked at this close, best first, and how many had no sequence."""
+        ranked, without, ids = [], {}, set()
+        for c in seen or ():
+            a = c.array
+            if a.array_id in ids:                   # the engine's list can hold one array more than once
+                continue
+            ids.add(a.array_id)
+            if c.sequence is None:
+                without[a.timeframe.value] = without.get(a.timeframe.value, 0) + 1
+                continue
+            if len(ranked) >= _CANDIDATES_SHOWN:
+                continue
+            s = c.sequence
+            ranked.append({
+                "id": a.array_id, "rank": len(ranked) + 1, "tf": a.timeframe.value, "type": a.array_type.value, "dir": a.direction.value,
+                "low": a.low, "high": a.high, "formed": wall(a.formed_at), "strength": round(a.strength_score, 3),
+                "mt": None if a.ob_candle_open is None else (a.ob_candle_open + a.ob_candle_close) / 2,
+                "raid": {"side": s.raid.pool.side.value, "source": s.raid.pool.source.value, "tf": s.raid.pool.timeframe.value,
+                         "price": s.raid.pool.price, "at": wall(s.raid.raided_at),
+                         "age_h": round((pd.Timestamp(t) - pd.Timestamp(s.raid.raided_at)).total_seconds() / 3600, 1)},
+                "cisd": wall(s.cisd_at), "protected": s.protected_swing.wick, "weight": c.key[1],
+                "chosen": bool(chosen_sequence is not None and a.array_id == chosen_sequence.entry_array_id and not ranked),
+            })
+        return {"ranked": ranked, "without": without}
 
     # ── what the page asks ──────────────────────────────────────────────────
     def status(self) -> dict:
@@ -290,14 +426,16 @@ class _Capturing:
 
     def analyze(self, view, instrument, t):
         lm = self.engine.analyze(view, instrument, t)
-        self.last = (lm, view)
+        self.last = (lm, view, ranked_candidates(view, lm.pd_arrays, t))   # what the detector ranked, for the page
         return lm
 
 
 class WatchApp:
-    def __init__(self, config: Path, snapshot: Path, slice_: tuple[date, date]) -> None:
+    def __init__(self, config: Path, snapshot: Path, slice_: tuple[date, date], picks: Optional[Path] = None) -> None:
         self.config, self.snapshot, self.slice = Path(config), Path(snapshot), slice_
+        self.picks_path = Path(picks) if picks else PICKS
         self.session: Optional[WatchSession] = None
+        self._kept: dict[tuple, WatchSession] = {}          # the last few sessions, so a tab can come back to one
 
     def meta(self) -> dict:
         import tomllib
@@ -315,9 +453,16 @@ class WatchApp:
         if not 1 <= days <= MAX_DAYS:
             raise ValueError(f"days: 1 to {MAX_DAYS}")
         variant = body.get("variant") or "base"
-        session = WatchSession(self.config, None if variant == "base" else variant, str(body.get("instrument", "XAUUSD")),
-                               day, days, self.snapshot)
-        self.session = session
+        instrument = str(body.get("instrument", "XAUUSD")).upper()
+        key = (instrument, day, days, variant)
+        kept = self._kept.get(key)
+        if kept is not None and kept.state != "error":
+            self.session = kept
+            return kept.status()
+        session = WatchSession(self.config, None if variant == "base" else variant, instrument, day, days, self.snapshot)
+        self.session = self._kept[key] = session
+        while len(self._kept) > KEPT_SESSIONS:
+            self._kept.pop(next(iter(self._kept)))
         threading.Thread(target=session.prepare, daemon=True).start()
         return session.status()
 
@@ -368,11 +513,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: {"state": self.app.need().state_at(int(q["t"]))})
         elif url.path == "/api/watch/journal":
             self._answer(lambda: {"rows": self.app.need().journal})
+        elif url.path == "/api/watch/picks":
+            self._answer(lambda: {"picks": self.app.need().picks(self.app.picks_path)})
         else:
             self._send(404, {"error": f"no such path {url.path}"})
 
     def do_POST(self) -> None:  # noqa: N802
-        if urlparse(self.path).path != "/api/watch/start":
+        if urlparse(self.path).path not in ("/api/watch/start", "/api/watch/pick"):
             self._send(404, {"error": f"no such path {self.path}"})
             return
         try:
@@ -380,7 +527,10 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._send(400, {"error": str(exc)})
             return
-        self._answer(lambda: self.app.start(body))
+        if urlparse(self.path).path == "/api/watch/pick":
+            self._answer(lambda: self.app.need().save_pick(body, self.app.picks_path))
+        else:
+            self._answer(lambda: self.app.start(body))
 
     def log_message(self, format: str, *args) -> None:
         pass
@@ -390,9 +540,9 @@ def make_watch_server(app: WatchApp, host: str = "127.0.0.1", port: int = 8767) 
     return ThreadingHTTPServer((host, port), type("WatchHandler", (_Handler,), {"app": app}))
 
 
-def serve(config: Path, port: int = 8767, browser: bool = True) -> int:
+def serve(config: Path, port: int = 8767, browser: bool = True, picks: Optional[Path] = None) -> int:
     research = load_research_config()
-    app = WatchApp(Path(config), SNAPSHOTS_DIR / research.snapshot, research.slices.explore)
+    app = WatchApp(Path(config), SNAPSHOTS_DIR / research.snapshot, research.slices.explore, picks=picks)
     server = make_watch_server(app, port=port)
     url = f"http://127.0.0.1:{server.server_address[1]}/"
     print(f"engine watch at {url} (strategy from {config}; days from the exploration slice). Ctrl+C stops.")

@@ -357,6 +357,6 @@ The trader can't judge the engine from tables: "something is still broken, but I
 
 Added 2026-10-15. After watching, the trader placed the engine's flaw "between the logical steps of my model execution and the right array, the high-probability point of interest". The sequence detector takes any untouched M1-M15 array with a raid, CISD and intact swing behind it, and ranks them by how recent the raid is. The grade then counts conditions; it is not an ordered chain.
 
-1. THE watch SHALL draw each trade as the engine managed it: placement, fill, every stop or target change and partial close the simulated broker made, and the exit with its R, each at its time.
+1. THE watch SHALL draw each trade's life: placement, fill, the exit with its R, and the path between them (the best and worst point it reached, in R, at their times). The backtest never moves a stop or takes a partial: the page SHALL say so, since that is the management a trader would have done. Until the trade closes, only the best so far is shown.
 2. AT each close where the engine looked for a setup, the page SHALL list every candidate array the sequence detector considered: its timeframe, type, zone, raid (pool and age), CISD, and the key it was ranked by. It SHALL mark the one the engine chose, and draw the candidates on the chart when asked.
 3. THE trader MAY mark the candidate they would have chosen, or "none". The picks are kept in a file under `data/journal/` (local, git-ignored), one line per close, with the engine's choice beside it, so the two can be compared over many sessions.

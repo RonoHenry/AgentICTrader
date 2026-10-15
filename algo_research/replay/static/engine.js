@@ -22,8 +22,9 @@ const TOOLS = [
   { type: "fib", icon: "≣", title: "Fib / SD (Alt+F)", key: "f" }, { type: "range", icon: "⇕", title: "Range (or Shift + drag)", key: "m" },
   { type: "text", icon: "T", title: "Text (Alt+N)", key: "n" },
 ];
-const LAYERS = [["arrays", "Arrays"], ["pools", "Pools"], ["profile", "Day bias & draw"], ["sequence", "Setup"], ["orders", "Orders & trades"]];
-const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, journal: [], playing: false, busy: false,
+const LAYERS = [["arrays", "Arrays"], ["pools", "Pools"], ["profile", "Day bias & draw"], ["sequence", "Setup"], ["candidates", "Candidates"],
+                ["orders", "Orders & trades"]];
+const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, journal: [], playing: false, busy: false, picks: {}, hl: null,
             speed: 1, digits: 5, layers: Prefs.get("watch.layers", { arrays: true, pools: true, profile: true, sequence: true, orders: true }),
             arrayMode: Prefs.get("watch.arrayMode", "interval"), arrayVis: Prefs.get("watch.arrayVis", {}) };
 // The chart timeframes each array timeframe shows on by default (Requirement 14.3); the trader can change them.
@@ -60,6 +61,7 @@ function label(t, long) {
 }
 const fmtTime = (t) => (t == null ? "—" : label(t, true));
 const fmt = (x) => (x == null ? "—" : Number(x).toFixed(S.digits));
+function hexOf(c) { const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c); return m ? "#" + [m[1], m[2], m[3]].map((x) => Number(x).toString(16).padStart(2, "0")).join("") : c; }
 function rgba(c, a) { const m = /^#([0-9a-f]{6})$/i.exec(c); if (!m) return c; const n = parseInt(m[1], 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; }
 
 const timeline = {
@@ -170,6 +172,24 @@ function paintEngine(ctx, size) {
       ctx.fill(); text("protected swing", px + 8, sq.direction === "BULLISH" ? py + 14 : py - 6, c);
     }
   }
+  if (st && !st.error && st.candidates) {               // what the sequence detector ranked; the hovered one always
+    for (const c of [...st.candidates.ranked].reverse()) {
+      if (!S.layers.candidates && c.id !== S.hl) continue;
+      const x1 = Math.max(X(c.formed), -10), y1 = Y(c.high), y2 = Y(c.low);
+      if (!isFinite(y1) || !isFinite(y2)) continue;
+      const col = c.dir === "BULLISH" ? pal.up : pal.bad, hex = col.startsWith("#") ? col : "#888888", hot = c.id === S.hl;
+      if (hot) { ctx.fillStyle = rgba(hex, 0.18); ctx.fillRect(x1, Math.min(y1, y2), W - x1, Math.abs(y2 - y1)); }
+      ctx.strokeStyle = rgba(hex, c.chosen || hot ? 1 : 0.6); ctx.lineWidth = c.chosen || hot ? 2 : 1; ctx.setLineDash(c.chosen ? [] : [4, 3]);
+      ctx.strokeRect(x1, Math.min(y1, y2), W - x1, Math.abs(y2 - y1)); ctx.setLineDash([]);
+      text(`#${c.rank} ${c.tf} ${c.type}${c.chosen ? " (engine)" : ""}`, Math.max(x1, 0) + 3, Math.max(y1, y2) + 11, col);
+      if (hot) {
+        const rx = X(c.raid.at), ry = Y(c.raid.price), cx = X(c.cisd);
+        ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(rx, ry, 6, 0, 2 * Math.PI); ctx.stroke();
+        text(`raid ${c.raid.source.replace("_", " ")} ${c.raid.tf}, ${c.raid.age_h} h before`, rx + 8, ry - 4, col);
+        line(cx, 0, cx, size.height, rgba(hex, 0.6), [3, 3]); text("CISD", cx + 3, 36, col);
+      }
+    }
+  }
   if (S.layers.orders) {
     for (const r of S.journal) {
       if (r.decision !== "EXECUTE" || r.placed_at == null || r.placed_at > S.t) continue;
@@ -195,6 +215,27 @@ function paintEngine(ctx, size) {
       ctx.fillStyle = c; ctx.beginPath();
       if (long) { ctx.moveTo(x1, fy); ctx.lineTo(x1 - 6, fy + 10); ctx.lineTo(x1 + 6, fy + 10); } else { ctx.moveTo(x1, fy); ctx.lineTo(x1 - 6, fy - 10); ctx.lineTo(x1 + 6, fy - 10); }
       ctx.fill();
+      const oneR = r.fill + (long ? 1 : -1) * Math.abs(r.fill - r.stop);   // where a break-even would arm
+      line(x1, Y(oneR), x2, Y(oneR), rgba(hexOf(pal.muted), 0.8), [1, 3]); text("+1R", x2 + 3, Y(oneR) + 4, pal.muted);
+      const mark = (t, p, label, color, up) => {
+        const mx = X(t), my = Y(p);
+        if (!isFinite(mx) || !isFinite(my)) return;
+        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(mx, my, 3.5, 0, 2 * Math.PI); ctx.fill();
+        text(label, mx + 6, up ? my - 5 : my + 13, color);
+      };
+      if (closed && r.path) {                           // the path, once it is all in the past
+        mark(r.path.best_at, r.path.best, `best +${r.path.best_r.toFixed(2)}R`, pal.good, long);
+        mark(r.path.worst_at, r.path.worst, `worst ${r.path.worst_r.toFixed(2)}R`, pal.bad, !long);
+      } else if (!closed) {                             // the best so far, from the chart's own bars
+        const i0 = Math.max(0, timeline.index(r.filled_at));
+        let best = r.fill, at = r.filled_at;
+        for (let i = i0; i < S.bars.length; i++) {
+          const b = S.bars[i], p = long ? b.high : b.low;
+          if (long ? p > best : p < best) { best = p; at = Math.max(b.time, r.filled_at); }
+        }
+        const bestR = (long ? best - r.fill : r.fill - best) / Math.abs(r.fill - r.stop);
+        if (bestR > 0.05) mark(at, best, `best so far +${bestR.toFixed(2)}R`, pal.good, long);
+      }
       if (!closed) {                                    // the open trade, marked to the last close
         const last = S.bars[S.bars.length - 1], risk = Math.abs(r.stop - r.fill);
         const openR = last && risk ? (long ? last.close - r.fill : r.fill - last.close) / risk : null;
@@ -278,6 +319,7 @@ async function openSession(st) {
   $("sMsg").textContent = "Play, step, or jump to the next order. Your own drawings are kept in this browser for this session.";
   $("prog").style.width = "100%";
   S.journal = (await api("/api/watch/journal")).rows;
+  S.picks = Object.fromEntries((await api("/api/watch/picks")).picks.map((p) => [p.t, p]));
   draw.load(Prefs.get(drawKey(), []));
   await jumpTo(st.start + 3600);
 }
@@ -452,9 +494,41 @@ function renderEngine() {
     html += `<div class="card"><b>Setup</b>: ${esc(sq.direction)} after a raid of ${esc(sq.pool.source)} ${esc(sq.pool.tf)} ${fmt(sq.pool.price)} at ${fmtTime(sq.raided)}<br>
       CISD at ${fmtTime(sq.cisd)} · protected swing ${fmt(sq.protected.wick)} (${fmtTime(sq.protected.at)})</div>`;
   }
+  const open = S.journal.find((r) => r.filled_at != null && r.filled_at <= S.t && (r.closed_at == null || r.closed_at > S.t));
+  if (open) {
+    html += `<div class="card"><b>Open trade</b>: ${esc(open.direction)} from ${fmt(open.fill)}, stop ${fmt(open.stop)}, target ${fmt(open.target)}.
+      <div class="muted">The engine doesn't manage trades: no break-even, trailing or partial close. It waits for the stop or the target;
+      the dotted +1R line is where a break-even would arm.</div></div>`;
+  }
+  const cd = st.candidates;
+  if (cd) {
+    const without = Object.entries(cd.without || {}).map(([tf, n]) => `${n} ${tf}`).join(", ");
+    const mine = S.picks[st.t];
+    const tag = (v) => (mine && mine.pick === v ? "✓ " : "");
+    html += `<div class="card cands"><b>Candidates</b>: ${cd.ranked.length} array(s) with a raid, CISD and intact swing behind them${without ? `; none behind ${esc(without)}` : ""}.
+      <div class="hint">Ranked as the engine ranks them: the latest raid first, then the raided pool's timeframe, then the array's type. Hover to see one; mark the one you would take.</div>
+      ${cd.ranked.map((c) => `<div class="cand${c.chosen ? " chosen" : ""}${mine && mine.pick === c.id ? " mine" : ""}" data-id="${esc(c.id)}">
+        <span class="rk">#${c.rank}</span> ${esc(c.tf)} ${esc(c.type)} ${c.dir === "BULLISH" ? "▲" : "▼"} ${fmt(c.low)}–${fmt(c.high)}${c.chosen ? " · <b>the engine's choice</b>" : ""}
+        <div class="muted">raid of ${esc(c.raid.source.replace("_", " "))} ${esc(c.raid.tf)} ${fmt(c.raid.price)}, ${c.raid.age_h} h before · CISD ${fmtTime(c.cisd)}</div>
+        <button class="boxed pick" data-pick="${esc(c.id)}">${tag(c.id)}Mine</button></div>`).join("")}
+      <div class="row"><button class="boxed pick" data-pick="none">${tag("none")}None: no trade here</button>
+        <button class="boxed pick" data-pick="other">${tag("other")}Another array</button></div>
+      <textarea id="pickNote" placeholder="Why (optional): the POI you would use, the step the engine skipped">${esc(mine ? mine.note : "")}</textarea>
+      ${mine ? `<div class="hint">Saved: ${esc(mine.pick === "none" ? "no trade" : mine.pick === "other" ? "another array" : "#" + (mine.picked ? mine.picked.rank : "?"))}.</div>` : ""}</div>`;
+  }
   const bias = Object.entries(st.bias || {}).map(([tf, b]) => `${tf} ${b.direction === "BULLISH" ? "▲" : b.direction === "BEARISH" ? "▼" : "–"}`).join(" · ");
   html += `<div class="hint">Price against each open: ${bias}. Showing ${st.arrays.length} unfilled arrays and ${st.pools.length} untaken pools near price.</div>`;
   box.innerHTML = html;
+  for (const div of box.querySelectorAll(".cand")) {
+    div.onmouseenter = () => { S.hl = div.dataset.id; refresh(); };
+    div.onmouseleave = () => { S.hl = null; refresh(); };
+  }
+  for (const b of box.querySelectorAll("button.pick")) {
+    b.onclick = () => act(async () => {
+      const saved = await api("/api/watch/pick", { t: st.t, pick: b.dataset.pick, note: $("pickNote").value });
+      S.picks[st.t] = saved; renderEngine();
+    });
+  }
 }
 function renderLog() {
   const items = [];
@@ -462,7 +536,8 @@ function renderLog() {
     if (r.decision !== "EXECUTE") continue;
     if (r.t <= S.t) items.push({ t: r.t, text: `${r.order_kind || ""} ${r.direction} placed @ ${fmt(r.entry)} (R:R ${r.r_ratio ? r.r_ratio.toFixed(1) : "—"})`, cls: "" });
     if (r.filled_at != null && r.filled_at <= S.t) items.push({ t: r.filled_at, text: `${r.direction} filled @ ${fmt(r.fill)}`, cls: "" });
-    if (r.closed_at != null && r.closed_at <= S.t) items.push({ t: r.closed_at, text: `${r.exit_reason || "closed"} ${r.net_r != null ? (r.net_r >= 0 ? "+" : "") + r.net_r.toFixed(2) + "R" : ""}`,
+    if (r.closed_at != null && r.closed_at <= S.t) items.push({ t: r.closed_at, text: `${r.exit_reason || "closed"} ${r.net_r != null ? (r.net_r >= 0 ? "+" : "") + r.net_r.toFixed(2) + "R" : ""}`
+                                                               + (r.path ? ` (best +${r.path.best_r.toFixed(2)}R at ${fmtTime(r.path.best_at)})` : ""),
                                                                cls: (r.net_r || 0) > 0 ? "good" : "bad" });
     else if (r.filled_at == null && r.expires_at != null && r.expires_at <= S.t) items.push({ t: r.expires_at, text: "order expired unfilled", cls: "muted" });
   }

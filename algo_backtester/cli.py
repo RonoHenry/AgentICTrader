@@ -133,6 +133,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     watch.add_argument("config", nargs="?", default="config/backtests/base.toml", help="run configuration (default base.toml)")
     watch.add_argument("--port", type=int, default=8767, help="default 8767")
     watch.add_argument("--no-browser", action="store_true", help="don't open the page")
+    watch.add_argument("--picks", type=Path, default=None, help="where your picks go (default data/journal/watch_picks.jsonl)")
 
     pine = commands.add_parser("pine", help="write a TradingView overlay of a run's trades")
     pine.add_argument("run_dir", type=Path, help="a run directory, data/backtests/<run_id>")
@@ -164,7 +165,7 @@ def main(argv: Optional[Sequence[str]] = None, source_factory: Optional[SourceFa
         return _pine(args)
     if args.command == "watch":
         from algo_backtester.watch import serve
-        return serve(Path(args.config), args.port, not args.no_browser)
+        return serve(Path(args.config), args.port, not args.no_browser, args.picks)
 
     names = args.variant if args.command == "run" else [args.variant]
     if args.command == "run" and not names:
