@@ -290,3 +290,144 @@ Proposed defaults apply unless the user changes them at review.
 | CE-D11 | History | `position` needs MN1 and W1 history before 2025. With today's data (M1 from 2024-05) it may be INSUFFICIENT; longer D1 and H4 history from MT5 would fix that (AR-D11). |
 | CE-D12 | The user's journal | Local and git-ignored. Calibration reads only records outside the confirmation slice and the hold-out; the others are scored once the rules are frozen. |
 | CE-D13 | Names and numbering | Package `liquidity_engine/context/`, spec `.kiro/specs/context-engine/`, decisions CE-D. Tasks continue the platform sequence from 275; hypotheses continue from H011. |
+
+---
+
+## Update 2026-10-15: Model A
+
+The trader wrote down their model, Model A, and said the engine's model is broken. It is: the engine reads bottom-up. It takes any recent sweep on M15, then lets the context grade or veto it, so a filter can remove a bad pick but never choose the right one. Every task 242 variant landed near +0.1R with an interval spanning zero. This spec's own Requirement 6 repeated the pattern ("the setup sequence stays the trigger").
+
+Model A reads top-down. The context frame picks the place and the time; the lower frames time the entry. Its six steps, for a short (a long mirrors them):
+1. Premium on the context frame's dealing range.
+2. A point of interest (POI) above.
+3. Inducement at the POI.
+4. C2 runs C1's high into the POI, closes back inside C1's range, and price displaces.
+5. C3 retraces into the OTE of the new range.
+6. A sell limit there, with the stop above C2's high and targets at C1's low and the SD levels.
+
+Time is its core element.
+
+The model is universal: it is read on every frame, and traded on the trader's frame sets (MA-D1):
+
+| Set | F, context | C, the CRT candles | E, execution |
+|---|---|---|---|
+| `model_d1` | D1 | H1 | M5 |
+| `model_h4` | H4 | M15 (M30 a variant) | M1 (M3 a variant) |
+
+`model_h4` nests inside `model_d1`: the higher set's OTE is a POI of the lower one, and the higher set's targets extend the lower set's (the "sniper entry").
+
+What this update does:
+- **Keeps** Requirements 1–5 and 8–12. They are the foundation Model A needs: frames, analysis prices, the frame state (dealing range, premium/discount, POIs), time in every frame, research before trading, calibration, parity and evaluation.
+- **Replaces** Requirements 6 and 7 in the Model A modes, with the Model A sequence (Requirement 13) and its orders (Requirement 14). `legacy` keeps its own path.
+- **Adds** nesting (Requirement 15), the state record measured before anything is traded (Requirement 16), and Model A drawn on the Engine chart (Requirement 17).
+- **Changes CE-D1.** The modes are the trader's sets. The four earlier ladders stay available as custom ladders, for the universality check (Requirement 16.4).
+
+Where the trader's model leaves a definition open, its working defaults apply (MA-D2 to MA-D12) until labelled examples settle them. Variants of the open ones are measured side by side.
+
+### Requirement 13: The Model A Sequence
+
+**User Story:** As the trader, I want the engine to read my sequence in my order, so that it takes the setup I would take, where and when I would.
+
+#### Acceptance Criteria
+
+1. FOR each frame set and direction, a reader SHALL follow Model A's states. Each instance records the time of every state and a reason string. Written for a short:
+   - **FRAMED:** a C candle closes (it becomes C1) while price is in premium of F's dealing range (Requirement 3) and F has a bearish POI above price (MA-D2). C1's high and low are recorded.
+   - **ARMED:** price comes within one F average range of the POI. Inducement between price and the POI (MA-D3) is recorded, not required.
+   - **MANIPULATED:** the next C candle, C2, trades above C1's high and into the POI.
+   - **REJECTED:** C2 closes back inside C1's range.
+   - **DISPLACED:** on E, a bearish CISD after C2's high, with a candle body of at least 1.5 E average ranges and a bearish FVG left by the leg (MA-D4). This fixes the new range, from C2's high to the leg's low (MA-D5).
+   - **IN_OTE:** price retraces into 0.62–0.79 of the new range.
+   - **ENTERED:** a sell limit at 0.705 of the new range fills (MA-D6).
+   - **Outcome:** TP1 (C1's low), each of −1, −2 and −2.5 SD of the new range (MA-D7), or STOPPED (above C2's high), within the horizon (MA-D11).
+2. AN instance SHALL end at the first invalidation, recorded by name:
+   - `POI_FAILED`: a C candle closes above the POI's far side.
+   - `NO_REJECTION`: C2 closes above C1's high.
+   - `NO_MANIPULATION`: C2 closes without having traded above C1's high into the POI.
+   - `MISSED`: price breaks the new range's low before reaching the OTE.
+   - `RETRACE_INVALID`: price trades above C2's high before the entry fills.
+   - `EXPIRED`: C3 closes without a fill, or without displacement.
+   - `REFRAMED`: F's dealing range changes before MANIPULATED.
+3. EVERY size SHALL be measured in the frame's own average range (MA-D8), and every duration in the frame's own candles. So the reader is the same code on every frame set, and relabelling the candles as another timeframe leaves its states unchanged (Property 1).
+4. THE reader SHALL read only bars closed by t (Property 2). It SHALL carry its instances from close to close; it does not re-derive them each time.
+5. **Time.** EACH MANIPULATED SHALL record whether C2 opened in the trader's window for its parent candle (MA-D9), and in a measured active slot (Requirement 5). Neither gates the reader; both are recorded.
+6. AT most one instance per direction SHALL run at a time on a frame set. A new C1 is taken only once the instance before it has ended (MA-D10).
+
+### Requirement 14: Model A Orders
+
+**User Story:** As the trader, I want the engine to place my order where I would, so that a backtest trades my model and not an approximation of it.
+
+#### Acceptance Criteria
+
+1. Once an instance is REJECTED and DISPLACED, the order SHALL be:
+   - a sell limit at 0.705 of the new range;
+   - the stop above C2's high by 0.1 E average ranges;
+   - TP1 at C1's low when it lies beyond the entry, else at −1 SD; TP2 at −2 SD.
+2. THE order SHALL expire at C3's close. Trades are held to stop or target within the horizon (MA-D11), and closed at its end otherwise.
+3. Each Model A order intent SHALL carry the instance's states and reasons. The backtest report SHALL show them per trade.
+
+### Requirement 15: Nesting
+
+**User Story:** As the trader, I want the lower frame set to trade inside the higher set's OTE, and to aim for the higher set's targets, so that a small stop carries a large target.
+
+#### Acceptance Criteria
+
+1. WHILE a `model_d1` instance is DISPLACED and not yet ended, its OTE zone SHALL be a POI of `model_h4` in the same direction, beside `model_h4`'s own F POIs.
+2. A `model_h4` instance SHALL record its nesting depth: 2 when its C2 traded into a live `model_d1` OTE, else 1.
+3. A nested instance SHALL carry the higher instance's C1 opposite extreme and SD levels beside its own, as its extended targets.
+
+### Requirement 16: The Model A Record
+
+**User Story:** As the trader, I want to know how often each step of my model happens and what follows, so that the model becomes a measured edge before anything is traded.
+
+#### Acceptance Criteria
+
+1. AlgoResearch SHALL run the readers over the exploration slice (AR-D3) per instrument and frame set. It SHALL report the funnel:
+   - how many instances reached each state, and each invalidation's count;
+   - after ENTERED, how often TP1 and each SD level were reached before the stop, and the mean R at TP1 and at TP2;
+   - day-cluster intervals for every rate (AlgoResearch's statistics).
+2. THE report SHALL break the funnel down by:
+   - time sync (the trader's windows and the measured slots);
+   - inducement;
+   - nesting depth;
+   - each variant of MA-D5 to MA-D7.
+3. TWO baselines SHALL run beside it with the same C and E rules:
+   - **`CRT`:** no F. Any C2 that trades above C1's high and closes back inside counts as MANIPULATED and REJECTED.
+   - **`RANDOM_POI`:** each POI is moved by a random 0.5–2 F average ranges, up or down, from a fixed seed.
+
+   Model A's context earns an edge only if its rates beat both.
+4. **The universality check.** The same reader SHALL also run on W1/D1/H4, D1/H4/M15 and H1/M15/M1, report-only.
+5. NOTHING is traded and no hypothesis is pre-registered from this report. It feeds a review with the trader (task 312) and the next spec update.
+
+### Requirement 17: Model A on the Chart
+
+**User Story:** As the trader, I want to watch the engine read Model A on the chart, so that I can see each step it takes and where it goes wrong.
+
+#### Acceptance Criteria
+
+1. THE Engine mode of the charts (market-narrative Requirement 15) SHALL draw each live instance of a chosen frame set:
+   - F's dealing range and its 50%, and the POI;
+   - C1 and C2 marked;
+   - the new range with 0.62, 0.705 and 0.79;
+   - the SD levels and the stop;
+   - a badge with the state and its reason.
+
+   An ended instance fades, with its outcome or invalidation shown.
+2. THE events log SHALL list every instance's state changes, and jump to each.
+3. NOTHING after the session's time SHALL be shown (algo-backtester Requirement 15.4).
+
+### Open Decisions: Model A
+
+| # | Decision | Proposed default |
+|---|---|---|
+| MA-D1 | Frame sets | `model_d1` D1 / H1 / M5. `model_h4` H4 / M15 / M1, with variants C = M30 and E = M3. |
+| MA-D2 | POI | F's unfilled order block, FVG or breaker of the trade's direction, in the matching zone (Requirement 3, CE-D2). Also untaken liquidity on that side: the previous month, week and day high (low), F's swing highs (lows), and F's equal highs (lows) within 0.1 F average ranges. A liquidity POI is the level ± 0.1 F average ranges. NWOG/NDOG and trendline liquidity come later. |
+| MA-D3 | Inducement | Between price and the POI on E: equal highs within 0.1 E average ranges, or at least 6 E candles inside a range smaller than one E average range. Recorded, not gating. |
+| MA-D4 | Displacement | A CISD on E (the engine's `CISDDetector`), the confirming candle's body ≥ 1.5 E average ranges, and an FVG in the leg. |
+| MA-D5 | Where the new range ends | The trader's default, `CISD`: the lowest low between C2's high and the CISD's confirmation. Variant `SWING`: the leg extends to the first confirmed E swing low (lookback 2), so a continuation isn't counted as MISSED. Both are measured; the trader picks. |
+| MA-D6 | Entry | 0.705 of the new range. Variant: the near edge of a bearish array inside the OTE. |
+| MA-D7 | SD anchor | The new range. Variant: the manipulation leg, from C2's open to its high. |
+| MA-D8 | Average range | The mean high minus low of the frame's last 20 closed candles. |
+| MA-D9 | The trader's time windows | H1 C2: opening at 02:00, 03:00, 07:00 or 08:00 New York (the first hours of London and NY AM). M15 or M30 C2: opening at :45 or :00, around the hour's macro. D1 C2: Monday to Wednesday. H4 C2: the 01:00, 05:00 and 09:00 candles. *(The trader confirms these.)* |
+| MA-D10 | Instances | One per direction per frame set at a time. |
+| MA-D11 | Outcome horizon | The close of the F candle in which the entry filled. Variant: the next F candle's close. |
+| MA-D12 | Cache key | `legacy`'s key excludes `liquidity_engine/context/`, so adding Model A leaves the cached legacy runs valid. The Model A modes carry their own key. |

@@ -394,3 +394,35 @@ Tests live in `backend/tests/test_context_*.py`; fixtures under `backend/tests/f
 | 10 Journal | Journal | 9 | 282 |
 | 11 Legacy parity, reasons | Engine integration | 5 | 280, 286 |
 | 12 Evaluation | — | — | 288, 289 |
+
+---
+
+## Update 2026-10-15: Model A
+
+Requirements 13–17 replace the old design choice 3 ("selection lives above the setup") in the Model A modes. There, the setup is Model A's own sequence, read top-down. The frame-relative core (choice 1) and the measure-first rule (choice 5) carry it.
+
+### Components
+
+```
+liquidity_engine/context/
+    model_a.py      # ModelAReader: one frame set, both directions; step(e_bar) per execution close
+    measures.py     # average range per frame, equal highs/lows, tight ranges, FVG in a leg
+    nesting.py      # a higher reader's live OTE as a lower reader's POI; extended targets
+algo_research/model_a.py           # the funnel: readers over the slice, baselines, report
+algo_backtester/watch.py           # the Engine chart's Model A layer (Requirement 17)
+```
+
+- **`ModelAReader(set, f_state_fn, poi_fn, windows)`** is fed E bars in order. It aggregates C and F bars itself, on the strategy calendar. When an F bar closes, it rebuilds the F frame state (dealing range, zone, POIs) through Requirement 3's `frame_state`. When a C bar closes, it advances C1/C2/C3. On each E bar it checks the intra-candle states: MANIPULATED, DISPLACED, IN_OTE, ENTERED, the outcomes and the invalidations.
+
+  Its instances are plain records, an event list of (state, t, reason), so the funnel, the chart and the order intent read the same thing.
+- **The baselines** are the same reader with a different POI function: `CRT` (no F context; the POI is C1's high itself) and `RANDOM_POI` (shifted POIs, seeded). The comparison is then like for like.
+- **The funnel** reads M1 from the research snapshot (the price basis of ND-D7) and builds the frames with the replay's `aggregate`, anchored at 17:00 New York, which matches the strategy calendar for D1, H4, H1 and M5.
+
+  The cost is one pass over E bars per set. F states are rebuilt only at F closes (D1: about 130 per instrument on the slice; H4: about 780), so `model_h4` on M1 stays a single pass of about 180,000 bars.
+- **The engine's path** (`engine.analyze` dispatching on the mode, C3) comes with the orders task (314). The funnel and the chart don't need it.
+
+### Properties added
+
+- Property 1 (frame invariance) covers the reader: relabelled candles, the same states.
+- Property 2 (only the past) covers it: truncating the bars after t leaves every state up to t unchanged.
+- **Property 10: the sequence holds.** Every instance's states appear in Model A's order. No state follows an invalidation. ENTERED implies REJECTED and DISPLACED.

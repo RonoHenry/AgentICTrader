@@ -28,7 +28,7 @@ Tasks marked **(user action)** need Docker, the MT5 terminal, data or a decision
 
 - [ ] 275. Ladders and modes
   - **275a. RED** (`backend/tests/test_context_ladder.py`)
-    - `test_modes_ship_with_their_ladders` — the four modes of CE-D1, bias frame and execution.
+    - `test_modes_ship_with_their_ladders` — the Model A sets of MA-D1 (`model_d1` D1 → H1, execution M5; `model_h4` H4 → M15, execution M1, with the M30 and M3 variants) and the four earlier ladders as custom ladders (update 2026-10-15).
     - `test_nesting_checked_on_the_calendar` — D1 → H4 → H1 → M15 → M5 → M1 nest; D1 → H6 is refused naming the pair; W1 under MN1 is allowed.
     - `test_execution_below_bias_frame` and `test_one_to_four_frames`
     - `test_custom_ladder_from_toml`
@@ -201,6 +201,52 @@ Tasks marked **(user action)** need Docker, the MT5 terminal, data or a decision
   - **If none passes:** use the journal diff (task 282) and the breakdowns to choose the next rule changes, as a spec update; the chain's reasons show where each losing trade's context went wrong.
   - **Validates: Requirements 12.2**
 
+### E. Model A (update 2026-10-15)
+
+Model A replaces the old selection (284) and orders (285) in the Model A modes. The plan builds what the record needs first, measures it, and reviews it with you before anything is traded. Order: 275 → 277 → 279 (the trader's windows) → 310 → 312 → 313 → 311 → your review → 314.
+
+- [ ] 310. The Model A reader (Requirement 13)
+  - **310a. RED** (`backend/tests/test_context_model_a.py`, hand-built candle series)
+    - `test_short_runs_framed_to_tp1` and `test_long_mirrors_it`
+    - `test_no_manipulation_without_c1_high_into_poi`
+    - One test per invalidation: `POI_FAILED`, `NO_REJECTION`, `NO_MANIPULATION`, `MISSED`, `RETRACE_INVALID`, `EXPIRED`, `REFRAMED`.
+    - `test_new_range_end_cisd_and_swing` (MA-D5)
+    - `test_displacement_needs_body_and_fvg` (MA-D4)
+    - `test_inducement_recorded_not_gating` (MA-D3)
+    - `test_time_sync_recorded` (MA-D9)
+    - `test_one_instance_per_direction` (MA-D10)
+    - Properties 1, 2 and 10 (Hypothesis).
+  - **310b. GREEN** — `context/model_a.py`, `context/measures.py`.
+  - **310c. REFACTOR**
+  - **Validates: Requirements 13.1–13.6**
+
+- [ ] 312. The Model A record (Requirement 16) **(user review)**
+  - **312a. RED** (`backend/tests/test_research_model_a.py`)
+    - `test_funnel_counts_states_and_invalidations`
+    - `test_outcome_rates_with_day_cluster_intervals`
+    - `test_breakdowns_by_time_inducement_depth_and_variant`
+    - `test_baselines_share_the_c_and_e_rules`
+    - `test_random_poi_is_seeded`
+    - Property 2 on the funnel's rows.
+  - **312b. GREEN** — `algo_research/model_a.py`; the command `python -m algo_research model-a [--set model_d1] [--instrument XAUUSD]`; `docs/research/MODEL_A_RECORD.md`.
+  - **312c. Your review.** Gold first, then the others. We read the funnel together, and the instances you'd label differently settle MA-D2 to MA-D11.
+  - **Validates: Requirements 16.1–16.5**
+
+- [ ] 313. Model A on the chart (Requirement 17)
+  - The watch session runs the chosen set's reader over its window. The Engine mode draws the instances and logs their states.
+  - **RED:** `test_watch_session_keeps_model_a_instances`, and the walk-through (an instance drawn, its states logged, nothing after the clock).
+  - **Validates: Requirements 17.1–17.3**
+
+- [ ] 311. Nesting (Requirement 15)
+  - **RED:** `test_d1_ote_is_an_h4_poi_while_live`, `test_depth_two_inside_a_live_ote`, `test_extended_targets_from_the_higher_instance`.
+  - **GREEN:** `context/nesting.py`; the funnel gains depth.
+  - **Validates: Requirements 15.1–15.3**
+
+- [ ] 314. Model A orders and the backtest modes (Requirement 14)
+  - Starts after your review of 312. `engine.analyze` dispatches on the mode (C3). Order intents follow Requirement 14, and the modes go into `config/backtests/modes.toml`.
+  - **RED:** `test_order_at_0705_stop_beyond_c2_high`, `test_tp1_c1_low_else_minus_one_sd`, `test_expiry_at_c3_close`, `test_horizon_close`, `test_legacy_cache_key_unchanged` (MA-D12).
+  - **Validates: Requirements 14.1–14.3**
+
 ---
 
 ## Task Dependency Graph
@@ -250,6 +296,12 @@ Dependencies are denoted as `prerequisite → dependent`. Liquidity-engine task 
       "tasks": ["287"],
       "description": "Parity, fixture runs, cost estimates",
       "dependencies": ["Trading the context"]
+    },
+    {
+      "name": "Model A",
+      "tasks": ["310", "312", "313", "311", "314"],
+      "description": "Model A: the reader, its measured record (your review), the chart, nesting, then orders (update 2026-10-15)",
+      "dependencies": ["Context model"]
     },
     {
       "name": "Runs and decision",
