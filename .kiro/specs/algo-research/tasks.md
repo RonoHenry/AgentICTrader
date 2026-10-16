@@ -667,6 +667,9 @@ The user's framework, reverse-engineered on the exploration slice (Requirements 
 News as context (Requirements 29–30). Task 327 needs the user once: to run the export script in the MT5 terminal.
 
 - [ ] 327. Calendar history
+  - **Built 2026-10-16; waiting for the user to run the export.** `algo_research/calendar.py`, `calendar --import`, `scripts/mql5/AgenticCalendarExport.mq5`.
+    - MetaEditor (build 6241) compiled the script with 0 errors and 0 warnings. It is installed as `MQL5\Scripts\AgentICTrader\AgenticCalendarExport` in the Exness terminal's data folder.
+    - It writes `Common\Files\agentic_calendar_<from>_<to>.csv`.
   - **327a. RED** (`test_research_calendar.py`)
     - On a hand-written export (with server offsets of +0 and +3):
       - the import gives UTC times;
@@ -683,6 +686,10 @@ News as context (Requirements 29–30). Task 327 needs the user once: to run the
   - **Validates: Requirement 29**
 
 - [ ] 328. News in the atlas **(user review)**
+  - **Built 2026-10-16; the rerun waits for task 327's import.**
+    - `atlas/news.py`, `CalendarSection` (`[calendar]` in research.toml, `name = "mt5-calendar"`, HIGH only), and the report's news values.
+    - Without an imported calendar, the atlas runs without news and says so in its Inputs.
+    - The research and replay suites pass: 412 passed, 1 skipped.
   - **328a. RED** (`test_research_atlas.py`, `test_research_config.py`)
     - On hand-made swings and releases: each flag at its window's edges, `news_day` per trading date, and only an instrument's own currencies and importance counting.
     - `[calendar]` in research.toml, with the AR-D35 defaults.

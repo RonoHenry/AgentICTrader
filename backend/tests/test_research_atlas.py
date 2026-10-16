@@ -486,3 +486,57 @@ def test_render_atlas_has_its_sections():
     for heading in ("# Turn atlas", "## Base rates", "## M15: same_tf", "## Inputs"):
         assert heading in text, heading
     assert "liq_pd" in text and "snap" in text
+
+
+# ══ Task 328: news in the atlas (Requirement 30) ════════════════════════════
+
+from algo_research.atlas.news import NEWS_COLUMNS, news_columns  # noqa: E402
+from algo_research.atlas.report import build_atlas  # noqa: E402
+
+NYZ = ZoneInfo("America/New_York")
+
+
+def _ny(text):
+    return pd.Timestamp(text, tz=NYZ).tz_convert("UTC")
+
+
+def _swing_rows(rows):
+    """Swings from (tf, extreme_time, known_at) in New York time."""
+    tf, extreme, known = zip(*rows)
+    return pd.DataFrame({"tf": tf, "extreme_time": [_ny(t) for t in extreme], "known_at": [_ny(t) for t in known]})
+
+
+def test_news_flags_at_their_windows_edges():
+    release = _ny("2025-01-10 08:30")
+    swings = _swing_rows([
+        ("M15", "2025-01-10 08:30", "2025-01-10 09:00"),     # printed at the release minute: made
+        ("M15", "2025-01-10 08:44", "2025-01-10 09:00"),     # 14 minutes after: made
+        ("M15", "2025-01-10 08:45", "2025-01-10 09:00"),     # 15 minutes after: not
+        ("M15", "2025-01-10 07:30", "2025-01-10 07:45"),     # 60 minutes before: ahead (its next bar ends 08:00)
+        ("M15", "2025-01-10 07:29", "2025-01-10 07:45"),     # 61 minutes before: not
+        ("H1", "2025-01-10 06:10", "2025-01-10 07:30"),      # known 07:30: the release is in its next H1 bar
+        ("H1", "2025-01-10 05:10", "2025-01-10 06:30"),      # known 06:30: the next bar ends 07:30, before it
+    ])
+    news = news_columns(swings, pd.DatetimeIndex([release]))
+    assert list(news.columns) == NEWS_COLUMNS
+    assert list(news["news_made"]) == [True, True, False, False, False, False, False]
+    assert list(news["news_ahead"]) == [False, False, False, True, False, False, False]
+    assert list(news["news_next_bar"]) == [False, False, False, False, False, True, False]
+
+
+def test_news_day_counts_the_trading_dates_releases():
+    releases = pd.DatetimeIndex([_ny("2025-01-09 16:59"), _ny("2025-01-09 17:00"), _ny("2025-01-10 08:30")])
+    swings = _swing_rows([("H1", "2025-01-09 12:00", "2025-01-09 14:00"),     # trading date Thursday: one
+                          ("H1", "2025-01-10 03:00", "2025-01-10 05:00"),     # Friday (17:00 Thursday on): two
+                          ("H1", "2025-01-13 03:00", "2025-01-13 05:00")])    # Monday: none
+    assert list(news_columns(swings, releases)["news_day"]) == ["1", "2+", "0"]
+    assert list(news_columns(swings, pd.DatetimeIndex([], tz="UTC"))["news_day"]) == ["0", "0", "0"]
+
+
+def test_the_atlas_adds_news_only_when_given_releases():
+    frame = hourly_frame(LEG + [(1.098, 1.112, 1.097, 1.111)])
+    plain = build_atlas(frame, START, START + 24 * HOUR)
+    assert not set(NEWS_COLUMNS) & set(plain.columns)
+    with_news = build_atlas(frame, START, START + 24 * HOUR, releases=pd.DatetimeIndex([START + 3 * HOUR + 50 * MINUTE]))
+    low = with_news[(with_news["side"] == "low") & (with_news["type"] == "three")].iloc[0]
+    assert low["news_ahead"] and not low["news_made"]                     # the low at :40 ran ten minutes before it

@@ -27,3 +27,7 @@ pairs = [["EURUSD", "GBPUSD"]]       # the new markets' pairs wait for the user 
 
 [profiles]                           # update 2026-10f, AR-D23: instruments from another broker profile
 BTCUSDT = "binance"                  # Exness (KE) offers no crypto
+
+[calendar]                           # update 2026-10i: news for the atlas (Req 30)
+name = "mt5-calendar"                # data/research/calendar/<name>.parquet: `python -m algo_research calendar --import <csv>`
+importance = ["HIGH"]                # which releases count; news currencies default per AR-D35

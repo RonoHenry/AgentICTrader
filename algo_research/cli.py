@@ -64,6 +64,7 @@ SourceFactory = Callable[[BrokerProfile], CandleSource]
 DRAFTS_DIR = REPO_ROOT / "data" / "research" / "drafts"
 HYPOTHESES = Path("config") / "research" / "hypotheses"
 DOCS = Path("docs") / "research"
+CALENDAR_DIR = Path("data") / "research" / "calendar"
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -89,6 +90,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     commands.add_parser("ledger", help="render docs/research/LEDGER.md from docs/research/ledger.csv")
     commands.add_parser("profile", help="write docs/research/VOLATILITY_PROFILE.md: where each instrument makes "
                                         "its range (exploration slice; descriptive, no ledger)")
+    calendar = commands.add_parser("calendar", help="import the MT5 economic calendar export into "
+                                                    "data/research/calendar/ (update 2026-10i)")
+    calendar.add_argument("--import", dest="export", required=True,
+                          help="the CSV written by scripts/mql5/AgenticCalendarExport.mq5")
+    calendar.add_argument("--name", default="mt5-calendar", help="the store's name (default mt5-calendar)")
     atlas = commands.add_parser("atlas", help="write docs/research/TURN_ATLAS.md: every swing point, what it delivered "
                                                "and the context it formed in (exploration slice; descriptive, no ledger)")
     atlas.add_argument("--instrument", action="append", help="one instrument (repeatable; default: all)")
@@ -136,6 +142,8 @@ def main(argv: Optional[Sequence[str]] = None, source_factory: Optional[SourceFa
             return _profile(cfg, root, snapshots_dir)
         if args.command == "model-a":
             return _model_a(args, cfg, root, snapshots_dir)
+        if args.command == "calendar":
+            return _calendar(args, root)
         if args.command == "atlas":
             return _atlas(args, cfg, root, snapshots_dir)
     except (HoldoutError, SnapshotError, HypothesisError) as exc:
@@ -241,6 +249,40 @@ def _inputs(h: Hypothesis, cfg: ResearchConfig, snapshot, specs, commit: str, se
                         hypothesis_text=h.path.read_text(encoding="utf-8"), ledger_rows=seqs)
 
 
+def _calendar(args: argparse.Namespace, root: Path) -> int:
+    """Req 29: import the MT5 calendar export, frozen with a manifest."""
+    from algo_research.calendar import import_calendar, write_calendar
+
+    path = Path(args.export)
+    table = import_calendar(path)
+    manifest = write_calendar(table, root / CALENDAR_DIR, args.name, source=path.name)
+    counts = table.groupby(["currency", "importance"]).size()
+    exact = int((table["time_mode"] == "DATETIME").sum())
+    print(f"imported {manifest['rows']} values ({manifest['first']} to {manifest['last']}), {exact} with an exact "
+          f"time; currencies {', '.join(manifest['currencies'])}")
+    for (currency, importance), n in counts.items():
+        print(f"  {currency} {importance}: {n}")
+    print(f"wrote {root / CALENDAR_DIR / (args.name + '.parquet')} (sha256 {manifest['sha256'][:12]})")
+    return 0
+
+
+def _news_releases(cfg: ResearchConfig, root: Path, instruments: Sequence[str]) -> tuple[dict, str]:
+    """Req 30: each instrument's counting release times, from the configured calendar; none without one."""
+    from algo_research.calendar import CalendarError, load_calendar, releases
+
+    name = cfg.calendar.name
+    if not name:
+        return {}, "none (no [calendar] in research.toml)"
+    try:
+        table = load_calendar(root / CALENDAR_DIR, name)
+    except CalendarError as exc:
+        print(f"no news columns: {exc}")
+        return {}, f"none ({name} not imported)"
+    out = {i: releases(table, cfg.calendar.currencies_of(i), cfg.calendar.importance) for i in instruments}
+    return out, (f"{name}: {len(table)} values, importance {', '.join(cfg.calendar.importance)}; "
+                 + "; ".join(f"{i} {'/'.join(cfg.calendar.currencies_of(i))} {len(r)}" for i, r in out.items()))
+
+
 def _atlas(args: argparse.Namespace, cfg: ResearchConfig, root: Path, snapshots_dir: Path) -> int:
     """Req 26: the turn atlas of the exploration slice, descriptive; no ledger."""
     from algo_research.atlas.report import (CELL_OBJECTIVES, REPORT_TIMEFRAMES, atlas_rows, base_rates, build_atlas,
@@ -251,9 +293,10 @@ def _atlas(args: argparse.Namespace, cfg: ResearchConfig, root: Path, snapshots_
     snapshot = load_snapshot(snapshots_dir / cfg.snapshot, instruments)
     frames = build_frames(snapshot, research_specs(cfg))
     since, until = cfg.slice_period("explore")
+    news, calendar_note = _news_releases(cfg, root, instruments)
     tables = {}
     for instrument in instruments:
-        tables[instrument] = build_atlas(frames[instrument], since, until)
+        tables[instrument] = build_atlas(frames[instrument], since, until, news.get(instrument))
         print(f"{instrument}: {len(tables[instrument])} swings")
     rows = atlas_rows(tables)
     out_dir = root / "data" / "research" / "atlas" / cfg.snapshot
@@ -273,7 +316,7 @@ def _atlas(args: argparse.Namespace, cfg: ResearchConfig, root: Path, snapshots_
     text = render_atlas(base_rates(rows), values,
                         {"snapshot": cfg.snapshot, "slice": f"exploration slice, {start} to {end} (end exclusive)",
                          "instruments": ", ".join(instruments), "resamples": str(resamples),
-                         "code_commit": _commit(root)}, stability)
+                         "calendar": calendar_note, "code_commit": _commit(root)}, stability)
     out = root / DOCS / "TURN_ATLAS.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8", newline="\n")

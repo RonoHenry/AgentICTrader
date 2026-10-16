@@ -177,3 +177,19 @@ def test_profiles_refuse_an_instrument_not_studied(tmp_path):
                                 'snapshot = "test-snapshot"\n\n[profiles]\nBTCUSDT = "binance"')
     with pytest.raises(ValueError, match="BTCUSDT"):
         load_research_config(root=write_root(tmp_path, research))
+
+
+# ── the economic calendar (update 2026-10i, Requirement 30.1) ───────────────
+
+def test_the_calendar_section_names_the_store_importance_and_news_currencies(tmp_path):
+    cfg = load_research_config(root=write_root(tmp_path))
+    assert cfg.calendar.name is None                                       # no section: the atlas runs without news
+    assert cfg.calendar.currencies_of("EURUSD") == ("USD", "EUR")          # AR-D35's defaults
+    assert cfg.calendar.currencies_of("GER40") == ("EUR", "USD")
+    assert cfg.calendar.currencies_of("US30") == ("USD",)
+    assert cfg.calendar.currencies_of("NZDCAD") == ("USD",)                # not listed: USD
+    research = RESEARCH + '\n[calendar]\nname = "mt5"\nimportance = ["HIGH", "MODERATE"]\n\n[calendar.currencies]\nxauusd = ["usd", "eur"]\n'
+    cfg = load_research_config(root=write_root(tmp_path / "set", research))
+    assert (cfg.calendar.name, cfg.calendar.importance) == ("mt5", ("HIGH", "MODERATE"))
+    assert cfg.calendar.currencies_of("XAUUSD") == ("USD", "EUR")          # overridden
+    assert cfg.calendar.currencies_of("EURUSD") == ("USD", "EUR")          # the rest keep their defaults

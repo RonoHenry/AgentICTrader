@@ -28,6 +28,7 @@ import pandas as pd
 
 from algo_research.atlas.arrays import build_arrays
 from algo_research.atlas.context import CONTEXT_COLUMNS, LIQUIDITY, build_context
+from algo_research.atlas.news import news_columns
 from algo_research.atlas.swings import OBJECTIVES, SWING_TIMEFRAMES, build_swings
 from algo_research.frame import InstrumentFrame, calendar_columns
 from algo_research.stats import Bootstrap
@@ -39,9 +40,9 @@ REPORT_TIMEFRAMES = ("M15", "H1", "H4", "D1")
 CELL_OBJECTIVES = ("same_tf", "next_tf")
 MIN_SWINGS, MIN_DATES = 100, 40
 BUCKETS = {"displacement": (1.0, 1.5), "wick_share": (0.5,)}
-_CATEGORICAL = ("pd_zone", "session", "killzone", "h4_index", "weekday", "ny_hour")
+_CATEGORICAL = ("pd_zone", "session", "killzone", "h4_index", "weekday", "ny_hour", "news_day")
 _BOOLEAN = (("twin", "engulf_full", "arr_any", "arr_htf_any") + tuple(f"liq_{n}" for n in LIQUIDITY)
-            + ("pd_aligned", "turtle_soup", "closes_beyond", "own_fvg"))
+            + ("pd_aligned", "turtle_soup", "closes_beyond", "own_fvg", "news_made", "news_ahead", "news_next_bar"))
 _ARRAYS = tuple(c for c in CONTEXT_COLUMNS if c.startswith("arr_") and c not in ("arr_any", "arr_htf_any"))
 _RESOLVED = ("held", "failed")
 
@@ -56,13 +57,16 @@ def truncate(frame: InstrumentFrame, until) -> InstrumentFrame:
     return InstrumentFrame(frame.instrument, frame.typical_spread, frame.stop_slippage, m1, bars, frame.all_week)
 
 
-def build_atlas(frame: InstrumentFrame, since, until) -> pd.DataFrame:
+def build_atlas(frame: InstrumentFrame, since, until, releases: Optional[pd.DatetimeIndex] = None) -> pd.DataFrame:
     """Every swing of every timeframe known in [since, until], scored and with its context, from the frame cut
-    at ``until``."""
+    at ``until``. With ``releases`` (the instrument's counting release times), the news columns too (Req 30)."""
     frame = truncate(frame, until)
-    swings = pd.concat([build_swings(frame, tf, since=since, until=until) for tf in SWING_TIMEFRAMES],
-                       ignore_index=True)
-    return build_context(frame, swings, build_arrays(frame))
+    parts = [build_swings(frame, tf, since=since, until=until) for tf in SWING_TIMEFRAMES]
+    swings = pd.concat([p for p in parts if len(p)] or parts[:1], ignore_index=True)
+    table = build_context(frame, swings, build_arrays(frame))
+    if releases is not None:
+        table = pd.concat([table, news_columns(table, releases)], axis=1)
+    return table
 
 
 def atlas_rows(tables: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
