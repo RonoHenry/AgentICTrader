@@ -557,6 +557,67 @@ The user's ten markets, in their order (Requirement 22). Task 319 needs Docker f
   - Open the charts with all ten tabs for the user.
   - **Validates: Requirements 22.1, 22.3; AR-D26**
 
+### J. Update 2026-10g: the turn atlas
+
+The user's framework, reverse-engineered on the exploration slice (Requirements 23–28). Every module is new, under `algo_research/atlas/`, and is tested in `test_research_atlas.py` on hand-made bars, plus one real-data smoke test on the fixture week.
+
+- [ ] 320. Arrays as the user reads them
+  - **320a. RED**
+    - **FVG:** a bullish and a bearish FVG on hand-made bars give the gap's low, high, CE and formation time (C3's close). Three candles without a gap give none. The FVG survives a wick into it and a close inside it. A close beyond its far edge flips it, and its state at a time before that close is still FVG.
+    - **Order block:** it matches `measures.bearish_order_blocks` and the mirror. The MT is the body's midpoint. A close beyond it flips it into a breaker.
+    - **Property 1:** the state at t never reads a bar that closes after t.
+  - **320b. GREEN** — `atlas/arrays.py`.
+  - **Validates: Requirement 23**
+
+- [ ] 321. Swings and what they delivered
+  - **321a. RED**
+    - **Three-candle swings:** a low and a high. Equal neighbours are not swings, and an outside bar is both.
+    - **Engulfing swings:** the low (the sweep, then a close above the previous body), and `engulf_full`. The link to the same extreme's three-candle swing.
+    - **The three objectives** on a hand-made path, each held, failed and open. An objective reached at once is marked.
+    - **Order within one bar:** a T bar that takes both the extreme and the objective is settled on M1. One M1 bar doing both is failed.
+    - **Excursion** in average ranges.
+    - **Mirroring:** lows and highs agree on the mirrored path.
+  - **321b. GREEN** — `atlas/swings.py`.
+  - **Validates: Requirement 24**
+
+- [ ] 322. The context at a swing
+  - **322a. RED**
+    - **Arrays traded into:**
+      - an H4 bullish FVG under an M15 swing low gives `edge`, `mid` or `through` by the wick's depth;
+      - an array formed during the extreme bar doesn't count;
+      - an array facing the other way doesn't count.
+    - **Liquidity:** the previous day's low taken, the Asian low taken, equal lows within 0.1 of the average range, and an untaken H1 swing low taken.
+    - **Dealing range:** 0.2 is discount and 0.8 is premium, for a low.
+    - **Time and anatomy:** the turtle soup, the wick share, displacement and `closes_beyond`, the swing's own FVG.
+    - **Property 1:** over every context column.
+  - **322b. GREEN** — `atlas/context.py`.
+  - **Validates: Requirement 25**
+
+- [ ] 323. The atlas report **(user review)**
+  - **323a. RED** (`test_research_atlas.py`, `test_research_runner.py`)
+    - The base rates, and a value's lift and complement with resampled intervals, on a hand-made table.
+    - The minimum-count rule.
+    - The `atlas` command writes the report and the tables, reads only the exploration slice, and adds no ledger row.
+  - **323b. GREEN** — `atlas/report.py`, `cli.py`.
+  - **323c. REFACTOR** — run it on `focus-2025-2026h1`, commit `docs/research/TURN_ATLAS.md`, and record the timings and the strongest values here.
+  - **Validates: Requirement 26**
+
+- [ ] 324. The fold **(user review)**
+  - **324a. RED**
+    - **Nesting:** on a hand-made D1 swing low built from M1, the H4, H1 and M15 swings at its extreme are found with their types, and the turtle soup on a lower timeframe is marked.
+    - **The first retracement:** its depth, the OTE flag, and whether the objective came after.
+  - **324b. GREEN** — `atlas/fold.py`; the report gains the fold.
+  - **324c. REFACTOR** — rerun on the snapshot and update the report.
+  - **Validates: Requirement 27**
+
+- [ ] 325. The Atlas mode **(user review)**
+  - **325a. RED** (`test_replay_charts.py`)
+    - `/atlas` and its API serve the swings and arrays of an instrument and timeframe as of a time, with outcomes and context.
+    - The You pages don't reference it.
+  - **325b. GREEN** — `replay/charts.py`, `replay/static/atlas.html` and `atlas.js` (on `shell.js` and `drawings.js`).
+  - **325c. REFACTOR** — check the page in headless Chrome.
+  - **Validates: Requirement 28**
+
 ---
 
 ## Task Dependency Graph
@@ -636,6 +697,12 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
       "tasks": ["317", "318", "319"],
       "description": "Update 2026-10f: the Exness focus instruments and chart precision, several profiles and 24/7 Saturdays, then the focus snapshot (319 needs 317 and 318, Docker and the MT5 terminal)",
       "dependencies": ["Self-Validation and Checkpoint"]
+    },
+    {
+      "name": "The Turn Atlas",
+      "tasks": ["320", "321", "322", "323", "324", "325"],
+      "description": "Update 2026-10g: arrays as the user reads them, swings and outcomes, context, the report, the fold, the Atlas mode (in order; each needs the one before)",
+      "dependencies": ["The User's Markets"]
     }
   ]
 }

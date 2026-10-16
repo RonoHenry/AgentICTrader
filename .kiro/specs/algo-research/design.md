@@ -895,6 +895,63 @@ Requirement 22; decisions AR-D23 to AR-D26.
 3. Compare the fingerprints of EURUSD, GBPUSD and gold with `exness-2025-2026h1`.
 4. List each instrument's coverage problems in the task notes.
 
+## Update 2026-10g: The Turn Atlas
+
+Requirements 23–28; decisions AR-D27 to AR-D32. The package is `algo_research/atlas/`, run as `python -m algo_research atlas`, on the snapshot's frames (frame.py). The atlas reads M1 and the calendar bars M15, H1, H4, D1 and W1.
+
+### Arrays (`atlas/arrays.py`)
+
+There is one table per instrument, with one row per array: `tf, kind (FVG / OB), direction, low, high, mid (CE or MT), formed_at, flipped_at`.
+- **The FVG** follows Req 23.1. `flipped_at` is the first close of a bar of its timeframe beyond the far edge; from then on the row reads as an IFVG facing the other way.
+- **The order block** uses `measures.bearish_order_blocks` (and its mirror), the engine's rule. Its MT is the midpoint of the order-block candle's body. Its `flipped_at` is the first close beyond it; from then on it reads as a breaker.
+- **State at time t:**
+  - an array exists if `formed_at` ≤ t;
+  - it is an IFVG or breaker if `flipped_at` ≤ t;
+  - otherwise it is an FVG or OB.
+
+### Swings and outcomes (`atlas/swings.py`)
+
+There is one row per swing: `tf, side (low / high), type (three / engulf), extreme, extreme_bar (open time), known_at, engulf_full`, the three objective prices, and per objective `outcome (held / failed / open), resolved_at, at_once`. It also holds `excursion` in T's average range and `avg_range`.
+- **Swing detection** is vectorised per timeframe over its bars.
+- **The objectives:**
+  - `same_tf` is the last opposite swing whose extreme bar opens before this extreme bar;
+  - `next_tf` is the same, on the next timeframe up (D1 → W1);
+  - `crt` is the previous bar's opposite extreme.
+- **Outcomes** are found on T's bars first. A swing scans forward in growing windows for the first bar beyond the extreme and the first bar reaching each objective. When the deciding bar holds both, M1 settles the order. When one M1 bar holds both, the outcome is failed, as in races (the stop wins). Lows and highs share one code path through `measures.mirror`.
+
+### Context (`atlas/context.py`)
+
+These are columns on the swing table, each computed as of `known_at`.
+- **Arrays (Req 25.1):** the arrays of T and above that face the turn, exist before the extreme bar opens, and whose range the extreme bar's wick reached. Per array timeframe and kind, the deepest one gives `depth`: `edge` (inside, short of the mid), `mid` (at or beyond the mid), `through` (beyond the far edge, closed back inside). Per swing, the columns are `arr_<tf>_<kind>` holding depth or null, and `arr_any`.
+- **Liquidity (Req 25.2):**
+  - the day, week and month extremes come from the calendar's D1 and W1 bars and a month built from D1;
+  - the Asian and London extremes so far come from the market features' session columns;
+  - an untaken swing of the next timeframe up comes from the swing table;
+  - equal lows or highs are two untaken T swings within 0.1 `avg_range`.
+- **Dealing range (Req 25.3):** the next timeframe's last untaken swing high and low before the extreme bar. `pd = (extreme − low) / (high − low)`.
+- **Time and anatomy (Req 25.4, 25.5):** from `calendar_columns` at the extreme's M1 bar, and from the swing's own bars.
+
+### The report (`atlas/report.py`, `cli.py`)
+
+- **Base rates** per (tf, type, objective). Context values are pooled across sides by mirroring.
+- **Each value:** its rate against the base, and against its complement. The intervals resample trading dates jointly across instruments (`stats.py`).
+- **What qualifies:** a value needs at least 100 swings on 40 trading dates. It is ranked by the lower bound of its lift.
+- **Output:** `docs/research/TURN_ATLAS.md`, and the tables in `data/research/atlas/<snapshot>/` (Parquet, git-ignored).
+
+### The fold (`atlas/fold.py`)
+
+- **Nesting:** for a held D1 or H4 swing, the M1 bar of its extreme fixes one bar on each lower timeframe. If that bar is a swing there (either type), it is a nested swing. "Turtle soup" marks a nested extreme bar that swept the previous bar's extreme and closed back inside.
+- **The first retracement on a lower timeframe:** the first opposite swing after the nested swing is known, then the next same-side swing. Depth = (that opposite swing − retracement extreme) ÷ (that opposite swing − turn extreme).
+
+### The Atlas mode (`replay/charts.py`, `replay/static/atlas.*`)
+
+`/atlas` serves the chart with the atlas tables of the selected instrument and timeframe:
+- swings as markers, coloured by outcome;
+- objectives as short rays;
+- arrays as boxes with the mid line.
+
+The You mode never links to it.
+
 ## Requirement Traceability
 
 | Requirement | Components | Properties | Tasks |
@@ -922,4 +979,5 @@ Requirement 22; decisions AR-D23 to AR-D26.
 | 15 Candle ranges, `crt` | `features/market.py`, `events.py`, `baselines.py` | 1 | 263 |
 | 16 SMT | `features/partner.py`, `events.py`, `dataset.py`, `config.py` | 1 | 264 |
 | 17 Daily quarters | `labels.py`, `baselines.py` | 2 | 265 |
+| 23–28 The turn atlas | `atlas/arrays.py`, `atlas/swings.py`, `atlas/context.py`, `atlas/report.py`, `atlas/fold.py`, `cli.py`, `replay/charts.py` | 1 | 320–325 |
 | 22 The user's markets | `config.py`, `snapshot.py`, `specs.py`, `cli.py`, `frame.py`, `dataset.py`, `replay/bars.py`, `replay/charts.py`; `config/brokers/exness-standard.toml`, `config/instruments/exness-standard.toml`, `config/research/research.toml` | 1, 10 | 317, 318, 319 |

@@ -470,6 +470,119 @@ Checked on the Exness demo terminal the same day:
 4. FOR an instrument whose venue trades 24/7, the grid SHALL keep Saturday's trading date. Every other instrument keeps the Saturday exclusion (Req 2.1).
 5. THE charts (the blind replay and the engine watch) SHALL show each instrument's prices to its own precision: the fewest decimals that write every price in its data. The order of the chart tabs follows criterion 1.
 
+## Update 2026-10g: The Turn Atlas
+
+On 2026-10-16 the user set out the framework their model lives in, and asked to reverse-engineer it:
+
+- "Price cannot reverse or retrace without a swing point, and a swing point can only be formed by three candles. This is the foundation of CRT." It happens on every timeframe.
+- They hunt the higher-timeframe swings that form after price has traded into an important level. As price rejects and hunts the opposing objectives, they ride the move and scale in while price retraces and expansion continues.
+- The sequence is Model A's, "just not picture perfect": a cyclic sequence in algorithmic price delivery.
+- A variation prints as an engulfing off an area of value. It is still a swing point; on a lower timeframe it is a turtle soup.
+- An FVG is the gap's high and low, its consequent encroachment (CE) and the time it formed. Example: a daily bearish FVG between Monday's low and Wednesday's high, with its CE.
+- Goal: discover "how narrative folds to eventually lead to a setup".
+
+Reverse-engineering is the method: start from what each swing delivered, then ask what was true when it formed. A swing is the candidate because every turn needs one. Its context only counts if it separates the swings that delivered from the swings that didn't, so every rate is shown against all swings of its timeframe. With arrays on five timeframes, price sits near one most of the time. A scratch test on 2026-10-13 read the D1 direction from the last array's outcome and was right 52% of the time [47, 57]. The base rate is the control for that.
+
+### Requirement 23: Arrays as the User Reads Them
+
+**User Story:** As the user, I want FVGs and order blocks measured the way I mark them, so that the atlas tests my levels, not the engine's approximations.
+
+#### Acceptance Criteria
+
+1. AN FVG on timeframe T SHALL come from three consecutive closed candles C1, C2, C3.
+   - It is bullish when C3's low is above C1's high: its low is C1's high and its high is C3's low.
+   - It is bearish when C1's low is above C3's high: its high is C1's low and its low is C3's high.
+   - Its CE is the midpoint. It forms at C3's close.
+2. AN FVG SHALL stay live when price trades into it. When a T candle closes beyond its far edge, it becomes an IFVG facing the other way, with the same high, low and CE, from that close.
+3. AN order block SHALL follow the engine's rule: the last opposite candle before a displacement candle of at least 1.5 ATR. It forms at the displacement's close, and its mean threshold (MT) is the midpoint of the order-block candle's body. When a T candle closes beyond it, it becomes a breaker facing the other way, from that close.
+4. THE arrays SHALL be built on M15, H1, H4, D1 and W1 for every instrument. A reader at time t sees only arrays formed by t, in their state at t (Property 1).
+
+### Requirement 24: Swings and What They Delivered
+
+**User Story:** As the user, I want every swing point found and scored by what price did next, so that the turns that delivered can be told from the ones that failed.
+
+#### Acceptance Criteria
+
+1. A swing low on timeframe T SHALL be a candle C2 whose low is below the lows of C1 before it and C3 after it. It is known at C3's close. A swing high is the mirror. An outside candle can be both.
+2. AN engulfing swing low SHALL be a candle B that trades below the previous candle A's low and closes above A's body (the higher of A's open and close). Its extreme is B's low, known at B's close.
+   - `engulf_full` marks a close above A's high as well.
+   - The swing high is the mirror.
+   - When the same extreme later also prints as a 3-candle swing, both are kept and linked.
+3. EACH swing SHALL be scored against three objectives on the other side, as known when it is known:
+   - `crt`: the opposite extreme of the candle before the extreme candle;
+   - `same_tf`: the last opposite swing of T before the extreme candle;
+   - `next_tf`: the last opposite swing of the next timeframe up.
+
+   For each objective, the swing **held** if price trades to the objective before trading beyond the swing's extreme, and **failed** if it trades beyond the extreme first. It is **open** if neither happens by the end of the data. An objective already reached when the swing is known counts as held at once and is marked. The number of T candles to the outcome is recorded.
+4. EACH swing SHALL record its excursion: the farthest price travelled toward its objectives before the extreme was taken, in T's average range (the mean high minus low of the 20 candles before the extreme candle).
+
+### Requirement 25: The Context at a Swing
+
+**User Story:** As the user, I want to know what was true when each swing formed — the level, the liquidity, the time, the candles — so that the conditions behind the turns that delivered can be found.
+
+#### Acceptance Criteria
+
+1. THE arrays traded into by the extreme candle SHALL be recorded, on T and every timeframe above it. Only arrays facing the turn count: bullish FVGs, IFVGs, order blocks and breakers for a swing low.
+   - Only arrays formed before the extreme candle opened count.
+   - Each records its kind, timeframe and depth: the near edge only, to the CE or MT, beyond it, or through the far edge with a close back inside.
+2. THE liquidity the extreme candle took SHALL be recorded:
+   - the previous day's, week's and month's extremes;
+   - the trading date's Asian and London extremes so far;
+   - an untaken swing of the next timeframe up;
+   - relative equal lows or highs: two untaken T swings within 0.1 of T's average range.
+3. THE extreme's position in the dealing range of the next timeframe up SHALL be recorded, from that timeframe's last untaken swing high and low, as a fraction: premium or discount.
+4. THE time of the extreme candle SHALL be recorded: the New York hour, the session, the killzone, `h4_index` and the weekday.
+5. THE anatomy SHALL be recorded:
+   - whether the extreme candle swept the previous candle's extreme and closed back inside (a turtle soup on T);
+   - its wick share on the swept side;
+   - the confirming candle's displacement: its body ÷ T's average range, and whether it closed beyond the extreme candle's opposite extreme;
+   - whether the swing's three candles left an FVG.
+6. EVERY context value SHALL be known when the swing is known (Property 1).
+
+### Requirement 26: The Atlas Report
+
+**User Story:** As the user, I want the atlas summarised against its base rates, so that I see which conditions separate the turns that delivered from the ones that didn't, and by how much.
+
+#### Acceptance Criteria
+
+1. `python -m algo_research atlas` SHALL build the arrays, the swings and their context for the exploration slice. It reads no other slice and never the hold-out.
+2. THE report SHALL give, per timeframe and swing type, the count and the held rate for each objective. These are the base rates.
+3. FOR every context value with enough swings, the report SHALL give:
+   - the held rate against the base rate, and against the swings without that value;
+   - 95% intervals from resampling trading dates across instruments;
+   - for the strongest values, the rate per instrument.
+4. THE report SHALL be `docs/research/TURN_ATLAS.md`, with the full tables under `data/research/atlas/` (git-ignored).
+   - It is descriptive, like the volatility profile: no verdict and no ledger row.
+   - A promising value becomes a hypothesis, pre-registered before the confirmation slice judges it.
+
+### Requirement 27: The Fold
+
+**User Story:** As the user, I want to see how each higher-timeframe turn was built on the lower timeframes, so that the way the narrative folds into a setup is visible, and measurable.
+
+#### Acceptance Criteria
+
+1. FOR each held D1 and H4 swing, the atlas SHALL find the nested swings at its extreme: the swings of each lower timeframe (H4, H1, M15) that made the same extreme inside the extreme candle. It records their type (3-candle, engulfing, or a turtle soup on that timeframe) and their context.
+2. AFTER the turn, it SHALL find the first retracement on each lower timeframe, and record:
+   - the depth of that retracement as a fraction of the leg from the extreme, with the share falling in the OTE (0.62 to 0.79);
+   - whether price then went on to the objective.
+3. THE report SHALL add the fold:
+   - where the nested extremes formed (session, killzone);
+   - their types;
+   - the retracement depths, for held turns against failed ones.
+
+### Requirement 28: The Atlas on the Chart
+
+**User Story:** As the user, I want to see the atlas on the chart, so that I can judge the swings, their levels and their outcomes with my own eyes.
+
+#### Acceptance Criteria
+
+1. THE charts SHALL gain an Atlas mode at `/atlas`, beside You and Engine, showing:
+   - the swings of a chosen timeframe, coloured by outcome;
+   - their objectives;
+   - the arrays as the user reads them (Req 23), each with its CE or MT.
+2. HOVERING over a swing SHALL show its context values.
+3. THE blind replay (the You mode) SHALL never show the atlas: it reveals outcomes. The Engine mode is the backtester's and stays as it is.
+
 ## Open Decisions
 
 Proposed defaults apply unless the user changes them at review.
@@ -502,3 +615,9 @@ Proposed defaults apply unless the user changes them at review.
 | AR-D24 | The new markets' calendar (update 2026-10f) | One trading day for all instruments: 17:00 to 17:00 New York, the user's lens. The indices pause on that boundary anyway. BTC gets a D1 candle on every date, Saturday's included. Its week opens with the server's Sunday (Saturday 17:00 New York), as FX's does. |
 | AR-D25 | SMT for the new markets (update 2026-10f) | Deferred. Requirement 16 allows one partner per instrument, positively correlated. The natural pairs need more: DXY is inverse to EURUSD, GBPUSD and gold; US100, US500 and US30 form a triad; GER40 pairs with UK100. That is a Requirement 16 change, specified once the user names the pairs. EURUSD with GBPUSD stays. |
 | AR-D26 | The snapshot (update 2026-10f) | A new snapshot, `focus-2025-2026h1`, with all ten instruments over the same period. The old `exness-2025-2026h1` stays on disk, so earlier reports remain reproducible. EURUSD, GBPUSD and gold should keep their old fingerprints, since the rows come from the same store; any difference is explained. The backtester's instruments and coverage rules don't change. Trading the indices there needs their holidays and the EUR and GBP conversion, a later step. |
+| AR-D27 | The FVG (update 2026-10g) | The gap between C1 and C3, its CE, formed at C3's close: the user's definition (2026-10-16). Trading into it doesn't end it; a close beyond the far edge inverts it. This is how the user still respected a traded-into D1 FVG on 2026-10-14. The engine's own FVG is fixed separately (liquidity-engine update 2026-10h). |
+| AR-D28 | The swing (update 2026-10g) | Three candles, strict on both sides. The user: "a swing point can only be formed by three candles". The engine's swings use two candles on each side; the atlas does not. |
+| AR-D29 | The engulfing variation (update 2026-10g) | The candle takes the previous candle's extreme and closes beyond its body. A close beyond the whole candle is a flag (`engulf_full`), not a requirement, so the atlas can show which of the two the user means. |
+| AR-D30 | Held (update 2026-10g) | The objective is reached before the extreme is taken. There are three objectives, each a distance on the user's own ladder. The atlas leads with `same_tf`, the last opposite swing: the nearest liquidity on the other side. |
+| AR-D31 | Timeframes (update 2026-10g) | Swings on M15, H1, H4 and D1; arrays on M15 to W1. W1 swings are counted, but six months hold too few to judge. M30 waits until the user asks: the calendar frames hold M15, H1, H4, D1 and W1. |
+| AR-D32 | The atlas's statistics (update 2026-10g) | Trading dates are resampled across instruments, as in Requirement 11. Lows and highs are pooled by mirroring, and the report splits them. The atlas is exploration only: a value that stands out is a lead for pre-registration, not a finding. |
