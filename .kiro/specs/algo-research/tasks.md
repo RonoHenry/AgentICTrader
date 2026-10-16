@@ -581,7 +581,19 @@ The user's framework, reverse-engineered on the exploration slice (Requirements 
   - **320b. GREEN** — `atlas/arrays.py`.
   - **Validates: Requirement 23**
 
-- [ ] 321. Swings and what they delivered
+- [x] 321. Swings and what they delivered
+  - **Done 2026-10-16.** `atlas/swings.py`.
+    - **The slice only:** `build_swings(frame, tf, since, until)` judges outcomes on M1 before `until`, so the atlas never reads past the exploration slice. A swing unresolved by then is open.
+    - **UK100, exploration slice:** M15 has 6,618 swings (1,563 of them engulfing), scored in 2.5 s; D1 has 80. Three-candle base rates, held among those resolved:
+
+      | Timeframe | `crt` | `same_tf` | `next_tf` |
+      |---|---|---|---|
+      | M15 | 72% | 56% | 28% |
+      | H1 | 72% | 56% | 28% |
+      | H4 | 69% | 53% | 23% |
+      | D1 | 71% | 61% | 32% |
+
+    - **Reading:** the rates barely change across timeframes, as a random walk's do (it looks the same at every scale). The information, if any, lies in the context (task 322) measured against these rates.
   - **321a. RED**
     - **Three-candle swings:** a low and a high. Equal neighbours are not swings, and an outside bar is both.
     - **Engulfing swings:** the low (the sweep, then a close above the previous body), and `engulf_full`. The link to the same extreme's three-candle swing.

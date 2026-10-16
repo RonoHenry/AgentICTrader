@@ -129,3 +129,143 @@ def test_build_arrays_covers_every_timeframe_of_the_frame():
     assert set(table["tf"]) <= {"M15", "H1", "H4", "D1", "W1"} and {"M15", "H1"} <= set(table["tf"])
     assert set(table["kind"]) == {"FVG", "OB"}
     assert (table["low"] < table["high"]).all()
+
+
+# ══ Task 321: swings and what they delivered (Requirement 24) ═══════════════
+
+from zoneinfo import ZoneInfo  # noqa: E402
+
+from algo_research.atlas.swings import build_swings, find_swings  # noqa: E402
+from algo_research.frame import frame_from_arrays  # noqa: E402
+
+MINUTE = pd.Timedelta(minutes=1)
+START = pd.Timestamp("2025-01-07 01:00", tz=ZoneInfo("America/New_York")).tz_convert("UTC")   # an H4 boundary
+
+
+def hourly_frame(rows, orders=None, spikes=None, mirrored=False):
+    """A frame whose H1 bars are ``rows`` (open, high, low, close), built minute by minute: an hour opens, reaches
+    its first extreme at :20 and its second at :40, and closes at :59. A bearish hour makes its high first ("hl"),
+    a bullish one its low first ("lh"), unless ``orders`` says otherwise. ``spikes`` {hour: (minute, high, low)}
+    widens one M1 bar. ``mirrored`` turns the prices upside down."""
+    times, o, h, l, c = [], [], [], [], []
+    for n, (op, hi, lo, cl) in enumerate(rows):
+        order = (orders or {}).get(n) or ("hl" if cl < op else "lh")
+        x1, x2 = (hi, lo) if order == "hl" else (lo, hi)
+        path = [(op, op)] * 20 + [(op, x1)] + [(x1, x1)] * 19 + [(x1, x2)] + [(x2, x2)] * 18 + [(x2, cl)]
+        for m, (a, b) in enumerate(path):
+            times.append(START + n * HOUR + m * MINUTE)
+            o.append(a), c.append(b), h.append(max(a, b)), l.append(min(a, b))
+            if spikes and n in spikes and spikes[n][0] == m:
+                h[-1], l[-1] = max(h[-1], spikes[n][1]), min(l[-1], spikes[n][2])
+    o, h, l, c = (np.array(x) for x in (o, h, l, c))
+    if mirrored:
+        o, h, l, c = -o, -l, -h, -c
+    return frame_from_arrays("TEST", pd.DatetimeIndex(times), o, h, l, c, spread=np.zeros(len(o)),
+                             typical_spread=0.0, stop_slippage=0.0)
+
+
+def test_three_candle_swings_need_both_neighbours_strictly_and_an_outside_bar_is_both():
+    b = bars([(1.000, 1.010, 0.990, 1.005), (1.005, 1.008, 0.980, 0.985), (0.985, 1.020, 0.985, 1.015),
+              (1.015, 1.018, 1.000, 1.005), (1.005, 1.018, 0.995, 1.000), (1.000, 1.010, 0.990, 1.008),
+              (1.008, 1.030, 0.970, 1.000), (1.000, 1.020, 0.980, 1.010)])
+    found = find_swings(b)
+    three = found[found["type"] == "three"]
+    assert sorted(zip(three["i"], three["side"])) == [(1, "low"), (2, "high"), (6, "high"), (6, "low")]
+    # bar 4 ties bar 3's high, so it isn't a swing high. Bar 5 sweeps bar 4's low and closes above its body.
+    engulf = found[found["type"] == "engulf"]
+    assert list(zip(engulf["i"], engulf["side"], engulf["engulf_full"], engulf["twin"])) == [(5, "low", False, False)]
+
+
+def test_an_engulfing_swing_sweeps_and_closes_above_the_previous_body():
+    full = bars([(1.010, 1.012, 1.000, 1.002), (1.002, 1.014, 0.995, 1.013), (1.013, 1.020, 1.005, 1.018)])
+    row = find_swings(full).query("type == 'engulf'").iloc[0]
+    assert (row["i"], row["side"], row["extreme"], row["engulf_full"], row["twin"]) == (1, "low", 0.995, True, True)
+    body_only = bars([(1.010, 1.012, 1.000, 1.002), (1.002, 1.011, 0.995, 1.011), (1.011, 1.013, 0.990, 1.000)])
+    row = find_swings(body_only).query("type == 'engulf'").iloc[0]
+    assert (row["engulf_full"], row["twin"]) == (False, False)          # the next bar went lower: no three-candle twin
+
+
+LEG = [(1.100, 1.102, 1.098, 1.101), (1.101, 1.110, 1.100, 1.108), (1.108, 1.109, 1.095, 1.096),
+       (1.096, 1.097, 1.090, 1.092), (1.092, 1.099, 1.093, 1.098)]          # a swing high at 1, a swing low at 3
+
+
+def _low(frame):
+    return build_swings(frame, TF.H1).query("side == 'low' and type == 'three'").iloc[0]
+
+
+def test_a_swing_low_held_against_its_crt_and_leg_objectives():
+    frame = hourly_frame(LEG + [(1.098, 1.112, 1.097, 1.111)])
+    row = _low(frame)
+    assert row["extreme"] == pytest.approx(1.090)
+    assert row["known_at"] == START + 5 * HOUR                             # C3's close
+    assert (row["obj_crt"], row["obj_same_tf"]) == pytest.approx((1.109, 1.110))   # C1's high; the leg's origin
+    assert (row["out_crt"], row["out_same_tf"]) == ("held", "held")
+    assert row["resolved_same_tf"] == START + 5 * HOUR + 40 * MINUTE + MINUTE    # the M1 bar that reached it
+    assert row["bars_same_tf"] == 1
+    assert not row["at_once_crt"]
+    assert pd.isna(row["obj_next_tf"]) and row["out_next_tf"] is None    # no H4 swing high yet
+    assert row["avg_range"] == pytest.approx((0.004 + 0.010 + 0.014) / 3)
+    assert row["excursion"] == pytest.approx((1.112 - 1.090) / row["avg_range"])
+
+
+def test_a_swing_low_failed_and_one_left_open():
+    failed = _low(hourly_frame(LEG + [(1.098, 1.099, 1.089, 1.090)]))
+    assert (failed["out_crt"], failed["out_same_tf"]) == ("failed", "failed")
+    open_ = _low(hourly_frame(LEG + [(1.098, 1.105, 1.095, 1.100)]))
+    assert (open_["out_crt"], open_["out_same_tf"]) == ("open", "open")
+
+
+def test_a_bar_that_does_both_is_settled_on_m1_and_one_m1_bar_doing_both_fails():
+    both = (1.098, 1.112, 1.089, 1.100)
+    assert _low(hourly_frame(LEG + [both], orders={5: "lh"}))["out_same_tf"] == "failed"   # the low came first
+    assert _low(hourly_frame(LEG + [both], orders={5: "hl"}))["out_same_tf"] == "held"     # the high came first
+    one_bar = hourly_frame(LEG + [(1.098, 1.100, 1.095, 1.099)], spikes={5: (10, 1.112, 1.089)})
+    assert _low(one_bar)["out_same_tf"] == "failed"
+
+
+def test_an_objective_reached_before_the_swing_is_known_is_held_at_once():
+    high = build_swings(hourly_frame(LEG + [(1.098, 1.112, 1.097, 1.111)]), TF.H1).query(
+        "side == 'high' and type == 'three'").iloc[0]
+    assert high["extreme"] == pytest.approx(1.110) and high["obj_crt"] == pytest.approx(1.098)
+    assert (high["out_crt"], high["at_once_crt"], high["bars_crt"]) == ("held", True, 0)   # 1.095 at hour 2's :40
+    assert high["resolved_crt"] == high["known_at"]
+
+
+def test_the_next_timeframes_untaken_swing_is_the_third_objective():
+    rows = ([(1.100, 1.105, 1.099, 1.102)] * 4
+            + [(1.102, 1.110, 1.101, 1.109), (1.109, 1.120, 1.108, 1.115), (1.115, 1.116, 1.105, 1.106),
+               (1.106, 1.108, 1.100, 1.104)]                                  # H4 bar 1: the H4 swing high, 1.120
+            + [(1.104, 1.110, 1.098, 1.100), (1.100, 1.102, 1.096, 1.097), (1.097, 1.099, 1.094, 1.095),
+               (1.095, 1.097, 1.093, 1.094)]
+            + [(1.094, 1.096, 1.091, 1.092), (1.092, 1.093, 1.085, 1.087), (1.087, 1.095, 1.088, 1.094),
+               (1.094, 1.121, 1.093, 1.120)])
+    low = build_swings(hourly_frame(rows), TF.H1).query("side == 'low' and type == 'three'")
+    row = low[low["extreme"] == 1.085].iloc[0]
+    assert row["obj_next_tf"] == pytest.approx(1.120) and row["out_next_tf"] == "held"
+    assert row["obj_same_tf"] == pytest.approx(1.110)                    # from the H1 swing high at hour 8
+
+
+def test_swing_highs_are_swing_lows_read_upside_down():
+    rows = LEG + [(1.098, 1.112, 1.097, 1.111)]
+    lows = build_swings(hourly_frame(rows), TF.H1).query("side == 'low'").reset_index(drop=True)
+    highs = build_swings(hourly_frame(rows, mirrored=True), TF.H1).query("side == 'high'").reset_index(drop=True)
+    assert len(lows) == len(highs) > 0
+    for col in ("extreme", "obj_crt", "obj_same_tf"):
+        assert highs[col].to_numpy() == pytest.approx(-lows[col].to_numpy(), nan_ok=True)
+    for col in ("type", "known_at", "out_crt", "out_same_tf", "at_once_crt"):
+        assert list(highs[col]) == list(lows[col])
+    assert highs["excursion"].to_numpy() == pytest.approx(lows["excursion"].to_numpy())
+
+
+def test_property_1_objectives_are_known_when_the_swing_is():
+    frame = hourly_frame(LEG + [(1.098, 1.112, 1.097, 1.111)])
+    full = _low(frame)
+    t = full["known_at"]
+    early = frame.m1["time"] < t
+    cut = frame_from_arrays("TEST", pd.DatetimeIndex(frame.m1["time"][early]),
+                            *(frame.m1[k][early].to_numpy() for k in ("open", "high", "low", "close")),
+                            spread=np.zeros(int(early.sum())), typical_spread=0.0, stop_slippage=0.0)
+    past = _low(cut)
+    for col in ("extreme", "obj_crt", "obj_same_tf", "avg_range", "at_once_crt", "known_at"):
+        assert past[col] == full[col]
+    assert past["out_same_tf"] == "open"                                   # its outcome lies after t

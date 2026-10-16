@@ -510,8 +510,8 @@ Reverse-engineering is the method: start from what each swing delivered, then as
    - When the same extreme later also prints as a 3-candle swing, both are kept and linked.
 3. EACH swing SHALL be scored against three objectives on the other side, as known when it is known:
    - `crt`: the opposite extreme of the candle before the extreme candle;
-   - `same_tf`: the last opposite swing of T before the extreme candle;
-   - `next_tf`: the last opposite swing of the next timeframe up.
+   - `same_tf`: the origin of the leg into the swing, the farthest price on the other side since T's last opposite swing;
+   - `next_tf`: the most recent untaken opposite swing of the next timeframe up.
 
    For each objective, the swing **held** if price trades to the objective before trading beyond the swing's extreme, and **failed** if it trades beyond the extreme first. It is **open** if neither happens by the end of the data. An objective already reached when the swing is known counts as held at once and is marked. The number of T candles to the outcome is recorded.
 4. EACH swing SHALL record its excursion: the farthest price travelled toward its objectives before the extreme was taken, in T's average range (the mean high minus low of the 20 candles before the extreme candle).

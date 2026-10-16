@@ -913,11 +913,16 @@ There is one table per instrument, with one row per array: `tf, kind (FVG / OB),
 
 There is one row per swing: `tf, side (low / high), type (three / engulf), extreme, extreme_bar (open time), known_at, engulf_full`, the three objective prices, and per objective `outcome (held / failed / open), resolved_at, at_once`. It also holds `excursion` in T's average range and `avg_range`.
 - **Swing detection** is vectorised per timeframe over its bars.
-- **The objectives:**
-  - `same_tf` is the last opposite swing whose extreme bar opens before this extreme bar;
-  - `next_tf` is the same, on the next timeframe up (D1 → W1);
-  - `crt` is the previous bar's opposite extreme.
-- **Outcomes** are found on T's bars first. A swing scans forward in growing windows for the first bar beyond the extreme and the first bar reaching each objective. When the deciding bar holds both, M1 settles the order. When one M1 bar holds both, the outcome is failed, as in races (the stop wins). Lows and highs share one code path through `measures.mirror`.
+- **The objectives** (for a swing low; highs mirror):
+  - `crt` is the high of the bar before the extreme bar.
+  - `same_tf` is the origin of the leg into the swing: the highest high from the last three-candle swing high of T up to the bar before the extreme bar. It is untaken by construction.
+  - `next_tf` is the most recent three-candle swing high of the next timeframe up (M15 → H1 → H4 → D1 → W1) that is known and untaken when the swing is known, and above the extreme.
+- **Outcomes** are settled on M1, from the first M1 bar after the swing is known, scanning forward in growing windows:
+  - held is a high at or above the objective;
+  - failed is a low below the extreme;
+  - one M1 bar doing both is failed, as in races (the stop wins).
+
+  An objective reached by an M1 bar after the extreme's bar but before the swing is known is held at once. Lows and highs share one code path, with highs read on the mirrored prices.
 
 ### Context (`atlas/context.py`)
 
