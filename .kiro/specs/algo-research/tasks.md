@@ -481,11 +481,24 @@ These replace the timing drafts and reframe bias before any pre-registration (25
 
 The user's ten markets, in their order (Requirement 22). Task 319 needs Docker for the candle store and the MT5 terminal for the Exness history.
 
-- [ ] 317. The Exness focus instruments, and chart precision and order
+- [x] 317. The Exness focus instruments, and chart precision and order
+  - **Done 2026-10-16.** Specs exported from ExnessKE-MT5Trial9 with no commission (a Standard account):
+
+    | Instrument | Symbol | Point | Contract | Quote | Typical spread (median of the day's ticks) |
+    |---|---|---|---|---|---|
+    | DXY | DXYm | 0.001 | 1000 | USD | 0.013 |
+    | US100 | USTECm | 0.01 | 1 | USD | 1.12 |
+    | US500 | US500m | 0.01 | 1 | USD | 0.40 |
+    | US30 | US30m | 0.1 | 1 | USD | 1.0 |
+    | GER40 | DE30m | 0.1 | 1 | EUR | 0.70 |
+    | UK100 | UK100m | 0.01 | 1 | GBP | 0.98 |
+
+    - **UK100's spread varies by session:** 3.0 in the Asian hours of 2026-10-15 against the 0.98 median. Races floor each bar at the typical spread and charge the bar's own spread when it is wider (D10). A stop of a few points is spread-sensitive there.
+    - **The swap-free profile:** the uncommitted task-240 profile `exness-standard-swapfree.toml` got the same six symbols, so its same-symbols test still holds. It stays uncommitted with task 240.
   - **317a. RED** (`test_research_markets.py`)
     - The `exness-standard` profile maps DXY, US100, US500, US30, GER40 and UK100 to DXYm, USTECm, US500m, US30m, DE30m and UK100m, and keeps its four old symbols.
     - The spec file loads them with the terminal's quote currencies: USD for DXY and the US indices, EUR for GER40, GBP for UK100. EURUSD, GBPUSD, USDJPY and XAUUSD are unchanged.
-    - `ReplayBars.digits` on hand-made prices: 10708.61 → 2, 44120.5 → 1, 98.123 → 3, 1.16512 → 5, and float noise (1.1 + 0.2) doesn't add decimals. Empty data falls back to the old rule.
+    - `ReplayBars.digits` on hand-made prices: 10708.61 → 2, 44120.5 → 1, 98.123 → 3, 1.16512 → 5, and float noise (1.1 + 0.2) doesn't add decimals. Empty data, or prices on no grid of up to 6 decimals, fall back to the old rule.
     - `ChartsApp` lists the snapshot's instruments in the configured order, then any others sorted.
   - **317b. GREEN**
     - `config/brokers/exness-standard.toml`: the six symbols.

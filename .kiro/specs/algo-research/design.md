@@ -883,7 +883,7 @@ Requirement 22; decisions AR-D23 to AR-D26.
 
 ### Chart precision and order (`replay/bars.py`, `replay/charts.py`)
 
-- **Precision.** `ReplayBars.digits` is the fewest decimals, from 0 to 6, that write every price of the instrument's M1 data, allowing for float noise (1e-6 of a step). This covers UK100 (2), US30 (1), DXY (3), EURUSD (5) and BTCUSDT (2) without a table. Empty data falls back to the old rule. The engine watch builds its bars from the same class, so it needs no backtester change.
+- **Precision.** `ReplayBars.digits` is the fewest decimals, from 0 to 6, that write every price of the instrument's M1 data, allowing for float noise (1e-6 of a step). This covers UK100 (2), US30 (1), DXY (3), EURUSD (5) and BTCUSDT (2) without a table. Empty data, or data on no grid of up to 6 decimals (simulated prices), falls back to the old rule. The engine watch builds its bars from the same class, so it needs no backtester change.
 - **Order.** `ChartsApp` takes the research instruments' order. Instruments in the snapshot but not in the configuration follow, sorted.
 
 ### The focus snapshot (task 319)

@@ -54,3 +54,83 @@ quote_ccy = "USD"
 default_spread = 0.24
 stop_slippage = 0.06
 commission = { kind = "PER_LOT_PER_SIDE", value = 0.0 }
+
+# The user's markets (algo-research update 2026-10f), exported from the same account on 2026-10-16:
+# spreads are the median of that day's ticks; GER40 is DE30m.
+["DXY"]
+point = 0.001
+tick_size = 0.001
+contract_size = 1000.0
+volume_min = 0.01
+volume_step = 0.01
+volume_max = 200.0
+base_ccy = "USD"
+quote_ccy = "USD"
+default_spread = 0.013
+stop_slippage = 0.0033
+commission = { kind = "PER_LOT_PER_SIDE", value = 0.0 }
+
+["US100"]
+point = 0.01
+tick_size = 0.01
+contract_size = 1.0
+volume_min = 0.05
+volume_step = 0.01
+volume_max = 500.0
+base_ccy = "USD"
+quote_ccy = "USD"
+default_spread = 1.12
+stop_slippage = 0.28
+commission = { kind = "PER_LOT_PER_SIDE", value = 0.0 }
+
+["US500"]
+point = 0.01
+tick_size = 0.01
+contract_size = 1.0
+volume_min = 0.14
+volume_step = 0.01
+volume_max = 1000.0
+base_ccy = "USD"
+quote_ccy = "USD"
+default_spread = 0.4
+stop_slippage = 0.1
+commission = { kind = "PER_LOT_PER_SIDE", value = 0.0 }
+
+["US30"]
+point = 0.1
+tick_size = 0.1
+contract_size = 1.0
+volume_min = 0.05
+volume_step = 0.01
+volume_max = 500.0
+base_ccy = "USD"
+quote_ccy = "USD"
+default_spread = 1.0
+stop_slippage = 0.25
+commission = { kind = "PER_LOT_PER_SIDE", value = 0.0 }
+
+["GER40"]
+point = 0.1
+tick_size = 0.1
+contract_size = 1.0
+volume_min = 0.07
+volume_step = 0.01
+volume_max = 300.0
+base_ccy = "EUR"
+quote_ccy = "EUR"
+default_spread = 0.7
+stop_slippage = 0.2
+commission = { kind = "PER_LOT_PER_SIDE", value = 0.0 }
+
+["UK100"]
+point = 0.01
+tick_size = 0.01
+contract_size = 1.0
+volume_min = 0.05
+volume_step = 0.01
+volume_max = 300.0
+base_ccy = "GBP"
+quote_ccy = "GBP"
+default_spread = 0.98
+stop_slippage = 0.245
+commission = { kind = "PER_LOT_PER_SIDE", value = 0.0 }
