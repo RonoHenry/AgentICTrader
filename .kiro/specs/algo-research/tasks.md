@@ -523,6 +523,30 @@ The user's ten markets, in their order (Requirement 22). Task 319 needs Docker f
   - **Validates: Requirements 22.3, 22.4**
 
 - [ ] 319. The focus snapshot **(user review)**
+  - **Exported 2026-10-16; the build and the user's look at the charts are next.**
+    - **The store:** M1 for the six new Exness instruments, 2023-10-17 to 2026-10-16, 1.01–1.11 million rows each. BTCUSDT was already there from Binance, from 2023-10-04.
+    - **The Docker crash:** starting Docker Desktop brought up the whole stack, and it crashed once mid-load. Afterwards the store's counts matched the terminal's to a few bars, so no rows were lost. Only TimescaleDB is needed here.
+    - **`focus-2025-2026h1`** (code 2e8a590):
+
+      | Instrument | M1 rows | Coverage problems | What they are |
+      |---|---|---|---|
+      | DXY | 788,575 | 4 | Exness outages of 34–86 minutes |
+      | XAUUSD | 751,095 | 17 | as in `exness-2025-2026h1` |
+      | EURUSD | 791,537 | 2 | as before |
+      | GBPUSD | 791,387 | 1 | as before |
+      | US100, US500, US30 | ~747,000 each | 19 each | US holidays and early closes (MLK, Presidents', Good Friday, Memorial, Juneteenth, 3–4 July, Labor, Thanksgiving) |
+      | GER40 | 726,193 | 7 | Easter, 1 May, Christmas, and a late Sunday open (2026-05-10) |
+      | UK100 | 719,596 | 11 | Easter, the UK bank holidays, Christmas |
+      | BTCUSDT | 1,118,820 | 0 | none |
+
+      Every instrument also has a 47-minute Exness outage on 2025-01-03 at 11:46 UTC. Every warm-up comes from M1.
+    - **Fingerprints:** EURUSD, GBPUSD and XAUUSD are identical to `exness-2025-2026h1`, so their engine anticipations come from the cache.
+    - **`build --workers 4`:** 394 s, of which the anticipation (the seven new instruments) took 214 s.
+      - Feature rows: about 37,000 per FX pair, 35,400 per US index, 34,500–34,700 for GER40 and UK100, and 53,000 for BTCUSDT (its weekends).
+      - 22 days have no anticipation, all market closures: New Year, Christmas and Good Friday.
+      - Docker was shut down first (`wsl --shutdown` freed 8.6 GB); the build doesn't need the store.
+    - **The charts:** `python -m algo_research.replay` lists the ten tabs in the user's order, with prices at each instrument's own precision.
+    - **Waiting on the user:** a look at the ten charts.
   - Start Docker. Load M1 into the store: the six new Exness instruments from 2024-09-30, and BTCUSDT from Binance over the same span.
   - research.toml:
     - the ten instruments in the user's order;

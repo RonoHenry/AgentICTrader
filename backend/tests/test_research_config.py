@@ -52,7 +52,11 @@ def test_loads_research_toml_defaults():
     cfg = load_research_config()                       # the committed config/research/research.toml
     assert cfg.profile == "exness-standard"
     assert cfg.study == "baseline-2026q3"
-    assert cfg.instruments == ("EURUSD", "GBPUSD", "USDJPY", "XAUUSD")
+    # The user's markets, in their order (update 2026-10f); BTCUSDT from Binance.
+    assert cfg.instruments == ("DXY", "XAUUSD", "EURUSD", "GBPUSD", "US100", "US500", "US30", "GER40", "UK100",
+                               "BTCUSDT")
+    assert cfg.snapshot == "focus-2025-2026h1"
+    assert cfg.profiles == {"BTCUSDT": "binance"}
     assert cfg.start == date(2025, 1, 1)
     assert cfg.holdout_start == date(2026, 7, 7)       # read from the study, never set here
     assert cfg.slices.explore == (date(2025, 1, 1), date(2025, 7, 1))
