@@ -360,3 +360,63 @@ Added 2026-10-15. After watching, the trader placed the engine's flaw "between t
 1. THE watch SHALL draw each trade's life: placement, fill, the exit with its R, and the path between them (the best and worst point it reached, in R, at their times). The backtest never moves a stop or takes a partial: the page SHALL say so, since that is the management a trader would have done. Until the trade closes, only the best so far is shown.
 2. AT each close where the engine looked for a setup, the page SHALL list every candidate array the sequence detector considered: its timeframe, type, zone, raid (pool and age), CISD, and the key it was ranked by. It SHALL mark the one the engine chose, and draw the candidates on the chart when asked.
 3. THE trader MAY mark the candidate they would have chosen, or "none". The picks are kept in a file under `data/journal/` (local, git-ignored), one line per close, with the engine's choice beside it, so the two can be compared over many sessions.
+
+## Update 2026-10-16: Noculus, the Trader Against the Engine
+
+The trader asked (2026-10-16): "Within our engine chart (Noculus, just a fancy name I want to call it) I want to be able to mark out PD arrays back in time and place pseudo trades as though they were live, and then you will compare with the ones the engine is outputting. I think it brings us close to how I actually see the market."
+
+The research so far says the edge, if any, is in the trader's selection (which array, which side, which day), not in arrays as such. The watch already shows the engine's choices (Requirements 15–16). Noculus records the trader's own, made the same way and at the same moments, so the two can be compared on the same bars. Two choices are the trader's (2026-10-16):
+- the engine stays hidden until they reveal it (D27);
+- arrays are marked by clicking their candles (D28).
+
+### Requirement 17: Noculus Sessions
+
+1. THE charts app SHALL be called Noculus. The engine chart is its Engine mode.
+2. A watch session MAY be **blind**: until the trader reveals it, the server sends the bars and the clock only. It withholds the engine's arrays, pools, profile, setup, grade, candidates, orders and trades.
+3. REVEAL SHALL show everything up to the clock, then play on as an ordinary session. It can't be undone.
+4. THE trader's marks, trades and the comparison SHALL be kept per session in `data/journal/noculus/<instrument>/<session>.json` (local, git-ignored). Each item is stamped with the replay clock at which it was made.
+
+### Requirement 18: Arrays Marked by Their Candles
+
+1. THE trader SHALL mark an array with a tool (FVG, IFVG, order block, breaker) and a timeframe, then click candles of that timeframe:
+   - **FVG:** its third candle (C3), with C1 the candle two before. It is bullish when C3's low is above C1's high: the gap from C1's high to C3's low, and the CE its midpoint (AR-D27). A bearish FVG is the mirror. Three candles without a gap are refused.
+   - **IFVG:** the C3 of an FVG that a later candle of its timeframe closed beyond, by the clock. The zone is the FVG's, facing the other way.
+   - **Order block:** the order-block candle. The zone is its high to low, the MT is its body's midpoint, and the direction is the trader's (proposed: opposite to the candle's colour).
+   - **Breaker:** an order-block candle that a later candle closed beyond, by the clock. Facing the other way.
+2. EACH mark SHALL keep:
+   - its tool, timeframe, direction, low, high and mid (CE or MT);
+   - the time it formed (the close that made it), the times of the candles clicked, and the clock;
+   - an optional note.
+
+   No candle closing after the clock can be used. A mark that would need one is refused, with the reason.
+3. MARKS are drawn as boxes with their mid line. A deleted mark is kept as deleted, with its clock.
+
+### Requirement 19: Pseudo Trades
+
+1. AT the clock, the trader MAY place a trade: LONG or SHORT; market or limit; with a stop and a target; optionally tied to one of their marks.
+   - A market order fills at the next M1 bar's open.
+   - A limit order sits at a price until an expiry: the session day's close by default, or a chosen time.
+2. TRADES SHALL play out as the clock advances, priced with AlgoResearch's race rules (its Requirement 7): bid and ask, each bar's spread floored at the typical spread, stop slippage, and the stop winning a bar that reaches both. Each shows its fill, its exit and its net R.
+3. THE trader MAY close a trade at the clock, at the closing side's price.
+
+### Requirement 20: The Comparison
+
+1. ON reveal, a panel SHALL compare the session up to the clock:
+   - **arrays:**
+     - each of the trader's marks against the engine's arrays of the same kind (an IFVG counts as FVG family, a breaker as OB family), timeframe, direction and formation candle (within one candle of that timeframe);
+     - counts of matched marks, marks only the trader made, and the engine's arrays the trader didn't mark (its unfilled arrays of the marked timeframes);
+   - **trades:** the trader's and the engine's trades side by side, by day: direction, entry, stop, target, outcome and net R; whether they took the same side, and how far apart in time.
+2. THE comparison SHALL be saved with the session.
+3. `python -m algo_backtester noculus` SHALL summarise every saved session in `data/journal/noculus/REPORT.md` (local):
+   - the match rates per array kind and timeframe;
+   - the trader's and the engine's net R on the same days;
+   - the days on which they disagreed.
+
+### Decisions (2026-10-16)
+
+| Id | Decision | Source |
+|---|---|---|
+| D27 | Blind until reveal | The trader's choice. Seeing the engine's arrays first (30 candidates at one close on 2026-01-27) would pull the marks toward them, and the comparison would measure the engine, not the trader. |
+| D28 | Marking by candles; matching by formation candle | The trader's choice. Matching uses the candle that formed an array, not its edges, because the engine's FVG spans all three candles until the liquidity-engine fix (task 326) while the trader marks the gap. |
+| D29 | Pseudo trades priced as races | They are the rules AlgoResearch already checks against the fill model (its Property 5). No management yet: a manual exit is the one action. Partials and break-even wait until an edge exists. |
+| D30 | The name | Noculus: the trader's name for the chart, for both modes of the charts app. |

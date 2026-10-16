@@ -708,6 +708,40 @@ The tests follow the TDD steering doc: each task is written RED first. They live
 
 ---
 
+## Update 2026-10-16: Noculus
+
+Requirements 17–20; decisions D27 to D30. The server side lives in `algo_backtester/noculus.py`, used by `watch.py`; the page is `engine.html`/`engine.js` with a `noculus.js` layer, served by the charts app.
+
+### Blind sessions (`watch.py`)
+
+- **Starting blind:** `WatchSession(..., blind=True)`.
+- **While blind:** `state_at(w)` returns only the clock, the journal shows no orders or trades, and `candidates` is empty.
+- **Reveal:** `reveal(w)` records the reveal time and stops withholding. Everything up to `w` is then shown, and play continues as usual.
+- **Why on the server:** the page can't leak what the server never sends.
+
+### Marks (`noculus.py`)
+
+- **`mark(tool, tf, clicked, clock)`** reads the session's bars of `tf` that closed by `clock`.
+  - **FVG:** C3 is the clicked candle and C1 the candle two before. It needs a gap. The gap and CE come from `algo_research.atlas.arrays.fvgs`, so research and Noculus define it once.
+  - **IFVG:** the same, plus a later close beyond the far edge by `clock`. Direction is flipped.
+  - **OB:** the clicked candle's range and its body midpoint (MT). Direction defaults to opposite the candle's colour; the trader may set it.
+  - **Breaker:** the same, plus a later close beyond the block by `clock`. Direction is flipped.
+- **A refusal** names its reason: no gap, not closed by the clock, no close beyond the edge yet.
+- **The journal** (`data/journal/noculus/<instrument>/<session>.json`) holds `marks`, `trades`, `reveal` and `comparison`. It is written atomically after each change.
+
+### Pseudo trades (`noculus.py`)
+
+- **Placing:** `place(direction, kind, entry, stop, target, expiry, mark_id, clock)`.
+- **Settling:** at any clock, `settle(clock)` runs every open trade with `algo_research.races.run_races` over the M1 bars before the clock. A limit fills at the first bar that trades through its price before its expiry, and its race starts there.
+- **Manual exit:** `close(trade_id, clock)` exits at the last M1 close by the clock, on the closing side.
+- **Costs** come from the session's broker-profile spec, as the backtest's do.
+
+### The comparison (`noculus.py`, `cli.py`)
+
+- **Arrays:** the engine's arrays of each marked timeframe, as the session kept them at the reveal clock, are matched to the trader's marks by (family, timeframe, direction, formation candle within one bar). Unmatched ones on either side are listed with their zones.
+- **Trades:** the engine's journal and the trader's trades, grouped by trading date. Pairs share a direction and day; the gap between their fill times is shown.
+- **The report:** `python -m algo_backtester noculus` reads every journal into `data/journal/noculus/REPORT.md`.
+
 ## Requirement Traceability
 
 | Requirement | Design element |
