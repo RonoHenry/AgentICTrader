@@ -895,6 +895,19 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
   - **If a variant passes:** ablations (one rule removed at a time), then the hold-out `--final` run once the user agrees the version is final.
   - **If none passes:** use the breakdowns to choose between the deferred items (lower frames, trade management, premium/discount, the economic calendar).
 
+### Update 2026-10h: the FVG as the user reads it
+
+- [ ] 326. The FVG is the gap (Req 26; liquidity-engine and Phase A code) **(user review)**
+  - **326a. RED**
+    - **Under `fvg_zone = "gap"`:**
+      - the bullish and bearish FVGs on hand-made candles have the gap's bounds and the CE;
+      - a wick through the gap leaves it unfilled, and a close beyond its far edge fills it;
+      - the IFVG, the BPR and the unicorn follow the gap.
+    - **Under the default:** every existing detector test and the golden run are unchanged.
+    - **Plumbing:** `StrategyConfig.fvg_zone` reaches the engine in Phase A, the live runner and the watch; the Phase A cache key changes with it.
+  - **326b. GREEN** — `liquidity_engine/detectors/internal.py`, `engine.py`, `agent/strategy_config.py`, `algo_backtester/signals.py` and its cache key, the live runner.
+  - **326c. REFACTOR** — run the reference configuration with a `gap` variant (`--workers 10`, one run at a time), compare it with the reference, and record the difference here. The default changes only after the user's review (LE-D18).
+
 ---
 
 ## Task Dependency Graph
