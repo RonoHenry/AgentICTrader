@@ -445,6 +445,31 @@ H001 and H003 are redrafted, and H004 and H007 are withdrawn. None of them was e
    It is descriptive, with no verdict and no ledger row.
 4. Features that lack 20 prior dates SHALL be null (Req 2.4).
 
+## Update 2026-10f: The User's Markets
+
+On 2026-10-16 the user set the markets: "We will focus on these assets in this sequence: DXY (Dollar Index), GOLD, EURUSD, GBPUSD, US100, US500, US30, GER40, UK100 and BTCUSD." Their recent trades (UK100 on 2026-10-15, gold on 2026-10-14) and Model A's worked examples (NAS100, GER40) are in markets the snapshot doesn't hold, so neither research nor the blind replay could speak about them. USDJPY leaves the research set.
+
+Checked on the Exness demo terminal the same day:
+- **Offered:** every market but BTC, as DXYm, XAUUSDm, EURUSDm, GBPUSDm, USTECm, US500m, US30m, DE30m (the German 40 index under its old name) and UK100m. Each has M1 from 2024-09-30, enough warm-up for the research period.
+- **Hours:** the indices pause from 17:00 to 18:00 New York every day, the D1 candle's own boundary. Their weekend runs from Friday 16:00 or 17:00 to Sunday 18:00. DXY trades through the day, like FX.
+- **Holidays:** the indices close on exchange holidays the FX calendar doesn't know: Good Friday, Easter Monday, UK bank holidays, 1 May on GER40, and US early closes at 13:00. Coverage lists these in the manifest; it doesn't refuse them (Req 1.3).
+- **BTC:** Exness (KE) lists no crypto. BTC comes from Binance spot, which the repository already loads (AR-D23).
+
+### Requirement 22: The User's Markets
+
+**User Story:** As the user, I want research and the replay to cover the markets I trade, in my order, so that what research finds, and what my blind reads measure, is about those markets.
+
+#### Acceptance Criteria
+
+1. THE research instruments SHALL be, in this order: DXY, XAUUSD, EURUSD, GBPUSD, US100, US500, US30, GER40, UK100, BTCUSDT. Reports and the chart tabs list them in this order.
+2. THE `exness-standard` profile SHALL map DXY, US100, US500, US30, GER40 and UK100 to DXYm, USTECm, US500m, US30m, DE30m and UK100m. Its spec file SHALL carry their specs, exported from the terminal. The entries already there SHALL stay unchanged.
+3. AN instrument MAY come from another broker profile (`[profiles]` in research.toml, e.g. `BTCUSDT = "binance"`):
+   - the snapshot reads it from that profile's candle store and records its profile, venue, server clock and spec source;
+   - loading checks its coverage by its own venue's rules;
+   - its costs come from its own profile's spec file, in that profile's account currency.
+4. FOR an instrument whose venue trades 24/7, the grid SHALL keep Saturday's trading date. Every other instrument keeps the Saturday exclusion (Req 2.1).
+5. THE charts (the blind replay and the engine watch) SHALL show each instrument's prices to its own precision: the fewest decimals that write every price in its data. The order of the chart tabs follows criterion 1.
+
 ## Open Decisions
 
 Proposed defaults apply unless the user changes them at review.
@@ -473,3 +498,7 @@ Proposed defaults apply unless the user changes them at review.
 | AR-D20 | Normal volatility (update 2026-10e) | The median over the previous 20 trading dates, per instrument and slot: robust to news spikes, and about a month of memory. The "so far" norm is time-matched, so a ratio early in an H4 candle isn't biased low. |
 | AR-D21 | Timing claims (update 2026-10e) | H004 and H007 are withdrawn before pre-registration. Time of day enters through the volatility features, the per-instrument profile, and `where` filters with `complement` twins. |
 | AR-D22 | Fractal frames (update 2026-10e) | Still deferred. The engine anticipates D1 candles only (Requirement 21 of liquidity-engine, stage 1). H001 and H003 test the D1 frame; the same tests apply to an H4 frame once the engine builds one. |
+| AR-D23 | BTC (update 2026-10f) | Binance spot BTCUSDT, named as such: it is the USDT pair, priced on trades, with a one-tick spread. Exness (KE) offers no crypto. A broker's BTCUSD CFD replaces it if the user opens an account that has one. |
+| AR-D24 | The new markets' calendar (update 2026-10f) | One trading day for all instruments: 17:00 to 17:00 New York, the user's lens. The indices pause on that boundary anyway. BTC gets a D1 candle on every date, Saturday's included. Its week opens with the server's Sunday (Saturday 17:00 New York), as FX's does. |
+| AR-D25 | SMT for the new markets (update 2026-10f) | Deferred. Requirement 16 allows one partner per instrument, positively correlated. The natural pairs need more: DXY is inverse to EURUSD, GBPUSD and gold; US100, US500 and US30 form a triad; GER40 pairs with UK100. That is a Requirement 16 change, specified once the user names the pairs. EURUSD with GBPUSD stays. |
+| AR-D26 | The snapshot (update 2026-10f) | A new snapshot, `focus-2025-2026h1`, with all ten instruments over the same period. The old `exness-2025-2026h1` stays on disk, so earlier reports remain reproducible. EURUSD, GBPUSD and gold should keep their old fingerprints, since the rows come from the same store; any difference is explained. The backtester's instruments and coverage rules don't change. Trading the indices there needs their holidays and the EUR and GBP conversion, a later step. |
