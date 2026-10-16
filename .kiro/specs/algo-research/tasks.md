@@ -561,7 +561,19 @@ The user's ten markets, in their order (Requirement 22). Task 319 needs Docker f
 
 The user's framework, reverse-engineered on the exploration slice (Requirements 23–28). Every module is new, under `algo_research/atlas/`, and is tested in `test_research_atlas.py` on hand-made bars, plus one real-data smoke test on the fixture week.
 
-- [ ] 320. Arrays as the user reads them
+- [x] 320. Arrays as the user reads them
+  - **Done 2026-10-16.** `atlas/arrays.py`, tested in `test_research_atlas.py`.
+    - **UK100 over the snapshot** (warm-up included): 26,351 arrays in 0.9 s (loading the snapshot takes 23 s).
+
+      | Timeframe | FVGs | OBs | Inverted by the data's end |
+      |---|---|---|---|
+      | M15 | 12,028 | 7,846 | 98% / 97% |
+      | H1 | 2,745 | 2,365 | 97% / 94% |
+      | H4 | 675 | 505 | 93% / 90% |
+      | D1 | 82 | 68 | 78% / 76% |
+      | W1 | 23 | 14 | 61% / 64% |
+
+    - **Reading:** almost every lower-timeframe gap is closed through in the end. So "an FVG below" is nearly always true somewhere, which is why the atlas compares against base rates.
   - **320a. RED**
     - **FVG:** a bullish and a bearish FVG on hand-made bars give the gap's low, high, CE and formation time (C3's close). Three candles without a gap give none. The FVG survives a wick into it and a close inside it. A close beyond its far edge flips it, and its state at a time before that close is still FVG.
     - **Order block:** it matches `measures.bearish_order_blocks` and the mirror. The MT is the body's midpoint. A close beyond it flips it into a breaker.
