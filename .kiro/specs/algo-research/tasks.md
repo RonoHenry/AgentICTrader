@@ -604,7 +604,11 @@ The user's framework, reverse-engineered on the exploration slice (Requirements 
   - **321b. GREEN** — `atlas/swings.py`.
   - **Validates: Requirement 24**
 
-- [ ] 322. The context at a swing
+- [x] 322. The context at a swing
+  - **Done 2026-10-16.** `atlas/context.py`. UK100 over the exploration slice: 8,974 swings on every timeframe in 4.4 s.
+    - **Process slip:** the module was written before its tests (RED wasn't first). The tests were then written from the requirement, not the code. They found two bugs: the session and month "known" times overflowed through float64, and two swings sharing one price needed a list lookup.
+    - **A level is untaken at the bar's open** when the first M1 bar beyond it, after it was known, opens at or after the bar's open. This is computed once per level, so the check is vectorised.
+    - **First look, UK100 three-candle M15 swings (not evidence):** 96% traded into some facing higher-timeframe array, and their held rate equals the base rate (56%). Turtle soups held 63%. On H4, a swept previous-day low held 32% (base 53%). Task 323 ranks these across all ten markets with intervals.
   - **322a. RED**
     - **Arrays traded into:**
       - an H4 bullish FVG under an M15 swing low gives `edge`, `mid` or `through` by the wick's depth;

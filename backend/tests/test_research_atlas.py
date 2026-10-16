@@ -142,18 +142,19 @@ MINUTE = pd.Timedelta(minutes=1)
 START = pd.Timestamp("2025-01-07 01:00", tz=ZoneInfo("America/New_York")).tz_convert("UTC")   # an H4 boundary
 
 
-def hourly_frame(rows, orders=None, spikes=None, mirrored=False):
+def hourly_frame(rows, orders=None, spikes=None, mirrored=False, start=None):
     """A frame whose H1 bars are ``rows`` (open, high, low, close), built minute by minute: an hour opens, reaches
     its first extreme at :20 and its second at :40, and closes at :59. A bearish hour makes its high first ("hl"),
     a bullish one its low first ("lh"), unless ``orders`` says otherwise. ``spikes`` {hour: (minute, high, low)}
     widens one M1 bar. ``mirrored`` turns the prices upside down."""
+    start = START if start is None else pd.Timestamp(start).tz_convert("UTC")
     times, o, h, l, c = [], [], [], [], []
     for n, (op, hi, lo, cl) in enumerate(rows):
         order = (orders or {}).get(n) or ("hl" if cl < op else "lh")
         x1, x2 = (hi, lo) if order == "hl" else (lo, hi)
         path = [(op, op)] * 20 + [(op, x1)] + [(x1, x1)] * 19 + [(x1, x2)] + [(x2, x2)] * 18 + [(x2, cl)]
         for m, (a, b) in enumerate(path):
-            times.append(START + n * HOUR + m * MINUTE)
+            times.append(start + n * HOUR + m * MINUTE)
             o.append(a), c.append(b), h.append(max(a, b)), l.append(min(a, b))
             if spikes and n in spikes and spikes[n][0] == m:
                 h[-1], l[-1] = max(h[-1], spikes[n][1]), min(l[-1], spikes[n][2])
@@ -269,3 +270,138 @@ def test_property_1_objectives_are_known_when_the_swing_is():
     for col in ("extreme", "obj_crt", "obj_same_tf", "avg_range", "at_once_crt", "known_at"):
         assert past[col] == full[col]
     assert past["out_same_tf"] == "open"                                   # its outcome lies after t
+
+
+# ══ Task 322: the context at a swing (Requirement 25) ═══════════════════════
+
+from algo_research.atlas.context import CONTEXT_COLUMNS, build_context, facing_depths, pd_zone  # noqa: E402
+from algo_research.frame import calendar_columns  # noqa: E402
+
+
+def _arrays_table(rows):
+    """Arrays from (tf, kind, direction, low, high, formed_at, flipped_at) rows; mid is the midpoint."""
+    tf, kind, direction, low, high, formed, flipped = zip(*rows)
+    return pd.DataFrame({"tf": tf, "kind": kind, "direction": direction, "low": low, "high": high,
+                         "mid": [(a + b) / 2 for a, b in zip(low, high)],
+                         "formed_at": pd.to_datetime(list(formed), utc=True),
+                         "flipped_at": pd.to_datetime(list(flipped), utc=True)})
+
+
+def test_the_depth_of_a_supporting_array_and_which_arrays_count():
+    opened = T0 + 10 * HOUR
+    arrays = _arrays_table([
+        ("H4", "FVG", 1, 1.104, 1.115, T0, None),                         # supports a low
+        ("H4", "OB", -1, 1.104, 1.115, T0, None),                         # resistance: the other way
+        ("H1", "FVG", 1, 1.104, 1.115, opened + HOUR, None),              # formed after the bar opened
+        ("D1", "FVG", -1, 1.100, 1.109, T0, T0 + 5 * HOUR),               # a bearish gap closed through: an IFVG
+    ])
+    assert facing_depths(arrays, opened, 1.112, 1.116) == {("H4", "FVG"): "edge"}
+    assert facing_depths(arrays, opened, 1.108, 1.116) == {("H4", "FVG"): "mid", ("D1", "IFVG"): "edge"}
+    assert facing_depths(arrays, opened, 1.102, 1.116) == {("H4", "FVG"): "through", ("D1", "IFVG"): "mid"}
+    assert facing_depths(arrays, opened, 1.125, 1.130) == {}                # the bar never reached them
+    # A swing high reads the same arrays upside down: the bearish OB is its resistance.
+    assert facing_depths(arrays, opened, 1.112, 1.100, side="high") == {("H4", "OB"): "mid"}
+
+
+def _path_a(x):
+    """An H4 bullish FVG [1.104, 1.115] formed at hour 12; an H1 swing low at hour 13 reaching ``x``. Hour 10
+    makes its own swing low at the FVG's top, inside the H4 bar that forms it."""
+    up = [(1.100, 1.104, 1.099, 1.102)] * 4
+    leg = [(1.102, 1.108, 1.101, 1.107), (1.107, 1.113, 1.106, 1.112), (1.112, 1.118, 1.111, 1.117),
+           (1.117, 1.122, 1.116, 1.121)]
+    top = [(1.121, 1.125, 1.118, 1.120), (1.120, 1.124, 1.117, 1.122), (1.122, 1.125, 1.115, 1.118),
+           (1.118, 1.121, 1.116, 1.119)]
+    dip = [(1.119, 1.120, 1.114, 1.115), (1.115, 1.116, x, 1.113), (1.113, 1.118, x + 0.002, 1.117),
+           (1.117, 1.120, 1.116, 1.119)]
+    return hourly_frame(up + leg + top + dip)
+
+
+def _context(frame, tf=TF.H1, extra=()):
+    swings = build_swings(frame, tf)
+    every = pd.concat([swings, *(build_swings(frame, t) for t in extra)], ignore_index=True)
+    return build_context(frame, swings, build_arrays(frame), every)
+
+
+@pytest.mark.parametrize("x, depth", [(1.112, "edge"), (1.108, "mid"), (1.102, "through")])
+def test_an_h1_swing_low_into_an_h4_fvg_records_how_deep_it_went(x, depth):
+    table = _context(_path_a(x))
+    lows = table[(table["side"] == "low") & (table["type"] == "three")].set_index("extreme")
+    assert lows.loc[x, "arr_H4_FVG"] == depth
+    assert lows.loc[x, "arr_htf_any"] and lows.loc[x, "arr_any"]
+    assert lows.loc[1.115, "arr_H4_FVG"] is None                            # the FVG formed after its bar opened
+    assert list(table.columns[-len(CONTEXT_COLUMNS):]) == CONTEXT_COLUMNS
+
+
+def _path_b():
+    """Two trading dates from Monday 17:00 New York, flat at 1.1000 (H1 lows 1.0995) except:
+    Tuesday's Asian low 1.0990 (22:00) and Tuesday's low 1.0985 (08:00); Wednesday's Asian low 1.0988 (22:00),
+    equal lows 1.0990 (02:00) and 1.09905 (05:00), then 1.0980 at 09:00 Wednesday."""
+    rows = [(1.1000, 1.1005, 1.0995, 1.1000)] * 48
+    for hour, low in ((5, 1.0990), (15, 1.0985), (29, 1.0988), (33, 1.0990), (36, 1.09905), (40, 1.0980)):
+        rows[hour] = (1.1000, 1.1005, low, 1.1000)
+    return hourly_frame(rows, start=pd.Timestamp("2025-01-06 17:00", tz=ZoneInfo("America/New_York")))
+
+
+def test_the_liquidity_a_swing_took():
+    table = _context(_path_b())
+    lows = table[(table["side"] == "low") & (table["type"] == "three")].set_index("extreme")
+    wednesday = lows.loc[1.0980]
+    assert (wednesday["liq_pd"], wednesday["liq_asia"], wednesday["liq_london"], wednesday["liq_equal"]) == (
+        True, True, True, True)
+    assert not wednesday["liq_pw"]                                         # no previous week in the data
+    tuesday = lows.loc[1.0985]
+    assert tuesday["liq_asia"] and not tuesday["liq_pd"] and not tuesday["liq_equal"]
+    # 1.0990 twice: hour 5 is inside Tuesday's Asian session; hour 33 stays above Wednesday's Asian low.
+    assert not lows.loc[[1.0990], "liq_asia"].any()
+
+
+def _path_c():
+    """An H4 swing low (1.095) and high (1.110) at H4 bar 1; an H1 swing low at hour 13 takes the low."""
+    rows = [(1.102, 1.103, 1.101, 1.102)] * 16
+    rows[1], rows[5], rows[6] = (1.102, 1.103, 1.100, 1.102), (1.102, 1.103, 1.095, 1.102), (1.102, 1.110, 1.101, 1.102)
+    rows[9], rows[10] = (1.102, 1.103, 1.098, 1.102), (1.102, 1.104, 1.101, 1.102)
+    rows[12], rows[13], rows[14] = (1.102, 1.103, 1.097, 1.102), (1.102, 1.103, 1.094, 1.102), (1.102, 1.103, 1.096, 1.102)
+    return hourly_frame(rows)
+
+
+def test_an_untaken_higher_timeframe_swing_and_the_dealing_range():
+    table = _context(_path_c(), extra=(TF.H4,))
+    row = table[(table["side"] == "low") & (table["type"] == "three") & (table["extreme"] == 1.094)].iloc[0]
+    assert row["liq_htf_swing"]
+    assert row["pd"] == pytest.approx((1.094 - 1.095) / (1.110 - 1.095))  # below the H4 range's low
+    assert (row["pd_zone"], row["pd_aligned"]) == ("beyond", True)
+
+
+def test_dealing_range_zones_read_for_the_swings_side():
+    assert [pd_zone("low", v) for v in (-0.1, 0.2, 0.8)] == ["beyond", "discount", "premium"]
+    assert [pd_zone("high", v) for v in (1.2, 0.8, 0.2)] == ["beyond", "premium", "discount"]
+    assert pd_zone("low", float("nan")) is None
+
+
+def test_time_and_anatomy_of_a_swing():
+    table = _context(hourly_frame(LEG + [(1.098, 1.112, 1.097, 1.111)]))
+    row = table[(table["side"] == "low") & (table["type"] == "three")].iloc[0]
+    cal = calendar_columns(pd.DatetimeIndex([row["extreme_time"]]))
+    assert (row["ny_hour"], row["session"], row["weekday"]) == (4, "london", 1)    # 04:40 New York, Tuesday
+    assert (row["killzone"], row["h4_index"]) == (cal["killzone"].iloc[0], cal["h4_index"].iloc[0])
+    assert not row["turtle_soup"]                                          # C2 closed below C1's low
+    assert row["wick_share"] == pytest.approx((1.092 - 1.090) / (1.097 - 1.090))
+    assert row["displacement"] == pytest.approx(0.006 / row["avg_range"])
+    assert row["closes_beyond"] and not row["own_fvg"]                     # C3 closed above C2's high
+    soup = _context(hourly_frame([(1.100, 1.102, 1.098, 1.101)] * 3 + [
+        (1.100, 1.102, 1.098, 1.101), (1.101, 1.102, 1.096, 1.100), (1.100, 1.106, 1.099, 1.105)]))
+    assert soup[(soup["side"] == "low") & (soup["type"] == "three")].iloc[0]["turtle_soup"]
+
+
+def test_property_1_context_is_known_when_the_swing_is():
+    frame = _path_a(1.108)
+    full = _context(frame)
+    row = full[(full["side"] == "low") & (full["type"] == "three") & (full["extreme"] == 1.108)].iloc[0]
+    early = frame.m1["time"] < row["known_at"]
+    cut = frame_from_arrays("TEST", pd.DatetimeIndex(frame.m1["time"][early]),
+                            *(frame.m1[k][early].to_numpy() for k in ("open", "high", "low", "close")),
+                            spread=np.zeros(int(early.sum())), typical_spread=0.0, stop_slippage=0.0)
+    past = _context(cut)
+    again = past[(past["side"] == "low") & (past["type"] == "three") & (past["extreme"] == 1.108)].iloc[0]
+    for col in CONTEXT_COLUMNS:
+        assert (again[col] == row[col]) or (pd.isna(again[col]) and pd.isna(row[col])), col
