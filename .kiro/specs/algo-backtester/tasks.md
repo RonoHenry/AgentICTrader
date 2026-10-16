@@ -680,6 +680,48 @@ Numbered from 294, after market-narrative's 290–293. Tasks 294 and 295 need th
     - the watch walk-through: candidates listed, a pick saved, events drawn.
   - **Validates: Requirements 16.1-16.3**
 
+### Update 2026-10-16: Noculus (tasks 329–332)
+
+The trader's marks and trades against the engine's, on the same bars, blind until revealed (Requirements 17–20).
+
+- [ ] 329. Blind sessions and the session journal
+  - **329a. RED** (`test_backtest_noculus.py`)
+    - A blind session's state, journal and candidates carry no engine data before reveal; after reveal they hold everything up to the reveal clock and nothing beyond the clock.
+    - The journal file round-trips, written atomically.
+    - The pages are titled Noculus.
+  - **329b. GREEN** — `watch.py` (blind, reveal, endpoints); `noculus.py` (the journal); `engine.html` and `index.html` (the name).
+  - **Validates: Requirements 17.1–17.4**
+
+- [ ] 330. Arrays marked by their candles
+  - **330a. RED**
+    - **FVG:** bullish and bearish from C3, with the gap, CE and formation time equal to `atlas.arrays.fvgs`; no gap is refused.
+    - **IFVG and breaker:** need a later close beyond by the clock, and are refused before it.
+    - **OB:** MT and direction (default and set).
+    - **No future candles:** a candle after the clock is refused.
+    - **Deletion** is kept with its clock.
+  - **330b. GREEN** — `noculus.py` (`mark`), endpoints, and the page's tools in `noculus.js` (click candles; boxes with the mid line).
+  - **330c. REFACTOR** — the browser walk-through: mark each kind and see the refusals.
+  - **Validates: Requirements 18.1–18.3**
+
+- [ ] 331. Pseudo trades
+  - **331a. RED**
+    - A market trade settles as `run_races` does from the next M1 open.
+    - A limit fills at the first bar trading through it before expiry, or expires unfilled.
+    - A manual exit is at the last M1 close by the clock, on the closing side.
+    - Nothing settles from bars after the clock.
+  - **331b. GREEN** — `noculus.py` (`place`, `settle`, `close`), endpoints, and the page's trade ticket and live drawing.
+  - **331c. REFACTOR** — the walk-through: place market and limit trades, play through, close one by hand.
+  - **Validates: Requirements 19.1–19.3**
+
+- [ ] 332. Reveal and compare **(user review)**
+  - **332a. RED**
+    - **Arrays:** matched by formation candle, even when the engine's FVG spans three candles; unmatched ones listed on both sides.
+    - **Trades:** paired by day and direction.
+    - **The report:** summarises several sessions.
+  - **332b. GREEN** — `noculus.py` (`compare`), the reveal panel, and `python -m algo_backtester noculus`.
+  - **332c. REFACTOR** — the walk-through, then the trader's first sessions.
+  - **Validates: Requirements 20.1–20.3**
+
 ---
 
 ## Task Dependency Graph
@@ -793,6 +835,11 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
       "tasks": ["213"],
       "description": "Remove the superseded ml/backtesting engine",
       "dependencies": ["Baseline"]
+    },
+    {
+      "name": "Noculus",
+      "tasks": ["329", "330", "331", "332"],
+      "description": "Update 2026-10-16: blind sessions, marks by candles, pseudo trades, the comparison (in order; builds on the engine watch, tasks 305 and 308)"
     }
   ]
 }

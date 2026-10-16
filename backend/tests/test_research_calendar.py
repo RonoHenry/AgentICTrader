@@ -44,6 +44,14 @@ def test_the_import_gives_utc_times_numbers_and_one_row_per_value(tmp_path):
     assert (nfp["importance"], nfp["time_mode"], nfp["currency"]) == ("HIGH", "DATETIME", "USD")
 
 
+def test_an_ansi_export_reads_too(tmp_path):
+    # The script writes with FILE_ANSI: on Windows that is cp1252, where an en dash is byte 0x96.
+    path = tmp_path / "ansi.csv"
+    row = "106,9006,2025.01.17 10:00:00,0,EUR,DE,ZEW Economic Sentiment – Germany,HIGH,DATETIME,1,2,3,,%,NONE"
+    path.write_bytes(("\n".join([HEADER, row]) + "\n").encode("cp1252"))
+    assert import_calendar(path)["event"].iloc[0] == "ZEW Economic Sentiment – Germany"
+
+
 def test_the_store_is_fingerprinted_and_refuses_changed_data(tmp_path):
     table = import_calendar(export(tmp_path))
     manifest = write_calendar(table, tmp_path / "calendar", "mt5", source="ExnessKE-MT5Trial9")
