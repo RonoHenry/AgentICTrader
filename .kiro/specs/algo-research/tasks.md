@@ -662,6 +662,35 @@ The user's framework, reverse-engineered on the exploration slice (Requirements 
   - **325c. REFACTOR** — check the page in headless Chrome.
   - **Validates: Requirement 28**
 
+### K. Update 2026-10i: the economic calendar
+
+News as context (Requirements 29–30). Task 327 needs the user once: to run the export script in the MT5 terminal.
+
+- [ ] 327. Calendar history
+  - **327a. RED** (`test_research_calendar.py`)
+    - On a hand-written export (with server offsets of +0 and +3):
+      - the import gives UTC times;
+      - blank values are nulls, and values are numbers;
+      - rows are de-duplicated by `value_id` and sorted.
+    - The manifest's sha256 changes with the data.
+    - `releases` keeps exact-time, high-importance rows of the given currencies only.
+  - **327b. GREEN**
+    - `scripts/mql5/AgenticCalendarExport.mq5`, compiled with MetaEditor.
+    - `algo_research/calendar.py`, and `calendar --import` in `cli.py`.
+  - **327c. REFACTOR**
+    - The user runs the script.
+    - Import its file, and record the counts per currency and importance.
+  - **Validates: Requirement 29**
+
+- [ ] 328. News in the atlas **(user review)**
+  - **328a. RED** (`test_research_atlas.py`, `test_research_config.py`)
+    - On hand-made swings and releases: each flag at its window's edges, `news_day` per trading date, and only an instrument's own currencies and importance counting.
+    - `[calendar]` in research.toml, with the AR-D35 defaults.
+    - The atlas builds without a calendar.
+  - **328b. GREEN** — `config.py`, `atlas/news.py`, `atlas/report.py`, `cli.py`.
+  - **328c. REFACTOR** — rerun the atlas with the calendar, and record what the news columns show against geometry.
+  - **Validates: Requirement 30**
+
 ---
 
 ## Task Dependency Graph
@@ -746,6 +775,12 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
       "name": "The Turn Atlas",
       "tasks": ["320", "321", "322", "323", "324", "325"],
       "description": "Update 2026-10g: arrays as the user reads them, swings and outcomes, context, the report, the fold, the Atlas mode (in order; each needs the one before)",
+      "dependencies": ["The User's Markets"]
+    },
+    {
+      "name": "The Economic Calendar",
+      "tasks": ["327", "328"],
+      "description": "Update 2026-10i: calendar history from the MT5 terminal (the user runs the export once), then news in the atlas (328 needs 327 and the atlas report, 323)",
       "dependencies": ["The User's Markets"]
     }
   ]

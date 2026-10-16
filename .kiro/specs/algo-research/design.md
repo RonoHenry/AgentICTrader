@@ -959,6 +959,34 @@ These are columns on the swing table, each computed as of `known_at`.
 
 The You mode never links to it.
 
+## Update 2026-10i: The Economic Calendar
+
+Requirements 29–30; decisions AR-D34 to AR-D36.
+
+### The export (`scripts/mql5/AgenticCalendarExport.mq5`)
+
+- **What it reads:** `CalendarValueHistory(values, from, to, NULL, currency)` for each currency in its inputs (default USD, EUR, GBP), from 2024-09-01 to now. For each value it reads `CalendarEventById` (name, importance, time mode, unit, multiplier) and `CalendarCountryById` (code, currency).
+- **Values:** the `long` fields arrive in millionths, with `LONG_MIN` meaning empty. They are written as plain numbers, or blank.
+- **Time:** times are the server's. The script writes `TimeTradeServer() − TimeGMT()` with every row, so the import converts each one; Exness runs at +0.
+- **Output:** `Common/Files/agentic_calendar_<from>_<to>.csv`, in the folder shared by every terminal. The script prints the path and the row count.
+- **Building it:** the source lives in the repository and is compiled with `MetaEditor64.exe /compile`. The user runs it once from the Navigator.
+
+### The import (`calendar.py`, `cli.py`)
+
+- **The file:** `import_calendar(csv) → DataFrame`: `time` (UTC), `currency`, `country`, `event`, `importance`, `time_mode`, `actual`, `forecast`, `previous`, `revised`, `unit`, `value_id`, `event_id`. Rows are sorted by time and de-duplicated by `value_id`.
+- **The store:** `data/research/calendar/<name>.parquet` and `manifest.json` (rows, sha256, period, currencies, source).
+- **Releases:** `releases(table, currencies, importance)` gives the exact-time releases that count for an instrument.
+
+### News columns (`atlas/news.py`)
+
+Per instrument, its counting release times are a sorted int64 array, and each swing's flags come from `searchsorted`:
+- `news_made`: (extreme − 15 min, extreme];
+- `news_ahead`: (extreme, extreme + 60 min];
+- `news_next_bar`: (known_at, known_at + one bar of the swing's timeframe];
+- `news_day`: the count on the extreme's trading date, as "0", "1" or "2+".
+
+The report lists them with the other context values. `CONTEXT_COLUMNS` doesn't change; the news columns are added by `build_atlas` when a calendar is given, so an atlas without one still builds.
+
 ## Requirement Traceability
 
 | Requirement | Components | Properties | Tasks |
@@ -986,5 +1014,6 @@ The You mode never links to it.
 | 15 Candle ranges, `crt` | `features/market.py`, `events.py`, `baselines.py` | 1 | 263 |
 | 16 SMT | `features/partner.py`, `events.py`, `dataset.py`, `config.py` | 1 | 264 |
 | 17 Daily quarters | `labels.py`, `baselines.py` | 2 | 265 |
+| 29–30 The economic calendar | `scripts/mql5/AgenticCalendarExport.mq5`, `calendar.py`, `atlas/news.py`, `atlas/report.py`, `cli.py`, `config.py` | 1 | 327, 328 |
 | 23–28 The turn atlas | `atlas/arrays.py`, `atlas/swings.py`, `atlas/context.py`, `atlas/report.py`, `atlas/fold.py`, `cli.py`, `replay/charts.py` | 1 | 320–325 |
 | 22 The user's markets | `config.py`, `snapshot.py`, `specs.py`, `cli.py`, `frame.py`, `dataset.py`, `replay/bars.py`, `replay/charts.py`; `config/brokers/exness-standard.toml`, `config/instruments/exness-standard.toml`, `config/research/research.toml` | 1, 10 | 317, 318, 319 |

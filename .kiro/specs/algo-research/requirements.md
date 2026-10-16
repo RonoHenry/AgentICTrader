@@ -587,6 +587,41 @@ Reverse-engineering is the method: start from what each swing delivered, then as
 2. HOVERING over a swing SHALL show its context values.
 3. THE blind replay (the You mode) SHALL never show the atlas: it reveals outcomes. The Engine mode is the backtester's and stays as it is.
 
+## Update 2026-10i: The Economic Calendar
+
+On 2026-10-16 the user asked whether the economic landscape is in the picture: "some moves were definitely followed by economic data". It isn't, anywhere: not in the atlas, not in the engine (liquidity-engine defers the calendar for want of a data source). The atlas hints at it all the same. H1 swings made in the 08:00 New York hour delivered +4.5 points beyond geometry, carried by EURUSD, GBPUSD and DXY (+9 to +12): the 08:30 release slot, seen only as a time of day.
+
+The MetaTrader 5 terminal holds MetaQuotes' economic calendar, with history, exact times, importance, and actual, forecast and previous values. The Python package can't read it; MQL5 can (`CalendarValueHistory`). An MQL5 script exports it once; research imports the file.
+
+### Requirement 29: Calendar History
+
+**User Story:** As the researcher, I want the economic calendar of the research period, frozen like the candles, so that news can be measured as context without guessing its times.
+
+#### Acceptance Criteria
+
+1. AN MQL5 script SHALL export the terminal's calendar values for a period and a list of currencies to a CSV file in the terminal's common folder. Each row has:
+   - the value and event ids, the release time and the server's offset from UTC;
+   - the currency and country code, the event name and its importance (none, low, moderate, high);
+   - the time mode (an exact time, a whole day, no time, tentative);
+   - the actual, forecast, previous and revised previous values, with the event's unit.
+2. `python -m algo_research calendar --import <csv>` SHALL convert the times to UTC and write `data/research/calendar/<name>.parquet` with a manifest: its row count, sha256, period, currencies and source line.
+3. ONLY events with an exact time SHALL be used as releases. The others are kept and counted.
+
+### Requirement 30: News in the Atlas
+
+**User Story:** As the user, I want each swing to say whether it formed around scheduled news, so that the moves the data released can be told apart from the ones it didn't.
+
+#### Acceptance Criteria
+
+1. EACH research instrument SHALL have its news currencies (configurable in research.toml; defaults in AR-D35). A release counts for an instrument when its currency is one of them and its importance is high (`[calendar] importance`).
+2. EACH swing SHALL gain, from the release schedule only:
+   - `news_made`: a counting release in the 15 minutes up to the extreme's minute (the release printed the extreme);
+   - `news_ahead`: a counting release in the 60 minutes after the extreme's minute (the extreme was a run before the release);
+   - `news_next_bar`: a counting release in the swing's next bar of its timeframe after it is known;
+   - `news_day`: the number of counting releases on the extreme's trading date (0, 1, 2+).
+3. THE schedule is published before the week it covers, so these columns read nothing that wasn't known. Actual values, and so surprises, are not used (AR-D36).
+4. THE atlas report SHALL read the news columns like every other context value: excess over geometry, against the rest.
+
 ## Open Decisions
 
 Proposed defaults apply unless the user changes them at review.
@@ -626,3 +661,6 @@ Proposed defaults apply unless the user changes them at review.
 | AR-D31 | Timeframes (update 2026-10g) | Swings on M15, H1, H4 and D1; arrays on M15 to W1. W1 swings are counted, but six months hold too few to judge. M30 waits until the user asks: the calendar frames hold M15, H1, H4, D1 and W1. |
 | AR-D32 | The atlas's statistics (update 2026-10g) | Trading dates are resampled across instruments, as in Requirement 11. Lows and highs are pooled by mirroring, and the report splits them. The atlas is exploration only: a value that stands out is a lead for pre-registration, not a finding. |
 | AR-D33 | Geometry first (update 2026-10g, from the first run on 2026-10-16) | Every held rate is read against the random walk from the confirming close. On the first run, the top values by raw rate (own FVG 91%, displacement, close beyond) matched their geometry within 1–3 points, and "sweeps hold less" was geometry too (38% against 34%). Outcomes are strict on both sides, because a touch had counted as held and gave a 1–3 point head start. |
+| AR-D34 | The calendar's source (update 2026-10i) | MetaQuotes' calendar from the MT5 terminal, exported by an MQL5 script: free, with history, exact times and importance, from the terminal that supplies the prices. ForexFactory's feed (the repo's `calendar_ingestion.py`) has the current week only. Scraping the ForexFactory or Investing.com history breaks their terms. FRED has US release dates only, without times or importance. |
+| AR-D35 | News currencies (update 2026-10i) | USD for DXY, gold, the US indices and BTCUSDT; USD and EUR for EURUSD and GER40; USD and GBP for GBPUSD and UK100. US data moves the European indices too. |
+| AR-D36 | No surprises yet (update 2026-10i) | Only the schedule and the importance are used: both are known before the week. The actual-against-forecast surprise is known only at release. It could describe what happened after a release, but not a swing formed before one, so it waits for a question that needs it. |
