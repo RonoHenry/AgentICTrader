@@ -507,7 +507,11 @@ The user's ten markets, in their order (Requirement 22). Task 319 needs Docker f
   - **317c. REFACTOR** — none planned.
   - **Validates: Requirements 22.2, 22.5**
 
-- [ ] 318. Instruments from several profiles, and Saturday for 24/7 venues
+- [x] 318. Instruments from several profiles, and Saturday for 24/7 venues
+  - **Done 2026-10-16.**
+    - **What changed:** `ResearchConfig.profiles` and `profile_of`; `snapshot.Origin` and per-instrument origins in the manifest; `specs.ResearchSpecs`. The `snapshot` command reads each profile from its own store.
+    - **Caches:** the market and label caches gain `all_week` in their key, and `frame.py`'s change re-keys them all, so the next `build` recomputes them (a few minutes). The anticipation cache (the engine) doesn't read `frame.py`, so instruments whose data is unchanged keep theirs.
+    - **Tests:** the research, replay and watch suites pass: 380 passed, 1 skipped (the slow self-check).
   - **318a. RED** (`test_research_config.py`, `test_research_snapshot.py`, `test_research_frame.py`, `test_research_markets.py`)
     - `profiles` maps an instrument to another profile; a key that isn't an instrument is refused; `profile_of` falls back to `profile`.
     - A snapshot exported from two in-memory sources (an MT5 venue and a Binance venue) records each instrument's origin, and loads back with the same fingerprints. The Binance instrument's weekend shows as a gap there, and the MT5 instrument's weekend doesn't.

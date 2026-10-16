@@ -31,12 +31,12 @@ t, as in the engine: the row at 17:00 New York, the close of the old candle's
 last M15 bar, is the first instant of the new candle. Friday 17:00 opens
 Saturday's candle, which FX and gold never trade, so trading dates that fall
 on a Saturday have no rows (a calendar fact: the grid reads nothing after t).
-A 24/7 venue would need this rule revisited.
+A frame from a 24/7 venue (``all_week``, Binance) keeps them (update 2026-10f).
 
 ``frame_from_arrays()`` builds the same frames from plain arrays, with the
 calendar bars aggregated here; the self-check's simulated markets use it.
 
-Validates: Requirements 2.1-2.3 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 2.1-2.3, 22.4 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -54,6 +54,7 @@ from services.market_data.as_of_view import aggregate
 from services.market_data.strategy_calendar import StrategyCalendar
 
 __all__ = [
+    "ALL_WEEK_VENUES",
     "BAR_TIMEFRAMES",
     "InstrumentFrame",
     "aggregate_frame",
@@ -64,6 +65,8 @@ __all__ = [
     "frame_from_data",
 ]
 
+#: Venues that trade every day, Saturday's trading date included (update 2026-10f, Req 22.4).
+ALL_WEEK_VENUES = frozenset({"binance"})
 #: The calendar bars research reads: the entry timeframe, the Asian range's, and the opens and levels'.
 BAR_TIMEFRAMES = (Timeframe.M15, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1)
 
@@ -205,6 +208,7 @@ class InstrumentFrame:
     stop_slippage: float
     m1: pd.DataFrame                       # time, open, high, low, close, spread + calendar columns
     bars: dict[Timeframe, pd.DataFrame]    # time, close_time, open, high, low, close; closed bars only
+    all_week: bool = False                 # its venue trades every day: the grid keeps Saturday (Req 22.4)
     arrays: dict[str, np.ndarray] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
@@ -223,7 +227,8 @@ def _m1_frame(times: pd.DatetimeIndex, o, h, l, c, spread) -> pd.DataFrame:
     return frame
 
 
-def frame_from_data(data: InstrumentData, typical_spread: float, stop_slippage: float) -> InstrumentFrame:
+def frame_from_data(data: InstrumentData, typical_spread: float, stop_slippage: float,
+                    all_week: bool = False) -> InstrumentFrame:
     """Frames from the backtester's InstrumentData: its M1, and its calendar bars
     (built from M1, or native in the warm-up). A timeframe the strategy didn't
     load is aggregated from the M1, as load_instrument would."""
@@ -241,19 +246,19 @@ def frame_from_data(data: InstrumentData, typical_spread: float, stop_slippage: 
         if candles is None:
             candles = aggregate(m1, tf, _CALENDAR, as_of=end)[1:] if m1 else []
         bars[tf] = _bars_from_candles(candles, tf)
-    return InstrumentFrame(data.instrument, typical_spread, stop_slippage, frame, bars)
+    return InstrumentFrame(data.instrument, typical_spread, stop_slippage, frame, bars, all_week)
 
 
 def frame_from_arrays(instrument: str, times: pd.DatetimeIndex, o: np.ndarray, h: np.ndarray, l: np.ndarray,
                       c: np.ndarray, *, spread: np.ndarray, typical_spread: float,
-                      stop_slippage: float) -> InstrumentFrame:
+                      stop_slippage: float, all_week: bool = False) -> InstrumentFrame:
     """Frames from plain M1 arrays (bid prices; ``spread`` already priced), with
     every calendar bar aggregated from them. For simulated markets."""
     times = pd.DatetimeIndex(times)
     times = times.tz_localize("UTC") if times.tz is None else times.tz_convert("UTC")
     frame = _m1_frame(times, o, h, l, c, np.maximum(spread, typical_spread))
     bars = {tf: aggregate_frame(frame, tf) for tf in BAR_TIMEFRAMES}
-    return InstrumentFrame(instrument, typical_spread, stop_slippage, frame, bars)
+    return InstrumentFrame(instrument, typical_spread, stop_slippage, frame, bars, all_week)
 
 
 # ── the decision grid ──────────────────────────────────────────────────────
@@ -276,8 +281,8 @@ def build_grid(frame: InstrumentFrame, slices: Mapping[str, tuple[date, date]]) 
         names[(dates >= np.datetime64(first)) & (dates < np.datetime64(end))] = name
     grid["slice"] = names
     # Friday 17:00 opens Saturday's candle, which FX and gold never trade: known from the calendar,
-    # not from the data, so the grid reads nothing after t (Property 1).
-    trading = grid["weekday"].to_numpy() != 5
+    # not from the data, so the grid reads nothing after t (Property 1). A 24/7 venue trades it (Req 22.4).
+    trading = np.full(len(grid), True) if frame.all_week else grid["weekday"].to_numpy() != 5
     return grid[grid["slice"].notna().to_numpy() & trading].reset_index(drop=True)
 
 

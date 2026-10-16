@@ -189,3 +189,22 @@ def test_grid_drops_closes_that_open_an_empty_candle():
     assert ny(2026, 1, 9, 17, 0) not in times
     assert all(d.weekday() < 5 for d in grid["trading_date"].dt.date)
     assert ny(2026, 1, 7, 17, 0) in times and ny(2026, 1, 11, 17, 15) in times
+
+
+# ── Saturday for 24/7 venues (update 2026-10f, Requirement 22.4) ────────────
+
+def _all_week_frame(all_week: bool):
+    times = pd.date_range(ny(2026, 1, 8, 17), ny(2026, 1, 13, 17), freq="1min", inclusive="left")
+    close = 95_000 + np.cumsum(np.random.default_rng(7).normal(0, 5, len(times)))
+    return frame_from_arrays("BTCUSDT", times, close, close + 2, close - 2, close, spread=np.zeros(len(times)),
+                             typical_spread=0.01, stop_slippage=40.0, all_week=all_week)
+
+
+def test_grid_keeps_saturday_for_a_24_7_venue():
+    slices = {"explore": (date(2026, 1, 9), date(2026, 1, 13))}
+    every_day = build_grid(_all_week_frame(True), slices)
+    weekdays = build_grid(_all_week_frame(False), slices)
+    assert sorted(set(every_day["trading_date"].dt.date)) == [date(2026, 1, d) for d in (9, 10, 11, 12)]
+    assert date(2026, 1, 10) not in set(weekdays["trading_date"].dt.date)   # Saturday: the calendar's rule
+    assert len(every_day[every_day["trading_date"].dt.date == date(2026, 1, 10)]) == 96   # a full day of M15 closes
+    assert frame_from_data(data_for("EURUSD"), typical_spread=0.00008, stop_slippage=0.00002).all_week is False

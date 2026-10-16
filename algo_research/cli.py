@@ -54,7 +54,8 @@ from algo_research.profile import instrument_profile, render_profile
 from algo_research.races import RaceCosts
 from algo_research.report import ReportInputs, render_report
 from algo_research.runner import RunSettings, TestResult, run_test
-from algo_research.snapshot import SNAPSHOTS_DIR, SnapshotError, SnapshotSpec, export_snapshot, load_snapshot
+from algo_research.snapshot import SNAPSHOTS_DIR, Origin, SnapshotError, SnapshotSpec, export_snapshot, load_snapshot
+from algo_research.specs import research_specs
 from algo_research.stats import seed_from
 
 __all__ = ["main", "parse_args", "preregistration_problems"]
@@ -151,17 +152,24 @@ def _store(profile: BrokerProfile) -> CandleSource:
 def _snapshot(args: argparse.Namespace, cfg, source_factory: SourceFactory, root: Path,
               snapshots_dir: Path) -> int:
     profile = load_profile(args.profile or cfg.profile)
+    others = {i: load_profile(name) for i, name in cfg.profiles.items()}      # Req 22.3: e.g. BTCUSDT from Binance
     run = cfg.run(root)
+    default = _origin(profile)
     spec = SnapshotSpec(
-        name=args.name or cfg.snapshot, profile=profile.name, venue=profile.venue, source=profile.venue,
+        name=args.name or cfg.snapshot, profile=profile.name, venue=profile.venue, source=default.source,
         instruments=cfg.instruments, start=cfg.start, end=cfg.holdout_start, study=cfg.study,
-        holdout_start=cfg.holdout_start, strategy=run.strategy,
-        clock=profile.clock() if profile.venue == "mt5" else None, max_gap_minutes=run.data.max_gap_minutes,
-        spec_source=spec_source(profile.spec_file) if profile.spec_file is not None else None,
+        holdout_start=cfg.holdout_start, strategy=run.strategy, clock=default.clock,
+        max_gap_minutes=run.data.max_gap_minutes, spec_source=default.spec_source,
+        origins={i: _origin(p) for i, p in others.items()},
     )
-    print(f"snapshot {spec.name}: {profile.name} ({profile.venue}), {', '.join(spec.instruments)}, "
-          f"trading dates {spec.start} to {spec.end} (end exclusive; hold-out from {spec.holdout_start})")
-    manifest = export_snapshot(source_factory(profile), spec, snapshots_dir, git_commit=git_state().commit,
+    sources = {profile.name: source_factory(profile)}
+    for other in others.values():
+        if other.name not in sources:
+            sources[other.name] = source_factory(other)
+    print(f"snapshot {spec.name}: {profile.name} ({profile.venue}), {', '.join(spec.instruments)}"
+          + "".join(f"; {i} from {p.name} ({p.venue})" for i, p in others.items())
+          + f", trading dates {spec.start} to {spec.end} (end exclusive; hold-out from {spec.holdout_start})")
+    manifest = export_snapshot(sources, spec, snapshots_dir, git_commit=git_state().commit,
                                created_at=datetime.now(timezone.utc))
     for instrument, entry in manifest["data"].items():
         problems = entry["coverage_problems"]
@@ -173,10 +181,17 @@ def _snapshot(args: argparse.Namespace, cfg, source_factory: SourceFactory, root
     return 0
 
 
+def _origin(profile: BrokerProfile) -> Origin:
+    """Where a profile's candles and costs come from: its venue's store, clock and spec file."""
+    return Origin(profile=profile.name, venue=profile.venue, source=profile.venue,
+                  clock=profile.clock() if profile.venue == "mt5" else None,
+                  spec_source=spec_source(profile.spec_file) if profile.spec_file is not None else None)
+
+
 def _load(cfg: ResearchConfig, root: Path, snapshots_dir: Path, cache_dir: Optional[Path],
           workers: Optional[int]):
     snapshot = load_snapshot(snapshots_dir / cfg.snapshot, cfg.instruments)
-    specs = load_profile(cfg.profile).specs()
+    specs = research_specs(cfg)                         # each instrument from its own profile (Req 22.3)
     data = build_dataset(snapshot, cfg, specs, cfg.strategy(root), ParquetCache(cache_dir) if cache_dir else None,
                          workers=workers)
     return snapshot, specs, data
@@ -205,7 +220,7 @@ def _build(args: argparse.Namespace, cfg: ResearchConfig, root: Path, snapshots_
 # ── explore and run ────────────────────────────────────────────────────────
 
 def _results(h: Hypothesis, cfg: ResearchConfig, data: ResearchData, specs, slice_name: str) -> list[TestResult]:
-    costs = {i: RaceCosts.from_spec(specs[i], specs.account_ccy) for i in data.frames}
+    costs = {i: RaceCosts.from_spec(specs[i], specs.account_ccy(i)) for i in data.frames}
     settings = RunSettings(resamples=cfg.bootstrap.resamples, random_time_draws=cfg.baselines.random_time_draws,
                            shuffles=cfg.baselines.shuffles)
     return [run_test(test, data, slice_name, costs, seed_from(h.sha256, test.index), settings) for test in h.tests()]
@@ -223,7 +238,7 @@ def _inputs(h: Hypothesis, cfg: ResearchConfig, snapshot, specs, commit: str, se
 def _profile(cfg: ResearchConfig, root: Path, snapshots_dir: Path) -> int:
     """Req 21.3: the volatility profile of the exploration slice, descriptive; no ledger."""
     snapshot = load_snapshot(snapshots_dir / cfg.snapshot, cfg.instruments)
-    frames = build_frames(snapshot, load_profile(cfg.profile).specs())
+    frames = build_frames(snapshot, research_specs(cfg))
     start, end = slices_of(cfg)["explore"]
     profiles = [instrument_profile(frames[i], start, end) for i in cfg.instruments if i in frames]
     text = render_profile(profiles, {"snapshot": cfg.snapshot, "slice": f"exploration slice, {start} to {end} "

@@ -21,8 +21,9 @@ ends before the hold-out's first trading date even begins.
     cfg.slice_of(t)                                # "explore", "confirm" or None
     cfg.strategy()                                 # the StrategyConfig Phase A uses
     cfg.smt.partners                               # {"EURUSD": "GBPUSD", ...}: SMT pairs (update 2026-10c)
+    cfg.profile_of("BTCUSDT")                      # "binance": an instrument from another profile (update 2026-10f)
 
-Validates: Requirements 13.1, 13.2, 16.1 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 13.1, 13.2, 16.1, 22.3 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -116,12 +117,29 @@ class ResearchConfig(_Section):
     bootstrap: BootstrapSection = Field(default_factory=BootstrapSection)
     baselines: BaselinesSection = Field(default_factory=BaselinesSection)
     smt: SmtSection = Field(default_factory=SmtSection)
+    profiles: dict[str, str] = Field(default_factory=dict)   # instrument -> another broker profile (Req 22.3)
     holdout_start: date                              # from the study file, not research.toml
 
     @field_validator("instruments")
     @classmethod
     def _uppercase(cls, instruments: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(i.upper() for i in instruments)
+
+    @field_validator("profiles")
+    @classmethod
+    def _uppercase_keys(cls, profiles: dict[str, str]) -> dict[str, str]:
+        return {i.upper(): name for i, name in profiles.items()}
+
+    @model_validator(mode="after")
+    def _profiled(self) -> ResearchConfig:
+        for instrument in self.profiles:
+            if instrument not in self.instruments:
+                raise ValueError(f"profiles: {instrument} is not one of the instruments {list(self.instruments)}")
+        return self
+
+    def profile_of(self, instrument: str) -> str:
+        """The broker profile ``instrument`` comes from: its own entry in ``profiles``, else ``profile``."""
+        return self.profiles.get(instrument.upper(), self.profile)
 
     @model_validator(mode="after")
     def _pairs(self) -> ResearchConfig:

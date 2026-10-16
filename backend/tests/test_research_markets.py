@@ -82,3 +82,43 @@ def test_the_chart_tabs_follow_the_configured_order(tmp_path):
     assert charts.instruments == ["XAUUSD", "EURUSD", "UK100", "AUDUSD"]   # DXY has no file; AUDUSD isn't configured
     assert ChartsApp(snap, tmp_path / "journal", (FIRST, END), watch).instruments == sorted(
         ["XAUUSD", "EURUSD", "UK100", "AUDUSD"])                             # no order: sorted, as before
+
+
+# ── costs from each instrument's own profile (Requirement 22.3) ────────────
+
+def test_research_specs_price_each_instrument_from_its_own_profile(tmp_path):
+    from algo_research.config import load_research_config
+    from algo_research.races import RaceCosts
+    from algo_research.specs import research_specs
+    from tests.test_research_config import RESEARCH, write_root
+
+    research = RESEARCH.replace('instruments = ["EURUSD", "XAUUSD"]', 'instruments = ["EURUSD", "BTCUSDT"]').replace(
+        'snapshot = "test-snapshot"', 'snapshot = "test-snapshot"\n\n[profiles]\nBTCUSDT = "binance"')
+    cfg = load_research_config(root=write_root(tmp_path, research))
+    specs = research_specs(cfg)
+    assert list(specs) == ["EURUSD", "BTCUSDT"]
+    assert specs["EURUSD"].venue == "mt5" and specs.account_ccy("EURUSD") == "USD"
+    assert specs["BTCUSDT"].venue == "binance" and specs.account_ccy("BTCUSDT") == "USDT"
+    costs = RaceCosts.from_spec(specs["BTCUSDT"], specs.account_ccy("BTCUSDT"))
+    # Binance charges 0.1% of notional a side: at 100,000 with 500 of risk, 2 x 100 / 500 = 0.4R.
+    assert costs.commission_r(100_000.0, 100_000.0, 500.0) == pytest.approx(0.4)
+
+
+def test_the_snapshot_command_reads_each_profile_from_its_own_store(tmp_path):
+    import json
+
+    from algo_research.cli import main
+    from tests.test_research_snapshot import MultiFixtureSource, fixture_root
+
+    root = fixture_root(tmp_path / "root")
+    research = root / "config" / "research" / "research.toml"
+    research.write_text(research.read_text(encoding="utf-8") + '\n[profiles]\nXAUUSD = "binance"\n', encoding="utf-8")
+    stores = {"metaquotes-demo": MultiFixtureSource(), "binance": MultiFixtureSource()}
+    assert main(["snapshot"], source_factory=lambda profile: stores[profile.name], root=root,
+                snapshots_dir=tmp_path / "snapshots", cache_dir=tmp_path / "cache") == 0
+    assert {c[0] for c in stores["metaquotes-demo"].calls} == {"EURUSD"}
+    assert {c[0] for c in stores["binance"].calls} == {"XAUUSD"}
+    manifest = json.loads((tmp_path / "snapshots" / "fixture-week" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["data"]["XAUUSD"]["venue"] == "binance" and manifest["data"]["XAUUSD"]["server_clock"] is None
+    assert manifest["data"]["XAUUSD"]["spec_source"] == "Binance public exchangeInfo, exported 2026-10-05"
+    assert manifest["data"]["EURUSD"]["profile"] == "metaquotes-demo"

@@ -238,3 +238,53 @@ def test_snapshot_command(tmp_path, capsys):
     assert main(["snapshot"], source_factory=lambda profile: MultiFixtureSource(), root=root,
                 snapshots_dir=tmp_path / "snapshots") == 2
     assert "already exists" in capsys.readouterr().out
+
+
+# ── instruments from other profiles (update 2026-10f, Requirement 22.3) ─────
+
+def _origin_spec():
+    from algo_research.snapshot import Origin
+
+    return spec(origins={"XAUUSD": Origin(profile="binance", venue="binance", source="binance", clock=None,
+                                          spec_source="Binance specs")})
+
+
+def test_each_instrument_is_read_from_its_own_profile(tmp_path):
+    exness, binance = MultiFixtureSource(), MultiFixtureSource()
+    manifest = export_snapshot({"metaquotes-demo": exness, "binance": binance}, _origin_spec(), tmp_path,
+                               git_commit="c" * 40, created_at=CREATED)
+    assert {c[0] for c in exness.calls} == {"EURUSD"} and {c[0] for c in binance.calls} == {"XAUUSD"}
+    gold, euro = manifest["data"]["XAUUSD"], manifest["data"]["EURUSD"]
+    assert (gold["profile"], gold["venue"], gold["source"], gold["server_clock"], gold["spec_source"]) == (
+        "binance", "binance", "binance", None, "Binance specs")
+    assert (euro["profile"], euro["venue"], euro["source"], euro["server_clock"], euro["spec_source"]) == (
+        "metaquotes-demo", "mt5", "mt5", "ny_close", "fixture specs")
+    assert (manifest["profile"], manifest["venue"], manifest["server_clock"]) == ("metaquotes-demo", "mt5", "ny_close")
+
+    snapshot = load_snapshot(tmp_path / "fixture-week")
+    s = spec()
+    as_binance = load_instrument(FixtureSource("XAUUSD"), "XAUUSD", trading_date_open(s.start),
+                                 trading_date_open(s.end), CFG, None, venue="binance", max_gap_minutes=30)
+    assert snapshot.data["XAUUSD"].fingerprint == as_binance.fingerprint     # its own clock and venue
+    assert snapshot.data["EURUSD"].fingerprint == direct("EURUSD").fingerprint
+    # Gold's daily break is a gap on a 24/7 venue, and allowed on MT5.
+    assert gold["coverage_problems"] and not direct("XAUUSD").coverage.problems
+    assert snapshot.venue_of("XAUUSD") == "binance" and snapshot.venue_of("EURUSD") == "mt5"
+
+
+def test_a_snapshot_without_origins_still_loads(tmp_path):
+    path = export(tmp_path)
+    manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
+    for entry in manifest["data"].values():                      # the format before update 2026-10f
+        for key in ("profile", "venue", "source", "server_clock", "spec_source"):
+            entry.pop(key)
+    (path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    snapshot = load_snapshot(path)
+    assert snapshot.data["XAUUSD"].fingerprint == direct("XAUUSD").fingerprint
+    assert snapshot.venue_of("XAUUSD") == "mt5"
+
+
+def test_a_profile_without_a_source_is_refused(tmp_path):
+    with pytest.raises(SnapshotError, match="binance"):
+        export_snapshot({"metaquotes-demo": MultiFixtureSource()}, _origin_spec(), tmp_path,
+                        git_commit="c" * 40, created_at=CREATED)

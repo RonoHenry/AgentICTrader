@@ -18,18 +18,18 @@ order; the feature and label tables share their index (the row id).
     data = build_dataset(snapshot, cfg, specs, ParquetCache.default())
     data.features, data.frames["EURUSD"], data.summary
 
-Validates: Requirements 3.5, 18, 21.1 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 3.5, 18, 21.1, 22.3, 22.4 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
 import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Mapping, Optional
 
 import pandas as pd
 
-from agent.instruments import InstrumentSpecs
+from agent.instruments import InstrumentSpec
 from agent.strategy_config import StrategyConfig
 from algo_backtester.cache import engine_code_fingerprint
 from algo_backtester.data import InstrumentData
@@ -40,7 +40,7 @@ from algo_research.features.draws import draw_taken_at
 from algo_research.features.market import market_features
 from algo_research.features.partner import partner_features
 from algo_research.features.volatility import volatility_features
-from algo_research.frame import InstrumentFrame, build_grid, frame_from_data, slices_of
+from algo_research.frame import ALL_WEEK_VENUES, InstrumentFrame, build_grid, frame_from_data, slices_of
 from algo_research.labels import LABEL_COLUMNS, build_labels, draw_labels
 from algo_research.snapshot import Snapshot
 
@@ -55,13 +55,16 @@ class ResearchData:
     summary: dict = field(default_factory=dict)   # timings, cache hits, row counts, engine errors
 
 
-def build_frames(snapshot: Snapshot, specs: InstrumentSpecs) -> dict[str, InstrumentFrame]:
-    return {i: frame_from_data(data, specs[i].default_spread, specs[i].stop_slippage)
+def build_frames(snapshot: Snapshot, specs: Mapping[str, InstrumentSpec]) -> dict[str, InstrumentFrame]:
+    """Each instrument's frames, priced by its own spec; a 24/7 venue's keep Saturday (Req 22.4)."""
+    return {i: frame_from_data(data, specs[i].default_spread, specs[i].stop_slippage,
+                               all_week=snapshot.venue_of(i) in ALL_WEEK_VENUES)
             for i, data in snapshot.data.items()}
 
 
-def build_dataset(snapshot: Snapshot, cfg: ResearchConfig, specs: InstrumentSpecs, strategy: StrategyConfig,
-                  cache: Optional[ParquetCache] = None, workers: Optional[int] = None) -> ResearchData:
+def build_dataset(snapshot: Snapshot, cfg: ResearchConfig, specs: Mapping[str, InstrumentSpec],
+                  strategy: StrategyConfig, cache: Optional[ParquetCache] = None,
+                  workers: Optional[int] = None) -> ResearchData:
     """Frames and the feature table for every instrument of ``snapshot``.
     ``strategy`` is the StrategyConfig the engine runs with (Phase A's);
     ``workers`` the processes for the anticipation (1: this process)."""
@@ -76,7 +79,7 @@ def build_dataset(snapshot: Snapshot, cfg: ResearchConfig, specs: InstrumentSpec
 
     def cached(kind: str, instrument: str, compute) -> pd.DataFrame:
         key = cache_key(kind, instrument, snapshot.manifest["data"][instrument]["sha256"], codes[kind], slices,
-                        frames[instrument].typical_spread)
+                        frames[instrument].typical_spread, frames[instrument].all_week)
         table = cache.load(kind, key) if cache else None
         if table is not None:
             summary["cache_hits"].append(f"{kind}:{instrument}")

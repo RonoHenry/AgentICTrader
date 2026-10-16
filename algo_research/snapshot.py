@@ -17,6 +17,12 @@ over those files) gives ``load_instrument()`` the same rows back: the same
     snapshot = load_snapshot(root / "exness-2025-2026h1")   # refuses changed data
     snapshot.data["EURUSD"]                                  # InstrumentData, as Phase A loads it
 
+An instrument may come from another broker profile (update 2026-10f, Req 22.3):
+``SnapshotSpec.origins`` names its profile, venue, clock and spec source, and
+``export_snapshot`` takes one source per profile. The manifest records every
+instrument's origin, and loading checks each instrument by its own venue and
+clock. Older manifests, without origins, load with the top-level ones.
+
 Guards:
 - an export whose end is after the study's hold-out start is refused before
   any read, and no row opening at or after the hold-out is ever written
@@ -26,7 +32,7 @@ Guards:
 - loading recomputes each instrument's fingerprint and refuses a snapshot
   whose data no longer matches its manifest (Req 1.5).
 
-Validates: Requirements 1.1-1.5 (.kiro/specs/algo-research/requirements.md)
+Validates: Requirements 1.1-1.5, 22.3 (.kiro/specs/algo-research/requirements.md)
 """
 from __future__ import annotations
 
@@ -37,7 +43,7 @@ from bisect import bisect_left
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, Mapping, Optional, Sequence, Union
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -50,6 +56,7 @@ from services.market_data.mt5_clock import MT5ServerClock
 
 __all__ = [
     "SNAPSHOTS_DIR",
+    "Origin",
     "RecordingSource",
     "Snapshot",
     "SnapshotError",
@@ -109,6 +116,16 @@ class RecordingSource:
 # ── export ─────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
+class Origin:
+    """Where an instrument's candles and costs come from (Req 22.3)."""
+    profile: str                         # broker profile
+    venue: str                           # mt5 / binance: the coverage rules
+    source: str                          # the store's source column
+    clock: Optional[MT5ServerClock]      # which native bars follow the strategy calendar
+    spec_source: Optional[str]           # the spec file's source line
+
+
+@dataclass(frozen=True)
 class SnapshotSpec:
     """What a snapshot holds: the loader's inputs for each instrument."""
     name: str
@@ -124,12 +141,23 @@ class SnapshotSpec:
     clock: Optional[MT5ServerClock]      # which native bars follow the strategy calendar
     max_gap_minutes: int
     spec_source: Optional[str]           # the spec file's source line: where the costs come from
+    origins: Mapping[str, Origin] = field(default_factory=dict)   # instruments from another profile (Req 22.3)
+
+    def origin(self, instrument: str) -> Origin:
+        """The instrument's own origin, else the snapshot's profile."""
+        return self.origins.get(instrument) or Origin(self.profile, self.venue, self.source, self.clock,
+                                                      self.spec_source)
 
 
-def export_snapshot(source: CandleSource, spec: SnapshotSpec, root: Path = SNAPSHOTS_DIR, *, git_commit: str,
-                    created_at: datetime) -> dict:
+def export_snapshot(source: Union[CandleSource, Mapping[str, CandleSource]], spec: SnapshotSpec,
+                    root: Path = SNAPSHOTS_DIR, *, git_commit: str, created_at: datetime) -> dict:
     """Write ``root/<spec.name>/``: Parquet per instrument and timeframe, and the
-    manifest. Returns the manifest."""
+    manifest. Returns the manifest. ``source`` is the profile's store, or one store
+    per profile name when instruments come from several (Req 22.3)."""
+    sources = dict(source) if isinstance(source, Mapping) else {spec.profile: source}
+    missing = sorted({spec.origin(i).profile for i in spec.instruments} - set(sources))
+    if missing:
+        raise SnapshotError(f"snapshot {spec.name!r}: no candle source for profile(s) {', '.join(missing)}")
     if spec.end > spec.holdout_start:
         raise HoldoutError(f"snapshot {spec.name!r} would end {spec.end}, inside study {spec.study!r}'s hold-out "
                            f"(holdout_start {spec.holdout_start}); research never reads the hold-out")
@@ -146,9 +174,10 @@ def export_snapshot(source: CandleSource, spec: SnapshotSpec, root: Path = SNAPS
     try:
         data = {}
         for instrument in spec.instruments:
-            recorder = RecordingSource(source)
-            loaded = load_instrument(recorder, instrument, start, end, spec.strategy, spec.clock, venue=spec.venue,
-                                     max_gap_minutes=spec.max_gap_minutes)
+            origin = spec.origin(instrument)
+            recorder = RecordingSource(sources[origin.profile])
+            loaded = load_instrument(recorder, instrument, start, end, spec.strategy, origin.clock,
+                                     venue=origin.venue, max_gap_minutes=spec.max_gap_minutes)
             files = {}
             for tf in sorted(recorder.timeframes(instrument), key=lambda t: t.value):
                 rows = recorder.recorded(instrument, tf)
@@ -163,6 +192,11 @@ def export_snapshot(source: CandleSource, spec: SnapshotSpec, root: Path = SNAPS
                 "coverage_problems": list(loaded.coverage.problems),
                 "warmup_source": loaded.warmup_source,
                 "files": files,
+                "profile": origin.profile,
+                "venue": origin.venue,
+                "source": origin.source,
+                "server_clock": origin.clock.spec if origin.clock is not None else None,
+                "spec_source": origin.spec_source,
             }
         manifest = {
             "name": spec.name,
@@ -251,6 +285,10 @@ class Snapshot:
         return (trading_date_open(date.fromisoformat(self.manifest["start"])),
                 trading_date_open(date.fromisoformat(self.manifest["end"])))
 
+    def venue_of(self, instrument: str) -> str:
+        """The instrument's venue: its own (Req 22.3), else the snapshot's."""
+        return self.manifest["data"].get(instrument, {}).get("venue", self.manifest["venue"])
+
     @property
     def fingerprint(self) -> str:
         """One string over every instrument's data fingerprint, for cache keys and reports."""
@@ -266,13 +304,15 @@ def load_snapshot(path: str | Path, instruments: Optional[Iterable[str]] = None)
     strategy = StrategyConfig.model_validate(manifest["strategy"])
     snapshot = Snapshot(source.path, manifest, strategy)
     start, end = snapshot.period
-    clock = MT5ServerClock(manifest["server_clock"]) if manifest["server_clock"] is not None else None
     wanted = list(instruments) if instruments is not None else manifest["instruments"]
     for instrument in wanted:
         expected = manifest["data"].get(instrument)
         if expected is None:
             raise SnapshotError(f"snapshot {manifest['name']!r} has no {instrument}; it holds {manifest['instruments']}")
-        data = load_instrument(source, instrument, start, end, strategy, clock, venue=manifest["venue"],
+        # Each instrument's own clock and venue (Req 22.3); manifests before update 2026-10f have only the top level.
+        clock_spec = expected["server_clock"] if "server_clock" in expected else manifest["server_clock"]
+        clock = MT5ServerClock(clock_spec) if clock_spec is not None else None
+        data = load_instrument(source, instrument, start, end, strategy, clock, venue=snapshot.venue_of(instrument),
                                max_gap_minutes=manifest["max_gap_minutes"])
         if (data.fingerprint.rows, data.fingerprint.sha256) != (expected["rows"], expected["sha256"]):
             raise SnapshotError(
