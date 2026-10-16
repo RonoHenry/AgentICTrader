@@ -38,8 +38,12 @@ class CalendarError(RuntimeError):
 
 
 def import_calendar(path: str | Path) -> pd.DataFrame:
-    """The MQL5 export at ``path`` as a table in UTC, one row per calendar value, oldest first."""
-    raw = pd.read_csv(path, dtype=str, keep_default_na=False)
+    """The MQL5 export at ``path`` as a table in UTC, one row per calendar value, oldest first. The script writes
+    with FILE_ANSI, the system code page (cp1252 here), so a file that isn't UTF-8 is read as cp1252."""
+    try:
+        raw = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8")
+    except UnicodeDecodeError:
+        raw = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="cp1252")
     server = pd.to_datetime(raw["time_server"], format="%Y.%m.%d %H:%M:%S")
     offset = pd.to_timedelta(pd.to_numeric(raw["server_offset_s"]), unit="s")
     table = pd.DataFrame({"time": (server - offset).dt.tz_localize("UTC")})

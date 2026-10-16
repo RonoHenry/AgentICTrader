@@ -15,7 +15,8 @@
 #property copyright "AgentICTrader"
 #property version   "1.00"
 #property description "Export the economic calendar's history to CSV for AgentICTrader research"
-#property script_show_inputs
+// No input dialog: it runs at once with the defaults below (a dialog hidden behind other windows cancelled
+// every drag on 2026-10-16). Edit the defaults and recompile to change the period or the currencies.
 
 input datetime InpFrom       = D'2024.09.01 00:00';   // first release time (server time)
 input datetime InpTo         = 0;                     // last release time; 0 = now
@@ -69,6 +70,39 @@ string Day(const datetime t)
    return text;
   }
 
+//--- one currency's values, a month at a time: a long first request timed out (error 5401) on 2026-10-16
+//--- while the terminal was still downloading the calendar, so each month is retried before giving up
+int FetchValues(const string currency, const datetime from, const datetime to, MqlCalendarValue &out[])
+  {
+   ArrayResize(out, 0);
+   datetime start = from;
+   while(start < to)
+     {
+      datetime stop = (datetime)MathMin((double)to, (double)(start + 31 * 86400));
+      MqlCalendarValue chunk[];
+      int n = -1;
+      for(int attempt = 0; attempt < 10 && n < 0; attempt++)
+        {
+         ResetLastError();
+         n = CalendarValueHistory(chunk, start, stop, NULL, currency);
+         if(n < 0)
+           {
+            PrintFormat("AgenticCalendarExport: %s %s, attempt %d failed (error %d)", currency, Day(start),
+                        attempt + 1, GetLastError());
+            Sleep(3000);
+           }
+        }
+      if(n < 0)
+         return -1;
+      int have = ArraySize(out);
+      ArrayResize(out, have + n);
+      for(int i = 0; i < n; i++)
+         out[have + i] = chunk[i];
+      start = stop;
+     }
+   return ArraySize(out);
+  }
+
 void OnStart()
   {
    datetime to     = (InpTo == 0) ? TimeTradeServer() : InpTo;
@@ -93,10 +127,10 @@ void OnStart()
       StringTrimLeft(currency);
       StringTrimRight(currency);
       MqlCalendarValue values[];
-      int n = CalendarValueHistory(values, InpFrom, to, NULL, currency);
+      int n = FetchValues(currency, InpFrom, to, values);
       if(n < 0)
         {
-         PrintFormat("AgenticCalendarExport: %s failed (error %d)", currency, GetLastError());
+         PrintFormat("AgenticCalendarExport: %s failed after retries; it is missing from the file", currency);
          continue;
         }
       for(int i = 0; i < n; i++)

@@ -666,8 +666,13 @@ The user's framework, reverse-engineered on the exploration slice (Requirements 
 
 News as context (Requirements 29–30). Task 327 needs the user once: to run the export script in the MT5 terminal.
 
-- [ ] 327. Calendar history
-  - **Built 2026-10-16; waiting for the user to run the export.** `algo_research/calendar.py`, `calendar --import`, `scripts/mql5/AgenticCalendarExport.mq5`.
+- [x] 327. Calendar history
+  - **Done 2026-10-16.**
+    - **Running the script:** dragging it onto a chart never started it. Each drag loaded it; it never initialised ("failed with code 0"), and the next drag replaced it. No dialog was open, visible or hidden. It ran when MT5 was restarted with a start config (`[StartUp] Script=AgentICTrader\AgenticCalendarExport`). The first run timed out on USD (error 5401) while the terminal was still downloading the calendar, so the script now queries a month at a time and retries a month that times out. It was then rerun.
+    - **The import:** the file is cp1252 (FILE_ANSI; an en dash broke the UTF-8 read), so the import falls back to cp1252.
+    - **`mt5-calendar`:** 16,451 values from 2024-09-02 to 2026-10-16, 15,211 of them with an exact time. High importance: USD 1,052, EUR 315, GBP 165.
+    - **Times checked:** NFP 12:30 UTC in summer; the Fed at 18:00 UTC, and 19:00 after the clocks changed; the ECB 12:15; the BoE 11:00.
+    - **A caveat:** MetaQuotes rates some routine releases high (weekly crude stocks, jobless claims, Treasury auctions). `algo_research/calendar.py`, `calendar --import`, `scripts/mql5/AgenticCalendarExport.mq5`.
     - MetaEditor (build 6241) compiled the script with 0 errors and 0 warnings. It is installed as `MQL5\Scripts\AgentICTrader\AgenticCalendarExport` in the Exness terminal's data folder.
     - It writes `Common\Files\agentic_calendar_<from>_<to>.csv`.
   - **327a. RED** (`test_research_calendar.py`)
@@ -686,7 +691,14 @@ News as context (Requirements 29–30). Task 327 needs the user once: to run the
   - **Validates: Requirement 29**
 
 - [ ] 328. News in the atlas **(user review)**
-  - **Built 2026-10-16; the rerun waits for task 327's import.**
+  - **Built and run 2026-10-16; waiting for the user's review.** The atlas ran with the calendar in 278 s.
+    - **How often:** 2.4% of three-candle swings had their extreme printed by a release (`news_made`). 41% fell on days with two or more high releases.
+    - **Against geometry (leads only):**
+      - **A release printed the extreme:** on H1 and H4 these swings delivered beyond a random walk: H1 +5.3 [+1.5, +9.0] (`same_tf`, 392 swings) and +6.8 [+0.8, +12.7] (`next_tf`); H4 +6.6 [+0.8, +12.8] (`same_tf`, 158). On M15 the effect is nil (+0.4, 1,121 swings).
+      - **An extreme that ran before a release** (`news_ahead`): nothing (−4 to +2, intervals spanning zero).
+      - **D1** (small samples): days without a high release, +12.9 [+1.7, +24.4] (`same_tf`, 163); a release in the next daily bar, +8.8 [+1.1, +17.1] (`next_tf`, 305).
+    - **Reading:** news doesn't change the intraday random walk. The exception is the release that itself prints the turn on H1 and H4, the news spike that reverses.
+    - **Possible refinement:** a curated release list (NFP, CPI, FOMC, ECB, BoE, GDP, PMIs) in place of MetaQuotes' broad high-importance tag.
     - `atlas/news.py`, `CalendarSection` (`[calendar]` in research.toml, `name = "mt5-calendar"`, HIGH only), and the report's news values.
     - Without an imported calendar, the atlas runs without news and says so in its Inputs.
     - The research and replay suites pass: 412 passed, 1 skipped.
