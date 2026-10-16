@@ -207,6 +207,14 @@ def test_a_swing_low_held_against_its_crt_and_leg_objectives():
     assert pd.isna(row["obj_next_tf"]) and row["out_next_tf"] is None    # no H4 swing high yet
     assert row["avg_range"] == pytest.approx((0.004 + 0.010 + 0.014) / 3)
     assert row["excursion"] == pytest.approx((1.112 - 1.090) / row["avg_range"])
+    # The geometry (AR-D33): from C3's close (1.098), the random walk's chance of the objective before 1.090.
+    assert row["geo_same_tf"] == pytest.approx((1.098 - 1.090) / (1.110 - 1.090))
+    assert row["geo_crt"] == pytest.approx((1.098 - 1.090) / (1.109 - 1.090))
+
+
+def test_a_touch_of_the_objective_is_not_held():
+    row = _low(hourly_frame(LEG + [(1.098, 1.110, 1.097, 1.105)]))         # a high of exactly 1.110
+    assert (row["out_crt"], row["out_same_tf"]) == ("held", "open")
 
 
 def test_a_swing_low_failed_and_one_left_open():
@@ -230,6 +238,7 @@ def test_an_objective_reached_before_the_swing_is_known_is_held_at_once():
     assert high["extreme"] == pytest.approx(1.110) and high["obj_crt"] == pytest.approx(1.098)
     assert (high["out_crt"], high["at_once_crt"], high["bars_crt"]) == ("held", True, 0)   # 1.095 at hour 2's :40
     assert high["resolved_crt"] == high["known_at"]
+    assert high["geo_crt"] == 1.0                                          # already there: no walk needed
 
 
 def test_the_next_timeframes_untaken_swing_is_the_third_objective():
@@ -405,3 +414,75 @@ def test_property_1_context_is_known_when_the_swing_is():
     again = past[(past["side"] == "low") & (past["type"] == "three") & (past["extreme"] == 1.108)].iloc[0]
     for col in CONTEXT_COLUMNS:
         assert (again[col] == row[col]) or (pd.isna(again[col]) and pd.isna(row[col])), col
+
+
+# ══ Task 323: the atlas report (Requirement 26) ═════════════════════════════
+
+from algo_research.atlas.report import atlas_rows, base_rates, render_atlas, value_table  # noqa: E402
+
+
+def _rows(dates=60, rare=10):
+    """Two instruments, four M15 three-candle swings a date: two with liq_pd (both held on 80% of dates, both
+    failed on the rest; geometry 0.6) and two without (one held, one failed; geometry 0.5). ``rare`` swings
+    carry own_fvg. Sessions alternate. One engulfing swing a date, which value tables leave out."""
+    out = []
+    for d in range(dates):
+        day = pd.Timestamp("2025-01-01") + pd.Timedelta(days=d)
+        cell = "held" if d % 5 else "failed"
+        for inst in ("AAA", "BBB"):
+            for n, (liq, outcome) in enumerate(((True, cell), (True, cell), (False, "held"), (False, "failed"))):
+                out.append({"instrument": inst, "tf": "M15", "type": "three", "twin": False, "trading_date": day,
+                            "liq_pd": liq, "session": "london" if n % 2 else "ny_am", "displacement": 1.2 * n,
+                            "own_fvg": d < rare and n == 0, "out_same_tf": outcome, "out_next_tf": outcome,
+                            "out_crt": "held", "geo_same_tf": 0.6 if liq else 0.5, "geo_next_tf": 0.3,
+                            "geo_crt": 1.0})
+        out.append({"instrument": "AAA", "tf": "M15", "type": "engulf", "twin": False, "trading_date": day,
+                    "liq_pd": True, "session": "london", "displacement": 3.0, "own_fvg": None,
+                    "out_same_tf": "failed", "out_next_tf": "failed", "out_crt": "failed", "geo_same_tf": 0.9,
+                    "geo_next_tf": 0.9, "geo_crt": 0.9})
+    return pd.DataFrame(out)
+
+
+def test_base_rates_per_timeframe_type_and_objective_with_their_geometry():
+    rows = _rows()
+    rows.loc[rows.index[:4], "out_same_tf"] = "open"
+    base = base_rates(rows).set_index(["tf", "type", "objective"])
+    same = base.loc[("M15", "three", "same_tf")]
+    assert (same["swings"], same["open"], same["resolved"]) == (480, 4, 476)
+    assert same["rate"] == pytest.approx(same["held"] / same["resolved"])
+    assert base.loc[("M15", "three", "crt"), "rate"] == 1.0
+    engulf = base.loc[("M15", "engulf", "same_tf")]                         # every swing counts in the base
+    assert (engulf["swings"], engulf["rate"], engulf["geo"]) == (60, 0.0, pytest.approx(0.9))
+    assert engulf["excess"] == pytest.approx(-0.9)
+
+
+def test_a_value_is_read_by_its_excess_over_geometry_against_the_rest():
+    table = value_table(_rows(), "M15", "same_tf", resamples=2000, seed=7).set_index(["column", "value"])
+    liq = table.loc[("liq_pd", "True")]
+    assert (liq["swings"], liq["dates"]) == (240, 60)                      # the engulfing swings stay out
+    assert (liq["rate"], liq["geo"]) == (pytest.approx(0.8), pytest.approx(0.6))
+    assert liq["excess"] == pytest.approx(0.8 - 0.6)
+    assert liq["vs_rest"] == pytest.approx((0.8 - 0.6) - (0.5 - 0.5))      # excess against the rest's excess
+    assert liq["vs_rest_lo"] > 0 and liq["excess_lo"] > 0 and liq["qualifies"]
+    assert not table.loc[("own_fvg", "True"), "qualifies"]                  # 20 swings: too few
+    assert {"london", "ny_am"} <= set(table.loc["session"].index)
+    assert ("displacement", ">= 1.5") in table.index                       # numbers are read in buckets
+    assert "type" not in table.index.get_level_values("column")
+
+
+def test_atlas_rows_keep_every_swing_with_its_instrument_and_date():
+    rows = pd.DataFrame({"instrument": ["X"] * 3, "tf": ["H1"] * 3, "type": ["three", "engulf", "engulf"],
+                         "twin": [True, True, False], "extreme_time": pd.to_datetime(["2025-01-07 09:40"] * 3,
+                                                                                     utc=True)})
+    kept = atlas_rows({"A": rows})
+    assert list(zip(kept["type"], kept["twin"])) == [("three", True), ("engulf", True), ("engulf", False)]
+    assert set(kept["instrument"]) == {"A"} and "trading_date" in kept.columns
+
+
+def test_render_atlas_has_its_sections():
+    rows = _rows()
+    text = render_atlas(base_rates(rows), {("M15", "same_tf"): value_table(rows, "M15", "same_tf", 500, 1)},
+                        {"snapshot": "snap", "slice": "exploration", "code_commit": "abc"})
+    for heading in ("# Turn atlas", "## Base rates", "## M15: same_tf", "## Inputs"):
+        assert heading in text, heading
+    assert "liq_pd" in text and "snap" in text

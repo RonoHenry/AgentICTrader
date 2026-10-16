@@ -513,7 +513,8 @@ Reverse-engineering is the method: start from what each swing delivered, then as
    - `same_tf`: the origin of the leg into the swing, the farthest price on the other side since T's last opposite swing;
    - `next_tf`: the most recent untaken opposite swing of the next timeframe up.
 
-   For each objective, the swing **held** if price trades to the objective before trading beyond the swing's extreme, and **failed** if it trades beyond the extreme first. It is **open** if neither happens by the end of the data. An objective already reached when the swing is known counts as held at once and is marked. The number of T candles to the outcome is recorded.
+   For each objective, the swing **held** if price trades beyond the objective before trading beyond the swing's extreme, and **failed** if it trades beyond the extreme first. Both sides are strict, so a touch is neither. It is **open** if neither happens by the end of the data. An objective already traded beyond when the swing is known counts as held at once and is marked. The number of T candles to the outcome is recorded.
+5. EACH swing SHALL record its geometry for each objective (AR-D33): `geo` = (confirming close − extreme) ÷ (objective − extreme), clipped to [0, 1], or 1 when held at once. It is the chance that a driftless random walk starting from the confirming close reaches the objective before the extreme.
 4. EACH swing SHALL record its excursion: the farthest price travelled toward its objectives before the extreme was taken, in T's average range (the mean high minus low of the 20 candles before the extreme candle).
 
 ### Requirement 25: The Context at a Swing
@@ -546,11 +547,14 @@ Reverse-engineering is the method: start from what each swing delivered, then as
 #### Acceptance Criteria
 
 1. `python -m algo_research atlas` SHALL build the arrays, the swings and their context for the exploration slice. It reads no other slice and never the hold-out.
-2. THE report SHALL give, per timeframe and swing type, the count and the held rate for each objective. These are the base rates.
-3. FOR every context value with enough swings, the report SHALL give:
-   - the held rate against the base rate, and against the swings without that value;
+2. THE report SHALL give, per timeframe and swing type, the count, the held rate and the mean geometry for each objective. These are the base rates, over every swing.
+3. FOR every context value of the three-candle swings with enough swings, the report SHALL give:
+   - its held rate, its mean geometry and its **excess** (held rate − geometry);
+   - the excess against the excess of the swings without that value;
    - 95% intervals from resampling trading dates across instruments;
-   - for the strongest values, the rate per instrument.
+   - for the strongest values, the excess per instrument.
+
+   Ranking is by the excess, never the raw rate. A value's raw rate mostly measures how close its swings' confirming closes sit to the objective.
 4. THE report SHALL be `docs/research/TURN_ATLAS.md`, with the full tables under `data/research/atlas/` (git-ignored).
    - It is descriptive, like the volatility profile: no verdict and no ledger row.
    - A promising value becomes a hypothesis, pre-registered before the confirmation slice judges it.
@@ -621,3 +625,4 @@ Proposed defaults apply unless the user changes them at review.
 | AR-D30 | Held (update 2026-10g) | The objective is reached before the extreme is taken. There are three objectives, each a distance on the user's own ladder. The atlas leads with `same_tf`, the last opposite swing: the nearest liquidity on the other side. |
 | AR-D31 | Timeframes (update 2026-10g) | Swings on M15, H1, H4 and D1; arrays on M15 to W1. W1 swings are counted, but six months hold too few to judge. M30 waits until the user asks: the calendar frames hold M15, H1, H4, D1 and W1. |
 | AR-D32 | The atlas's statistics (update 2026-10g) | Trading dates are resampled across instruments, as in Requirement 11. Lows and highs are pooled by mirroring, and the report splits them. The atlas is exploration only: a value that stands out is a lead for pre-registration, not a finding. |
+| AR-D33 | Geometry first (update 2026-10g, from the first run on 2026-10-16) | Every held rate is read against the random walk from the confirming close. On the first run, the top values by raw rate (own FVG 91%, displacement, close beyond) matched their geometry within 1–3 points, and "sweeps hold less" was geometry too (38% against 34%). Outcomes are strict on both sides, because a touch had counted as held and gave a 1–3 point head start. |

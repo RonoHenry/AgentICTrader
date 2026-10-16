@@ -918,9 +918,11 @@ There is one row per swing: `tf, side (low / high), type (three / engulf), extre
   - `same_tf` is the origin of the leg into the swing: the highest high from the last three-candle swing high of T up to the bar before the extreme bar. It is untaken by construction.
   - `next_tf` is the most recent three-candle swing high of the next timeframe up (M15 → H1 → H4 → D1 → W1) that is known and untaken when the swing is known, and above the extreme.
 - **Outcomes** are settled on M1, from the first M1 bar after the swing is known, scanning forward in growing windows:
-  - held is a high at or above the objective;
+  - held is a high above the objective;
   - failed is a low below the extreme;
+  - both are strict (AR-D33): a touch had counted as held, a head start of 1–3 points;
   - one M1 bar doing both is failed, as in races (the stop wins).
+- **The geometry** (`geo_<objective>`): (confirming close − extreme) ÷ (objective − extreme), clipped to [0, 1], or 1 when held at once. It is what a driftless random walk from the confirming close would deliver.
 
   An objective reached by an M1 bar after the extreme's bar but before the swing is known is held at once. Lows and highs share one code path, with highs read on the mirrored prices.
 
@@ -938,9 +940,9 @@ These are columns on the swing table, each computed as of `known_at`.
 
 ### The report (`atlas/report.py`, `cli.py`)
 
-- **Base rates** per (tf, type, objective). Context values are pooled across sides by mirroring.
-- **Each value:** its rate against the base, and against its complement. The intervals resample trading dates jointly across instruments (`stats.py`).
-- **What qualifies:** a value needs at least 100 swings on 40 trading dates. It is ranked by the lower bound of its lift.
+- **Base rates** per (tf, type, objective), over every swing: held rate, mean geometry, excess. Context values are pooled across sides by mirroring.
+- **Each value**, on the three-candle swings: its excess (held − geometry), and that excess against the rest's excess. The intervals resample trading dates jointly across instruments (`stats.py`). Raw rates are shown but never ranked: the first run ranked own FVG, displacement and closes-beyond on top, and each matched its geometry within 1–3 points.
+- **What qualifies:** a value needs at least 100 swings on 40 trading dates. It is ranked by the lower bound of its excess against the rest.
 - **Output:** `docs/research/TURN_ATLAS.md`, and the tables in `data/research/atlas/<snapshot>/` (Parquet, git-ignored).
 
 ### The fold (`atlas/fold.py`)

@@ -622,6 +622,22 @@ The user's framework, reverse-engineered on the exploration slice (Requirements 
   - **Validates: Requirement 25**
 
 - [ ] 323. The atlas report **(user review)**
+  - **Built and run 2026-10-16; waiting for the user's review.** `atlas/report.py` and the `atlas` command; `docs/research/TURN_ATLAS.md`. The run covered 94,232 swings of the ten markets in 425 s, and each frame is cut at the slice's end first.
+  - **The first run was corrected before review (AR-D33).** It ranked values by raw held rate. Own FVG (91%), displacement and close-beyond came top, but each matched what a random walk from the confirming close delivers, within 1–3 points. "Sweeps hold less" was geometry too. Also:
+    - a touch had counted as held, a 1–3 point head start;
+    - counting each extreme once had kept only the engulfing swings whose next bar took their extreme, and those fail by construction.
+
+    Now outcomes are strict, every swing carries its geometry, base rates count every swing, and values are ranked by excess over geometry on the three-candle swings.
+  - **What the corrected atlas shows (exploration slice; leads, not findings).** About 1,100 values were tested, so about 55 clear the 95% bar by chance.
+    - **Intraday swings behave like a random walk.** The base excess on M15, H1 and H4 is within ±1 point for both types and all objectives, and nearly every context value is within ±2.
+      - The M15 17:00 hour (+7.5) is mostly EURUSD, GBPUSD and DXY: the rollover bid-dip (task 273).
+      - Trading *through* a W1 or D1 order block's far edge is consistently worse, by 4 to 9 points.
+    - **Daily swings deliver beyond geometry.** D1 three-candle swings: +3.4 points (`same_tf`) and +5.7 (`next_tf`). D1 engulfing swings: +11.7 (`next_tf`, 156 resolved). Within D1, `next_tf`:
+      - `liq_pw` (the swing took the previous week's extreme): +14.9 [+2.7, +26.7], positive in all ten markets;
+      - `twin` (the user's engulfing variation printing as a three-candle swing): +14.7 [+4.5, +24.2], positive in 9 of 10;
+      - an IFVG traded through: +7.7 [+1.6, +13.8].
+
+      This is the user's framework: a higher-timeframe swing formed after price traded into an important level. Samples are small (100–480 swings), so these are the candidates to pre-register for the confirmation slice.
   - **323a. RED** (`test_research_atlas.py`, `test_research_runner.py`)
     - The base rates, and a value's lift and complement with resampled intervals, on a hand-made table.
     - The minimum-count rule.

@@ -19,11 +19,15 @@ The objectives of a swing low (AR-D30) are prices above it, fixed when it is kno
   above the extreme when the swing is known.
 
 Each objective's outcome is settled on M1 from the first bar opening at or after the swing is known:
-- **held**: a high at or above the objective;
+- **held**: a high above the objective;
 - **failed**: a low below the extreme;
-- **open**: neither, by ``until``. One M1 bar doing both is failed (the stop wins, as in races).
+- **open**: neither, by ``until``. Both sides are strict, so a touch is neither (AR-D33). One M1 bar doing
+  both is failed (the stop wins, as in races).
 
-An objective reached after the extreme's own M1 bar but before the swing is known is held at once.
+An objective traded beyond after the extreme's own M1 bar but before the swing is known is held at once.
+``geo_<objective>`` is the geometry (AR-D33): the chance that a driftless random walk from the confirming close
+(C3's, or the engulfing bar's) reaches the objective before the extreme, (close - extreme) / (objective -
+extreme), clipped to [0, 1]. It is 1 for an objective held at once.
 ``excursion`` is the farthest high before the extreme is taken, in T's average range: the mean high minus low
 of the 20 bars before the extreme bar (measures.rolling_average_range).
 
@@ -51,7 +55,7 @@ NEXT_TF = {Timeframe.M15: Timeframe.H1, Timeframe.H1: Timeframe.H4, Timeframe.H4
 OBJECTIVES = ("crt", "same_tf", "next_tf")
 COLUMNS = (["tf", "side", "type", "extreme", "extreme_bar", "extreme_time", "known_at", "engulf_full", "twin",
             "avg_range", "excursion"]
-           + [f"{field}_{o}" for o in OBJECTIVES for field in ("obj", "out", "at_once", "resolved", "bars")])
+           + [f"{field}_{o}" for o in OBJECTIVES for field in ("obj", "out", "at_once", "resolved", "bars", "geo")])
 
 _MINUTE = 60 * 1_000_000_000
 _WINDOW = 64
@@ -157,7 +161,7 @@ def _score_lows(bars: tuple, times: np.ndarray, close_times: np.ndarray, m1: tup
     out = {"extreme_time": np.zeros(n, np.int64), "excursion": np.full(n, np.nan)}
     objectives = {o_: np.full(n, np.nan) for o_ in OBJECTIVES}
     results = {o_: (np.full(n, None, dtype=object), np.zeros(n, bool), np.full(n, np.iinfo(np.int64).min, np.int64),
-                    np.full(n, np.nan)) for o_ in OBJECTIVES}
+                    np.full(n, np.nan), np.full(n, np.nan)) for o_ in OBJECTIVES}
     for s in range(n):
         bar = i[s]
         lo = int(np.searchsorted(m1_t, times[bar], "left"))
@@ -185,11 +189,13 @@ def _score_lows(bars: tuple, times: np.ndarray, close_times: np.ndarray, m1: tup
             if np.isnan(target) or target <= extreme[s]:
                 objectives[name][s] = np.nan
                 continue
-            outcome, at_once, resolved, bars_to = results[name]
-            if early.size and early.max() >= target:
-                outcome[s], at_once[s], resolved[s], bars_to[s] = "held", True, known_at[s], 0
+            outcome, at_once, resolved, bars_to, geo = results[name]
+            if early.size and early.max() > target:
+                outcome[s], at_once[s], resolved[s], bars_to[s], geo[s] = "held", True, known_at[s], 0, 1.0
                 continue
-            reach = _first(m1_h, start, stop + 1 if taken >= 0 else end, target, below=False)
+            geo[s] = min(1.0, max(0.0, (c[known_idx[s]] - extreme[s]) / (target - extreme[s])))
+            beyond = np.nextafter(target, np.inf)                           # strict: a touch is not held
+            reach = _first(m1_h, start, stop + 1 if taken >= 0 else end, beyond, below=False)
             if reach >= 0 and (taken < 0 or reach < taken):
                 outcome[s], resolved[s] = "held", m1_t[reach] + _MINUTE
             elif taken >= 0:
@@ -205,9 +211,9 @@ def _score_lows(bars: tuple, times: np.ndarray, close_times: np.ndarray, m1: tup
         "excursion": out["excursion"],
     })
     for name in OBJECTIVES:
-        outcome, at_once, resolved, bars_to = results[name]
+        outcome, at_once, resolved, bars_to, geo = results[name]
         table[f"obj_{name}"], table[f"out_{name}"], table[f"at_once_{name}"] = objectives[name], outcome, at_once
-        table[f"resolved_{name}"], table[f"bars_{name}"] = resolved, bars_to
+        table[f"resolved_{name}"], table[f"bars_{name}"], table[f"geo_{name}"] = resolved, bars_to, geo
     return table
 
 

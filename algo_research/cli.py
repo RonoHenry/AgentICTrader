@@ -89,6 +89,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     commands.add_parser("ledger", help="render docs/research/LEDGER.md from docs/research/ledger.csv")
     commands.add_parser("profile", help="write docs/research/VOLATILITY_PROFILE.md: where each instrument makes "
                                         "its range (exploration slice; descriptive, no ledger)")
+    atlas = commands.add_parser("atlas", help="write docs/research/TURN_ATLAS.md: every swing point, what it delivered "
+                                               "and the context it formed in (exploration slice; descriptive, no ledger)")
+    atlas.add_argument("--instrument", action="append", help="one instrument (repeatable; default: all)")
+    atlas.add_argument("--resamples", type=int, help="bootstrap resamples (default: research.toml's)")
     model_a = commands.add_parser("model-a", help="write docs/research/MODEL_A_RECORD.md: how often each step of "
                                                    "Model A happens (exploration slice; descriptive, no ledger)")
     model_a.add_argument("--instrument", action="append", help="one instrument (repeatable; default: all)")
@@ -132,6 +136,8 @@ def main(argv: Optional[Sequence[str]] = None, source_factory: Optional[SourceFa
             return _profile(cfg, root, snapshots_dir)
         if args.command == "model-a":
             return _model_a(args, cfg, root, snapshots_dir)
+        if args.command == "atlas":
+            return _atlas(args, cfg, root, snapshots_dir)
     except (HoldoutError, SnapshotError, HypothesisError) as exc:
         print(f"refused: {exc}")
         return 2
@@ -233,6 +239,47 @@ def _inputs(h: Hypothesis, cfg: ResearchConfig, snapshot, specs, commit: str, se
                  "commission": f"{specs[i].commission.value:g} {specs[i].commission.kind}"} for i in cfg.instruments}
     return ReportInputs(snapshot=cfg.snapshot, fingerprints=fingerprints, code_commit=commit, specs=costs,
                         hypothesis_text=h.path.read_text(encoding="utf-8"), ledger_rows=seqs)
+
+
+def _atlas(args: argparse.Namespace, cfg: ResearchConfig, root: Path, snapshots_dir: Path) -> int:
+    """Req 26: the turn atlas of the exploration slice, descriptive; no ledger."""
+    from algo_research.atlas.report import (CELL_OBJECTIVES, REPORT_TIMEFRAMES, atlas_rows, base_rates, build_atlas,
+                                            per_instrument, render_atlas, value_table)
+
+    started = time.perf_counter()
+    instruments = [i.upper() for i in args.instrument] if args.instrument else list(cfg.instruments)
+    snapshot = load_snapshot(snapshots_dir / cfg.snapshot, instruments)
+    frames = build_frames(snapshot, research_specs(cfg))
+    since, until = cfg.slice_period("explore")
+    tables = {}
+    for instrument in instruments:
+        tables[instrument] = build_atlas(frames[instrument], since, until)
+        print(f"{instrument}: {len(tables[instrument])} swings")
+    rows = atlas_rows(tables)
+    out_dir = root / "data" / "research" / "atlas" / cfg.snapshot
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rows.to_parquet(out_dir / "swings.parquet", index=False)
+
+    resamples = args.resamples or cfg.bootstrap.resamples
+    values, stability = {}, {}
+    for n, tf in enumerate(REPORT_TIMEFRAMES):
+        for k, objective in enumerate(CELL_OBJECTIVES):
+            table = value_table(rows, tf, objective, resamples=resamples, seed=20261016 + 10 * n + k)
+            values[(tf, objective)] = table
+            stability[(tf, objective)] = {f"{r.column} = {r.value}": per_instrument(rows, tf, objective, r.column,
+                                                                                    r.value)
+                                          for r in table[table["qualifies"]].head(5).itertuples()}
+    start, end = slices_of(cfg)["explore"]
+    text = render_atlas(base_rates(rows), values,
+                        {"snapshot": cfg.snapshot, "slice": f"exploration slice, {start} to {end} (end exclusive)",
+                         "instruments": ", ".join(instruments), "resamples": str(resamples),
+                         "code_commit": _commit(root)}, stability)
+    out = root / DOCS / "TURN_ATLAS.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8", newline="\n")
+    print(f"wrote {out} and {out_dir / 'swings.parquet'} ({len(rows)} swings, {time.perf_counter() - started:.0f} s; "
+          f"descriptive: no verdict, no ledger row)")
+    return 0
 
 
 def _profile(cfg: ResearchConfig, root: Path, snapshots_dir: Path) -> int:
