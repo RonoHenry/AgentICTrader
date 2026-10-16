@@ -106,6 +106,36 @@ class SmtSection(_Section):
         return {**{a: b for a, b in self.pairs}, **{b: a for a, b in self.pairs}}
 
 
+#: Each instrument's news currencies (AR-D35): US data moves everything here; the euro and sterling move their own.
+DEFAULT_NEWS_CURRENCIES = {
+    "DXY": ("USD",), "XAUUSD": ("USD",), "US100": ("USD",), "US500": ("USD",), "US30": ("USD",),
+    "BTCUSDT": ("USD",), "EURUSD": ("USD", "EUR"), "GBPUSD": ("USD", "GBP"), "GER40": ("EUR", "USD"),
+    "UK100": ("GBP", "USD"),
+}
+
+
+class CalendarSection(_Section):
+    """The economic calendar for the atlas's news columns (update 2026-10i, Requirement 30)."""
+    name: Optional[str] = None                       # data/research/calendar/<name>.parquet; None: no news
+    importance: tuple[str, ...] = ("HIGH",)          # which releases count
+    currencies: dict[str, tuple[str, ...]] = Field(default_factory=dict)   # overrides of the defaults
+
+    @field_validator("importance")
+    @classmethod
+    def _upper_importance(cls, importance: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(i.upper() for i in importance)
+
+    @field_validator("currencies")
+    @classmethod
+    def _upper_currencies(cls, currencies: dict[str, tuple[str, ...]]) -> dict[str, tuple[str, ...]]:
+        return {i.upper(): tuple(c.upper() for c in cs) for i, cs in currencies.items()}
+
+    def currencies_of(self, instrument: str) -> tuple[str, ...]:
+        """An instrument's news currencies: its own entry, else AR-D35's default, else USD."""
+        instrument = instrument.upper()
+        return self.currencies.get(instrument) or DEFAULT_NEWS_CURRENCIES.get(instrument, ("USD",))
+
+
 class ResearchConfig(_Section):
     profile: str                                     # broker profile: candle source and spec file (costs)
     study: str                                       # its holdout_start ends the research period
@@ -118,6 +148,7 @@ class ResearchConfig(_Section):
     baselines: BaselinesSection = Field(default_factory=BaselinesSection)
     smt: SmtSection = Field(default_factory=SmtSection)
     profiles: dict[str, str] = Field(default_factory=dict)   # instrument -> another broker profile (Req 22.3)
+    calendar: CalendarSection = Field(default_factory=CalendarSection)   # news for the atlas (Req 30)
     holdout_start: date                              # from the study file, not research.toml
 
     @field_validator("instruments")

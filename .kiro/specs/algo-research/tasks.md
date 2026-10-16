@@ -523,6 +523,30 @@ The user's ten markets, in their order (Requirement 22). Task 319 needs Docker f
   - **Validates: Requirements 22.3, 22.4**
 
 - [ ] 319. The focus snapshot **(user review)**
+  - **Exported 2026-10-16; the build and the user's look at the charts are next.**
+    - **The store:** M1 for the six new Exness instruments, 2023-10-17 to 2026-10-16, 1.01–1.11 million rows each. BTCUSDT was already there from Binance, from 2023-10-04.
+    - **The Docker crash:** starting Docker Desktop brought up the whole stack, and it crashed once mid-load. Afterwards the store's counts matched the terminal's to a few bars, so no rows were lost. Only TimescaleDB is needed here.
+    - **`focus-2025-2026h1`** (code 2e8a590):
+
+      | Instrument | M1 rows | Coverage problems | What they are |
+      |---|---|---|---|
+      | DXY | 788,575 | 4 | Exness outages of 34–86 minutes |
+      | XAUUSD | 751,095 | 17 | as in `exness-2025-2026h1` |
+      | EURUSD | 791,537 | 2 | as before |
+      | GBPUSD | 791,387 | 1 | as before |
+      | US100, US500, US30 | ~747,000 each | 19 each | US holidays and early closes (MLK, Presidents', Good Friday, Memorial, Juneteenth, 3–4 July, Labor, Thanksgiving) |
+      | GER40 | 726,193 | 7 | Easter, 1 May, Christmas, and a late Sunday open (2026-05-10) |
+      | UK100 | 719,596 | 11 | Easter, the UK bank holidays, Christmas |
+      | BTCUSDT | 1,118,820 | 0 | none |
+
+      Every instrument also has a 47-minute Exness outage on 2025-01-03 at 11:46 UTC. Every warm-up comes from M1.
+    - **Fingerprints:** EURUSD, GBPUSD and XAUUSD are identical to `exness-2025-2026h1`, so their engine anticipations come from the cache.
+    - **`build --workers 4`:** 394 s, of which the anticipation (the seven new instruments) took 214 s.
+      - Feature rows: about 37,000 per FX pair, 35,400 per US index, 34,500–34,700 for GER40 and UK100, and 53,000 for BTCUSDT (its weekends).
+      - 22 days have no anticipation, all market closures: New Year, Christmas and Good Friday.
+      - Docker was shut down first (`wsl --shutdown` freed 8.6 GB); the build doesn't need the store.
+    - **The charts:** `python -m algo_research.replay` lists the ten tabs in the user's order, with prices at each instrument's own precision.
+    - **Waiting on the user:** a look at the ten charts.
   - Start Docker. Load M1 into the store: the six new Exness instruments from 2024-09-30, and BTCUSDT from Binance over the same span.
   - research.toml:
     - the ten instruments in the user's order;
@@ -532,6 +556,147 @@ The user's ten markets, in their order (Requirement 22). Task 319 needs Docker f
   - `build` the feature tables.
   - Open the charts with all ten tabs for the user.
   - **Validates: Requirements 22.1, 22.3; AR-D26**
+
+### J. Update 2026-10g: the turn atlas
+
+The user's framework, reverse-engineered on the exploration slice (Requirements 23–28). Every module is new, under `algo_research/atlas/`, and is tested in `test_research_atlas.py` on hand-made bars, plus one real-data smoke test on the fixture week.
+
+- [x] 320. Arrays as the user reads them
+  - **Done 2026-10-16.** `atlas/arrays.py`, tested in `test_research_atlas.py`.
+    - **UK100 over the snapshot** (warm-up included): 26,351 arrays in 0.9 s (loading the snapshot takes 23 s).
+
+      | Timeframe | FVGs | OBs | Inverted by the data's end |
+      |---|---|---|---|
+      | M15 | 12,028 | 7,846 | 98% / 97% |
+      | H1 | 2,745 | 2,365 | 97% / 94% |
+      | H4 | 675 | 505 | 93% / 90% |
+      | D1 | 82 | 68 | 78% / 76% |
+      | W1 | 23 | 14 | 61% / 64% |
+
+    - **Reading:** almost every lower-timeframe gap is closed through in the end. So "an FVG below" is nearly always true somewhere, which is why the atlas compares against base rates.
+  - **320a. RED**
+    - **FVG:** a bullish and a bearish FVG on hand-made bars give the gap's low, high, CE and formation time (C3's close). Three candles without a gap give none. The FVG survives a wick into it and a close inside it. A close beyond its far edge flips it, and its state at a time before that close is still FVG.
+    - **Order block:** it matches `measures.bearish_order_blocks` and the mirror. The MT is the body's midpoint. A close beyond it flips it into a breaker.
+    - **Property 1:** the state at t never reads a bar that closes after t.
+  - **320b. GREEN** — `atlas/arrays.py`.
+  - **Validates: Requirement 23**
+
+- [x] 321. Swings and what they delivered
+  - **Done 2026-10-16.** `atlas/swings.py`.
+    - **The slice only:** `build_swings(frame, tf, since, until)` judges outcomes on M1 before `until`, so the atlas never reads past the exploration slice. A swing unresolved by then is open.
+    - **UK100, exploration slice:** M15 has 6,618 swings (1,563 of them engulfing), scored in 2.5 s; D1 has 80. Three-candle base rates, held among those resolved:
+
+      | Timeframe | `crt` | `same_tf` | `next_tf` |
+      |---|---|---|---|
+      | M15 | 72% | 56% | 28% |
+      | H1 | 72% | 56% | 28% |
+      | H4 | 69% | 53% | 23% |
+      | D1 | 71% | 61% | 32% |
+
+    - **Reading:** the rates barely change across timeframes, as a random walk's do (it looks the same at every scale). The information, if any, lies in the context (task 322) measured against these rates.
+  - **321a. RED**
+    - **Three-candle swings:** a low and a high. Equal neighbours are not swings, and an outside bar is both.
+    - **Engulfing swings:** the low (the sweep, then a close above the previous body), and `engulf_full`. The link to the same extreme's three-candle swing.
+    - **The three objectives** on a hand-made path, each held, failed and open. An objective reached at once is marked.
+    - **Order within one bar:** a T bar that takes both the extreme and the objective is settled on M1. One M1 bar doing both is failed.
+    - **Excursion** in average ranges.
+    - **Mirroring:** lows and highs agree on the mirrored path.
+  - **321b. GREEN** — `atlas/swings.py`.
+  - **Validates: Requirement 24**
+
+- [x] 322. The context at a swing
+  - **Done 2026-10-16.** `atlas/context.py`. UK100 over the exploration slice: 8,974 swings on every timeframe in 4.4 s.
+    - **Process slip:** the module was written before its tests (RED wasn't first). The tests were then written from the requirement, not the code. They found two bugs: the session and month "known" times overflowed through float64, and two swings sharing one price needed a list lookup.
+    - **A level is untaken at the bar's open** when the first M1 bar beyond it, after it was known, opens at or after the bar's open. This is computed once per level, so the check is vectorised.
+    - **First look, UK100 three-candle M15 swings (not evidence):** 96% traded into some facing higher-timeframe array, and their held rate equals the base rate (56%). Turtle soups held 63%. On H4, a swept previous-day low held 32% (base 53%). Task 323 ranks these across all ten markets with intervals.
+  - **322a. RED**
+    - **Arrays traded into:**
+      - an H4 bullish FVG under an M15 swing low gives `edge`, `mid` or `through` by the wick's depth;
+      - an array formed during the extreme bar doesn't count;
+      - an array facing the other way doesn't count.
+    - **Liquidity:** the previous day's low taken, the Asian low taken, equal lows within 0.1 of the average range, and an untaken H1 swing low taken.
+    - **Dealing range:** 0.2 is discount and 0.8 is premium, for a low.
+    - **Time and anatomy:** the turtle soup, the wick share, displacement and `closes_beyond`, the swing's own FVG.
+    - **Property 1:** over every context column.
+  - **322b. GREEN** — `atlas/context.py`.
+  - **Validates: Requirement 25**
+
+- [ ] 323. The atlas report **(user review)**
+  - **Built and run 2026-10-16; waiting for the user's review.** `atlas/report.py` and the `atlas` command; `docs/research/TURN_ATLAS.md`. The run covered 94,232 swings of the ten markets in 425 s, and each frame is cut at the slice's end first.
+  - **The first run was corrected before review (AR-D33).** It ranked values by raw held rate. Own FVG (91%), displacement and close-beyond came top, but each matched what a random walk from the confirming close delivers, within 1–3 points. "Sweeps hold less" was geometry too. Also:
+    - a touch had counted as held, a 1–3 point head start;
+    - counting each extreme once had kept only the engulfing swings whose next bar took their extreme, and those fail by construction.
+
+    Now outcomes are strict, every swing carries its geometry, base rates count every swing, and values are ranked by excess over geometry on the three-candle swings.
+  - **What the corrected atlas shows (exploration slice; leads, not findings).** About 1,100 values were tested, so about 55 clear the 95% bar by chance.
+    - **Intraday swings behave like a random walk.** The base excess on M15, H1 and H4 is within ±1 point for both types and all objectives, and nearly every context value is within ±2.
+      - The M15 17:00 hour (+7.5) is mostly EURUSD, GBPUSD and DXY: the rollover bid-dip (task 273).
+      - Trading *through* a W1 or D1 order block's far edge is consistently worse, by 4 to 9 points.
+    - **Daily swings deliver beyond geometry.** D1 three-candle swings: +3.4 points (`same_tf`) and +5.7 (`next_tf`). D1 engulfing swings: +11.7 (`next_tf`, 156 resolved). Within D1, `next_tf`:
+      - `liq_pw` (the swing took the previous week's extreme): +14.9 [+2.7, +26.7], positive in all ten markets;
+      - `twin` (the user's engulfing variation printing as a three-candle swing): +14.7 [+4.5, +24.2], positive in 9 of 10;
+      - an IFVG traded through: +7.7 [+1.6, +13.8].
+
+      This is the user's framework: a higher-timeframe swing formed after price traded into an important level. Samples are small (100–480 swings), so these are the candidates to pre-register for the confirmation slice.
+  - **323a. RED** (`test_research_atlas.py`, `test_research_runner.py`)
+    - The base rates, and a value's lift and complement with resampled intervals, on a hand-made table.
+    - The minimum-count rule.
+    - The `atlas` command writes the report and the tables, reads only the exploration slice, and adds no ledger row.
+  - **323b. GREEN** — `atlas/report.py`, `cli.py`.
+  - **323c. REFACTOR** — run it on `focus-2025-2026h1`, commit `docs/research/TURN_ATLAS.md`, and record the timings and the strongest values here.
+  - **Validates: Requirement 26**
+
+- [ ] 324. The fold **(user review)**
+  - **324a. RED**
+    - **Nesting:** on a hand-made D1 swing low built from M1, the H4, H1 and M15 swings at its extreme are found with their types, and the turtle soup on a lower timeframe is marked.
+    - **The first retracement:** its depth, the OTE flag, and whether the objective came after.
+  - **324b. GREEN** — `atlas/fold.py`; the report gains the fold.
+  - **324c. REFACTOR** — rerun on the snapshot and update the report.
+  - **Validates: Requirement 27**
+
+- [ ] 325. The Atlas mode **(user review)**
+  - **325a. RED** (`test_replay_charts.py`)
+    - `/atlas` and its API serve the swings and arrays of an instrument and timeframe as of a time, with outcomes and context.
+    - The You pages don't reference it.
+  - **325b. GREEN** — `replay/charts.py`, `replay/static/atlas.html` and `atlas.js` (on `shell.js` and `drawings.js`).
+  - **325c. REFACTOR** — check the page in headless Chrome.
+  - **Validates: Requirement 28**
+
+### K. Update 2026-10i: the economic calendar
+
+News as context (Requirements 29–30). Task 327 needs the user once: to run the export script in the MT5 terminal.
+
+- [ ] 327. Calendar history
+  - **Built 2026-10-16; waiting for the user to run the export.** `algo_research/calendar.py`, `calendar --import`, `scripts/mql5/AgenticCalendarExport.mq5`.
+    - MetaEditor (build 6241) compiled the script with 0 errors and 0 warnings. It is installed as `MQL5\Scripts\AgentICTrader\AgenticCalendarExport` in the Exness terminal's data folder.
+    - It writes `Common\Files\agentic_calendar_<from>_<to>.csv`.
+  - **327a. RED** (`test_research_calendar.py`)
+    - On a hand-written export (with server offsets of +0 and +3):
+      - the import gives UTC times;
+      - blank values are nulls, and values are numbers;
+      - rows are de-duplicated by `value_id` and sorted.
+    - The manifest's sha256 changes with the data.
+    - `releases` keeps exact-time, high-importance rows of the given currencies only.
+  - **327b. GREEN**
+    - `scripts/mql5/AgenticCalendarExport.mq5`, compiled with MetaEditor.
+    - `algo_research/calendar.py`, and `calendar --import` in `cli.py`.
+  - **327c. REFACTOR**
+    - The user runs the script.
+    - Import its file, and record the counts per currency and importance.
+  - **Validates: Requirement 29**
+
+- [ ] 328. News in the atlas **(user review)**
+  - **Built 2026-10-16; the rerun waits for task 327's import.**
+    - `atlas/news.py`, `CalendarSection` (`[calendar]` in research.toml, `name = "mt5-calendar"`, HIGH only), and the report's news values.
+    - Without an imported calendar, the atlas runs without news and says so in its Inputs.
+    - The research and replay suites pass: 412 passed, 1 skipped.
+  - **328a. RED** (`test_research_atlas.py`, `test_research_config.py`)
+    - On hand-made swings and releases: each flag at its window's edges, `news_day` per trading date, and only an instrument's own currencies and importance counting.
+    - `[calendar]` in research.toml, with the AR-D35 defaults.
+    - The atlas builds without a calendar.
+  - **328b. GREEN** — `config.py`, `atlas/news.py`, `atlas/report.py`, `cli.py`.
+  - **328c. REFACTOR** — rerun the atlas with the calendar, and record what the news columns show against geometry.
+  - **Validates: Requirement 30**
 
 ---
 
@@ -612,6 +777,18 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
       "tasks": ["317", "318", "319"],
       "description": "Update 2026-10f: the Exness focus instruments and chart precision, several profiles and 24/7 Saturdays, then the focus snapshot (319 needs 317 and 318, Docker and the MT5 terminal)",
       "dependencies": ["Self-Validation and Checkpoint"]
+    },
+    {
+      "name": "The Turn Atlas",
+      "tasks": ["320", "321", "322", "323", "324", "325"],
+      "description": "Update 2026-10g: arrays as the user reads them, swings and outcomes, context, the report, the fold, the Atlas mode (in order; each needs the one before)",
+      "dependencies": ["The User's Markets"]
+    },
+    {
+      "name": "The Economic Calendar",
+      "tasks": ["327", "328"],
+      "description": "Update 2026-10i: calendar history from the MT5 terminal (the user runs the export once), then news in the atlas (328 needs 327 and the atlas report, 323)",
+      "dependencies": ["The User's Markets"]
     }
   ]
 }

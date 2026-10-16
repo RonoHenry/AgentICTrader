@@ -439,6 +439,25 @@ def test_profile_command_writes_the_profile_and_no_ledger(repo, data_dirs, capsy
     assert "VOLATILITY_PROFILE.md" in out
 
 
+def test_atlas_command_reads_the_exploration_slice_only_and_adds_no_ledger_row(repo, data_dirs, capsys):
+    # Update 2026-10g (Req 26): descriptive, like the profile; the tables go under data/research/atlas/.
+    import pandas as pd
+
+    from algo_research.config import load_research_config, trading_date_open
+
+    code, out = cli(repo, data_dirs, "atlas", "--resamples", "200", capsys=capsys)
+    assert code == 0 and "TURN_ATLAS.md" in out
+    text = (repo / "docs" / "research" / "TURN_ATLAS.md").read_text(encoding="utf-8")
+    assert "# Turn atlas" in text and "fixture-week" in text and "## Base rates" in text
+    assert not (repo / "docs" / "research" / "ledger.csv").exists()
+    swings = pd.read_parquet(repo / "data" / "research" / "atlas" / "fixture-week" / "swings.parquet")
+    first, end = (trading_date_open(d) for d in load_research_config(root=repo).slices.explore)
+    assert len(swings) > 0 and set(swings["instrument"]) == {"EURUSD", "XAUUSD"}
+    assert (swings["known_at"] >= first).all() and (swings["known_at"] <= end).all()
+    resolved = swings["resolved_same_tf"].dropna()
+    assert (resolved <= end).all()                                       # nothing judged after the slice
+
+
 # ── reports ─────────────────────────────────────────────────────────────────
 
 def test_report_has_every_section(repo, data_dirs, capsys):

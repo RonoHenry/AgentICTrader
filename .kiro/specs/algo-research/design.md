@@ -895,6 +895,98 @@ Requirement 22; decisions AR-D23 to AR-D26.
 3. Compare the fingerprints of EURUSD, GBPUSD and gold with `exness-2025-2026h1`.
 4. List each instrument's coverage problems in the task notes.
 
+## Update 2026-10g: The Turn Atlas
+
+Requirements 23–28; decisions AR-D27 to AR-D32. The package is `algo_research/atlas/`, run as `python -m algo_research atlas`, on the snapshot's frames (frame.py). The atlas reads M1 and the calendar bars M15, H1, H4, D1 and W1.
+
+### Arrays (`atlas/arrays.py`)
+
+There is one table per instrument, with one row per array: `tf, kind (FVG / OB), direction, low, high, mid (CE or MT), formed_at, flipped_at`.
+- **The FVG** follows Req 23.1. `flipped_at` is the first close of a bar of its timeframe beyond the far edge; from then on the row reads as an IFVG facing the other way.
+- **The order block** uses `measures.bearish_order_blocks` (and its mirror), the engine's rule. Its MT is the midpoint of the order-block candle's body. Its `flipped_at` is the first close beyond it; from then on it reads as a breaker.
+- **State at time t:**
+  - an array exists if `formed_at` ≤ t;
+  - it is an IFVG or breaker if `flipped_at` ≤ t;
+  - otherwise it is an FVG or OB.
+
+### Swings and outcomes (`atlas/swings.py`)
+
+There is one row per swing: `tf, side (low / high), type (three / engulf), extreme, extreme_bar (open time), known_at, engulf_full`, the three objective prices, and per objective `outcome (held / failed / open), resolved_at, at_once`. It also holds `excursion` in T's average range and `avg_range`.
+- **Swing detection** is vectorised per timeframe over its bars.
+- **The objectives** (for a swing low; highs mirror):
+  - `crt` is the high of the bar before the extreme bar.
+  - `same_tf` is the origin of the leg into the swing: the highest high from the last three-candle swing high of T up to the bar before the extreme bar. It is untaken by construction.
+  - `next_tf` is the most recent three-candle swing high of the next timeframe up (M15 → H1 → H4 → D1 → W1) that is known and untaken when the swing is known, and above the extreme.
+- **Outcomes** are settled on M1, from the first M1 bar after the swing is known, scanning forward in growing windows:
+  - held is a high above the objective;
+  - failed is a low below the extreme;
+  - both are strict (AR-D33): a touch had counted as held, a head start of 1–3 points;
+  - one M1 bar doing both is failed, as in races (the stop wins).
+- **The geometry** (`geo_<objective>`): (confirming close − extreme) ÷ (objective − extreme), clipped to [0, 1], or 1 when held at once. It is what a driftless random walk from the confirming close would deliver.
+
+  An objective reached by an M1 bar after the extreme's bar but before the swing is known is held at once. Lows and highs share one code path, with highs read on the mirrored prices.
+
+### Context (`atlas/context.py`)
+
+These are columns on the swing table, each computed as of `known_at`.
+- **Arrays (Req 25.1):** the arrays of T and above that face the turn, exist before the extreme bar opens, and whose range the extreme bar's wick reached. Per array timeframe and kind, the deepest one gives `depth`: `edge` (inside, short of the mid), `mid` (at or beyond the mid), `through` (beyond the far edge, closed back inside). Per swing, the columns are `arr_<tf>_<kind>` holding depth or null, and `arr_any`.
+- **Liquidity (Req 25.2):**
+  - the day, week and month extremes come from the calendar's D1 and W1 bars and a month built from D1;
+  - the Asian and London extremes so far come from the market features' session columns;
+  - an untaken swing of the next timeframe up comes from the swing table;
+  - equal lows or highs are two untaken T swings within 0.1 `avg_range`.
+- **Dealing range (Req 25.3):** the next timeframe's last untaken swing high and low before the extreme bar. `pd = (extreme − low) / (high − low)`.
+- **Time and anatomy (Req 25.4, 25.5):** from `calendar_columns` at the extreme's M1 bar, and from the swing's own bars.
+
+### The report (`atlas/report.py`, `cli.py`)
+
+- **Base rates** per (tf, type, objective), over every swing: held rate, mean geometry, excess. Context values are pooled across sides by mirroring.
+- **Each value**, on the three-candle swings: its excess (held − geometry), and that excess against the rest's excess. The intervals resample trading dates jointly across instruments (`stats.py`). Raw rates are shown but never ranked: the first run ranked own FVG, displacement and closes-beyond on top, and each matched its geometry within 1–3 points.
+- **What qualifies:** a value needs at least 100 swings on 40 trading dates. It is ranked by the lower bound of its excess against the rest.
+- **Output:** `docs/research/TURN_ATLAS.md`, and the tables in `data/research/atlas/<snapshot>/` (Parquet, git-ignored).
+
+### The fold (`atlas/fold.py`)
+
+- **Nesting:** for a held D1 or H4 swing, the M1 bar of its extreme fixes one bar on each lower timeframe. If that bar is a swing there (either type), it is a nested swing. "Turtle soup" marks a nested extreme bar that swept the previous bar's extreme and closed back inside.
+- **The first retracement on a lower timeframe:** the first opposite swing after the nested swing is known, then the next same-side swing. Depth = (that opposite swing − retracement extreme) ÷ (that opposite swing − turn extreme).
+
+### The Atlas mode (`replay/charts.py`, `replay/static/atlas.*`)
+
+`/atlas` serves the chart with the atlas tables of the selected instrument and timeframe:
+- swings as markers, coloured by outcome;
+- objectives as short rays;
+- arrays as boxes with the mid line.
+
+The You mode never links to it.
+
+## Update 2026-10i: The Economic Calendar
+
+Requirements 29–30; decisions AR-D34 to AR-D36.
+
+### The export (`scripts/mql5/AgenticCalendarExport.mq5`)
+
+- **What it reads:** `CalendarValueHistory(values, from, to, NULL, currency)` for each currency in its inputs (default USD, EUR, GBP), from 2024-09-01 to now. For each value it reads `CalendarEventById` (name, importance, time mode, unit, multiplier) and `CalendarCountryById` (code, currency).
+- **Values:** the `long` fields arrive in millionths, with `LONG_MIN` meaning empty. They are written as plain numbers, or blank.
+- **Time:** times are the server's. The script writes `TimeTradeServer() − TimeGMT()` with every row, so the import converts each one; Exness runs at +0.
+- **Output:** `Common/Files/agentic_calendar_<from>_<to>.csv`, in the folder shared by every terminal. The script prints the path and the row count.
+- **Building it:** the source lives in the repository and is compiled with `MetaEditor64.exe /compile`. The user runs it once from the Navigator.
+
+### The import (`calendar.py`, `cli.py`)
+
+- **The file:** `import_calendar(csv) → DataFrame`: `time` (UTC), `currency`, `country`, `event`, `importance`, `time_mode`, `actual`, `forecast`, `previous`, `revised`, `unit`, `value_id`, `event_id`. Rows are sorted by time and de-duplicated by `value_id`.
+- **The store:** `data/research/calendar/<name>.parquet` and `manifest.json` (rows, sha256, period, currencies, source).
+- **Releases:** `releases(table, currencies, importance)` gives the exact-time releases that count for an instrument.
+
+### News columns (`atlas/news.py`)
+
+Per instrument, its counting release times are a sorted int64 array, and each swing's flags come from `searchsorted`:
+- `news_made`: (extreme − 15 min, extreme];
+- `news_ahead`: (extreme, extreme + 60 min];
+- `news_next_bar`: (known_at, known_at + one bar of the swing's timeframe];
+- `news_day`: the count on the extreme's trading date, as "0", "1" or "2+".
+
+The report lists them with the other context values. `CONTEXT_COLUMNS` doesn't change; the news columns are added by `build_atlas` when a calendar is given, so an atlas without one still builds.
+
 ## Requirement Traceability
 
 | Requirement | Components | Properties | Tasks |
@@ -922,4 +1014,6 @@ Requirement 22; decisions AR-D23 to AR-D26.
 | 15 Candle ranges, `crt` | `features/market.py`, `events.py`, `baselines.py` | 1 | 263 |
 | 16 SMT | `features/partner.py`, `events.py`, `dataset.py`, `config.py` | 1 | 264 |
 | 17 Daily quarters | `labels.py`, `baselines.py` | 2 | 265 |
+| 29–30 The economic calendar | `scripts/mql5/AgenticCalendarExport.mq5`, `calendar.py`, `atlas/news.py`, `atlas/report.py`, `cli.py`, `config.py` | 1 | 327, 328 |
+| 23–28 The turn atlas | `atlas/arrays.py`, `atlas/swings.py`, `atlas/context.py`, `atlas/report.py`, `atlas/fold.py`, `cli.py`, `replay/charts.py` | 1 | 320–325 |
 | 22 The user's markets | `config.py`, `snapshot.py`, `specs.py`, `cli.py`, `frame.py`, `dataset.py`, `replay/bars.py`, `replay/charts.py`; `config/brokers/exness-standard.toml`, `config/instruments/exness-standard.toml`, `config/research/research.toml` | 1, 10 | 317, 318, 319 |

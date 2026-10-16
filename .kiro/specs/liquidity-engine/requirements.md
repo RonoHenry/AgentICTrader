@@ -888,3 +888,38 @@ This update encodes the user's bias method, described on 2026-10-08 (LE-D9 to LE
 - **The midnight open in rules,** and the monthly, quarterly and yearly layers of anticipation.
 - **Frame/execution pairs below D1** (H4/H1 frames, M5/M1 execution) and 24-hour trading.
 - **Premium and discount; trade management** (breakeven, partials); **an open-risk budget** in place of the 3-trade cap; **dynamic risk**.
+
+---
+
+## Update 2026-10h: The FVG as the User Reads It
+
+On 2026-10-16 the user confirmed how they mark a fair value gap: "I capture the high and low of the FVG, consequent encroachment and time it was formed, for example a daily bearish FVG that was formed between Monday low and Wednesday high and its CE."
+
+The engine stores something else (Requirement 4.1–4.2, `PDArrayDetector._detect_fvg`, checked 2026-10-13):
+- **The zone:** it spans the three candles (the first candle's low to the third candle's high for a bullish gap), not the gap between them.
+- **Fill:** it is "filled" only when price trades through all three candles, so stale gaps stay eligible as POIs.
+- **The entry:** it sits at the three-candle midpoint.
+- **Derived arrays:** IFVG, BPR and the unicorn are built on the same zone.
+- **Inconsistency:** the candle profile (Requirement 21) and the Model A reader (context-engine) already use the gap.
+
+### Requirement 26: The FVG Is the Gap
+
+**User Story:** As the user, I want the engine's FVG to be the gap I mark, with its CE, so that its POIs, entries and targets sit where I would put them.
+
+#### Acceptance Criteria
+
+1. UNDER `fvg_zone = "gap"`, A bullish FVG SHALL span the first candle's high to the third candle's low, and a bearish FVG the third candle's high to the first candle's low. The `PDArray` SHALL carry its CE (the midpoint), and `formed_at` stays the third candle's open time.
+2. UNDER `fvg_zone = "gap"`, an FVG SHALL be filled only when a candle of its timeframe closes beyond its far edge, the close that inverts it into an IFVG. A wick into or through the gap leaves it live.
+3. IFVG, BPR and the unicorn SHALL be built on the gap under `fvg_zone = "gap"`.
+4. `fvg_zone` SHALL be a `StrategyConfig` option, default `"candles"`:
+   - the engine receives it at construction;
+   - Phase A's cache key and the live runner include it;
+   - the golden run is unchanged under the default.
+5. A variant run of the reference configuration under `"gap"` SHALL be compared with the reference before the default changes.
+
+### Decisions (2026-10h)
+
+| Id | Decision | Source |
+|---|---|---|
+| LE-D17 | The FVG is the gap, with its CE and formation time; trading into it doesn't end it, a close beyond its far edge inverts it | User 2026-10-16 (algo-research AR-D27) |
+| LE-D18 | The fix ships behind `fvg_zone`, default `"candles"`, until a variant run is reviewed: the golden run and every cached run stay comparable | The validation protocol (a flag, the golden run unchanged, a variant run) |
