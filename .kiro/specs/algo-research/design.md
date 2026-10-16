@@ -864,6 +864,37 @@ It is descriptive only, with no verdict and no ledger row. It records the inputs
 - **Withdrawn:** H004 and H007 (AR-D21).
 - **Later, in stage 2:** the user's step 3, the algorithmic signature at the objective. That is H003 with the engine's setup sequence required at the touch.
 
+## Update 2026-10f: The User's Markets
+
+Requirement 22; decisions AR-D23 to AR-D26.
+
+### Instruments from several profiles (`config.py`, `snapshot.py`, `specs.py`, `cli.py`)
+
+- **Configuration.** `ResearchConfig.profiles` maps an instrument to a broker profile other than `profile`, for example `BTCUSDT = "binance"`. A key that isn't one of the instruments is refused. `profile_of(instrument)` gives the instrument's profile.
+- **Snapshot.** `SnapshotSpec.origins` holds an `Origin` per instrument from another profile: its profile, venue, store source, server clock and spec source. `export_snapshot` takes one `CandleSource` per profile and reads each instrument from its own.
+  - The manifest's `data[instrument]` records the origin of every instrument.
+  - The top-level `profile`, `venue`, `server_clock` and `spec_source` stay those of the default profile, so older manifests still load.
+  - `load_snapshot` checks each instrument by its own venue and clock, falling back to the top-level values for older manifests.
+- **Costs.** `specs.ResearchSpecs` is a mapping from instrument to `InstrumentSpec`, each read from its own profile's spec file. `account_ccy(instrument)` gives that profile's account currency, which `RaceCosts.from_spec` needs: Binance's commission is a rate on USDT notional.
+
+### Saturday for 24/7 venues (`frame.py`, `dataset.py`)
+
+`InstrumentFrame.all_week` is true for an instrument whose venue trades every day (`binance`). `build_grid` then keeps its Saturday trading date. For every other instrument, the date is still dropped because the calendar knows it (Property 1 is unchanged). Every other calendar column is computed the same way for all instruments: the trading day runs from 17:00 to 17:00 New York (AR-D24).
+
+### Chart precision and order (`replay/bars.py`, `replay/charts.py`)
+
+- **Precision.** `ReplayBars.digits` is the fewest decimals, from 0 to 6, that write every price of the instrument's M1 data, allowing for float noise (1e-6 of a step). This covers UK100 (2), US30 (1), DXY (3), EURUSD (5) and BTCUSDT (2) without a table. Empty data, or data on no grid of up to 6 decimals (simulated prices), falls back to the old rule. The engine watch builds its bars from the same class, so it needs no backtester change.
+- **Order.** `ChartsApp` takes the research instruments' order. Instruments in the snapshot but not in the configuration follow, sorted.
+
+### The focus snapshot (task 319)
+
+1. Load M1 into the candle store (Docker):
+   - from Exness, the six new instruments, starting 2024-09-30;
+   - from Binance, BTCUSDT over the same span.
+2. Export `focus-2025-2026h1` with research.toml's new instruments and `[profiles]`.
+3. Compare the fingerprints of EURUSD, GBPUSD and gold with `exness-2025-2026h1`.
+4. List each instrument's coverage problems in the task notes.
+
 ## Requirement Traceability
 
 | Requirement | Components | Properties | Tasks |
@@ -891,3 +922,4 @@ It is descriptive only, with no verdict and no ledger row. It records the inputs
 | 15 Candle ranges, `crt` | `features/market.py`, `events.py`, `baselines.py` | 1 | 263 |
 | 16 SMT | `features/partner.py`, `events.py`, `dataset.py`, `config.py` | 1 | 264 |
 | 17 Daily quarters | `labels.py`, `baselines.py` | 2 | 265 |
+| 22 The user's markets | `config.py`, `snapshot.py`, `specs.py`, `cli.py`, `frame.py`, `dataset.py`, `replay/bars.py`, `replay/charts.py`; `config/brokers/exness-standard.toml`, `config/instruments/exness-standard.toml`, `config/research/research.toml` | 1, 10 | 317, 318, 319 |

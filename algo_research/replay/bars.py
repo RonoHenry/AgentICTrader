@@ -36,12 +36,12 @@ class ReplayBars:
         self.instrument = instrument.upper()
         m1 = m1[["time", "open", "high", "low", "close"]].sort_values("time", kind="stable").reset_index(drop=True)
         m1["time"] = pd.DatetimeIndex(pd.to_datetime(m1["time"], utc=True)).as_unit("ns")
+        self.digits = _digits(m1, self.instrument)       # the data's own precision, before any price basis
         self.m1 = apply_price_basis(m1, self.instrument, basis or PriceBasis())
         self.m1["time"] = pd.DatetimeIndex(self.m1["time"]).as_unit("ns")
         self._t = self.m1["time"].to_numpy(dtype="datetime64[ns]").view("int64")
         self._wall = wall_seconds(self.m1["time"])
         self._ohlc = tuple(self.m1[c].to_numpy(dtype=float) for c in ("open", "high", "low", "close"))
-        self.digits = 3 if self.instrument.endswith("JPY") or self.instrument.startswith("XAU") else 5
 
     def _n_closed_by(self, until: pd.Timestamp) -> int:
         """How many M1 bars have closed by ``until``."""
@@ -91,3 +91,22 @@ class ReplayBars:
                 out.append(day)
             day += timedelta(days=1)
         return out
+
+
+#: The most decimals a chart writes (algo-research Requirement 22.5).
+_MAX_DIGITS = 6
+#: How far from a grid step, as a share of the step, a price may sit and still be on it: float noise.
+_GRID_TOLERANCE = 1e-6
+
+
+def _digits(m1: pd.DataFrame, instrument: str) -> int:
+    """The fewest decimals, 0 to 6, that write every price in ``m1``: UK100 2, US30 1, DXY 3, EURUSD 5.
+    Empty data, or prices on no such grid (simulated paths), fall back to the FX rule: 3 for JPY and gold, else 5."""
+    prices = m1[["open", "high", "low", "close"]].to_numpy(dtype=float).ravel()
+    prices = prices[np.isfinite(prices)]
+    if prices.size:
+        for digits in range(_MAX_DIGITS + 1):
+            scaled = prices * 10.0 ** digits
+            if np.all(np.abs(scaled - np.round(scaled)) <= _GRID_TOLERANCE):
+                return digits
+    return 3 if instrument.endswith("JPY") or instrument.startswith("XAU") else 5

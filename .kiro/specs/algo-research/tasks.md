@@ -477,6 +477,62 @@ These replace the timing drafts and reframe bias before any pre-registration (25
   - `explore` the redrafts on the exploration slice and report the numbers.
   - The user confirms each file's rules. The commit is the pre-registration, and then task 259 runs them on the confirmation slice.
 
+### I. Update 2026-10f: the user's markets
+
+The user's ten markets, in their order (Requirement 22). Task 319 needs Docker for the candle store and the MT5 terminal for the Exness history.
+
+- [x] 317. The Exness focus instruments, and chart precision and order
+  - **Done 2026-10-16.** Specs exported from ExnessKE-MT5Trial9 with no commission (a Standard account):
+
+    | Instrument | Symbol | Point | Contract | Quote | Typical spread (median of the day's ticks) |
+    |---|---|---|---|---|---|
+    | DXY | DXYm | 0.001 | 1000 | USD | 0.013 |
+    | US100 | USTECm | 0.01 | 1 | USD | 1.12 |
+    | US500 | US500m | 0.01 | 1 | USD | 0.40 |
+    | US30 | US30m | 0.1 | 1 | USD | 1.0 |
+    | GER40 | DE30m | 0.1 | 1 | EUR | 0.70 |
+    | UK100 | UK100m | 0.01 | 1 | GBP | 0.98 |
+
+    - **UK100's spread varies by session:** 3.0 in the Asian hours of 2026-10-15 against the 0.98 median. Races floor each bar at the typical spread and charge the bar's own spread when it is wider (D10). A stop of a few points is spread-sensitive there.
+    - **The swap-free profile:** the uncommitted task-240 profile `exness-standard-swapfree.toml` got the same six symbols, so its same-symbols test still holds. It stays uncommitted with task 240.
+  - **317a. RED** (`test_research_markets.py`)
+    - The `exness-standard` profile maps DXY, US100, US500, US30, GER40 and UK100 to DXYm, USTECm, US500m, US30m, DE30m and UK100m, and keeps its four old symbols.
+    - The spec file loads them with the terminal's quote currencies: USD for DXY and the US indices, EUR for GER40, GBP for UK100. EURUSD, GBPUSD, USDJPY and XAUUSD are unchanged.
+    - `ReplayBars.digits` on hand-made prices: 10708.61 → 2, 44120.5 → 1, 98.123 → 3, 1.16512 → 5, and float noise (1.1 + 0.2) doesn't add decimals. Empty data, or prices on no grid of up to 6 decimals, fall back to the old rule.
+    - `ChartsApp` lists the snapshot's instruments in the configured order, then any others sorted.
+  - **317b. GREEN**
+    - `config/brokers/exness-standard.toml`: the six symbols.
+    - `config/instruments/exness-standard.toml`: their specs, exported from the terminal into a scratch file and merged. The four old entries and the source line stay as they are.
+    - `replay/bars.py` and `replay/charts.py`; `charts.serve` passes the research instruments.
+  - **317c. REFACTOR** — none planned.
+  - **Validates: Requirements 22.2, 22.5**
+
+- [x] 318. Instruments from several profiles, and Saturday for 24/7 venues
+  - **Done 2026-10-16.**
+    - **What changed:** `ResearchConfig.profiles` and `profile_of`; `snapshot.Origin` and per-instrument origins in the manifest; `specs.ResearchSpecs`. The `snapshot` command reads each profile from its own store.
+    - **Caches:** the market and label caches gain `all_week` in their key, and `frame.py`'s change re-keys them all, so the next `build` recomputes them (a few minutes). The anticipation cache (the engine) doesn't read `frame.py`, so instruments whose data is unchanged keep theirs.
+    - **Tests:** the research, replay and watch suites pass: 380 passed, 1 skipped (the slow self-check).
+  - **318a. RED** (`test_research_config.py`, `test_research_snapshot.py`, `test_research_frame.py`, `test_research_markets.py`)
+    - `profiles` maps an instrument to another profile; a key that isn't an instrument is refused; `profile_of` falls back to `profile`.
+    - A snapshot exported from two in-memory sources (an MT5 venue and a Binance venue) records each instrument's origin, and loads back with the same fingerprints. The Binance instrument's weekend shows as a gap there, and the MT5 instrument's weekend doesn't.
+    - A manifest without origins (the old format) still loads.
+    - `ResearchSpecs` gives each instrument its own profile's spec and account currency. Race costs for a Binance spec are charged in USDT.
+    - `build_grid` keeps Saturday's trading date for an `all_week` frame and drops it otherwise. Property 1 still holds.
+  - **318b. GREEN** — `config.py`, `snapshot.py`, `specs.py` (new), `cli.py`, `frame.py`, `dataset.py`.
+  - **318c. REFACTOR** — none planned.
+  - **Validates: Requirements 22.3, 22.4**
+
+- [ ] 319. The focus snapshot **(user review)**
+  - Start Docker. Load M1 into the store: the six new Exness instruments from 2024-09-30, and BTCUSDT from Binance over the same span.
+  - research.toml:
+    - the ten instruments in the user's order;
+    - `[profiles] BTCUSDT = "binance"`;
+    - `snapshot = "focus-2025-2026h1"`.
+  - Export the snapshot. Compare the EURUSD, GBPUSD and gold fingerprints with `exness-2025-2026h1`. Record each instrument's coverage problems here.
+  - `build` the feature tables.
+  - Open the charts with all ten tabs for the user.
+  - **Validates: Requirements 22.1, 22.3; AR-D26**
+
 ---
 
 ## Task Dependency Graph
@@ -550,6 +606,12 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
       "tasks": ["269", "270", "271", "272", "273", "274"],
       "description": "Update 2026-10e: engine draws as levels, objective touch, complement baseline, session volatility, profile; then the redrafted batch (270 needs 269; 274 needs 269-273)",
       "dependencies": ["Baseline Corrections"]
+    },
+    {
+      "name": "The User's Markets",
+      "tasks": ["317", "318", "319"],
+      "description": "Update 2026-10f: the Exness focus instruments and chart precision, several profiles and 24/7 Saturdays, then the focus snapshot (319 needs 317 and 318, Docker and the MT5 terminal)",
+      "dependencies": ["Self-Validation and Checkpoint"]
     }
   ]
 }

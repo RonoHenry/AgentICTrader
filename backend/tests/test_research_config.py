@@ -155,3 +155,21 @@ def test_smt_pairs(tmp_path):
 def test_smt_pairs_refused(tmp_path, pairs, message):
     with pytest.raises(ValueError, match=message):
         load_research_config(root=write_root(tmp_path, RESEARCH + f"\n[smt]\npairs = {pairs}\n"))
+
+
+# ── instruments from other profiles (update 2026-10f, Requirement 22.3) ─────
+
+def test_profiles_map_an_instrument_to_another_profile(tmp_path):
+    research = RESEARCH.replace('snapshot = "test-snapshot"',
+                                'snapshot = "test-snapshot"\n\n[profiles]\nxauusd = "binance"')
+    cfg = load_research_config(root=write_root(tmp_path, research))
+    assert cfg.profiles == {"XAUUSD": "binance"}
+    assert cfg.profile_of("XAUUSD") == "binance"
+    assert cfg.profile_of("eurusd") == "exness-standard"          # the default profile
+
+
+def test_profiles_refuse_an_instrument_not_studied(tmp_path):
+    research = RESEARCH.replace('snapshot = "test-snapshot"',
+                                'snapshot = "test-snapshot"\n\n[profiles]\nBTCUSDT = "binance"')
+    with pytest.raises(ValueError, match="BTCUSDT"):
+        load_research_config(root=write_root(tmp_path, research))

@@ -100,6 +100,9 @@ def test_long_mirrors_it():
     for key in ("entry", "stop", "tp1", "sd1", "c2_extreme", "range_end", "poi_near", "poi_far"):
         assert long[key] == pytest.approx(220 - short[key]), key
     assert long["r_tp1"] == pytest.approx(short["r_tp1"])
+    assert short["poi_label"] == "H1 swing high" and long["poi_label"] == "H1 swing low" and long["poi_kind"] == "SWING_LOW"
+    reasons = " ".join(why for _, _, why in long["events"])                 # a long reads as a long
+    assert "C1's low" in reasons and "buy limit" in reasons and "sell" not in reasons and " -1" not in reasons
 
 
 def test_no_manipulation_without_c1_high_into_poi():

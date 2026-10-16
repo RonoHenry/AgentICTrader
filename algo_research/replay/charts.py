@@ -18,7 +18,7 @@ import webbrowser
 from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 from urllib.parse import parse_qs, urlparse
 
 import pandas as pd
@@ -40,9 +40,12 @@ class ChartsApp:
     """The instruments, a blind journal per instrument (opened on first use), the engine watch and the watchlist."""
 
     def __init__(self, snapshot: Path, journal_root: Path, slice_: tuple[date, date], watch: watch_mod.WatchApp,
-                 default: str = "XAUUSD") -> None:
+                 default: str = "XAUUSD", order: Sequence[str] = ()) -> None:
         self.snapshot, self.journal_root, self.slice, self.watch = Path(snapshot), Path(journal_root), slice_, watch
-        self.instruments = sorted(p.name.split("_")[0] for p in self.snapshot.glob("*_M1.parquet"))
+        held = sorted(p.name.split("_")[0] for p in self.snapshot.glob("*_M1.parquet"))
+        # The tabs in the research order (algo-research Requirement 22.5), then anything else the snapshot holds.
+        self.instruments = [i for i in dict.fromkeys(o.upper() for o in order) if i in held] + \
+                           [i for i in held if i not in {o.upper() for o in order}]
         self.default = default.upper() if default.upper() in self.instruments else (self.instruments or [default])[0]
         self._bars: dict[str, ReplayBars] = {}
         self._replays: dict[str, ReplayApp] = {}
@@ -185,7 +188,8 @@ def serve(config: Path, port: int = 8765, browser: bool = True, instrument: str 
     research = load_research_config()
     snapshot = SNAPSHOTS_DIR / research.snapshot
     watch = watch_mod.WatchApp(Path(config), snapshot, research.slices.explore, picks=picks)
-    charts = ChartsApp(snapshot, journal_root or JOURNAL_DIR, research.slices.explore, watch, default=instrument)
+    charts = ChartsApp(snapshot, journal_root or JOURNAL_DIR, research.slices.explore, watch, default=instrument,
+                       order=research.instruments)
     server = make_charts_server(charts, port=port)
     url = f"http://127.0.0.1:{server.server_address[1]}{page}"
     print(f"charts at {url}: You (the blind replay) at /, Engine (the watch) at /engine. "

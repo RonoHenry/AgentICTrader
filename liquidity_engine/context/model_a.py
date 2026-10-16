@@ -136,6 +136,21 @@ def day_phase(tf: str, wall_open: int) -> str:
 MODEL_A_VT = Variant(size_basis="SEASONAL", phases=EARLY, max_adr_used=0.7, max_size_adr=0.35, room=True)
 
 
+_MIRROR_WORDS = {"high": "low", "low": "high", "highs": "lows", "lows": "highs", "above": "below", "below": "above",
+                 "under": "over", "over": "under", "sell": "buy", "buy": "sell", "premium": "discount",
+                 "discount": "premium", "bearish": "bullish", "bullish": "bearish", "PDH": "PDL", "PWH": "PWL",
+                 "PMH": "PML", "SWING_HIGH": "SWING_LOW", "EQUAL_HIGHS": "EQUAL_LOWS"}
+
+
+def _mirror_text(text: str) -> str:
+    """A long's words, from the mirrored reading: highs are lows, sells are buys, and its prices lose the minus
+    sign mirroring gave them (every other number in a reason, a share or a ratio, is never negative)."""
+    import re
+    text = re.sub(r"(?<![\w.])-(\d)", r"\1", text)
+    return re.sub(r"\b(" + "|".join(sorted(_MIRROR_WORDS, key=len, reverse=True)) + r")\b",
+                  lambda m: _MIRROR_WORDS[m.group(1)], text)
+
+
 def in_time_window(tf: str, wall_open: int) -> bool:
     """MA-D9, the trader's windows, for a C2 candle opening at ``wall_open`` (New York wall seconds)."""
     t = _wall(wall_open)
@@ -567,15 +582,17 @@ class ModelAReader:
         states: Dict[str, int] = {}
         for name, t, _ in inst.events:
             states.setdefault(name, t)
+        say = _mirror_text if s < 0 else (lambda text: text)       # a long reads as a long
         poi_lo, poi_hi = inst.poi.low, inst.poi.high          # near and far edge: mirrored prices flip them back
         return {
             "set": self.frames.name, "f": self.frames.f, "c": self.frames.c, "e": self.frames.e, "side": self.side,
             "variant": self.variant.name(), "leg_end": self.variant.leg_end, "poi_mode": self.variant.poi_mode,
             "c1_open": inst.c1[0], "c1_extreme": p(inst.c1[2]), "c1_opposite": p(inst.c1[3]),
-            "poi_kind": inst.poi.kind, "poi_label": inst.poi.label, "poi_near": p(poi_lo), "poi_far": p(poi_hi),
-            "zone_position": inst.zone_position, "favg": inst.favg, "states": states, "events": list(inst.events),
+            "poi_kind": say(inst.poi.kind), "poi_label": say(inst.poi.label), "poi_near": p(poi_lo), "poi_far": p(poi_hi),
+            "zone_position": inst.zone_position, "favg": inst.favg, "states": states,
+            "events": [(n, t, say(why)) for n, t, why in inst.events],
             "f_range": sorted(p(x) for x in inst.f_range) if np.all(np.isfinite(inst.f_range)) else None,
-            "end": end, "end_at": inst.ended[1] if inst.ended else None, "end_reason": inst.ended[2] if inst.ended else "",
+            "end": end, "end_at": inst.ended[1] if inst.ended else None, "end_reason": say(inst.ended[2]) if inst.ended else "",
             "time_sync": inst.time_sync, "inducement": inst.inducement, "phase": inst.phase,
             "adr": float(inst.adr) if np.isfinite(inst.adr) else None,
             "adr_used": float(inst.adr_used) if np.isfinite(inst.adr_used) else None,
