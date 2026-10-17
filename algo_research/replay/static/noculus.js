@@ -33,7 +33,7 @@
     constructor(chart, series, opts) {
       this.chart = chart; this.series = series; this.opts = opts;
       this.data = null;                                  // the session's journal, as the server keeps it
-      this.trades = [];
+      this.trades = []; this.diff = null;                // the comparison, once the engine is revealed
       this.tool = null; this.field = null; this.tf = null; this.dir = 0; this.side = "LONG"; this.builtKey = null;
       this.update = () => {};
       series.attachPrimitive({
@@ -57,6 +57,7 @@
         try {
           this.data = await this.opts.api("/api/watch/noculus");
           this.trades = this.data.trades || [];
+          if (this.revealed != null) this.diff = await this.opts.api("/api/watch/noculus/comparison");
         } catch (e) { this.opts.say(e.message); }
       }
       this.tool = this.field = null;
@@ -175,6 +176,9 @@
         this.tool = this.field = null;
         document.body.classList.remove("picking");
         await this.opts.onReveal(status);
+        this.diff = await this.opts.api("/api/watch/noculus/comparison");
+        this.builtKey = null;                            // the panel becomes the comparison
+        this.render();
       } catch (e) { this.opts.say(e.message); }
     }
 
@@ -186,7 +190,7 @@
       const key = `${this.blind}|${this.marking}`;
       if (this.builtKey !== key) { this.build(); this.builtKey = key; }
       if (!this.blind) return;
-      this.fillTools(); this.fillMarks(); this.fillTrades();
+      this.fillTools(); this.fillMarks(); this.fillTrades(); this.fillDiff();
     }
 
     build() {
@@ -219,7 +223,8 @@
         <div class="nmarks" id="nMarks"></div>
         ${ticket}
         <div class="ntrades" id="nTrades"></div>
-        ${this.marking ? `<div class="row"><button class="boxed" id="nReveal">Reveal the engine</button></div>` : ""}`;
+        ${this.marking ? `<div class="row"><button class="boxed" id="nReveal">Reveal the engine</button></div>`
+                       : `<div id="nDiff"></div>`}`;
       const tf = box.querySelector("#nTf"), dir = box.querySelector("#nDir"), rev = box.querySelector("#nReveal");
       if (tf) tf.onchange = () => { this.tf = tf.value; this.fillTools(); };
       if (dir) dir.onchange = () => { this.dir = Number(dir.value); };
@@ -286,6 +291,33 @@
       list.innerHTML = (rows || `<div class="muted">No trades yet.</div>`)
         + (done.length ? `<div class="hint">${done.length} closed: <b>${this.r(total)}</b></div>` : "");
       for (const b of list.querySelectorAll("[data-close]")) b.onclick = () => this.closeTrade(b.dataset.close);
+    }
+
+    /** The comparison, once the engine is out: where the marks agreed, and the days side by side. */
+    fillDiff() {
+      const box = this.opts.box.querySelector("#nDiff");
+      if (!box) return;
+      const d = this.diff;
+      if (!d) { box.innerHTML = `<div class="muted">No comparison yet.</div>`; return; }
+      const a = d.arrays, c = a.counts;
+      const rate = (row) => (row.mine ? `${row.matched}/${row.mine} (${Math.round(100 * row.matched / row.mine)}%)` : "—");
+      const kinds = Object.entries(a.by_kind || {}).map(([k, row]) => `${esc(k)} ${rate(row)}`).join(" · ");
+      const frames = Object.entries(a.by_tf || {}).map(([k, row]) => `${esc(k)} ${rate(row)}`).join(" · ");
+      const one = (x) => (x ? `${esc(x.direction)} ${this.price(x.entry)} → ${esc(x.outcome)} ${this.r(x.net_r)}` : "—");
+      const days = (d.trades.days || []).map((day) => `<div class="nmark">
+        <b>${esc(day.day)}</b> <span class="muted">you ${this.r(day.mine_r)} · engine ${this.r(day.engine_r)}</span>
+        ${day.disagreed ? `<b class="warn">read differently</b>` : ""}</div>` +
+        day.pairs.map((p) => `<div class="cond">${one(p.mine)} <span class="muted">vs</span> ${one(p.engine)}
+          <span class="muted">${p.same_side ? "same side" : "the other side"}, ${p.apart_minutes} min apart</span></div>`).join("") +
+        day.mine_only.map((x) => `<div class="cond">${one(x)} <span class="muted">— the engine didn't</span></div>`).join("") +
+        day.engine_only.map((x) => `<div class="cond"><span class="muted">you didn't —</span> ${one(x)}</div>`).join("")).join("");
+      box.innerHTML = `<h2>You against the engine</h2>
+        <div class="card"><b>Arrays</b>: ${c.matched} of your ${c.mine} marks are also the engine's;
+          ${c.mine_only} only yours; ${c.engine_only} of its own, on the timeframes you marked, you didn't mark.
+          <div class="muted">${kinds || "—"}</div><div class="muted">${frames || "—"}</div></div>
+        <div class="card"><b>Trades</b>: you ${this.r(d.trades.totals.mine_r)} in ${d.trades.totals.mine},
+          the engine ${this.r(d.trades.totals.engine_r)} in ${d.trades.totals.engine};
+          ${d.trades.totals.days_apart} day(s) read differently.${days}</div>`;
     }
 
     // ── the chart ─────────────────────────────────────────────────────────

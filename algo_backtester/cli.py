@@ -1,4 +1,4 @@
-"""The command line: python -m algo_backtester check-data | run | compare | report | autopsy | pine | watch.
+"""The command line: python -m algo_backtester check-data | run | compare | report | autopsy | pine | watch | noculus.
 
     python -m algo_backtester check-data config/backtests/base.toml
     python -m algo_backtester run config/backtests/base.toml [--variant min_rr_5] [--final] [--walk-forward 3M]
@@ -135,6 +135,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     watch.add_argument("--no-browser", action="store_true", help="don't open the page")
     watch.add_argument("--picks", type=Path, default=None, help="where your picks go (default data/journal/watch_picks.jsonl)")
 
+    noc = commands.add_parser("noculus", help="summarise the Noculus sessions: your marks and trades against the engine's")
+    noc.add_argument("--root", type=Path, default=None, help="where the sessions live (default data/journal/noculus)")
+
     pine = commands.add_parser("pine", help="write a TradingView overlay of a run's trades")
     pine.add_argument("run_dir", type=Path, help="a run directory, data/backtests/<run_id>")
     pine.add_argument("--instrument", required=True, help="e.g. EURUSD")
@@ -166,6 +169,12 @@ def main(argv: Optional[Sequence[str]] = None, source_factory: Optional[SourceFa
     if args.command == "watch":
         from algo_research.replay.charts import serve        # the charts, opened on the Engine mode
         return serve(Path(args.config), args.port, not args.no_browser, picks=args.picks, page="/engine")
+    if args.command == "noculus":
+        from algo_backtester.noculus import NOCULUS_DIR, write_report
+        root = args.root or NOCULUS_DIR
+        write_report(root)
+        print(f"wrote {root / 'REPORT.md'}")
+        return 0
 
     names = args.variant if args.command == "run" else [args.variant]
     if args.command == "run" and not names:

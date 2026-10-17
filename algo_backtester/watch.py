@@ -37,7 +37,8 @@ from agent.broker_profiles import load_profile
 from algo_backtester.cache import SignalCache, engine_code_fingerprint
 from algo_backtester.config import REPO_ROOT, load_or_create_study, load_run_config
 from algo_backtester.data import StoredBar, load_instrument
-from algo_backtester.noculus import NOCULUS_DIR, NoculusJournal, build_mark, close as close_trade, place, settle
+from algo_backtester.noculus import (NOCULUS_DIR, NoculusJournal, build_mark, close as close_trade, compare,
+                                     place, settle)
 from algo_backtester.report import journal_csv
 from algo_backtester.run import run_backtest
 from algo_backtester.signals import entry_closes, signals_at
@@ -303,8 +304,22 @@ class WatchSession:
         if self.noculus is not None:
             self.noculus.data["reveal"] = {"t": self.revealed_at,
                                            "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-            self.noculus.save()
+            self.comparison()                              # the diff, as it stood at the reveal (Requirement 20.2)
         return self.status()
+
+    def comparison(self) -> dict:
+        """The trader's reading of the session against the engine's, kept with the session (Requirement 20)."""
+        journal = self.own_journal()
+        if self.withheld:
+            raise LookupError("the session is blind: reveal it before comparing, or the engine's arrays leak")
+        clock = self.revealed_at if self.revealed_at is not None else wall(self.end)
+        for trade in journal.data["trades"]:
+            settle(trade, self.path, clock, self.costs)
+        state = self.states.get(self._keys[bisect_right(self._keys, clock) - 1]) if self._keys else None
+        arrays = (state or {}).get("arrays") or []
+        journal.data["comparison"] = compare(journal.data["marks"], journal.data["trades"], arrays, self.journal, clock)
+        journal.save()
+        return journal.data["comparison"]
 
     def journal_rows(self) -> list[dict]:
         """The backtest's orders and trades, or nothing at all while the session is blind."""
@@ -697,6 +712,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.app.need_journal().data)
         elif url.path == "/api/watch/noculus/trades":
             self._answer(lambda: {"trades": self.app.need().trades(q)})
+        elif url.path == "/api/watch/noculus/comparison":
+            self._answer(self.app.need().comparison)
         elif url.path == "/api/watch/model-a":
             self._answer(lambda: {"set": q.get("set", "model_d1"),
                                   "instances": self.app.need().model_a_at(q.get("set", "model_d1"), int(q["t"]))})

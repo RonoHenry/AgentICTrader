@@ -17,7 +17,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from algo_backtester.noculus import NoculusJournal, build_mark, close, place, settle
+from algo_backtester.noculus import (NoculusJournal, build_mark, close, compare, place, settle,
+                                     write_report)
 from algo_backtester.watch import STATIC, WatchApp, from_wall, wall
 from algo_research.atlas.arrays import fvgs, order_blocks
 from algo_research.replay.timeframes import seconds_of
@@ -434,3 +435,158 @@ def test_the_page_carries_the_trade_ticket():
         assert path in js
     for field in ("nKind", "nPrice", "nStop", "nTarget", "nPlace", "nMark"):
         assert field in js
+
+
+# ── task 332: reveal and compare (Requirements 20.1-20.3) ────────────────────
+def _mark(**kw) -> dict:
+    row = {"id": "m1", "tool": "FVG", "tf": "H1", "direction": 1, "low": 1.1, "high": 1.11, "mid": 1.105,
+           "formed_at": 1790553600, "candles": [1790546400, 1790550000, 1790553600], "clock": 1790553600,
+           "note": "", "deleted_at": None}
+    row.update(kw)
+    return row
+
+
+def _array(**kw) -> dict:
+    row = {"id": "a1", "type": "FVG", "dir": "BULLISH", "tf": "H1", "high": 1.11, "low": 1.1,
+           "formed": 1790553600, "mt": None, "entry": False}
+    row.update(kw)
+    return row
+
+
+def _trade(**kw) -> dict:
+    row = {"id": "t1", "direction": "LONG", "kind": "MARKET", "price": None, "stop": 1.09, "target": 1.12,
+           "expiry": None, "mark": None, "placed_at": 1790553600, "note": "", "state": "CLOSED", "fill": 1.1,
+           "fill_bid": 1.1, "filled_at": 1790553660, "exit": 1.12, "exit_bid": 1.12, "exit_at": 1790560000,
+           "outcome": "TARGET", "risk": 0.01, "gross_r": 2.0, "net_r": 2.0, "commission_r": 0.0, "mfe_r": 2.0,
+           "mae_r": -0.1, "live_r": None, "ambiguous": False, "settled_to": 1790560000}
+    row.update(kw)
+    return row
+
+
+def _row(**kw) -> dict:
+    row = {"t": 1790553600, "decision": "EXECUTE", "reason": "", "grade": "B", "direction": "LONG", "entry": 1.1,
+           "stop": 1.09, "target": 1.12, "r_ratio": 2.0, "order_kind": "MARKET", "placed_at": 1790553600,
+           "expires_at": None, "filled_at": 1790553660, "fill": 1.1, "closed_at": 1790560000, "exit": 1.12,
+           "exit_reason": "TARGET", "net_r": 2.0, "mfe_r": 2.0}
+    row.update(kw)
+    return row
+
+
+def test_arrays_match_by_their_formation_candle_within_one_candle():
+    clock = 1790600000
+    mine = [_mark(), _mark(id="m2", tool="OB", direction=-1, formed_at=1790557200),
+            _mark(id="m3", tf="H4", formed_at=1790553600)]
+    engine = [_array(formed=1790550000),                                 # one H1 candle early: still a match
+              _array(id="a2", type="BREAKER", dir="BEARISH", formed=1790557200),
+              _array(id="a3", type="OB", dir="BULLISH", tf="H1", formed=1790560800),
+              _array(id="a4", type="FVG", dir="BULLISH", tf="D1", formed=1790553600)]
+    out = compare(mine, [], engine, [], clock)["arrays"]
+    assert [p["mine"]["id"] for p in out["matched"]] == ["m1", "m2"]      # the breaker counts as the OB family
+    assert out["matched"][0]["apart"] == 3600 and out["matched"][1]["apart"] == 0
+    assert [m["id"] for m in out["mine_only"]] == ["m3"]                  # no H4 array from the engine
+    assert [a["id"] for a in out["engine_only"]] == ["a3"]                # a4's D1 was never marked
+    assert out["counts"] == {"mine": 3, "matched": 2, "mine_only": 1, "engine_only": 1}
+    assert out["by_kind"]["FVG"] == {"mine": 2, "matched": 1} and out["by_kind"]["OB"] == {"mine": 1, "matched": 1}
+    assert out["by_tf"]["H1"]["matched"] == 2 and out["by_tf"]["H4"]["matched"] == 0
+
+
+def test_a_mark_matches_nothing_of_another_kind_direction_or_timeframe():
+    clock = 1790600000
+    mine = [_mark()]
+    for engine in ([_array(type="OB")], [_array(dir="BEARISH")], [_array(tf="H4")],
+                   [_array(formed=1790553600 + 2 * 3600)]):               # two candles away
+        out = compare(mine, [], engine, [], clock)["arrays"]
+        assert out["counts"]["matched"] == 0 and [m["id"] for m in out["mine_only"]] == ["m1"]
+
+
+def test_marks_made_after_the_clock_or_deleted_are_left_out():
+    clock = 1790553600
+    mine = [_mark(), _mark(id="m2", clock=clock + 3600), _mark(id="m3", deleted_at=clock)]
+    out = compare(mine, [], [_array()], [], clock)["arrays"]
+    assert out["counts"]["mine"] == 1 and out["counts"]["matched"] == 1
+
+
+def test_trades_are_paired_by_day_and_direction():
+    clock = 1790700000
+    mine = [_trade(), _trade(id="t2", direction="SHORT", placed_at=1790560000, filled_at=1790560060,
+                             fill=1.12, stop=1.13, target=1.09, net_r=-1.0, outcome="STOP")]
+    engine = [_row(), _row(t=1790564000, direction="SHORT", placed_at=1790564000, filled_at=1790564060,
+                           fill=1.121, net_r=1.5, exit_reason="TARGET")]
+    out = compare([], mine, [], engine, clock)["trades"]
+    day = out["days"][0]
+    assert len(out["days"]) == 1
+    assert [(p["mine"]["id"], p["same_side"]) for p in day["pairs"]] == [("t1", True), ("t2", True)]
+    assert day["pairs"][1]["apart_minutes"] == pytest.approx(66.7, abs=0.05)   # to a tenth of a minute
+    assert day["mine_r"] == pytest.approx(1.0) and day["engine_r"] == pytest.approx(3.5)
+    assert out["totals"]["mine_r"] == pytest.approx(1.0) and out["totals"]["engine_r"] == pytest.approx(3.5)
+    assert out["totals"]["days_apart"] == 0                               # they agreed on the side both times
+
+
+def test_opposite_sides_on_the_same_day_are_paired_and_flagged():
+    clock = 1790700000
+    mine = [_trade(direction="SHORT", stop=1.12, target=1.08, net_r=-1.0, outcome="STOP")]
+    out = compare([], mine, [], [_row()], clock)["trades"]
+    day = out["days"][0]
+    assert day["pairs"][0]["same_side"] is False and day["pairs"][0]["engine"]["direction"] == "LONG"
+    assert out["totals"]["days_apart"] == 1
+
+
+def test_a_day_only_one_of_them_traded_is_still_reported():
+    clock = 1790900000
+    mine = [_trade()]
+    engine = [_row(t=1790640000, placed_at=1790640000, filled_at=1790640060)]     # the next trading day
+    out = compare([], mine, [], engine, clock)["trades"]
+    assert len(out["days"]) == 2 and out["days"][0]["day"] < out["days"][1]["day"]
+    assert out["days"][0]["pairs"] == [] and [x["id"] for x in out["days"][0]["mine_only"]] == ["t1"]
+    assert len(out["days"][1]["engine_only"]) == 1 and out["days"][1]["mine_only"] == []
+
+
+def test_the_session_saves_its_comparison_on_reveal(blind, session, tmp_path):  # noqa: F811
+    blind.noculus = NoculusJournal(tmp_path / "EURUSD" / "s1.json", {"instrument": "EURUSD"})
+    mid = blind._keys[len(blind._keys) // 2]
+    bars = _bars(session, "H1")
+    table, _ = _atlas(bars, "H1")
+    third = next(wall(r.formed_at) for r in table.itertuples() if wall(r.formed_at) <= mid) - seconds_of("H1")
+    blind.mark({"tool": "FVG", "tf": "H1", "t": mid, "candle": third})
+    blind.reveal(mid)
+    saved = NoculusJournal(blind.noculus.path).data["comparison"]
+    assert saved["clock"] == mid and saved["arrays"]["counts"]["mine"] == 1
+    assert "days" in saved["trades"] and saved["arrays"]["engine_only"] is not None
+    assert blind.comparison()["clock"] == mid                             # and it can be asked for again
+
+
+def test_the_report_summarises_every_saved_session(tmp_path):
+    for day, net in (("2026-09-29", 2.0), ("2026-09-30", -1.0)):
+        j = NoculusJournal(tmp_path / "EURUSD" / f"{day}.json", {"instrument": "EURUSD", "first_day": day})
+        j.data["reveal"] = {"t": 1790600000, "at": "2026-10-17T06:00:00+00:00"}
+        j.data["comparison"] = {"clock": 1790600000,
+                                "arrays": {"counts": {"mine": 2, "matched": 1, "mine_only": 1, "engine_only": 3},
+                                           "by_kind": {"FVG": {"mine": 2, "matched": 1}},
+                                           "by_tf": {"H1": {"mine": 2, "matched": 1}},
+                                           "matched": [], "mine_only": [], "engine_only": []},
+                                "trades": {"days": [{"day": day, "pairs": [], "mine_only": [], "engine_only": [],
+                                                     "mine_r": net, "engine_r": 0.5}],
+                                           "totals": {"mine_r": net, "engine_r": 0.5, "days_apart": 1,
+                                                      "mine": 1, "engine": 1}}}
+        j.save()
+    text = write_report(tmp_path)
+    assert (tmp_path / "REPORT.md").read_text(encoding="utf-8") == text
+    assert "EURUSD" in text and "2026-09-29" in text and "2026-09-30" in text
+    assert "2 sessions" in text and "50%" in text                         # the match rate over both sessions
+    assert "+1.00R" in text and "+1.00R" in text                          # the trader's net R, and the engine's
+
+
+def test_the_comparison_is_refused_while_the_session_is_blind(blind, tmp_path):  # noqa: F811
+    blind.noculus = NoculusJournal(tmp_path / "EURUSD" / "s1.json", {"instrument": "EURUSD"})
+    with pytest.raises(LookupError, match="leak"):                        # it would show the engine's arrays
+        blind.comparison()
+    blind.reveal(blind._keys[2])
+    assert blind.comparison()["clock"] == blind._keys[2]
+
+
+def test_the_page_carries_the_comparison_and_the_cli_writes_the_report():
+    js = (STATIC / "noculus.js").read_text(encoding="utf-8")
+    assert "/api/watch/noculus/comparison" in js and "You against the engine" in js and "nDiff" in js
+    from algo_backtester.cli import parse_args
+    args = parse_args(["noculus"])
+    assert args.command == "noculus" and args.root is None

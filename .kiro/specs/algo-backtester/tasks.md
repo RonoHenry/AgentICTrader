@@ -742,13 +742,31 @@ The trader's marks and trades against the engine's, on the same bars, blind unti
     the fill to the exit. **331c:** the stubbed-DOM walk-through under node now covers the ticket too (48 checks).
   - **Validates: Requirements 19.1–19.3**
 
-- [ ] 332. Reveal and compare **(user review)**
+- [x] 332. Reveal and compare **(user review)**
   - **332a. RED**
     - **Arrays:** matched by formation candle, even when the engine's FVG spans three candles; unmatched ones listed on both sides.
     - **Trades:** paired by day and direction.
     - **The report:** summarises several sessions.
   - **332b. GREEN** — `noculus.py` (`compare`), the reveal panel, and `python -m algo_backtester noculus`.
   - **332c. REFACTOR** — the walk-through, then the trader's first sessions.
+  - **Done 2026-10-17.** `noculus.compare(marks, trades, arrays, journal, clock)`:
+    - **arrays** — each mark against the engine's live arrays of the same family (an IFVG counts as FVG, a
+      breaker as OB), timeframe and direction, matched on the formation candle within one candle of that
+      timeframe (D28), each of the engine's matching at most one mark and the nearest winning. It gives the
+      matched pairs with how far apart they formed, the marks only the trader made, the engine's unfilled
+      arrays of the marked timeframes that the trader didn't mark, and the rates per kind and per timeframe.
+      Marks made after the clock, or deleted, are left out.
+    - **trades** — by trading day (the 17:00 open), paired within the day: the same side first and nearest in
+      time, then whatever is left, so an opposite-side pair is still shown with `same_side` false. Each pair
+      carries both sides' direction, entry, stop, target, outcome and net R, and the minutes between them.
+      A day only one of them traded is still reported, and `days_apart` counts the days they read differently.
+    - It is saved with the session on reveal, and `GET /api/watch/noculus/comparison` recomputes it.
+    - `python -m algo_backtester noculus [--root]` writes `REPORT.md`: a row per session, the match rates per
+      kind and timeframe over all of them, both net Rs, and the days they read differently. Read by eye on
+      three made-up sessions; it named the "apart" column backwards in the first draft, now fixed.
+    - The page gains the reveal panel: the array counts and rates, and the days side by side.
+    **332c:** the stubbed-DOM walk-through covers the panel (53 checks). **The trader's first real sessions,
+    and the look of the panel on a chart, are the user's to run.**
   - **Validates: Requirements 20.1–20.3**
 
 ---
