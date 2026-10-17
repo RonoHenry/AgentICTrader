@@ -490,6 +490,32 @@ def test_arrays_match_by_their_formation_candle_within_one_candle():
     assert out["by_tf"]["H1"]["matched"] == 2 and out["by_tf"]["H4"]["matched"] == 0
 
 
+def test_a_mark_matches_an_array_the_engine_had_earlier_even_if_it_is_gone_by_the_reveal():
+    """Under the three-candle FVG a wick fills it, so the engine can drop an array before the reveal. The
+    trader saw it as the engine did: the match is against everything the engine showed up to the clock."""
+    clock = 1790600000
+    shown = [_array(id="early", formed=1790553600)]                       # shown at an earlier close, then filled
+    alive = [_array(id="late", type="OB", formed=1790560800)]             # what is still live at the reveal
+    out = compare([_mark()], [], shown + alive, [], clock, alive=alive)["arrays"]
+    assert [p["engine"]["id"] for p in out["matched"]] == ["early"]
+    assert [a["id"] for a in out["engine_only"]] == ["late"]              # unmarked and still live
+    assert out["counts"] == {"mine": 1, "matched": 1, "mine_only": 0, "engine_only": 1}
+
+
+def test_one_window_reported_twice_with_growing_bounds_counts_once():
+    """While its third candle forms the engine re-reports a gap with new bounds, so a new id; it is one array."""
+    clock = 1790600000
+    v1 = _array(id="v1", formed=1790553600, high=1.1080)
+    v2 = _array(id="v2", formed=1790553600, high=1.1100)                  # the same window, a later close
+    out = compare([], [], [v1, v2], [], clock, alive=[v2])["arrays"]
+    assert out["counts"]["engine_only"] == 0                              # no marks: nothing counted on H1
+    out = compare([_mark(tf="H1")], [], [v1, v2], [], clock, alive=[v2])["arrays"]
+    assert [p["engine"]["id"] for p in out["matched"]] == ["v2"]          # the latest version is the one shown
+    assert out["counts"]["engine_only"] == 0                              # and it is not also counted unmarked
+    other = _array(id="o", formed=1790560800)
+    out = compare([_mark(tf="H1")], [], [v1, v2, other], [], clock, alive=[v2, other])["arrays"]
+    assert [a["id"] for a in out["engine_only"]] == ["o"]
+
 def test_a_mark_matches_nothing_of_another_kind_direction_or_timeframe():
     clock = 1790600000
     mine = [_mark()]
@@ -541,6 +567,15 @@ def test_a_day_only_one_of_them_traded_is_still_reported():
     assert len(out["days"][1]["engine_only"]) == 1 and out["days"][1]["mine_only"] == []
 
 
+def test_engine_trades_before_the_traders_window_are_left_out():
+    """The engine's run starts early to warm up; an order placed before the session opens was never the
+    trader's to see, so it makes no day of disagreement."""
+    clock = 1790900000
+    engine = [_row(t=1790500000, placed_at=1790500000, filled_at=1790500060), _row()]
+    out = compare([], [_trade()], [], engine, clock, since=1790550000)["trades"]
+    assert len(out["days"]) == 1 and out["totals"]["engine"] == 1
+    assert out["days"][0]["pairs"][0]["same_side"] is True and out["totals"]["days_apart"] == 0
+
 def test_the_session_saves_its_comparison_on_reveal(blind, session, tmp_path):  # noqa: F811
     blind.noculus = NoculusJournal(tmp_path / "EURUSD" / "s1.json", {"instrument": "EURUSD"})
     mid = blind._keys[len(blind._keys) // 2]
@@ -590,3 +625,53 @@ def test_the_page_carries_the_comparison_and_the_cli_writes_the_report():
     from algo_backtester.cli import parse_args
     args = parse_args(["noculus"])
     assert args.command == "noculus" and args.root is None
+
+
+def test_a_blind_session_started_again_resumes_its_marks(setup, tmp_path):  # noqa: F811
+    """A restart, or the session dropped from memory: starting it again picks up its journal."""
+    root, snap = setup
+    app = WatchApp(root / "base.toml", snap, (DAY, DAY + timedelta(days=1)), noculus_root=tmp_path, studies_root=root)
+    app.start({"instrument": "EURUSD", "first_day": DAY.isoformat(), "days": 1, "blind": True})
+    path = app.session.noculus.path
+    app.session.noculus.data["marks"].append({"id": "m1", "tool": "FVG", "clock": 1, "deleted_at": None})
+    app.session.noculus.save()
+    again = WatchApp(root / "base.toml", snap, (DAY, DAY + timedelta(days=1)), noculus_root=tmp_path, studies_root=root)
+    again.start({"instrument": "EURUSD", "first_day": DAY.isoformat(), "days": 1, "blind": True})
+    assert again.session.noculus.path == path and [m["id"] for m in again.session.noculus.data["marks"]] == ["m1"]
+    assert again.session.withheld                                        # never revealed: still blind
+
+
+def test_a_session_revealed_once_stays_revealed_when_started_again(setup, tmp_path):  # noqa: F811
+    """The engine can't be un-seen: a journal that holds a reveal opens revealed, and the marking stays shut."""
+    root, snap = setup
+    app = WatchApp(root / "base.toml", snap, (DAY, DAY + timedelta(days=1)), noculus_root=tmp_path, studies_root=root)
+    app.start({"instrument": "EURUSD", "first_day": DAY.isoformat(), "days": 1, "blind": True})
+    t = wall(app.session.start) + 3600
+    app.session.noculus.data["reveal"] = {"t": t, "at": "2026-10-17T09:00:00+00:00"}
+    app.session.noculus.save()
+    again = WatchApp(root / "base.toml", snap, (DAY, DAY + timedelta(days=1)), noculus_root=tmp_path, studies_root=root)
+    status = again.start({"instrument": "EURUSD", "first_day": DAY.isoformat(), "days": 1, "blind": True})
+    assert status["revealed_at"] == t and not again.session.withheld
+    with pytest.raises(LookupError, match="already revealed"):
+        again.session.reveal(t + 60)
+
+
+def test_no_new_marks_or_trades_after_the_reveal(blind, session, tmp_path):  # noqa: F811
+    blind.noculus = NoculusJournal(tmp_path / "EURUSD" / "s1.json", {"instrument": "EURUSD"})
+    mid = blind._keys[len(blind._keys) // 2]
+    bid = float(session.bars.price_at(from_wall(mid)))
+    placed = blind.place({"direction": "LONG", "kind": "MARKET", "stop": bid - 0.005, "target": bid + 0.005, "t": mid})
+    blind.reveal(mid)
+    bars = _bars(session, "H1")
+    table, _ = _atlas(bars, "H1")
+    third = next(wall(r.formed_at) for r in table.itertuples() if wall(r.formed_at) <= mid) - seconds_of("H1")
+    with pytest.raises(LookupError, match="revealed"):
+        blind.mark({"tool": "FVG", "tf": "H1", "t": mid, "candle": third})
+    with pytest.raises(LookupError, match="revealed"):
+        blind.place({"direction": "LONG", "kind": "MARKET", "stop": bid - 0.005, "target": bid + 0.005, "t": mid})
+    with pytest.raises(LookupError, match="revealed"):
+        blind.unmark({"id": "m1", "t": mid})
+    later = mid + 3600
+    rows = blind.trades({"t": later})                                     # a trade from before still plays out
+    if rows[0]["state"] == "OPEN":
+        assert blind.close_trade({"id": placed["id"], "t": later})["outcome"] == "MANUAL"   # and can be closed

@@ -380,17 +380,30 @@ def _brief_array(a: dict) -> dict:
             "entry": bool(a.get("entry"))}
 
 
-def _arrays(marks: list[dict], arrays: list[dict], clock: int) -> dict:
+def _window(a: dict) -> tuple:
+    """One of the engine's arrays across its closes: kind, side, timeframe and the candle that formed it. While
+    that candle is still forming the engine re-reports the array with new bounds, and so a new id."""
+    return a["type"], a["dir"], a["tf"], int(a["formed"])
+
+
+def _arrays(marks: list[dict], arrays: list[dict], clock: int, alive: Optional[list[dict]] = None) -> dict:
     """Each mark against the engine's arrays of the same family, timeframe and direction, by formation candle.
 
     A mark matches the nearest of the engine's arrays whose formation is within one candle of that timeframe:
     the engine's FVG spans all three candles until the liquidity-engine fix (task 326) while the trader marks
     the gap, so the candle is the honest key, not the edges (D28). Only the timeframes the trader marked are
     counted on the engine's side, and each of its arrays matches at most one mark.
+
+    ``arrays`` is everything the engine showed up to the clock, oldest close first, and the matching runs
+    against all of it: under the three-candle FVG a wick fills an array, so the engine may drop one the trader
+    marked before the reveal. ``alive`` is what it still holds at the clock, and only those count as the
+    engine's arrays the trader didn't mark. A window reported more than once is one array, at its latest bounds.
     """
     mine = [m for m in marks if not m.get("deleted_at") and int(m["clock"]) <= int(clock)]
     timeframes = {m["tf"] for m in mine}
-    theirs = [a for a in arrays if a["tf"] in timeframes and a["type"] in FAMILY and int(a["formed"]) <= int(clock)]
+    keep = lambda a: a["tf"] in timeframes and a["type"] in FAMILY and int(a["formed"]) <= int(clock)  # noqa: E731
+    theirs = list({_window(a): a for a in arrays if keep(a)}.values())                # the latest version of each
+    still = theirs if alive is None else list({_window(a): a for a in alive if keep(a)}.values())
     taken, matched, mine_only = set(), [], []
     for m in mine:
         want, size = FAMILY[m["tool"]], seconds_of(m["tf"])
@@ -410,6 +423,8 @@ def _arrays(marks: list[dict], arrays: list[dict], clock: int) -> dict:
             taken.add(best[1])
             matched.append({"mine": _brief_mark(m), "engine": _brief_array(theirs[best[1]]), "apart": best[0]})
     hit = {p["mine"]["id"] for p in matched}
+    marked = {_window(theirs[i]) for i in taken}
+    engine_only = [_brief_array(a) for a in still if _window(a) not in marked]
     by_kind: dict[str, dict] = {}
     by_tf: dict[str, dict] = {}
     for m in mine:
@@ -417,10 +432,9 @@ def _arrays(marks: list[dict], arrays: list[dict], clock: int) -> dict:
             row = table.setdefault(key, {"mine": 0, "matched": 0})
             row["mine"] += 1
             row["matched"] += int(m["id"] in hit)
-    return {"matched": matched, "mine_only": mine_only,
-            "engine_only": [_brief_array(a) for i, a in enumerate(theirs) if i not in taken],
+    return {"matched": matched, "mine_only": mine_only, "engine_only": engine_only,
             "counts": {"mine": len(mine), "matched": len(matched), "mine_only": len(mine_only),
-                       "engine_only": len(theirs) - len(taken)},
+                       "engine_only": len(engine_only)},
             "by_kind": by_kind, "by_tf": by_tf}
 
 
@@ -461,12 +475,21 @@ def _pair(mine: list[dict], theirs: list[dict]) -> tuple[list[dict], list[dict],
     return pairs, left, right
 
 
-def _trades(trades: list[dict], journal: list[dict], clock: int) -> dict:
-    """The trader's trades and the engine's, side by side, by trading day (Requirement 20.1)."""
+def _trades(trades: list[dict], journal: list[dict], clock: int, since: Optional[int] = None) -> dict:
+    """The trader's trades and the engine's, side by side, by trading day (Requirement 20.1).
+
+    Only what falls in the trader's window counts, from ``since`` (the session's start) to the clock: the
+    engine's run begins earlier to warm up, and an order the trader never had the chance to see is no
+    disagreement.
+    """
+    lo = int(since) if since is not None else None
     mine = [_mine_trade(x) for x in trades if x["state"] != "REJECTED" and int(x["placed_at"]) <= int(clock)]
     theirs = [_engine_trade(r) for r in journal
               if r.get("direction") and (r.get("filled_at") or r.get("placed_at") or r.get("t"))
               and int(r.get("filled_at") or r.get("placed_at") or r["t"]) <= int(clock)]
+    if lo is not None:
+        mine = [x for x in mine if x["at"] >= lo]
+        theirs = [y for y in theirs if y["at"] >= lo]
     days = sorted({trading_day(x["at"]) for x in mine} | {trading_day(y["at"]) for y in theirs})
     out, apart_days = [], 0
     for day in days:
@@ -485,10 +508,15 @@ def _trades(trades: list[dict], journal: list[dict], clock: int) -> dict:
                                     "days_apart": apart_days}}
 
 
-def compare(marks: list[dict], trades: list[dict], arrays: list[dict], journal: list[dict], clock: int) -> dict:
-    """The trader's reading of the session against the engine's, up to ``clock`` (Requirement 20.1)."""
-    return {"clock": int(clock), "arrays": _arrays(marks or [], arrays or [], clock),
-            "trades": _trades(trades or [], journal or [], clock),
+def compare(marks: list[dict], trades: list[dict], arrays: list[dict], journal: list[dict], clock: int,
+            alive: Optional[list[dict]] = None, since: Optional[int] = None) -> dict:
+    """The trader's reading of the session against the engine's, up to ``clock`` (Requirement 20.1).
+
+    ``arrays`` is every array the engine showed up to the clock, oldest close first; ``alive`` what it still
+    holds at the clock (``None``: the same list). ``since`` is where the trader's window opens.
+    """
+    return {"clock": int(clock), "arrays": _arrays(marks or [], arrays or [], clock, alive),
+            "trades": _trades(trades or [], journal or [], clock, since),
             "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
 
 

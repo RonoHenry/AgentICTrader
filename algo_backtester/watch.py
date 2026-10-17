@@ -316,9 +316,11 @@ class WatchSession:
         clock = self.revealed_at if self.revealed_at is not None else wall(self.end)
         for trade in journal.data["trades"]:
             settle(trade, self.path, clock, self.costs)
-        state = self.states.get(self._keys[bisect_right(self._keys, clock) - 1]) if self._keys else None
-        arrays = (state or {}).get("arrays") or []
-        journal.data["comparison"] = compare(journal.data["marks"], journal.data["trades"], arrays, self.journal, clock)
+        closes = self._keys[:bisect_right(self._keys, clock)]
+        shown = [a for t in closes for a in self.states[t].get("arrays") or []]      # every close's, oldest first
+        alive = (self.states[closes[-1]].get("arrays") or []) if closes else []
+        journal.data["comparison"] = compare(journal.data["marks"], journal.data["trades"], shown, self.journal,
+                                             clock, alive=alive, since=wall(self.start))
         journal.save()
         return journal.data["comparison"]
 
@@ -332,13 +334,21 @@ class WatchSession:
             raise LookupError("the session keeps no Noculus journal: start it blind")
         return self.noculus
 
+    def _still_marking(self) -> NoculusJournal:
+        """The journal, while the trader may still add to their read: once the engine is seen it is closed, so
+        nothing made after can pass for a blind read. An open trade can still be closed."""
+        journal = self.own_journal()
+        if self.revealed_at is not None:
+            raise LookupError(f"the session was revealed at {self.revealed_at}: the marking is done")
+        return journal
+
     def _marking_bars(self, tf: str, clock: int) -> pd.DataFrame:
         """Every ``tf`` bar of the session up to the clock, so a click finds the candle it landed on."""
         return self.bars.as_of(tf, from_wall(clock), since=wall(self.bars.m1["time"].min()))
 
     def mark(self, body: dict) -> dict:
         """Mark an array by its candles, at the replay clock (Requirement 18.1)."""
-        journal = self.own_journal()
+        journal = self._still_marking()
         tf, clock = str(body.get("tf", "M15")), min(int(body["t"]), wall(self.end))
         record = build_mark(self._marking_bars(tf, clock), tool=str(body.get("tool", "FVG")), tf=tf, clock=clock,
                             candle=int(body["candle"]), direction=body.get("direction"), note=body.get("note") or "")
@@ -346,12 +356,12 @@ class WatchSession:
 
     def unmark(self, body: dict) -> dict:
         """Delete one of the trader's marks, keeping it with the clock at which it went (Requirement 18.3)."""
-        return self.own_journal().delete_mark(str(body["id"]), min(int(body["t"]), wall(self.end)))
+        return self._still_marking().delete_mark(str(body["id"]), min(int(body["t"]), wall(self.end)))
 
     # ── the trader's own trades (Requirement 19) ────────────────────────────
     def place(self, body: dict) -> dict:
         """A pseudo trade at the replay clock. A limit with no expiry of its own runs to the session's end."""
-        journal = self.own_journal()
+        journal = self._still_marking()
         clock = min(int(body["t"]), wall(self.end))
         return journal.add_trade(place(body, self.path, clock, until=wall(self.end)))
 
@@ -642,6 +652,9 @@ class WatchApp:
                                studies_root=self.studies_root, blind=blind)
         if blind:
             session.noculus = self._journal(session)
+            reveal = session.noculus.data.get("reveal")
+            if reveal:                                       # the engine was seen once: it can't be un-seen
+                session.revealed_at = int(reveal["t"])
         self.session = self._kept[key] = session
         while len(self._kept) > KEPT_SESSIONS:
             self._kept.pop(next(iter(self._kept)))
