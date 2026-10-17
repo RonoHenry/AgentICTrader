@@ -720,7 +720,7 @@ The trader's marks and trades against the engine's, on the same bars, blind unti
     before it could be read — now fixed. **The look of it on a real chart is still the user's to check.**
   - **Validates: Requirements 18.1–18.3**
 
-- [ ] 331. Pseudo trades
+- [x] 331. Pseudo trades
   - **331a. RED**
     - A market trade settles as `run_races` does from the next M1 open.
     - A limit fills at the first bar trading through it before expiry, or expires unfilled.
@@ -728,6 +728,18 @@ The trader's marks and trades against the engine's, on the same bars, blind unti
     - Nothing settles from bars after the clock.
   - **331b. GREEN** — `noculus.py` (`place`, `settle`, `close`), endpoints, and the page's trade ticket and live drawing.
   - **331c. REFACTOR** — the walk-through: place market and limit trades, play through, close one by hand.
+  - **Done 2026-10-17.** `noculus.place` / `settle` / `close`, on the session's M1 in wall seconds
+    (`WatchSession.path`, from `frame_from_data`, with `RaceCosts.from_spec`). A market trade settles exactly as
+    `run_races` does — the test compares fill, exit, outcome, gross R, net R, MFE and MAE row for row, both ways
+    round — and a limit fills at its own price on the first bar whose entry side trades through it (the ask low
+    for LONG, the bid high for SHORT), or EXPIRES. `settle` reads only bars closed by the clock and leaves an
+    unresolved trade OPEN with its live R; `close` exits at the last such close on the closing side (MANUAL).
+    `place` refuses what a broker would: a limit on the wrong side of the market, a stop or target on the wrong
+    side of the entry, an unknown direction. `POST /api/watch/noculus/place` and `/close`,
+    `GET /api/watch/noculus/trades?t=` (settles to the clock, writes only on a change).
+    The page: the ticket (side, order type, limit, stop, target, the mark it came from, a note), prices picked
+    off the chart, the trades list with each one's live or final R and the day's total, and the lines drawn from
+    the fill to the exit. **331c:** the stubbed-DOM walk-through under node now covers the ticket too (48 checks).
   - **Validates: Requirements 19.1–19.3**
 
 - [ ] 332. Reveal and compare **(user review)**

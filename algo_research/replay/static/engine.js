@@ -446,7 +446,7 @@ async function loadState() {
 }
 async function jumpTo(t) {
   S.t = Math.max(S.status.start, Math.min(t, S.status.end));
-  await loadBars(true); await loadState(); renderHeader();
+  await loadBars(true); await loadState(); await noculus.tick(); renderHeader();
 }
 function put(bar) {
   const n = S.bars.length, last = S.bars[n - 1];
@@ -465,6 +465,7 @@ async function advance(dt) {
     try { for (const b of got) put(b); } catch (e) { await loadBars(false); }
     if (Math.floor(S.t / 900) !== Math.floor(before / 900)) await loadState();
     else { await loadModelA(); renderEngine(); renderLog(); refresh(); }
+    await noculus.tick();                               // the trader's own trades settle to the clock too
     renderHeader();
   } finally { S.busy = false; }
 }

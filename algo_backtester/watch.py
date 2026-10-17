@@ -37,12 +37,14 @@ from agent.broker_profiles import load_profile
 from algo_backtester.cache import SignalCache, engine_code_fingerprint
 from algo_backtester.config import REPO_ROOT, load_or_create_study, load_run_config
 from algo_backtester.data import StoredBar, load_instrument
-from algo_backtester.noculus import NOCULUS_DIR, NoculusJournal, build_mark
+from algo_backtester.noculus import NOCULUS_DIR, NoculusJournal, build_mark, close as close_trade, place, settle
 from algo_backtester.report import journal_csv
 from algo_backtester.run import run_backtest
 from algo_backtester.signals import entry_closes, signals_at
 from algo_research.config import load_research_config, trading_date_open
+from algo_research.frame import frame_from_data
 from algo_research.narrative import PriceBasis
+from algo_research.races import RaceCosts
 from algo_research.replay.bars import ReplayBars
 from algo_research.replay.timeframes import TIMEFRAMES, seconds_of, wall_seconds
 from algo_research.snapshot import SNAPSHOTS_DIR
@@ -177,6 +179,9 @@ class WatchSession:
         self.start = pd.Timestamp(trading_date_open(first_day))
         self.end = pd.Timestamp(trading_date_open(first_day + timedelta(days=days)))
         self.bars: Optional[ReplayBars] = None
+        self.frame = None                      # the races' own view of the M1 (prices, spread, costs)
+        self.path: dict = {}
+        self.costs: Optional[RaceCosts] = None
         self.journal: list[dict] = []
         self.states: dict[int, dict] = {}
         self._keys: list[int] = []
@@ -210,9 +215,15 @@ class WatchSession:
                            "high": [b.high for b in data.m1], "low": [b.low for b in data.m1],
                            "close": [b.close for b in data.m1]})
         self.bars = ReplayBars(m1, self.instrument, PriceBasis(instruments=()))   # the engine's own prices, unflattened
+        # What a pseudo trade is priced on (Requirement 19.2): the same M1 and costs the races use, in wall seconds.
+        spec = specs[self.instrument]
+        self.frame = frame_from_data(data, spec.default_spread, spec.stop_slippage)
+        self.costs = RaceCosts.from_spec(spec, specs.account_ccy)
+        self.path = {"time": np.asarray(wall_seconds(self.frame.m1["time"]), dtype=np.int64),
+                     **{k: self.frame.arrays[k] for k in ("open", "high", "low", "close", "spread")}}
         # Phase A, once: the backtest's own records, with the engine's view of each close kept for the page.
         closes = entry_closes(data, cfg.strategy.entry_tf, start_dt, end_dt)
-        spread = specs[self.instrument].default_spread
+        spread = spec.default_spread
         engine = _Capturing()
         records, states = [], {}
         for n, t in enumerate(closes):
@@ -320,6 +331,33 @@ class WatchSession:
     def unmark(self, body: dict) -> dict:
         """Delete one of the trader's marks, keeping it with the clock at which it went (Requirement 18.3)."""
         return self.own_journal().delete_mark(str(body["id"]), min(int(body["t"]), wall(self.end)))
+
+    # ── the trader's own trades (Requirement 19) ────────────────────────────
+    def place(self, body: dict) -> dict:
+        """A pseudo trade at the replay clock. A limit with no expiry of its own runs to the session's end."""
+        journal = self.own_journal()
+        clock = min(int(body["t"]), wall(self.end))
+        return journal.add_trade(place(body, self.path, clock, until=wall(self.end)))
+
+    def trades(self, body: dict) -> list[dict]:
+        """Every pseudo trade, each advanced to the clock. The journal keeps what they have become."""
+        journal = self.own_journal()
+        clock = min(int(body.get("t") or wall(self.end)), wall(self.end))
+        rows = journal.data["trades"]
+        before = json.dumps(rows, sort_keys=True)
+        for trade in rows:
+            settle(trade, self.path, clock, self.costs)
+        if json.dumps(rows, sort_keys=True) != before:
+            journal.save()                                  # the page asks on every tick; write only on a change
+        return rows
+
+    def close_trade(self, body: dict) -> dict:
+        """The trader's own exit at the clock (Requirement 19.3)."""
+        journal = self.own_journal()
+        clock = min(int(body["t"]), wall(self.end))
+        trade = close_trade(journal.trade(str(body["id"])), self.path, clock, self.costs)
+        journal.save()
+        return trade
 
     def save_pick(self, body: dict, path: Optional[Path] = None) -> dict:
         """The trader's pick at a close: one of the ranked candidates, "none" or "other" (Requirement 16.3)."""
@@ -657,6 +695,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: {"rows": self.app.need().journal_rows()})
         elif url.path == "/api/watch/noculus":
             self._answer(lambda: self.app.need_journal().data)
+        elif url.path == "/api/watch/noculus/trades":
+            self._answer(lambda: {"trades": self.app.need().trades(q)})
         elif url.path == "/api/watch/model-a":
             self._answer(lambda: {"set": q.get("set", "model_d1"),
                                   "instances": self.app.need().model_a_at(q.get("set", "model_d1"), int(q["t"]))})
@@ -667,8 +707,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        if path not in ("/api/watch/start", "/api/watch/pick", "/api/watch/reveal",
-                        "/api/watch/noculus/mark", "/api/watch/noculus/unmark"):
+        if path not in ("/api/watch/start", "/api/watch/pick", "/api/watch/reveal", "/api/watch/noculus/mark",
+                        "/api/watch/noculus/unmark", "/api/watch/noculus/place", "/api/watch/noculus/close"):
             self._send(404, {"error": f"no such path {self.path}"})
             return
         try:
@@ -684,6 +724,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.app.need().mark(body))
         elif path == "/api/watch/noculus/unmark":
             self._answer(lambda: self.app.need().unmark(body))
+        elif path == "/api/watch/noculus/place":
+            self._answer(lambda: self.app.need().place(body))
+        elif path == "/api/watch/noculus/close":
+            self._answer(lambda: self.app.need().close_trade(body))
         else:
             self._answer(lambda: self.app.start(body))
 

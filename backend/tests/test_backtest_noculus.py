@@ -13,10 +13,11 @@ import copy
 import json
 from datetime import timedelta
 
+import numpy as np
 import pandas as pd
 import pytest
 
-from algo_backtester.noculus import NoculusJournal, build_mark
+from algo_backtester.noculus import NoculusJournal, build_mark, close, place, settle
 from algo_backtester.watch import STATIC, WatchApp, from_wall, wall
 from algo_research.atlas.arrays import fvgs, order_blocks
 from algo_research.replay.timeframes import seconds_of
@@ -283,3 +284,153 @@ def test_the_page_carries_the_marking_tools():
     assert all(f'"{tool}"' in js for tool in ("FVG", "IFVG", "OB", "BRK"))
     for path in ("/api/watch/noculus/mark", "/api/watch/noculus/unmark", "/api/watch/reveal"):
         assert path in js
+
+
+# ── task 331: pseudo trades (Requirements 19.1-19.3) ─────────────────────────
+def _orders(clock: int, direction: str, stop: float, target: float, until: int) -> pd.DataFrame:
+    return pd.DataFrame({"t": [from_wall(clock)], "direction": [direction], "stop": [stop], "target": [target],
+                         "limit": [from_wall(until)]})
+
+
+def _price(session, clock: int) -> float:  # noqa: F811
+    return float(session.bars.price_at(from_wall(clock)))
+
+
+def test_a_market_trade_settles_as_a_race_does(session):  # noqa: F811
+    from algo_research.races import run_races
+
+    clock, end = wall(session.start) + 7200, wall(session.end)
+    bid = _price(session, clock)
+    for direction, sign in (("LONG", 1), ("SHORT", -1)):
+        stop, target = bid - sign * 0.0010, bid + sign * 0.0010
+        race = run_races(session.frame, _orders(clock, direction, stop, target, end)).iloc[0]
+        assert race["outcome"] in ("TARGET", "STOP"), "the test wants a race that resolves"
+        trade = place({"direction": direction, "kind": "MARKET", "stop": stop, "target": target}, session.path, clock)
+        settle(trade, session.path, end, session.costs)
+        assert trade["state"] == "CLOSED" and trade["outcome"] == race["outcome"]
+        assert trade["fill"] == pytest.approx(race["entry"]) and trade["filled_at"] == wall(race["entry_time"])
+        assert trade["exit"] == pytest.approx(race["exit"]) and trade["exit_at"] == wall(race["exit_time"])
+        assert trade["net_r"] == pytest.approx(race["net_r"]) and trade["gross_r"] == pytest.approx(race["gross_r"])
+        assert trade["mfe_r"] == pytest.approx(race["mfe_r"]) and trade["mae_r"] == pytest.approx(race["mae_r"])
+
+
+def test_a_limit_fills_at_the_first_bar_through_it_or_expires(session):  # noqa: F811
+    clock, end = wall(session.start) + 7200, wall(session.end)
+    path, bid = session.path, _price(session, wall(session.start) + 7200)
+    price = bid - 0.0005                                                      # a long limit, below the ask
+    t, low, sp = path["time"], path["low"], path["spread"]
+    through = int(t[np.flatnonzero((t >= clock) & (low + sp <= price))[0]])
+    trade = place({"direction": "LONG", "kind": "LIMIT", "price": price, "stop": price - 0.0010,
+                   "target": price + 0.0010, "expiry": end}, path, clock)
+    assert trade["state"] == "PENDING" and trade["fill"] is None
+    settle(trade, path, through + 60, session.costs)
+    assert trade["filled_at"] == through and trade["fill"] == pytest.approx(price)
+    early = place({"direction": "LONG", "kind": "LIMIT", "price": price, "stop": price - 0.0010,
+                   "target": price + 0.0010, "expiry": through}, path, clock)
+    settle(early, path, end, session.costs)
+    assert early["state"] == "EXPIRED" and early["fill"] is None and early["net_r"] is None
+
+
+def test_a_trade_closed_by_hand_exits_at_the_closing_side_of_the_last_close(session):  # noqa: F811
+    clock = wall(session.start) + 7200
+    path, bid = session.path, _price(session, wall(session.start) + 7200)
+    trade = place({"direction": "SHORT", "kind": "MARKET", "stop": bid + 0.0050, "target": bid - 0.0050}, path, clock)
+    settle(trade, path, clock + 1800, session.costs)
+    assert trade["state"] == "OPEN" and trade["live_r"] is not None
+    at = clock + 1800
+    n = int(np.count_nonzero(path["time"] + 60 <= at))
+    close(trade, path, at, session.costs)
+    assert trade["state"] == "CLOSED" and trade["outcome"] == "MANUAL"
+    assert trade["exit"] == pytest.approx(path["close"][n - 1] + path["spread"][n - 1])   # a short closes at the ask
+    assert trade["exit_at"] == int(path["time"][n - 1]) + 60
+
+
+def test_nothing_settles_from_bars_after_the_clock(session):  # noqa: F811
+    clock, end = wall(session.start) + 7200, wall(session.end)
+    path, bid = session.path, _price(session, wall(session.start) + 7200)
+    far = place({"direction": "LONG", "kind": "MARKET", "stop": bid - 0.0010, "target": bid + 0.0010}, path, clock)
+    settle(far, path, clock, session.costs)                                   # the entry bar has not closed
+    assert far["state"] == "PENDING" and far["fill"] is None
+    settle(far, path, clock + 120, session.costs)
+    assert far["fill"] is not None and far["settled_to"] == clock + 120
+    resolved = place({"direction": "LONG", "kind": "MARKET", "stop": bid - 0.0010, "target": bid + 0.0010}, path, clock)
+    settle(resolved, path, end, session.costs)
+    assert resolved["state"] == "CLOSED"
+    assert far["state"] == "OPEN" or far["exit_at"] > clock + 120             # nothing read from later bars
+
+
+def test_a_trade_is_refused_when_it_makes_no_sense(session):  # noqa: F811
+    clock, path, bid = wall(session.start) + 7200, session.path, _price(session, wall(session.start) + 7200)
+    for body, reason in (
+        ({"direction": "LONG", "kind": "MARKET", "stop": bid + 0.0010, "target": bid + 0.0020}, "stop"),
+        ({"direction": "LONG", "kind": "MARKET", "stop": bid - 0.0010, "target": bid - 0.0020}, "target"),
+        ({"direction": "LONG", "kind": "LIMIT", "price": bid + 0.0050, "stop": bid, "target": bid + 0.01}, "below"),
+        ({"direction": "SHORT", "kind": "LIMIT", "price": bid - 0.0050, "stop": bid, "target": bid - 0.01}, "above"),
+        ({"direction": "SIDEWAYS", "kind": "MARKET", "stop": bid, "target": bid}, "direction"),
+    ):
+        with pytest.raises(ValueError, match=reason):
+            place(body, path, clock)
+
+
+def test_the_session_places_settles_and_closes_its_own_trades(blind, session, tmp_path):  # noqa: F811
+    clock = wall(session.start) + 7200
+    bid = _price(session, clock)
+    with pytest.raises(LookupError, match="journal"):
+        session.place({"direction": "LONG", "kind": "MARKET", "stop": bid - 0.001, "target": bid + 0.001, "t": clock})
+    blind.noculus = NoculusJournal(tmp_path / "EURUSD" / "s1.json", {"instrument": "EURUSD"})
+    trade = blind.place({"direction": "LONG", "kind": "MARKET", "stop": bid - 0.0050, "target": bid + 0.0050,
+                         "t": clock, "note": "my long"})
+    assert trade["id"] == "t1" and trade["state"] == "PENDING" and trade["placed_at"] == clock
+    rows = blind.trades({"t": clock + 1800})                                  # settled to the clock on each read
+    assert rows[0]["state"] in ("OPEN", "CLOSED") and rows[0]["id"] == "t1"
+    assert NoculusJournal(blind.noculus.path).data["trades"][0]["state"] == rows[0]["state"]
+    done = blind.close_trade({"id": "t1", "t": clock + 1800})
+    assert done["outcome"] == "MANUAL" and done["net_r"] is not None
+
+
+def test_the_trade_endpoints_and_the_ticket_on_the_page(setup, tmp_path):  # noqa: F811
+    import threading
+    import time
+    import urllib.request
+
+    from algo_backtester.watch import make_watch_server
+
+    root, snap = setup
+    app = WatchApp(root / "base.toml", snap, (DAY, DAY + timedelta(days=1)), noculus_root=tmp_path, studies_root=root)
+    server = make_watch_server(app, port=0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+
+    def call(path, body=None):
+        data = None if body is None else json.dumps(body).encode()
+        req = urllib.request.Request(base + path, data=data, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read())
+
+    try:
+        call("/api/watch/start", {"instrument": "EURUSD", "first_day": DAY.isoformat(), "days": 1, "blind": True})
+        for _ in range(600):
+            if call("/api/watch/status")["state"] == "ready":
+                break
+            time.sleep(0.2)
+        session = app.session
+        t = wall(session.start) + 7200
+        bid = float(session.bars.price_at(from_wall(t)))
+        placed = call("/api/watch/noculus/place", {"direction": "LONG", "kind": "MARKET", "t": t,
+                                                   "stop": bid - 0.0050, "target": bid + 0.0050, "note": "mine"})
+        assert placed["id"] == "t1" and placed["state"] == "PENDING"
+        rows = call(f"/api/watch/noculus/trades?t={t + 3600}")["trades"]
+        assert rows[0]["fill"] is not None and rows[0]["state"] in ("OPEN", "CLOSED")
+        if rows[0]["state"] == "OPEN":
+            assert call("/api/watch/noculus/close", {"id": "t1", "t": t + 3600})["outcome"] == "MANUAL"
+        assert json.loads((session.noculus.path).read_text(encoding="utf-8"))["trades"][0]["id"] == "t1"
+    finally:
+        server.shutdown()
+
+
+def test_the_page_carries_the_trade_ticket():
+    js = (STATIC / "noculus.js").read_text(encoding="utf-8")
+    for path in ("/api/watch/noculus/place", "/api/watch/noculus/close", "/api/watch/noculus/trades"):
+        assert path in js
+    for field in ("nKind", "nPrice", "nStop", "nTarget", "nPlace", "nMark"):
+        assert field in js
