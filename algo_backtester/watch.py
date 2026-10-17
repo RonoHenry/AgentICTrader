@@ -225,7 +225,7 @@ class WatchSession:
         # Phase A, once: the backtest's own records, with the engine's view of each close kept for the page.
         closes = entry_closes(data, cfg.strategy.entry_tf, start_dt, end_dt)
         spread = spec.default_spread
-        engine = _Capturing()
+        engine = _Capturing(cfg.strategy.fvg_zone)
         records, states = [], {}
         for n, t in enumerate(closes):
             self.message = f"the engine at close {n + 1} of {len(closes)}"
@@ -594,8 +594,8 @@ class WatchSession:
 class _Capturing:
     """The engine, keeping the last view and map it produced, for the page."""
 
-    def __init__(self) -> None:
-        self.engine = LiquidityMappingEngine()
+    def __init__(self, fvg_zone: str = "candles") -> None:
+        self.engine = LiquidityMappingEngine(fvg_zone)
         self.last = None
 
     def analyze(self, view, instrument, t):

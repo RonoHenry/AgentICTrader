@@ -296,7 +296,8 @@ VARIANTS = [CFG, CFG.model_copy(update={"min_rr": 5.0}),
 
 
 class CountingEngine(LiquidityMappingEngine):
-    def __init__(self):
+    def __init__(self, fvg_zone="candles"):
+        super().__init__(fvg_zone)
         self.calls = 0
 
     def analyze(self, view, instrument, t):

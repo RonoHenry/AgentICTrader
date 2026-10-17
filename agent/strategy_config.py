@@ -69,6 +69,12 @@ class TargetMode(str, Enum):
     NEAREST = "NEAREST"  # the nearer of that and the candle profile's draw (LE-D10)
 
 
+class FvgZone(str, Enum):
+    """What an FVG's zone is (liquidity-engine Req 26). The default keeps every run comparable (LE-D18)."""
+    CANDLES = "candles"  # the three candles' whole range: the engine's original reading
+    GAP = "gap"          # the gap alone, with its CE, filled only by a close beyond it (LE-D17)
+
+
 K = TypeVar("K")
 V = TypeVar("V")
 # A read-only mapping, so a config's fingerprint can't drift after it is built.
@@ -129,6 +135,9 @@ class StrategyConfig(BaseModel):
     min_stop_spreads: float = Field(default=0.0, ge=0)   # a stop of at least k typical spreads; 0 is off
     pending_expiry: PendingExpiry = PendingExpiry.KILLZONE_END
     fallback_ttl_minutes: PositiveInt = 180
+    # What the engine reads an FVG as (liquidity-engine Req 26). Unlike the rules above this one changes the
+    # engine's own map, not the order rules, so configurations that differ in it cannot share an engine view.
+    fvg_zone: FvgZone = FvgZone.CANDLES
 
     @property
     def fallback_ttl(self) -> timedelta:

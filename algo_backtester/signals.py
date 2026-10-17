@@ -218,7 +218,7 @@ def signals_at(data: InstrumentData, cfgs: Sequence[StrategyConfig], t: datetime
     engine analyses t once and each configuration's order rules read its map."""
     view = compose_as_of_view(data.closed, data.m1, t, cfgs[0].entry_tf, cfgs[0].candle_counts, _CALENDAR)
     try:
-        liquidity_map = (engine or LiquidityMappingEngine()).analyze(view, data.instrument, t)
+        liquidity_map = (engine or LiquidityMappingEngine(cfgs[0].fvg_zone)).analyze(view, data.instrument, t)
     except Exception as exc:
         error = EngineError(exception=type(exc).__name__, message=str(exc))
         return [SignalRecord(t=t, instrument=data.instrument, result=error, context=None) for _ in cfgs]
@@ -236,15 +236,15 @@ def signals_at(data: InstrumentData, cfgs: Sequence[StrategyConfig], t: datetime
 
 
 def same_view(cfgs: Sequence[StrategyConfig]) -> bool:
-    """Whether the engine sees the same candles under every one of ``cfgs``: its
-    analysis reads only the view, so they can share it (generate_many)."""
-    return len({(c.entry_tf, tuple(sorted(c.candle_counts.items()))) for c in cfgs}) <= 1
+    """Whether the engine reads the same map under every one of ``cfgs``: its analysis reads the view and
+    its own ``fvg_zone`` (liquidity-engine Req 26), so those must match for them to share it (generate_many)."""
+    return len({(c.entry_tf, tuple(sorted(c.candle_counts.items())), c.fvg_zone) for c in cfgs}) <= 1
 
 
 def generate_signals(data: InstrumentData, cfg: StrategyConfig, start: datetime, end: datetime,
                      engine: Optional[Engine] = None, typical_spread: Optional[float] = None) -> Iterator[SignalRecord]:
     """One SignalRecord per entry-timeframe close in [start, end], oldest first."""
-    engine = engine or LiquidityMappingEngine()  # stateless: one per instrument is enough
+    engine = engine or LiquidityMappingEngine(cfg.fvg_zone)  # stateless: one per instrument is enough
     for t in entry_closes(data, cfg.entry_tf, start, end):
         yield signal_at(data, cfg, t, engine, typical_spread)
 
@@ -380,7 +380,7 @@ def _generate_chunk(path: str, cfgs: Sequence[StrategyConfig], closes: Sequence[
 def _generate_closes(data: InstrumentData, cfgs: Sequence[StrategyConfig], closes: Sequence[datetime],
                      typical_spread: Optional[float] = None) -> list[list[SignalRecord]]:
     """One chunk of Phase A: per configuration, the records at ``closes``, in order."""
-    engine = LiquidityMappingEngine()
+    engine = LiquidityMappingEngine(cfgs[0].fvg_zone)   # same_view(): one map serves every configuration
     per_cfg: list[list[SignalRecord]] = [[] for _ in cfgs]
     for t in closes:
         for records, record in zip(per_cfg, signals_at(data, cfgs, t, engine, typical_spread)):

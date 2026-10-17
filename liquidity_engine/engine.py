@@ -27,7 +27,7 @@ from typing import Dict, List, Optional
 
 from liquidity_engine.detectors.bias import HTFBiasClassifier
 from liquidity_engine.detectors.external import LiquidityLevelDetector
-from liquidity_engine.detectors.internal import PDArrayDetector
+from liquidity_engine.detectors.internal import FVG_ZONES, PDArrayDetector
 from liquidity_engine.detectors.structure import SwingStructureClassifier
 from liquidity_engine.fractal.candle_model import FractalModelTracker
 from liquidity_engine.grader.sequence import SetupSequenceDetector
@@ -83,7 +83,20 @@ _REQUIRED_TIMEFRAMES: List[Timeframe] = [Timeframe.D1, Timeframe.W1]
 
 
 class LiquidityMappingEngine:
-    """Main orchestrator class for liquidity analysis. Stateless; safe to reuse across calls."""
+    """Main orchestrator class for liquidity analysis. Stateless; safe to reuse across calls.
+
+    ``fvg_zone`` is the one setting the engine itself reads (Requirement 26): whether an FVG is the three
+    candles or the gap alone. Two engines that differ in it produce different maps from the same candles, so
+    a caller that shares one engine across configurations must share the setting too.
+    """
+
+    #: The default, also the fallback for a subclass that does not call this constructor.
+    fvg_zone: str = "candles"
+
+    def __init__(self, fvg_zone: str = "candles") -> None:
+        if fvg_zone not in FVG_ZONES:
+            raise ValueError(f"fvg_zone: one of {', '.join(FVG_ZONES)}, not {fvg_zone!r}")
+        self.fvg_zone = fvg_zone
 
     def analyze(
         self,
@@ -105,7 +118,7 @@ class LiquidityMappingEngine:
         draw_on_liquidity = self._find_draw_on_liquidity(htf_bias, liquidity_levels)
 
         swing_structure = SwingStructureClassifier().classify(candles_by_tf)
-        pd_arrays = PDArrayDetector().detect(candles_by_tf, swing_structure)
+        pd_arrays = PDArrayDetector(self.fvg_zone).detect(candles_by_tf, swing_structure)
 
         key_level = self._fractal_key_level(draw_on_liquidity, htf_bias)
         fractal_model = FractalModelTracker().track(finest_candles, key_level)

@@ -30,6 +30,13 @@ OB_EXPANSION_ATR_MULTIPLE: float = 1.5
 # Minimum run length of same-direction candles before a violation counts as a CISD.
 CISD_MIN_SEQUENCE_LENGTH: int = 3
 
+# What an FVG's zone is (Requirement 26):
+# - "candles": the three candles' whole range, and any trade into it fills it. The engine's original reading.
+# - "gap": the gap alone — the first candle's high to the third's low, or the mirror — with its CE as the
+#   midpoint, filled only by a close beyond its far edge, the close that inverts it (LE-D17). This is the
+#   user's own definition, and the one `algo_research.atlas.arrays.fvgs` reads (AR-D27).
+FVG_ZONES: tuple[str, ...] = ("candles", "gap")
+
 # Baseline significance per array type, used by `_assign_strength_score`.
 _ARRAY_TYPE_WEIGHT: Dict[PDArrayType, float] = {
     PDArrayType.FVG: 0.5,
@@ -42,7 +49,16 @@ _ARRAY_TYPE_WEIGHT: Dict[PDArrayType, float] = {
 
 
 class PDArrayDetector:
-    """Detects all Price Delivery Array types across the provided timeframes."""
+    """Detects all Price Delivery Array types across the provided timeframes.
+
+    ``fvg_zone`` says what an FVG is: the three candles or the gap alone (``FVG_ZONES``, Requirement 26). The
+    IFVG, the BPR and the unicorn are built from the FVGs' own bounds, so they follow whichever is chosen.
+    """
+
+    def __init__(self, fvg_zone: str = "candles") -> None:
+        if fvg_zone not in FVG_ZONES:
+            raise ValueError(f"fvg_zone: one of {', '.join(FVG_ZONES)}, not {fvg_zone!r}")
+        self.fvg_zone = fvg_zone
 
     def detect(
         self,
@@ -67,30 +83,30 @@ class PDArrayDetector:
         return arrays
 
     def _detect_fvg(self, candles: List[Candle], tf: Timeframe) -> List[PDArray]:
+        gap = self.fvg_zone == "gap"
         arrays: List[PDArray] = []
         for i in range(2, len(candles)):
             c0, c2 = candles[i - 2], candles[i]
             if c2.low > c0.high:
+                high, low = (c2.low, c0.high) if gap else (c2.high, c0.low)
                 arrays.append(
-                    self._make_pdarray(
-                        PDArrayType.FVG, BiasDirection.BULLISH, tf, c2.high, c0.low, c2.timestamp
-                    )
+                    self._make_pdarray(PDArrayType.FVG, BiasDirection.BULLISH, tf, high, low, c2.timestamp)
                 )
             elif c0.low > c2.high:
+                high, low = (c0.low, c2.high) if gap else (c0.high, c2.low)
                 arrays.append(
-                    self._make_pdarray(
-                        PDArrayType.FVG, BiasDirection.BEARISH, tf, c0.high, c2.low, c2.timestamp
-                    )
+                    self._make_pdarray(PDArrayType.FVG, BiasDirection.BEARISH, tf, high, low, c2.timestamp)
                 )
         return arrays
 
     def _mark_fvg_filled(self, fvg: PDArray, candles: List[Candle]) -> None:
+        """When the FVG is spent: a trade into the three candles, or — for a gap — a close beyond its far
+        edge, the close that inverts it (Requirement 26.2). A wick through a gap leaves it live."""
+        gap = self.fvg_zone == "gap"
         for candle in candles[bisect_right(candles, fvg.formed_at, key=_open_time):]:   # oldest first
-            if fvg.direction == BiasDirection.BULLISH and candle.low <= fvg.low:
-                fvg.is_filled = True
-                fvg.filled_at = candle.timestamp
-                return
-            if fvg.direction == BiasDirection.BEARISH and candle.high >= fvg.high:
+            below = candle.close < fvg.low if gap else candle.low <= fvg.low
+            above = candle.close > fvg.high if gap else candle.high >= fvg.high
+            if (below if fvg.direction == BiasDirection.BULLISH else above):
                 fvg.is_filled = True
                 fvg.filled_at = candle.timestamp
                 return
