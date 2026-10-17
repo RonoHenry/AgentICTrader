@@ -281,6 +281,12 @@ class PDArray(BaseModel):
     # For CISD level: the open of the first candle in the violated sequence
     cisd_sequence_open: Optional[float] = None
 
+    @property
+    def ce(self) -> float:
+        """The zone's midpoint: an FVG's consequent encroachment, a BPR's middle (liquidity-engine Req 26.1).
+        An order block's own mean threshold is its body's midpoint, from ``ob_candle_open``/``_close``."""
+        return (self.high + self.low) / 2
+
     @model_validator(mode="after")
     def validate_high_gt_low(self) -> "PDArray":
         """High must be strictly greater than low (cross-field, see Candle.validate_ohlc)."""

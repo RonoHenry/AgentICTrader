@@ -52,6 +52,8 @@
                   trend: "Trend line", ray: "Ray", extended: "Extended line", arrow: "Arrow", rect: "Box (PD array)",
                   range: "Date & price range", fib: "Fib / SD projection", channel: "Parallel channel",
                   fibext: "Trend-based fib extension", long: "Long position", short: "Short position", path: "Brush" };
+  // The lines Shift straightens: two points joined by a line, which can lie level.
+  const LEVELS = new Set(["trend", "ray", "extended", "arrow"]);
   const FIB = [1, 0.786, 0.705, 0.618, 0.5, 0, -0.5, -1, -1.5, -2, -2.5, -4];
   const FIBEXT = [0, 0.618, 1, 1.272, 1.618, 2, 2.618, 3.618, 4.236];
   const BASE = { color: "", width: 1, dash: "solid", textColor: "", fontSize: 12, extendLeft: false, extendRight: false,
@@ -211,17 +213,29 @@
       let p = this.series.coordinateToPrice(y);
       if (p === null) return null;
       if (snap && this.magnet) {
+        // The magnet, as TradingView's: "weak" (or true) snaps to the bar's open, high, low or close when the
+        // pointer is within 14 px of it; "strong" always takes the nearest of the four.
         const bar = this.opts.timeline.barAt(index);
         if (bar) {
+          const strong = this.magnet === "strong";
           let best = null;
           for (const v of [bar.open, bar.high, bar.low, bar.close]) {
             const dist = Math.abs(this.Y(v) - y);
-            if (dist < 14 && (!best || dist < best.dist)) best = { v, dist };
+            if ((strong || dist < 14) && (!best || dist < best.dist)) best = { v, dist };
           }
           if (best) p = best.v;
         }
       }
       return { t: this.opts.timeline.toTime(index), p: this.round(p), x, y, index };
+    }
+    // Shift straightens a line while it is drawn or a handle is dragged: the point keeps the other point's
+    // price, so the line lies level (TradingView's Shift on a trend line).
+    level(at, shift, anchor) {
+      if (!at || !shift || !anchor) return at;
+      return { ...at, p: anchor.p, y: this.Y(anchor.p) };
+    }
+    anchorOf(type, points) {
+      return LEVELS.has(type) && points.length ? points[0] : null;
     }
 
     // ── geometry, shared by painting and hit tests ────────────────────────
@@ -507,7 +521,7 @@
           return;
         }
         if (this.pending) {
-          const at = this.at(x, y, true);
+          const at = this.level(this.at(x, y, true), e.shiftKey, this.anchorOf(this.pending.type, this.pending.points));
           if (!at) return;
           stop();
           if (this.pending.type === "path") { this.pending.points = [{ t: at.t, p: at.p }]; this.pending.drawing = true; freeze(true); return; }
@@ -535,9 +549,10 @@
           }
           return;
         }
-        const at = this.at(x, y, !!this.pending || (this.drag && this.drag.handle >= 0));
+        let at = this.at(x, y, !!this.pending || (this.drag && this.drag.handle >= 0));
+        if (this.pending) at = this.level(at, e.shiftKey, this.anchorOf(this.pending.type, this.pending.points));
         this.mouse = at;
-        if (this.drag && at) { this.dragTo(at, x); return; }
+        if (this.drag && at) { this.dragTo(at, x, e.shiftKey); return; }
         if (this.pending) { this.refresh(); return; }
         if (!(this.opts.picking && this.opts.picking())) el.style.cursor = this.hit(x, y, paneWidth()) ? "pointer" : "";
       }, true);
@@ -569,11 +584,14 @@
       el.addEventListener("mouseleave", () => { this.mouse = null; if (this.pending) this.refresh(); });
     }
 
-    dragTo(at, x) {
+    dragTo(at, x, shift = false) {
       const { item, handle, start, points } = this.drag;
       this.drag.moved = true;
       if (handle >= 0) {
         const q = item.points[handle];
+        if (shift && LEVELS.has(item.type) && item.points.length === 2) {
+          at = this.level(at, true, item.points[1 - handle]);      // Shift: level with the other end
+        }
         if (item.type === "hline") q.p = at.p;
         else if ((item.type === "long" || item.type === "short") && handle < 2) q.p = at.p;
         else if (item.type === "channel" && handle === 2) { q.t = at.t; q.p = at.p; }

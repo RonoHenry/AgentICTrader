@@ -907,6 +907,26 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     - **Plumbing:** `StrategyConfig.fvg_zone` reaches the engine in Phase A, the live runner and the watch; the Phase A cache key changes with it.
   - **326b. GREEN** — `liquidity_engine/detectors/internal.py`, `engine.py`, `agent/strategy_config.py`, `algo_backtester/signals.py` and its cache key, the live runner.
   - **326c. REFACTOR** — run the reference configuration with a `gap` variant (`--workers 10`, one run at a time), compare it with the reference, and record the difference here. The default changes only after the user's review (LE-D18).
+  - **326a/b done 2026-10-17.** `FVG_ZONES` and `PDArrayDetector(fvg_zone=)` in `detectors/internal.py`:
+    under `"gap"` a bullish FVG is C1's high to C3's low and a bearish one the mirror, `formed_at` stays C3's
+    open, and `PDArray.ce` gives the midpoint. A gap is filled only by a close beyond its far edge, so a wick
+    through it leaves it live; the IFVG, the BPR and the unicorn read the FVG's own bounds and follow it.
+    `LiquidityMappingEngine(fvg_zone=)` passes it down and keeps `"candles"` as a class-level default, so an
+    Engine subclass that skips the constructor behaves exactly as before. `StrategyConfig.fvg_zone`
+    (`FvgZone`, default `CANDLES`) reaches the engine in Phase A, the watch (and so Noculus) and the live
+    runner. `same_view()` now includes `fvg_zone`: it changes the engine's map, not the order rules, so two
+    configurations that differ in it must not share one engine view.
+    Tests: 35 in `test_liquidity_internal_detector.py`; the 20 that were there pass unchanged, and the golden
+    run is unchanged under the default. Two guard tests needed updating, as designed: the fingerprint guard
+    (every field must be covered) and `CountingEngine`, which never called its base constructor.
+    **Note:** `liquidity_engine/**`, `agent/strategy_config.py` and `algo_backtester/signals.py` are all in
+    `ENGINE_SOURCES`, so this change invalidates the whole Phase A cache (539 MB on 2026-10-17). The next run
+    recomputes Phase A from scratch whichever zone it uses.
+    The engine's gap is pinned to the research's: a test runs `atlas.arrays.fvgs` and the detector over one
+    series and compares every gap bound for bound (they agree under `"gap"`, and differ under the default), so
+    the turn atlas, the engine and Noculus's comparison read one definition.
+    `config/backtests/base.toml` gains the `gap` and `anticipation_gap` variants for 326c.
+  - **326c is open:** the variant run and the user's review, before the default changes (LE-D18).
 
 ---
 

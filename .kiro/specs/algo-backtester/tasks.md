@@ -690,9 +690,14 @@ The trader's marks and trades against the engine's, on the same bars, blind unti
     - The journal file round-trips, written atomically.
     - The pages are titled Noculus.
   - **329b. GREEN** — `watch.py` (blind, reveal, endpoints); `noculus.py` (the journal); `engine.html` and `index.html` (the name).
+  - **Done 2026-10-17.** `WatchSession(..., blind=True)`: `withheld`, `reveal(w)` (once, clamped to the session's end),
+    `journal_rows()`, and `state_at` giving `{t, withheld}` alone. A withheld session also hides the summary and Model A,
+    and refuses a pick. `WatchApp` takes `noculus_root` and `studies_root`; a blind start is keyed apart from the open one
+    and opens `data/journal/noculus/<instrument>/<first_day>-<days>d-<variant>.json`. `POST /api/watch/reveal`,
+    `GET /api/watch/noculus`. Both pages are Noculus. 6 tests.
   - **Validates: Requirements 17.1–17.4**
 
-- [ ] 330. Arrays marked by their candles
+- [x] 330. Arrays marked by their candles
   - **330a. RED**
     - **FVG:** bullish and bearish from C3, with the gap, CE and formation time equal to `atlas.arrays.fvgs`; no gap is refused.
     - **IFVG and breaker:** need a later close beyond by the clock, and are refused before it.
@@ -701,9 +706,21 @@ The trader's marks and trades against the engine's, on the same bars, blind unti
     - **Deletion** is kept with its clock.
   - **330b. GREEN** — `noculus.py` (`mark`), endpoints, and the page's tools in `noculus.js` (click candles; boxes with the mid line).
   - **330c. REFACTOR** — the browser walk-through: mark each kind and see the refusals.
+  - **Done 2026-10-17.** `noculus.build_mark(bars, tool=, tf=, clock=, candle=, direction=, note=)` reads the array from
+    the clicked candle, on bars closed by the clock: the FVG geometry is checked row for row against
+    `algo_research.atlas.arrays.fvgs` on the same bars, and the OB's MT against `order_blocks`. Refusals carry the reason
+    (no gap, nothing before C1, no close beyond it yet, the candle has not closed, not a candle at all).
+    `NoculusJournal.add_mark` / `delete_mark` number the marks and keep a deleted one with its clock.
+    `POST /api/watch/noculus/mark` and `/unmark`; `WatchSession.mark` / `unmark` floor nothing — the page does, so an
+    HTF array can be marked from an LTF chart. `static/noculus.js`: the four tools, the timeframe and block-direction
+    selects, the marks list, the reveal button, and the boxes with their mid line.
+    **330c:** no headless browser is installed here, so the walk-through ran as a stubbed-DOM pass over `noculus.js`
+    under node (27 checks: arm, click, floor to the HTF candle, the refusal shown in the server's words, paint, delete,
+    reveal, and no panel when the session is not blind). It found one bug — putting the tool down cleared the refusal
+    before it could be read — now fixed. **The look of it on a real chart is still the user's to check.**
   - **Validates: Requirements 18.1–18.3**
 
-- [ ] 331. Pseudo trades
+- [x] 331. Pseudo trades
   - **331a. RED**
     - A market trade settles as `run_races` does from the next M1 open.
     - A limit fills at the first bar trading through it before expiry, or expires unfilled.
@@ -711,15 +728,45 @@ The trader's marks and trades against the engine's, on the same bars, blind unti
     - Nothing settles from bars after the clock.
   - **331b. GREEN** — `noculus.py` (`place`, `settle`, `close`), endpoints, and the page's trade ticket and live drawing.
   - **331c. REFACTOR** — the walk-through: place market and limit trades, play through, close one by hand.
+  - **Done 2026-10-17.** `noculus.place` / `settle` / `close`, on the session's M1 in wall seconds
+    (`WatchSession.path`, from `frame_from_data`, with `RaceCosts.from_spec`). A market trade settles exactly as
+    `run_races` does — the test compares fill, exit, outcome, gross R, net R, MFE and MAE row for row, both ways
+    round — and a limit fills at its own price on the first bar whose entry side trades through it (the ask low
+    for LONG, the bid high for SHORT), or EXPIRES. `settle` reads only bars closed by the clock and leaves an
+    unresolved trade OPEN with its live R; `close` exits at the last such close on the closing side (MANUAL).
+    `place` refuses what a broker would: a limit on the wrong side of the market, a stop or target on the wrong
+    side of the entry, an unknown direction. `POST /api/watch/noculus/place` and `/close`,
+    `GET /api/watch/noculus/trades?t=` (settles to the clock, writes only on a change).
+    The page: the ticket (side, order type, limit, stop, target, the mark it came from, a note), prices picked
+    off the chart, the trades list with each one's live or final R and the day's total, and the lines drawn from
+    the fill to the exit. **331c:** the stubbed-DOM walk-through under node now covers the ticket too (48 checks).
   - **Validates: Requirements 19.1–19.3**
 
-- [ ] 332. Reveal and compare **(user review)**
+- [x] 332. Reveal and compare **(user review)**
   - **332a. RED**
     - **Arrays:** matched by formation candle, even when the engine's FVG spans three candles; unmatched ones listed on both sides.
     - **Trades:** paired by day and direction.
     - **The report:** summarises several sessions.
   - **332b. GREEN** — `noculus.py` (`compare`), the reveal panel, and `python -m algo_backtester noculus`.
   - **332c. REFACTOR** — the walk-through, then the trader's first sessions.
+  - **Done 2026-10-17.** `noculus.compare(marks, trades, arrays, journal, clock)`:
+    - **arrays** — each mark against the engine's live arrays of the same family (an IFVG counts as FVG, a
+      breaker as OB), timeframe and direction, matched on the formation candle within one candle of that
+      timeframe (D28), each of the engine's matching at most one mark and the nearest winning. It gives the
+      matched pairs with how far apart they formed, the marks only the trader made, the engine's unfilled
+      arrays of the marked timeframes that the trader didn't mark, and the rates per kind and per timeframe.
+      Marks made after the clock, or deleted, are left out.
+    - **trades** — by trading day (the 17:00 open), paired within the day: the same side first and nearest in
+      time, then whatever is left, so an opposite-side pair is still shown with `same_side` false. Each pair
+      carries both sides' direction, entry, stop, target, outcome and net R, and the minutes between them.
+      A day only one of them traded is still reported, and `days_apart` counts the days they read differently.
+    - It is saved with the session on reveal, and `GET /api/watch/noculus/comparison` recomputes it.
+    - `python -m algo_backtester noculus [--root]` writes `REPORT.md`: a row per session, the match rates per
+      kind and timeframe over all of them, both net Rs, and the days they read differently. Read by eye on
+      three made-up sessions; it named the "apart" column backwards in the first draft, now fixed.
+    - The page gains the reveal panel: the array counts and rates, and the days side by side.
+    **332c:** the stubbed-DOM walk-through covers the panel (53 checks). **The trader's first real sessions,
+    and the look of the panel on a chart, are the user's to run.**
   - **Validates: Requirements 20.1–20.3**
 
 ---

@@ -99,11 +99,23 @@ const draw = new Drawings(chart, series, {
     { label: "Delete", action: () => draw.remove(item) }]);
     else window.ReplayUI.contextMenu(x, y, [{ label: "Reset the chart view", action: () => { const n = S.bars.length; motion.fit();
       chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 140), to: n + 12 }); } }, ...motion.menu()]); },
-  picking: () => false, onPick: () => {}, onError: (t) => say(t),
+  picking: () => noculus.armed(), onPick: (at) => act(() => noculus.pick(at)), onError: (t) => say(t),
 });
 const motion = new Motion(chart, series, {
   container: $("chart"), draw, prefs: Prefs, palette, bars: () => S.bars, tfSeconds: () => SECONDS[S.tf],
   now: () => (S.status ? S.t : null), onChange: () => refresh(),
+});
+// ── Noculus: the trader's marks, blind until they reveal the engine (Requirements 17-18) ──
+const MARK_TFS = ["M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1"];
+const noculus = new Noculus(chart, series, {
+  box: $("noculus"), timeline, palette, seconds: (tf) => SECONDS[tf], timeframes: MARK_TFS, tf: () => S.tf,
+  digits: () => S.digits, clock: () => S.t, status: () => S.status, api: (path, body) => api(path, body),
+  say: (t) => say(t), refresh: () => refresh(), timeLabel: (t) => fmtTime(t), X, Y,
+  onReveal: async (status) => {                         // the clock stays where it is; the engine joins it
+    S.status = status;
+    S.journal = (await api("/api/watch/journal")).rows;
+    summaryLine(); await loadState(); noculus.render();
+  },
 });
 const uiCtx = { palette, kinds: ["OB", "FVG", "BREAKER", "IFVG", "BPR", "LIQUIDITY", "OTHER"], timeframes: Object.keys(SECONDS), tf: () => S.tf,
                 digits: () => S.digits, timeLabel: (t) => fmtTime(t), say: (t) => say(t),
@@ -129,7 +141,7 @@ function paintEngine(ctx, size) {
   ctx.font = "10px system-ui, sans-serif"; ctx.textBaseline = "bottom";
   const text = (s, x, y, color, align) => { ctx.fillStyle = color; ctx.textAlign = align || "left"; ctx.fillText(s, x, y); };
   const line = (x1, y1, x2, y2, color, dash, width) => { ctx.strokeStyle = color; ctx.lineWidth = width || 1; ctx.setLineDash(dash || []); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.setLineDash([]); };
-  if (st && !st.error) {
+  if (st && !st.error && !st.withheld) {
     if (S.layers.arrays) {
       for (const a of st.arrays.filter(showArray)) {
         const x1 = Math.max(X(a.formed), -10), y1 = Y(a.high), y2 = Y(a.low);
@@ -315,14 +327,34 @@ async function loadModelA() {
   S.maAt = key;
   S.ma = (await api(`/api/watch/model-a?set=${S.maSet}&t=${S.t}`)).instances;
 }
-function refresh() { engineUpdate(); draw.refresh(); }
+function refresh() { engineUpdate(); noculus.update(); draw.refresh(); }
 
 // ── API ───────────────────────────────────────────────────────────────────
-async function api(path, body) {
+async function api(path, body, retried = false) {
   const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const j = await r.json();
-  if (!r.ok) throw new Error(j.error || r.statusText);
+  if (!r.ok) {
+    // The server restarted under the page: start the same session again and carry on from the same clock. A
+    // blind session's marks and trades are on disk and come back with it; a revealed one stays revealed.
+    if (r.status === 409 && /no session/.test(j.error || "") && S.status && !S.recovering && !retried) {
+      await recover();
+      return api(path, body, true);
+    }
+    throw new Error(j.error || r.statusText);
+  }
   return j;
+}
+async function recover() {
+  const st = S.status, t = S.t;
+  S.recovering = true;
+  stop();
+  try {
+    say("The server restarted: starting your session again where you were…");
+    await api("/api/watch/start", { instrument: st.instrument, first_day: st.first_day, days: st.days,
+                                   variant: st.variant, blind: !!st.blind }, true);
+    await waitReady(t);
+    say("Your session is back.");
+  } finally { S.recovering = false; }
 }
 function say(t) { $("msg").textContent = t || ""; }
 async function act(fn) { say(""); try { await fn(); } catch (e) { say(e.message); } }
@@ -358,12 +390,14 @@ async function blindCheck() {                         // days still unread in th
   } catch (e) { S.unread = 0; $("blindWarn").textContent = ""; }
 }
 async function startSession() {
+  const blind = $("sBlind").checked;                    // a blind session spoils nothing: the engine stays hidden
   await blindCheck();
-  if (S.unread && !confirm(`${S.unread} of these days are still unread in your blind replay. Watching the engine on them spoils `
-                           + "them for a blind read. Start anyway?")) return;
+  if (!blind && S.unread && !confirm(`${S.unread} of these days are still unread in your blind replay. Watching the engine on them spoils `
+                                     + "them for a blind read. Start anyway?")) return;
   Prefs.set("watch.day", $("sDay").value);
   stop();
-  await api("/api/watch/start", { instrument: $("sInst").value, first_day: $("sDay").value, days: Number($("sDays").value), variant: $("sVariant").value });
+  await api("/api/watch/start", { instrument: $("sInst").value, first_day: $("sDay").value, days: Number($("sDays").value),
+                                 variant: $("sVariant").value, blind });
   await waitReady();
 }
 function overlay(title, text, progress) {
@@ -373,7 +407,7 @@ function overlay(title, text, progress) {
   $("ovProg").parentElement.style.display = progress == null ? "none" : "";
   $("ovProg").style.width = Math.round((progress || 0) * 100) + "%";
 }
-async function waitReady() {
+async function waitReady(resumeAt) {
   $("status").textContent = "preparing"; $("status").className = "pill READING";
   const started = Date.now();
   for (;;) {
@@ -384,24 +418,35 @@ async function waitReady() {
     const secs = Math.round((Date.now() - started) / 1000);
     overlay(`Preparing ${st.instrument}, ${st.days} day(s) from ${st.first_day}`,
             `${st.message || "starting"} — ${pct}% (${secs} s). The backtest runs for real; about 20-30 s a day.`, st.progress || 0);
-    if (st.state === "ready") { overlay(null); await openSession(st); return; }
+    if (st.state === "ready") { overlay(null); await openSession(st, resumeAt); return; }
     if (st.state === "error") { $("status").textContent = "error"; overlay("The session failed", st.message); throw new Error(st.message); }
     await sleep(700);
   }
 }
-async function openSession(st) {
+async function openSession(st, resumeAt) {
   overlay(null);
   S.status = st; S.digits = st.digits;
   $("sInst").value = st.instrument; Shell.setInstrument(st.instrument);
   $("inst").textContent = `${st.instrument} · ${st.variant}`;
-  $("status").textContent = "ready"; $("status").className = "pill REVEALED";
-  $("summaryTop").textContent = `${st.days} day(s) from ${st.first_day}: ${st.summary.orders} orders, ${st.summary.trades} trades, ${st.summary.total_r >= 0 ? "+" : ""}${st.summary.total_r}R`;
-  $("sMsg").textContent = "Play, step, or jump to the next order. Your own drawings are kept in this browser for this session.";
+  $("status").textContent = st.blind && st.revealed_at == null ? "blind" : "ready";
+  $("status").className = "pill REVEALED";
+  summaryLine();
+  $("sMsg").textContent = st.blind && st.revealed_at == null
+    ? "The engine is hidden. Mark what you see and place your trades, then reveal it (Noculus, on the right)."
+    : "Play, step, or jump to the next order. Your own drawings are kept in this browser for this session.";
   $("prog").style.width = "100%";
   S.journal = (await api("/api/watch/journal")).rows;
   S.picks = Object.fromEntries((await api("/api/watch/picks")).picks.map((p) => [p.t, p]));
   draw.load(Prefs.get(drawKey(), []));
-  await jumpTo(st.start + 3600);
+  await noculus.sync();
+  await jumpTo(resumeAt != null ? resumeAt : st.start + 3600);
+}
+
+function summaryLine() {
+  const st = S.status, s = st.summary || {};
+  $("summaryTop").textContent = st.blind && st.revealed_at == null
+    ? `${st.days} day(s) from ${st.first_day}: blind — the engine's side is hidden`
+    : `${st.days} day(s) from ${st.first_day}: ${s.orders} orders, ${s.trades} trades, ${s.total_r >= 0 ? "+" : ""}${s.total_r}R`;
 }
 
 // ── time ──────────────────────────────────────────────────────────────────
@@ -421,7 +466,7 @@ async function loadState() {
 }
 async function jumpTo(t) {
   S.t = Math.max(S.status.start, Math.min(t, S.status.end));
-  await loadBars(true); await loadState(); renderHeader();
+  await loadBars(true); await loadState(); await noculus.tick(); renderHeader();
 }
 function put(bar) {
   const n = S.bars.length, last = S.bars[n - 1];
@@ -440,6 +485,7 @@ async function advance(dt) {
     try { for (const b of got) put(b); } catch (e) { await loadBars(false); }
     if (Math.floor(S.t / 900) !== Math.floor(before / 900)) await loadState();
     else { await loadModelA(); renderEngine(); renderLog(); refresh(); }
+    await noculus.tick();                               // the trader's own trades settle to the clock too
     renderHeader();
   } finally { S.busy = false; }
 }
@@ -477,6 +523,12 @@ function buildTfs() {
     }
   });
 }
+// The magnet (as TradingView's): off, weak (snaps to a bar's open, high, low or close when near one), strong
+// (always the nearest of the four). Shift straightens a line while it is drawn.
+const MAGNETS = [[false, "🧲", "Magnet off (click: weak)"],
+                 ["weak", "🧲", "Magnet: snaps to the open, high, low or close when you are near one (click: strong)"],
+                 ["strong", "🧲⁺", "Strong magnet: always snaps to the nearest open, high, low or close (click: off)"]];
+draw.magnet = (() => { const m = Prefs.get("watch.magnet", "weak"); return m === true ? "weak" : m; })();
 function buildTools() {
   const nav = $("tools");
   for (const tool of TOOLS) {
@@ -484,6 +536,19 @@ function buildTools() {
     b.onclick = () => { draw.use(tool.type); markTool(); };
     nav.append(b);
   }
+  const magnet = document.createElement("button");
+  const showMagnet = () => {
+    const [, icon, title] = MAGNETS.find(([v]) => v === draw.magnet) || MAGNETS[1];
+    magnet.textContent = icon; magnet.title = title + ". Hold Shift while drawing a line to keep it level.";
+    magnet.classList.toggle("on", !!draw.magnet);
+  };
+  magnet.onclick = () => {
+    const i = MAGNETS.findIndex(([v]) => v === draw.magnet);
+    draw.magnet = MAGNETS[(i + 1) % MAGNETS.length][0];
+    Prefs.set("watch.magnet", draw.magnet);
+    showMagnet();
+  };
+  showMagnet(); nav.append(magnet);
   const clear = document.createElement("button"); clear.textContent = "🗑"; clear.title = "Remove my drawings";
   clear.onclick = () => { if (confirm("Remove your drawings in this session?")) draw.clearAll(); };
   nav.append(clear);
@@ -545,7 +610,8 @@ function buildControls() {
   $("nextEvent").onclick = () => act(async () => { stop(); const t = nextTime((r) => (r.decision === "EXECUTE" ? [r.t, r.filled_at, r.closed_at] : [])); if (t) await jumpTo(t); else say("No more events in this session."); });
   document.addEventListener("keydown", (e) => {
     const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
-    if (e.key === "Escape") { draw.use(null); draw.select(null); draw.measure = null; markTool(); draw.refresh(); return; }
+    if (e.key === "Escape") { if (noculus.armed()) noculus.arm(null);
+                              draw.use(null); draw.select(null); draw.measure = null; markTool(); draw.refresh(); return; }
     if (typing || !S.status) return;
     if ((e.key === "Delete" || e.key === "Backspace") && draw.selected) { e.preventDefault(); draw.remove(draw.selected); return; }
     if (e.altKey) { const tool = TOOLS.find((t) => t.key === e.key.toLowerCase()); if (tool) { e.preventDefault(); draw.use(tool.type); markTool(); } return; }
@@ -565,6 +631,11 @@ function renderEngine() {
   const st = S.state, box = $("engine");
   if (!st) { box.innerHTML = `<h2>The engine</h2><div class="muted">Before the first close of the session.</div>`; return; }
   if (st.error) { box.innerHTML = `<h2>The engine at ${fmtTime(st.t)}</h2><div class="bad">${esc(st.error)}</div>`; return; }
+  if (st.withheld) {
+    box.innerHTML = `<h2>The engine at ${fmtTime(st.t)}</h2><div class="muted">Hidden: this session is blind. Your marks and
+      trades come first, then reveal it and compare.</div>`;
+    return;
+  }
   const d = st.decision || {}, g = st.grade, pr = st.profile, sq = st.sequence;
   const cls = d.decision === "EXECUTE" ? "good" : d.decision === "NO_TRADE" || d.decision === "IN_TRADE" ? "muted" : "neutral";
   let html = `<h2>The engine at ${fmtTime(st.t)}</h2>

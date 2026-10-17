@@ -64,3 +64,17 @@ strategy.time_window = "MANIPULATION"
 strategy.target_mode = "NEAREST"
 strategy.min_stop_spreads = 2.0
 strategy.require_htf_poi = true
+
+# The FVG is the gap, with its CE, filled only by a close beyond it (liquidity-engine Req 26, LE-D17).
+# The engine itself reads differently under this one, so it is the reference rules with the other FVG,
+# to be compared with the reference before the default changes (LE-D18, task 326c).
+[variants.gap]
+strategy.fvg_zone = "gap"
+
+[variants.anticipation_gap]     # the anticipation rules, with the gap
+strategy.bias_mode = "PROFILE"
+strategy.require_false_move = true
+strategy.time_window = "MANIPULATION"
+strategy.target_mode = "NEAREST"
+strategy.min_stop_spreads = 2.0
+strategy.fvg_zone = "gap"

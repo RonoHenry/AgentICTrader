@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from hypothesis import given, settings, strategies as st
 
 from liquidity_engine.detectors.internal import PDArrayDetector
@@ -303,3 +304,228 @@ class TestPropertyBasedTests:
                 assert any(
                     e.direction == breaker.direction and e.confirmed_at >= ts(7) for e in events
                 )
+
+
+class TestFVGIsTheGap:
+    """``fvg_zone = "gap"``: the FVG is the gap the user marks, with its CE (Requirement 26, LE-D17)."""
+
+    def _bullish(self):
+        return [                                     # the gap runs from candle 0's high to candle 2's low
+            mk(0.98, 1.00, 0.97, 0.99, 0),
+            mk(0.99, 1.04, 0.99, 1.03, 1),
+            mk(1.03, 1.10, 1.05, 1.08, 2),
+        ]
+
+    def _bearish(self):
+        return [                                     # the gap runs from candle 2's high to candle 0's low
+            mk(0.97, 1.00, 0.95, 0.96, 0),
+            mk(0.96, 0.97, 0.90, 0.91, 1),
+            mk(0.91, 0.92, 0.85, 0.87, 2),
+        ]
+
+    def _only(self, candles, zone="gap"):
+        fvgs = PDArrayDetector(fvg_zone=zone)._detect_fvg(candles, Timeframe.M5)
+        assert len(fvgs) == 1
+        return fvgs[0]
+
+    def test_a_bullish_gap_is_c1s_high_to_c3s_low_with_its_ce(self):
+        fvg = self._only(self._bullish())
+        assert (fvg.low, fvg.high) == (1.00, 1.05)                    # not 0.97 to 1.10, the three candles
+        assert fvg.ce == pytest.approx(1.025) and fvg.direction == BiasDirection.BULLISH
+        assert fvg.formed_at == ts(2)                                 # the third candle's open time
+
+    def test_a_bearish_gap_is_c3s_high_to_c1s_low_with_its_ce(self):
+        fvg = self._only(self._bearish())
+        assert (fvg.low, fvg.high) == (0.92, 0.95)
+        assert fvg.ce == pytest.approx(0.935) and fvg.direction == BiasDirection.BEARISH
+
+    def test_the_default_is_still_the_three_candles(self):
+        assert (self._only(self._bullish(), zone="candles").low,
+                self._only(self._bullish(), zone="candles").high) == (0.97, 1.10)
+        assert PDArrayDetector()._detect_fvg(self._bullish(), Timeframe.M5)[0].high == 1.10
+
+    def test_a_wick_through_the_gap_leaves_it_live_and_a_close_beyond_fills_it(self):
+        detector = PDArrayDetector(fvg_zone="gap")
+        wick = self._bullish() + [mk(1.08, 1.09, 0.99, 1.06, 3)]      # straight through the gap, closes above it
+        fvg = detector._detect_fvg(wick, Timeframe.M5)[0]
+        detector._mark_fvg_filled(fvg, wick)
+        assert not fvg.is_filled and fvg.filled_at is None
+        closed = self._bullish() + [mk(1.08, 1.09, 0.95, 0.99, 3)]    # closes below the gap's far edge
+        beyond = detector._detect_fvg(closed, Timeframe.M5)[0]
+        detector._mark_fvg_filled(beyond, closed)
+        assert beyond.is_filled and beyond.filled_at == ts(3)
+
+    def test_a_bearish_gap_fills_on_a_close_above_it(self):
+        detector = PDArrayDetector(fvg_zone="gap")
+        candles = self._bearish() + [mk(0.87, 0.99, 0.86, 0.96, 3)]   # closes above the gap's high
+        fvg = detector._detect_fvg(candles, Timeframe.M5)[0]
+        detector._mark_fvg_filled(fvg, candles)
+        assert fvg.is_filled and fvg.filled_at == ts(3)
+
+    def test_the_default_still_fills_on_a_wick(self):
+        detector = PDArrayDetector()
+        candles = self._bullish() + [mk(1.08, 1.09, 0.96, 1.06, 3)]   # a wick to the bottom of the three candles
+        fvg = detector._detect_fvg(candles, Timeframe.M5)[0]
+        detector._mark_fvg_filled(fvg, candles)
+        assert fvg.is_filled and fvg.filled_at == ts(3)
+
+    def test_the_ifvg_and_the_bpr_follow_the_gap(self):
+        detector = PDArrayDetector(fvg_zone="gap")
+        candles = self._bullish() + [mk(1.08, 1.09, 0.95, 0.99, 3)]
+        fvgs = detector._detect_fvg(candles, Timeframe.M5)
+        for fvg in fvgs:
+            detector._mark_fvg_filled(fvg, candles)
+        ifvgs = detector._detect_ifvg(candles, fvgs)
+        assert len(ifvgs) == 1 and (ifvgs[0].low, ifvgs[0].high) == (1.00, 1.05)
+        assert ifvgs[0].direction == BiasDirection.BEARISH and ifvgs[0].ce == pytest.approx(1.025)
+        # A bearish gap overlapping the bullish one: the BPR is the overlap of the two gaps.
+        bull = detector._detect_fvg(self._bullish(), Timeframe.M5)[0]
+        down = [mk(1.06, 1.06, 1.02, 1.03, 4), mk(1.03, 1.04, 0.99, 1.00, 5), mk(1.00, 1.01, 0.96, 0.97, 6)]
+        bear = detector._detect_fvg(down, Timeframe.M5)[0]            # the gap: 1.01 to 1.02
+        bprs = detector._detect_bpr([bull, bear])
+        assert len(bprs) == 1 and (bprs[0].low, bprs[0].high) == (1.01, 1.02)
+
+    def test_the_unicorn_overlaps_the_gap(self):
+        from liquidity_engine.unicorn.detector import UnicornDetector
+
+        detector = PDArrayDetector(fvg_zone="gap")
+        fvg = detector._detect_fvg(self._bullish(), Timeframe.M5)[0]            # the gap: 1.00 to 1.05
+        ob = detector._make_pdarray(PDArrayType.BREAKER, BiasDirection.BULLISH, Timeframe.M5, 1.03, 0.90, ts(3))
+        unicorn = UnicornDetector().detect([fvg, ob])
+        assert unicorn is not None
+        assert (unicorn.overlap_low, unicorn.overlap_high) == (1.00, 1.03)       # the gap, not the candles
+
+    def test_every_timeframe_goes_through_detect(self):
+        candles = {Timeframe.M5: self._bullish()}
+        gap = [a for a in PDArrayDetector(fvg_zone="gap").detect(candles, {}) if a.array_type == PDArrayType.FVG]
+        assert (gap[0].low, gap[0].high) == (1.00, 1.05)
+        assert not PDArrayDetector(fvg_zone="gap")._detect_fvg([], Timeframe.M5)
+
+    def test_an_unknown_zone_is_refused(self):
+        with pytest.raises(ValueError, match="fvg_zone"):
+            PDArrayDetector(fvg_zone="the whole candle")
+
+
+class TestFVGZoneReachesTheEngine:
+    """The plumbing (Requirement 26.4): the option travels from the configuration to the detector."""
+
+    def test_the_engine_passes_it_to_the_detector(self):
+        from liquidity_engine import LiquidityMappingEngine
+
+        assert LiquidityMappingEngine().fvg_zone == "candles"
+        assert LiquidityMappingEngine(fvg_zone="gap").fvg_zone == "gap"
+        with pytest.raises(ValueError, match="fvg_zone"):
+            LiquidityMappingEngine(fvg_zone="nonsense")
+
+    def test_the_strategy_config_carries_it_and_defaults_to_the_candles(self):
+        from agent.strategy_config import FvgZone, StrategyConfig
+
+        assert StrategyConfig().fvg_zone is FvgZone.CANDLES
+        assert StrategyConfig(fvg_zone="gap").fvg_zone is FvgZone.GAP
+        with pytest.raises(Exception):
+            StrategyConfig(fvg_zone="candles and the wick")
+
+    def test_the_phase_a_cache_key_changes_with_it(self):
+        from algo_backtester.cache import cache_key
+        from algo_backtester.data import DataFingerprint
+        from agent.strategy_config import StrategyConfig
+
+        fp = DataFingerprint(rows=10, sha256="abc")
+        args = (fp, "engine-fp", )
+        rest = ("EURUSD", datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 2, 1, tzinfo=timezone.utc))
+        candles = cache_key(*args, StrategyConfig(), *rest)
+        gap = cache_key(*args, StrategyConfig(fvg_zone="gap"), *rest)
+        assert candles != gap
+
+    def test_configurations_with_different_zones_cannot_share_one_engine_view(self):
+        from agent.strategy_config import StrategyConfig
+        from algo_backtester.signals import same_view
+
+        base = StrategyConfig()
+        assert same_view([base, StrategyConfig(min_rr=2.0)])          # execution-only: one engine is enough
+        assert not same_view([base, StrategyConfig(fvg_zone="gap")])  # the engine itself reads differently
+
+    def test_phase_a_builds_the_engine_from_the_configuration(self):
+        import inspect
+
+        from algo_backtester import signals as sig
+
+        for name in ("signals_at", "generate_signals", "_generate_closes"):
+            source = inspect.getsource(getattr(sig, name))
+            assert "fvg_zone" in source, f"{name} builds the engine without the configuration's fvg_zone"
+
+    def test_the_live_runner_and_the_watch_pass_it(self):
+        import inspect
+
+        from algo_backtester import watch
+        import scripts.run_live_agent as live
+
+        assert "fvg_zone" in inspect.getsource(watch.WatchSession._prepare)
+        assert "fvg_zone" in inspect.getsource(watch._Capturing)
+        assert "fvg_zone" in inspect.getsource(live._process_instrument)
+
+
+class TestTheGapIsTheResearchsFVG:
+    """One definition, read twice (Requirement 26, AR-D27).
+
+    The research reads FVGs from a bar table (``algo_research.atlas.arrays.fvgs``) and the engine from a candle
+    list. Under ``fvg_zone = "gap"`` they must agree on every gap of the same series, bound for bound, or the
+    turn atlas and the engine are measuring different things — and so is Noculus's comparison.
+    """
+
+    def _series(self, n: int = 90):
+        """A walk with gaps both ways: each candle steps from the last close, some steps jumping clear."""
+        import random
+
+        rng = random.Random(26)
+        price, candles = 1.1000, []
+        for i in range(n):
+            step = rng.choice((-0.0030, -0.0012, -0.0004, 0.0004, 0.0012, 0.0030))
+            open_ = price
+            close = round(open_ + step, 5)
+            high = round(max(open_, close) + rng.choice((0.0, 0.0002, 0.0006)), 5)
+            low = round(min(open_, close) - rng.choice((0.0, 0.0002, 0.0006)), 5)
+            candles.append(mk(open_, high, low, close, i, tf=Timeframe.H1))
+            price = close
+        return candles
+
+    def test_the_engine_and_the_research_find_the_same_gaps(self):
+        import pandas as pd
+
+        from algo_research.atlas.arrays import fvgs as research_fvgs
+
+        candles = self._series()
+        mine = PDArrayDetector(fvg_zone="gap")._detect_fvg(candles, Timeframe.H1)
+        bars = pd.DataFrame({
+            "time": [c.timestamp for c in candles],
+            "close_time": [c.timestamp + timedelta(hours=1) for c in candles],
+            "open": [c.open for c in candles], "high": [c.high for c in candles],
+            "low": [c.low for c in candles], "close": [c.close for c in candles],
+        })
+        theirs = research_fvgs(bars, Timeframe.H1)
+        assert len(mine) > 8, "the series should hold gaps both ways"
+        engine = sorted((a.formed_at, 1 if a.direction == BiasDirection.BULLISH else -1,
+                         round(a.low, 5), round(a.high, 5), round(a.ce, 5)) for a in mine)
+        # The research stamps a gap with C3's close, the engine with C3's open: one candle apart, by design.
+        research = sorted((row.formed_at.tz_convert(None).to_pydatetime().replace(tzinfo=timezone.utc)
+                           - timedelta(hours=1), int(row.direction), round(row.low, 5), round(row.high, 5),
+                           round(row.mid, 5)) for row in theirs.itertuples())
+        assert engine == research
+
+    def test_the_default_finds_different_bounds(self):
+        import pandas as pd
+
+        from algo_research.atlas.arrays import fvgs as research_fvgs
+
+        candles = self._series()
+        bars = pd.DataFrame({
+            "time": [c.timestamp for c in candles],
+            "close_time": [c.timestamp + timedelta(hours=1) for c in candles],
+            "open": [c.open for c in candles], "high": [c.high for c in candles],
+            "low": [c.low for c in candles], "close": [c.close for c in candles],
+        })
+        wide = PDArrayDetector()._detect_fvg(candles, Timeframe.H1)
+        theirs = research_fvgs(bars, Timeframe.H1)
+        assert len(wide) == len(theirs)                       # the same gaps are found
+        assert [(round(a.low, 5), round(a.high, 5)) for a in wide] != \
+               [(round(r.low, 5), round(r.high, 5)) for r in theirs.itertuples()]   # but not the same zones
