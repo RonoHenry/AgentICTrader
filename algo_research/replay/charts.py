@@ -26,7 +26,8 @@ import pandas as pd
 from algo_backtester import watch as watch_mod
 from algo_research.replay.bars import ReplayBars
 from algo_research.replay.journal import Journal, ReplayError
-from algo_research.replay.server import FILES, STATIC, ReplayApp, _Handler as _ReplayHandler
+from algo_research.replay.server import (FILES, STATIC, ReplayApp, static_file,
+                                         _Handler as _ReplayHandler)
 
 __all__ = ["ChartsApp", "make_charts_server", "serve"]
 
@@ -137,8 +138,9 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         name = PAGES.get(path) or (path.removeprefix("/static/") if path.startswith("/static/") else None)
-        if name in ALL_FILES:
-            self._send(200, (STATIC / name).read_bytes(), ALL_FILES[name])
+        served = static_file(name)
+        if served is not None:
+            self._send(200, *served)
         elif path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         elif path == "/api/instruments":

@@ -47,6 +47,7 @@ from algo_research.frame import frame_from_data
 from algo_research.narrative import PriceBasis
 from algo_research.races import RaceCosts
 from algo_research.replay.bars import ReplayBars
+from algo_research.replay.server import static_file
 from algo_research.replay.timeframes import TIMEFRAMES, seconds_of, wall_seconds
 from algo_research.snapshot import SNAPSHOTS_DIR
 from liquidity_engine import LiquidityMappingEngine
@@ -693,8 +694,9 @@ class _Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         name = "engine.html" if url.path in ("/", "/index.html") else url.path.removeprefix("/static/")
-        if name in FILES and (url.path in ("/", "/index.html") or url.path.startswith("/static/")):
-            self._send(200, (STATIC / name).read_bytes(), FILES[name])
+        served = static_file(name) if (url.path in ("/", "/index.html") or url.path.startswith("/static/")) else None
+        if served is not None:
+            self._send(200, *served)
         elif url.path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         elif url.path == "/api/watch/meta":

@@ -30,6 +30,27 @@ STATIC = Path(__file__).parent / "static"
 FILES = {"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8",
          "drawings.js": "text/javascript; charset=utf-8", "settings.js": "text/javascript; charset=utf-8",
          "motion.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8"}
+#: What ``/static/`` serves beyond the names above: any file of these types sitting directly in ``static/``.
+#: A page is read from disk on every request, so a server left running would otherwise serve a page that asks
+#: for a script added since it started and then 404 that script — which kills the page with no clue why.
+STATIC_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+                ".html": "text/html; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png",
+                ".ico": "image/x-icon", ".woff2": "font/woff2", ".map": "application/json"}
+
+
+def static_file(name: Optional[str]) -> Optional[tuple[bytes, str]]:
+    """The bytes and content type of ``static/<name>``, or None.
+
+    The name must be a plain file name of a known type that is really in ``static/``: no directory parts, so
+    no traversal, and nothing hidden. ``FILES`` keeps the content types of the pages themselves.
+    """
+    if not name or "/" in name or "\\" in name or name.startswith("."):
+        return None
+    kind = FILES.get(name) or STATIC_TYPES.get(Path(name).suffix)
+    path = STATIC / name
+    if kind is None or not path.is_file():
+        return None
+    return path.read_bytes(), kind
 _EPOCH = pd.Timestamp("1970-01-01")
 
 
@@ -169,8 +190,9 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 (http.server's naming)
         url = urlparse(self.path)
         name = "index.html" if url.path in ("/", "/index.html") else url.path.removeprefix("/static/")
-        if name in FILES and (url.path in ("/", "/index.html") or url.path.startswith("/static/")):
-            self._send(200, (STATIC / name).read_bytes(), FILES[name])
+        served = static_file(name) if (url.path in ("/", "/index.html") or url.path.startswith("/static/")) else None
+        if served is not None:
+            self._send(200, *served)
         elif url.path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         elif url.path == "/api/state":

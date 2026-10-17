@@ -9,6 +9,7 @@ Validates: Requirements 15.1-15.2 (.kiro/specs/market-narrative/requirements.md)
 from __future__ import annotations
 
 import json
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -128,3 +129,29 @@ def test_a_watch_session_is_kept_for_its_tab(charts, monkeypatch):
     charts.watch.start({**body, "instrument": "EURUSD"})
     charts.watch.start(body)                                                 # back to the gold tab: the same session
     assert charts.watch.session is first and started == ["XAUUSD", "EURUSD"]
+
+
+def test_static_serves_any_script_the_pages_ask_for(tmp_path):
+    """A page is read from disk per request, so a long-running server must serve a script added since it
+    started (2026-10-17: a stale server served the new engine page and 404ed noculus.js, killing the page)."""
+    from algo_research.replay.server import STATIC, static_file
+
+    for name in sorted(p.name for p in STATIC.glob("*.js")):
+        served = static_file(name)
+        assert served is not None, f"static/{name} is not served"
+        assert served[1].startswith("text/javascript")
+    assert static_file("app.css")[1].startswith("text/css")
+    assert static_file("engine.html")[1].startswith("text/html")
+    # Every script each page asks for is served.
+    for page in ("index.html", "engine.html"):
+        text = (STATIC / page).read_text(encoding="utf-8")
+        for src in re.findall(r'<script src="/static/([^"]+)"', text):
+            assert static_file(src) is not None, f"{page} asks for {src}, which is not served"
+
+
+def test_static_refuses_anything_outside_the_folder():
+    from algo_research.replay.server import static_file
+
+    for name in ("../config/backtests/base.toml", "..\\..\\.env", "sub/app.js", "", None, ".env",
+                 "../../algo_backtester/watch.py", "nothing_here.js", "app.js.bak"):
+        assert static_file(name) is None, f"{name!r} must not be served"
