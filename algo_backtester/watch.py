@@ -8,6 +8,10 @@ plays the days forward. At every entry-timeframe close it shows what the engine 
 pools it can raid, the candle profile, the setup sequence, the grade) and what it did (the decision, the order, the
 fill, the exit), so a flaw in its logic can be seen on the chart.
 
+A session may be started **blind** (Noculus, Requirement 17): it then serves the bars and the clock alone, and
+withholds everything the engine made until the trader reveals it. The trader's own marks and trades live in
+``noculus.py``, one journal per blind session, so the comparison measures the trader, not the engine.
+
 Nothing here decides anything: the engine and the simulation are the backtester's own; this module only runs
 them over a short window and serialises what they produced. Times go to the page as New York wall-clock seconds.
 """
@@ -33,6 +37,7 @@ from agent.broker_profiles import load_profile
 from algo_backtester.cache import SignalCache, engine_code_fingerprint
 from algo_backtester.config import REPO_ROOT, load_or_create_study, load_run_config
 from algo_backtester.data import StoredBar, load_instrument
+from algo_backtester.noculus import NOCULUS_DIR, NoculusJournal
 from algo_backtester.report import journal_csv
 from algo_backtester.run import run_backtest
 from algo_backtester.signals import entry_closes, signals_at
@@ -160,9 +165,12 @@ class WatchSession:
     """One instrument over a few trading days: the backtest's journal, the chart's bars and the engine's state."""
 
     def __init__(self, config: Path, variant: Optional[str], instrument: str, first_day: date, days: int,
-                 snapshot: Path, studies_root: Path = REPO_ROOT) -> None:
+                 snapshot: Path, studies_root: Path = REPO_ROOT, blind: bool = False) -> None:
         self.config, self.variant, self.instrument = Path(config), variant, instrument.upper()
         self.first_day, self.days = first_day, days
+        # Noculus (Requirement 17.2): a blind session keeps the engine's work to itself until the trader reveals it.
+        self.blind, self.revealed_at = bool(blind), None
+        self.noculus: Optional[NoculusJournal] = None
         self.snapshot, self.studies_root = Path(snapshot), studies_root
         self.state, self.progress, self.message = "preparing", 0.0, "loading candles"
         self.start = pd.Timestamp(trading_date_open(first_day))
@@ -267,8 +275,33 @@ class WatchSession:
             r["path"] = {"best": best, "best_at": min(best_at, end), "best_r": round(sign * (best - r["fill"]) / risk, 2),
                          "worst": worst, "worst_at": min(worst_at, end), "worst_r": round(sign * (worst - r["fill"]) / risk, 2)}
 
+    # ── blind until revealed (Requirement 17.2, 17.3) ───────────────────────
+    @property
+    def withheld(self) -> bool:
+        """Whether the engine's side of the session is still out of the trader's sight."""
+        return self.blind and self.revealed_at is None
+
+    def reveal(self, w: int) -> dict:
+        """Show the engine's work up to the clock ``w``, and play on as an ordinary session. It can't be undone."""
+        if not self.blind:
+            raise LookupError("the session is not blind: there is nothing to reveal")
+        if self.revealed_at is not None:
+            raise LookupError(f"the session was already revealed at {self.revealed_at}")
+        self.revealed_at = min(int(w), wall(self.end))
+        if self.noculus is not None:
+            self.noculus.data["reveal"] = {"t": self.revealed_at,
+                                           "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+            self.noculus.save()
+        return self.status()
+
+    def journal_rows(self) -> list[dict]:
+        """The backtest's orders and trades, or nothing at all while the session is blind."""
+        return [] if self.withheld else self.journal
+
     def save_pick(self, body: dict, path: Optional[Path] = None) -> dict:
         """The trader's pick at a close: one of the ranked candidates, "none" or "other" (Requirement 16.3)."""
+        if self.withheld:
+            raise LookupError("the session is blind: reveal it before picking among the engine's candidates")
         t = int(body["t"])
         if t not in self.states:
             raise KeyError(f"t: {t} is not one of the session's closes")
@@ -412,7 +445,8 @@ class WatchSession:
         return {"state": self.state, "progress": round(self.progress, 3), "message": self.message, "instrument": self.instrument,
                 "variant": self.variant or "base", "first_day": self.first_day.isoformat(), "days": self.days,
                 "start": wall(self.start), "end": wall(self.end), "digits": self.bars.digits if self.bars else 5,
-                "summary": self.summary, "closes": len(self._keys)}
+                "summary": {} if self.withheld else self.summary, "closes": len(self._keys),
+                "blind": self.blind, "revealed_at": self.revealed_at}
 
     def _read_model_a(self) -> dict[str, list[dict]]:
         """Model A's instances over the session, both of the trader's frame sets, both sides (Requirement 17), with
@@ -440,6 +474,8 @@ class WatchSession:
         after the clock."""
         if name not in self.model_a:
             raise ValueError(f"set: one of {', '.join(self.model_a) or MODEL_A_SETS}")
+        if self.withheld:
+            return []                                           # the engine's reading of the frames: out of sight
         keep, out = _MODEL_A_KEEP.get(name, 86400), []
         base = ("side", "set", "f", "c", "e", "poi_kind", "poi_label", "poi_near", "poi_far", "f_range", "c1_open",
                 "c1_extreme", "c1_opposite", "phase")
@@ -468,7 +504,9 @@ class WatchSession:
 
     def state_at(self, w: int) -> Optional[dict]:
         i = bisect_right(self._keys, int(w)) - 1
-        return self.states[self._keys[i]] if i >= 0 else None
+        if i < 0:
+            return None
+        return {"t": self._keys[i], "withheld": True} if self.withheld else self.states[self._keys[i]]
 
     def bars_until(self, tf: str, until: int, since: Optional[int]) -> list[dict]:
         seconds_of(tf)
@@ -491,9 +529,12 @@ class _Capturing:
 
 
 class WatchApp:
-    def __init__(self, config: Path, snapshot: Path, slice_: tuple[date, date], picks: Optional[Path] = None) -> None:
+    def __init__(self, config: Path, snapshot: Path, slice_: tuple[date, date], picks: Optional[Path] = None,
+                 noculus_root: Optional[Path] = None, studies_root: Path = REPO_ROOT) -> None:
         self.config, self.snapshot, self.slice = Path(config), Path(snapshot), slice_
         self.picks_path = Path(picks) if picks else PICKS
+        self.noculus_root = Path(noculus_root) if noculus_root else NOCULUS_DIR
+        self.studies_root = Path(studies_root)
         self.session: Optional[WatchSession] = None
         self._kept: dict[tuple, WatchSession] = {}          # the last few sessions, so a tab can come back to one
 
@@ -514,17 +555,29 @@ class WatchApp:
             raise ValueError(f"days: 1 to {MAX_DAYS}")
         variant = body.get("variant") or "base"
         instrument = str(body.get("instrument", "XAUUSD")).upper()
-        key = (instrument, day, days, variant)
+        blind = bool(body.get("blind"))
+        key = (instrument, day, days, variant, blind)       # a blind session is not the open one over the same days
         kept = self._kept.get(key)
         if kept is not None and kept.state != "error":
             self.session = kept
             return kept.status()
-        session = WatchSession(self.config, None if variant == "base" else variant, instrument, day, days, self.snapshot)
+        session = WatchSession(self.config, None if variant == "base" else variant, instrument, day, days, self.snapshot,
+                               studies_root=self.studies_root, blind=blind)
+        if blind:
+            session.noculus = self._journal(session)
         self.session = self._kept[key] = session
         while len(self._kept) > KEPT_SESSIONS:
             self._kept.pop(next(iter(self._kept)))
         threading.Thread(target=session.prepare, daemon=True).start()
         return session.status()
+
+    def _journal(self, session: WatchSession) -> NoculusJournal:
+        """A blind session's own journal, one file per instrument and window (Requirement 17.4)."""
+        name = f"{session.first_day.isoformat()}-{session.days}d-{session.variant or 'base'}.json"
+        return NoculusJournal(self.noculus_root / session.instrument / name,
+                              {"instrument": session.instrument, "first_day": session.first_day.isoformat(),
+                               "days": session.days, "variant": session.variant or "base",
+                               "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
 
     def need(self) -> WatchSession:
         if self.session is None:
@@ -532,6 +585,12 @@ class WatchApp:
         if self.session.state != "ready":
             raise LookupError(f"the session is {self.session.state}")
         return self.session
+
+    def need_journal(self) -> NoculusJournal:
+        session = self.need()
+        if session.noculus is None:
+            raise LookupError("the session is not blind: it keeps no Noculus journal")
+        return session.noculus
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -572,7 +631,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif url.path == "/api/watch/state":
             self._answer(lambda: {"state": self.app.need().state_at(int(q["t"]))})
         elif url.path == "/api/watch/journal":
-            self._answer(lambda: {"rows": self.app.need().journal})
+            self._answer(lambda: {"rows": self.app.need().journal_rows()})
+        elif url.path == "/api/watch/noculus":
+            self._answer(lambda: self.app.need_journal().data)
         elif url.path == "/api/watch/model-a":
             self._answer(lambda: {"set": q.get("set", "model_d1"),
                                   "instances": self.app.need().model_a_at(q.get("set", "model_d1"), int(q["t"]))})
@@ -582,7 +643,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": f"no such path {url.path}"})
 
     def do_POST(self) -> None:  # noqa: N802
-        if urlparse(self.path).path not in ("/api/watch/start", "/api/watch/pick"):
+        path = urlparse(self.path).path
+        if path not in ("/api/watch/start", "/api/watch/pick", "/api/watch/reveal"):
             self._send(404, {"error": f"no such path {self.path}"})
             return
         try:
@@ -590,8 +652,10 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._send(400, {"error": str(exc)})
             return
-        if urlparse(self.path).path == "/api/watch/pick":
+        if path == "/api/watch/pick":
             self._answer(lambda: self.app.need().save_pick(body, self.app.picks_path))
+        elif path == "/api/watch/reveal":
+            self._answer(lambda: self.app.need().reveal(int(body["t"])))
         else:
             self._answer(lambda: self.app.start(body))
 

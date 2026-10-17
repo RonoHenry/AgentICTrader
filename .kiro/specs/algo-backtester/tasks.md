@@ -684,7 +684,7 @@ Numbered from 294, after market-narrative's 290–293. Tasks 294 and 295 need th
 
 The trader's marks and trades against the engine's, on the same bars, blind until revealed (Requirements 17–20).
 
-- [ ] 329. Blind sessions and the session journal
+- [x] 329. Blind sessions and the session journal
   - **329a. RED** (`test_backtest_noculus.py`)
     - A blind session's state, journal and candidates carry no engine data before reveal; after reveal they hold everything up to the reveal clock and nothing beyond the clock.
     - The journal file round-trips, written atomically.
