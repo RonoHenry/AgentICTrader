@@ -37,7 +37,7 @@ from agent.broker_profiles import load_profile
 from algo_backtester.cache import SignalCache, engine_code_fingerprint
 from algo_backtester.config import REPO_ROOT, load_or_create_study, load_run_config
 from algo_backtester.data import StoredBar, load_instrument
-from algo_backtester.noculus import NOCULUS_DIR, NoculusJournal
+from algo_backtester.noculus import NOCULUS_DIR, NoculusJournal, build_mark
 from algo_backtester.report import journal_csv
 from algo_backtester.run import run_backtest
 from algo_backtester.signals import entry_closes, signals_at
@@ -59,7 +59,8 @@ NY = "America/New_York"
 STATIC = REPO_ROOT / "algo_research" / "replay" / "static"
 FILES = {"engine.html": "text/html; charset=utf-8", "engine.js": "text/javascript; charset=utf-8",
          "drawings.js": "text/javascript; charset=utf-8", "settings.js": "text/javascript; charset=utf-8",
-         "motion.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8"}
+         "motion.js": "text/javascript; charset=utf-8", "noculus.js": "text/javascript; charset=utf-8",
+         "app.css": "text/css; charset=utf-8"}
 MAX_DAYS = 5
 KEPT_SESSIONS = 3
 #: The trader's picks against the engine's choice (Requirement 16.3): local, git-ignored.
@@ -297,6 +298,28 @@ class WatchSession:
     def journal_rows(self) -> list[dict]:
         """The backtest's orders and trades, or nothing at all while the session is blind."""
         return [] if self.withheld else self.journal
+
+    # ── the trader's own marks (Requirement 18) ─────────────────────────────
+    def own_journal(self) -> NoculusJournal:
+        if self.noculus is None:
+            raise LookupError("the session keeps no Noculus journal: start it blind")
+        return self.noculus
+
+    def _marking_bars(self, tf: str, clock: int) -> pd.DataFrame:
+        """Every ``tf`` bar of the session up to the clock, so a click finds the candle it landed on."""
+        return self.bars.as_of(tf, from_wall(clock), since=wall(self.bars.m1["time"].min()))
+
+    def mark(self, body: dict) -> dict:
+        """Mark an array by its candles, at the replay clock (Requirement 18.1)."""
+        journal = self.own_journal()
+        tf, clock = str(body.get("tf", "M15")), min(int(body["t"]), wall(self.end))
+        record = build_mark(self._marking_bars(tf, clock), tool=str(body.get("tool", "FVG")), tf=tf, clock=clock,
+                            candle=int(body["candle"]), direction=body.get("direction"), note=body.get("note") or "")
+        return journal.add_mark(record)
+
+    def unmark(self, body: dict) -> dict:
+        """Delete one of the trader's marks, keeping it with the clock at which it went (Requirement 18.3)."""
+        return self.own_journal().delete_mark(str(body["id"]), min(int(body["t"]), wall(self.end)))
 
     def save_pick(self, body: dict, path: Optional[Path] = None) -> dict:
         """The trader's pick at a close: one of the ranked candidates, "none" or "other" (Requirement 16.3)."""
@@ -644,7 +667,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        if path not in ("/api/watch/start", "/api/watch/pick", "/api/watch/reveal"):
+        if path not in ("/api/watch/start", "/api/watch/pick", "/api/watch/reveal",
+                        "/api/watch/noculus/mark", "/api/watch/noculus/unmark"):
             self._send(404, {"error": f"no such path {self.path}"})
             return
         try:
@@ -656,6 +680,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.app.need().save_pick(body, self.app.picks_path))
         elif path == "/api/watch/reveal":
             self._answer(lambda: self.app.need().reveal(int(body["t"])))
+        elif path == "/api/watch/noculus/mark":
+            self._answer(lambda: self.app.need().mark(body))
+        elif path == "/api/watch/noculus/unmark":
+            self._answer(lambda: self.app.need().unmark(body))
         else:
             self._answer(lambda: self.app.start(body))
 
