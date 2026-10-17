@@ -1,0 +1,22 @@
+
+;(async () => {
+  const ok = [], bad = [];
+  const check = (n, c, d) => (c ? ok : bad).push(n + (c || d === undefined ? "" : "  (" + d + ")"));
+  S.status = JSON.parse(JSON.stringify(global.__status)); S.digits = 3; S.t = 1741737600 + 2700;   // mid-session
+  const clock = S.t;
+  try { await api("/api/watch/state?t=" + clock); } catch (e) { bad.push("the call failed: " + e.message); }
+  const calls = global.__calls;
+  const start = calls.find(([u]) => u === "/api/watch/start");
+  check("a lost session is started again", !!start);
+  check("with the same instrument, day, days, variant and blind",
+        start && start[1].instrument === "XAUUSD" && start[1].first_day === "2025-03-12" && start[1].days === 2
+        && start[1].variant === "gap" && start[1].blind === true, start && JSON.stringify(start[1]));
+  check("and back at the same clock", S.t === clock, S.t + " vs " + clock);
+  check("the failed call is made again", calls.filter(([u]) => u.startsWith("/api/watch/state")).length >= 2);
+  check("the marks come back from the journal", noculus.marks.length === 1 && noculus.marks[0].id === "m1");
+  check("one restart, not a loop", calls.filter(([u]) => u === "/api/watch/start").length === 1);
+  console.log(ok.map((s) => "  ok   " + s).join("\n"));
+  if (bad.length) console.log(bad.map((s) => "  FAIL " + s).join("\n"));
+  console.log("\n" + ok.length + " ok, " + bad.length + " failed");
+  process.exit(bad.length ? 1 : 0);
+})();

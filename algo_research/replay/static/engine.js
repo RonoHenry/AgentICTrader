@@ -330,11 +330,31 @@ async function loadModelA() {
 function refresh() { engineUpdate(); noculus.update(); draw.refresh(); }
 
 // ── API ───────────────────────────────────────────────────────────────────
-async function api(path, body) {
+async function api(path, body, retried = false) {
   const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const j = await r.json();
-  if (!r.ok) throw new Error(j.error || r.statusText);
+  if (!r.ok) {
+    // The server restarted under the page: start the same session again and carry on from the same clock. A
+    // blind session's marks and trades are on disk and come back with it; a revealed one stays revealed.
+    if (r.status === 409 && /no session/.test(j.error || "") && S.status && !S.recovering && !retried) {
+      await recover();
+      return api(path, body, true);
+    }
+    throw new Error(j.error || r.statusText);
+  }
   return j;
+}
+async function recover() {
+  const st = S.status, t = S.t;
+  S.recovering = true;
+  stop();
+  try {
+    say("The server restarted: starting your session again where you were…");
+    await api("/api/watch/start", { instrument: st.instrument, first_day: st.first_day, days: st.days,
+                                   variant: st.variant, blind: !!st.blind }, true);
+    await waitReady(t);
+    say("Your session is back.");
+  } finally { S.recovering = false; }
 }
 function say(t) { $("msg").textContent = t || ""; }
 async function act(fn) { say(""); try { await fn(); } catch (e) { say(e.message); } }
@@ -387,7 +407,7 @@ function overlay(title, text, progress) {
   $("ovProg").parentElement.style.display = progress == null ? "none" : "";
   $("ovProg").style.width = Math.round((progress || 0) * 100) + "%";
 }
-async function waitReady() {
+async function waitReady(resumeAt) {
   $("status").textContent = "preparing"; $("status").className = "pill READING";
   const started = Date.now();
   for (;;) {
@@ -398,12 +418,12 @@ async function waitReady() {
     const secs = Math.round((Date.now() - started) / 1000);
     overlay(`Preparing ${st.instrument}, ${st.days} day(s) from ${st.first_day}`,
             `${st.message || "starting"} — ${pct}% (${secs} s). The backtest runs for real; about 20-30 s a day.`, st.progress || 0);
-    if (st.state === "ready") { overlay(null); await openSession(st); return; }
+    if (st.state === "ready") { overlay(null); await openSession(st, resumeAt); return; }
     if (st.state === "error") { $("status").textContent = "error"; overlay("The session failed", st.message); throw new Error(st.message); }
     await sleep(700);
   }
 }
-async function openSession(st) {
+async function openSession(st, resumeAt) {
   overlay(null);
   S.status = st; S.digits = st.digits;
   $("sInst").value = st.instrument; Shell.setInstrument(st.instrument);
@@ -419,7 +439,7 @@ async function openSession(st) {
   S.picks = Object.fromEntries((await api("/api/watch/picks")).picks.map((p) => [p.t, p]));
   draw.load(Prefs.get(drawKey(), []));
   await noculus.sync();
-  await jumpTo(st.start + 3600);
+  await jumpTo(resumeAt != null ? resumeAt : st.start + 3600);
 }
 
 function summaryLine() {
@@ -503,6 +523,12 @@ function buildTfs() {
     }
   });
 }
+// The magnet (as TradingView's): off, weak (snaps to a bar's open, high, low or close when near one), strong
+// (always the nearest of the four). Shift straightens a line while it is drawn.
+const MAGNETS = [[false, "🧲", "Magnet off (click: weak)"],
+                 ["weak", "🧲", "Magnet: snaps to the open, high, low or close when you are near one (click: strong)"],
+                 ["strong", "🧲⁺", "Strong magnet: always snaps to the nearest open, high, low or close (click: off)"]];
+draw.magnet = (() => { const m = Prefs.get("watch.magnet", "weak"); return m === true ? "weak" : m; })();
 function buildTools() {
   const nav = $("tools");
   for (const tool of TOOLS) {
@@ -510,6 +536,19 @@ function buildTools() {
     b.onclick = () => { draw.use(tool.type); markTool(); };
     nav.append(b);
   }
+  const magnet = document.createElement("button");
+  const showMagnet = () => {
+    const [, icon, title] = MAGNETS.find(([v]) => v === draw.magnet) || MAGNETS[1];
+    magnet.textContent = icon; magnet.title = title + ". Hold Shift while drawing a line to keep it level.";
+    magnet.classList.toggle("on", !!draw.magnet);
+  };
+  magnet.onclick = () => {
+    const i = MAGNETS.findIndex(([v]) => v === draw.magnet);
+    draw.magnet = MAGNETS[(i + 1) % MAGNETS.length][0];
+    Prefs.set("watch.magnet", draw.magnet);
+    showMagnet();
+  };
+  showMagnet(); nav.append(magnet);
   const clear = document.createElement("button"); clear.textContent = "🗑"; clear.title = "Remove my drawings";
   clear.onclick = () => { if (confirm("Remove your drawings in this session?")) draw.clearAll(); };
   nav.append(clear);

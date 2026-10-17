@@ -373,7 +373,26 @@ function buildTools() {
     b.onclick = () => { set(!get()); mark(); draw.refresh(); };
     mark(); nav.append(b);
   };
-  toggle("🧲", "Magnet: snap to open, high, low, close", () => draw.magnet, (v) => { draw.magnet = v; });
+  // The magnet cycles off, weak, strong (as on the Engine page); Shift straightens a line while it is drawn.
+  {
+    const modes = [[false, "🧲", "Magnet off (click: weak)"],
+                   ["weak", "🧲", "Magnet: snaps to the open, high, low or close when you are near one (click: strong)"],
+                   ["strong", "🧲⁺", "Strong magnet: always snaps to the nearest open, high, low or close (click: off)"]];
+    const saved = Prefs.get("magnet", "weak");
+    draw.magnet = saved === true ? "weak" : saved;
+    const b = document.createElement("button");
+    const show = () => {
+      const [, icon, title] = modes.find(([v]) => v === draw.magnet) || modes[1];
+      b.textContent = icon; b.title = title + ". Hold Shift while drawing a line to keep it level.";
+      b.classList.toggle("on", !!draw.magnet);
+    };
+    b.onclick = () => {
+      const i = modes.findIndex(([v]) => v === draw.magnet);
+      draw.magnet = modes[(i + 1) % modes.length][0];
+      Prefs.set("magnet", draw.magnet); show(); draw.refresh();
+    };
+    show(); nav.append(b);
+  }
   toggle("📌", "Stay in drawing mode", () => draw.keepTool, (v) => { draw.keepTool = v; });
   toggle("👁", "Hide all drawings", () => draw.hidden, (v) => { draw.hidden = v; });
   const action = (icon, title, fn) => { const b = document.createElement("button"); b.textContent = icon; b.title = title; b.onclick = fn; nav.append(b); };
