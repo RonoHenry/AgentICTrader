@@ -664,21 +664,3 @@ Proposed defaults apply unless the user changes them at review.
 | AR-D34 | The calendar's source (update 2026-10i) | MetaQuotes' calendar from the MT5 terminal, exported by an MQL5 script: free, with history, exact times and importance, from the terminal that supplies the prices. ForexFactory's feed (the repo's `calendar_ingestion.py`) has the current week only. Scraping the ForexFactory or Investing.com history breaks their terms. FRED has US release dates only, without times or importance. |
 | AR-D35 | News currencies (update 2026-10i) | USD for DXY, gold, the US indices and BTCUSDT; USD and EUR for EURUSD and GER40; USD and GBP for GBPUSD and UK100. US data moves the European indices too. |
 | AR-D36 | No surprises yet (update 2026-10i) | Only the schedule and the importance are used: both are known before the week. The actual-against-forecast surprise is known only at release. It could describe what happened after a release, but not a swing formed before one, so it waits for a question that needs it. |
-
-## Update 2026-10j: Supply and Demand
-
-The trader asked (2026-10-20): "How about we pair the concept of Supply and Demand with what we already have... lets just test it and see how this goes."
-
-### Requirement 31: Supply and Demand Zones
-
-1. A ZONE SHALL be a base (1–3 candles whose bodies are at most half their range) and an explosive leg-out: a body of at least 60% of its range and a range of at least 1.5× the 20-candle average, closing beyond the base.
-   - Demand when the leg-out closes above the base, supply when below.
-   - Its proximal line is the base's body edge, its distal line the far wick of the base and the leg-out.
-   - It is known at the leg-out's close.
-2. A ZONE SHALL be fresh until price first returns to the proximal line, and broken by the first close beyond the distal line.
-3. `python -m algo_research.supply_demand` SHALL report, over the exploration slice:
-   - the first return to each D1, H4 and H1 zone traded at 2R and 3R (a limit at the proximal line, the stop beyond the distal line), against a random walk's chance;
-   - with `--paired`, the indicator's setups split by whether C2 swept into a fresh zone of their kind.
-
-The findings are in `docs/research/SUPPLY_DEMAND.md`.
-

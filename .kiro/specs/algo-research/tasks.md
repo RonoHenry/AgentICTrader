@@ -710,20 +710,6 @@ News as context (Requirements 29–30). Task 327 needs the user once: to run the
   - **328c. REFACTOR** — rerun the atlas with the calendar, and record what the news columns show against geometry.
   - **Validates: Requirement 30**
 
-### L. Update 2026-10j: supply and demand
-
-- [x] 339. Supply and demand zones **(user review)**
-  - **339a. RED** (`test_research_supply_demand.py`)
-    - A base and an explosive leg-out make a zone, known at the leg-out's close, with its proximal and distal lines.
-    - No base, or no explosion, makes none.
-    - A zone is fresh until price returns, and broken by a close beyond its far line.
-  - **339b. GREEN** — `algo_research/supply_demand.py`: `zones`, `zone_life`, `trade_zones`; `python -m algo_research.supply_demand [--paired]`.
-  - **Done 2026-10-20.** 3 tests. Exploration slice, five markets:
-    - **Alone, a coin flip:** H4 2R hit 0.32 vs chance 0.33, +0.04R net [−0.20, +0.31]; H1 2R 0.27 vs 0.33, −0.07R. D1 has 24 zones in six months, too few to judge.
-    - **Paired, no separation:** the indicator's setups that swept into a fresh zone made +0.08R net (51 trades, [−0.13, +0.30]) against −0.04R for the rest.
-    - The findings are in `docs/research/SUPPLY_DEMAND.md`.
-  - **Validates: Requirements 31.1–31.3**
-
 ---
 
 ## Task Dependency Graph
