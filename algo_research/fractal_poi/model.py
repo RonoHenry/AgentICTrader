@@ -85,7 +85,7 @@ class Setup:
              "cisd_start_idx", "cisd_end_idx", "extreme_bar_idx", "ic_start_idx", "ic_extreme_idx", "proj_start_idx",
              "proj_end_idx", "liq_c1_start_idx", "liq_c0_start_idx", "liq_end_time", "liq_c1_mitigated_idx",
              "liq_c0_mitigated_idx", "ez_c3_left_time", "ez_c3_right_time", "ez_c4_invalid_time", "ez_c4_left_time",
-             "ez_c4_right_time", "smt_x1", "smt_x2")
+             "ez_c4_right_time", "smt_x1", "smt_x2", "invalid_idx")
     _BOOLS = ("is_bullish", "is_confirmed", "is_post_c2", "has_cisd", "cisd_triggered", "ic_active", "ic_pending",
               "ic_seen_same_side", "is_invalid", "ez_c3_set", "ez_c4_set", "ez_c4_invalid", "has_smt")
     __slots__ = _FLOATS + _INTS + _BOOLS + ("ic_list", "smt_symbol", "uid")
@@ -129,7 +129,7 @@ class Model:
     """The HTF candle set and its setups over one chart, read candle by candle."""
 
     def __init__(self, chart: Chart, s: FractalSettings, symbol: str, partners: tuple[Partner, ...] = (),
-                 events: Optional[list] = None) -> None:
+                 events: Optional[list] = None, archive: bool = False) -> None:
         from algo_research.fractal_poi.frames import fractal_htf, htf2_auto
         self.ch, self.s, self.symbol = chart, s, symbol
         self.htf = fractal_htf(s.fractal_mode, chart.tf, s.custom_htf)
@@ -147,6 +147,9 @@ class Model:
         self.curr, self.trk = Tracker(), [Tracker(), Tracker()]
         self.htf2_candles: list[Candle] = []
         self._uid = 0
+        #: Every setup that reached the history (completed, or invalidated after its CISD), for research reads.
+        #: Off for the chart: it only grows, and checkpoints don't copy it.
+        self.archive: Optional[list[Setup]] = [] if archive else None
 
     # ── state, for checkpoints ───────────────────────────────────────────────
     _STATE = ("candles", "setups", "live", "curr", "trk", "htf2_candles", "_uid")
@@ -543,9 +546,11 @@ class Model:
         replaced = False
         if far(ext, s.c2_extreme):
             if s.cisd_triggered:
-                s.is_invalid = True
+                s.is_invalid, s.invalid_idx = True, i
                 self._ic_stop(s)
                 cs.setups.insert(0, s)
+                if self.archive is not None:
+                    self.archive.append(s)
             old_c2 = cs.candles[1]
             ns = self._new_setup(bull)
             ns.sweep_price = s.c2_extreme
@@ -618,6 +623,8 @@ class Model:
                 right = t + QUARTERLY[self.htf] if self.quarterly else self._time_close_htf(i)
                 self._try_ez_c4(s, first.h, first.l, ch.o[i], t, right)
                 cs.setups.insert(0, s)
+                if self.archive is not None:
+                    self.archive.append(s)
             cs.live[bull] = None
 
     # ── drawing (DrawAll, DrawSetups, DrawHTF2) ──────────────────────────────

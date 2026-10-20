@@ -332,3 +332,52 @@ def test_partners_and_warmup():
     manual = FractalSettings(smt_mode="Manual", smt_sym1="us500", smt_sym2="us30", smt_sym2_inverse=True)
     assert partners_for("US100", manual, ["US500", "US30"]) == [("US500", False), ("US30", True)]
     assert warmup_days("M15", FractalSettings()) >= 15 and warmup_days("H1", FractalSettings()) <= 121
+
+
+# ── task 338: the setups as a table, against the engine, as trades (Requirement 24) ─────────────────────────
+def _path(m1: pd.DataFrame) -> dict:
+    """The races' M1 path for built candles: no spread."""
+    return {"time": np.asarray(wall_seconds(m1["time"]), dtype=np.int64),
+            **{k: m1[k].to_numpy(dtype=float) for k in ("open", "high", "low", "close")},
+            "spread": np.zeros(len(m1))}
+
+
+def test_a_setup_s_row_carries_its_levels_and_when_each_was_known():
+    from algo_research.fractal_poi.setups import setup_rows
+    reader = FractalPOI(m1_from(Z + A + B + C + D, START), "M15", H1, "EURUSD", archive=True)
+    reader.at(w("2026-01-06 05:30"))
+    row = setup_rows(reader).iloc[0]
+    assert (row.direction, row.htf, row.sweep_price, row.c2_extreme, row.cisd_level) == ("SHORT", "60", 110, 111, 106)
+    assert (row.c1_open, row.c2_open, row.sweep_at) == (w("2026-01-06 02:00"), w("2026-01-06 03:00"), w("2026-01-06 03:15"))
+    assert (row.cisd_at, row.c3_open, row.c4_open, row.c4_close) == (w("2026-01-06 04:00"), w("2026-01-06 04:00"),
+                                                                    w("2026-01-06 05:00"), w("2026-01-06 06:00"))
+    assert (row.z3_low, row.z3_high, row.target_c1, row.target_c0) == (108, 108.25, 99, 95) and pd.isna(row.invalid_at)
+
+
+def test_a_setup_that_fails_in_c3_is_still_traded_from_c3():
+    """C3's close comes from the HTF clock, not from the setup's later record: only a survivor gets a C4, so
+    reading it there would drop every setup that went on to fail (the 2026-10-20 look-ahead)."""
+    from algo_research.fractal_poi.diff import trade_setups, windows
+    from algo_research.fractal_poi.setups import setup_rows
+    breach = [(105.5, 106, 105.2, 105.4), (105.4, 111.5, 105.3, 110)]           # C3 runs through C2's high, 111
+    m1 = m1_from(Z + A + B + breach, START)
+    reader = FractalPOI(m1, "M15", H1, "EURUSD", archive=True)
+    reader.at(w("2026-01-06 04:30"))
+    setups = windows(setup_rows(reader))
+    failed = setups.iloc[0]
+    assert pd.notna(failed.invalid_at) and pd.isna(failed.c4_open)              # an xC2: no C4 in its record
+    assert (failed.c3_close, failed.w1) == (w("2026-01-06 05:00"), failed.invalid_at)
+    trades = trade_setups(setups.iloc[:1], _path(m1)).set_index("variant")
+    assert trades.loc["B", "state"] == "CLOSED" and trades.loc["B", "outcome"] == "STOP"   # filled at 108.25, stopped
+    assert trades.loc["B", "fill"] == 108.25 and "C" not in trades.index                    # no C4 zone after an xC2
+
+
+def test_engine_orders_are_with_against_or_outside_a_live_setup():
+    from algo_research.fractal_poi.diff import classify_orders
+    setups = pd.DataFrame({"direction": ["SHORT", "LONG"], "w0": [100, 500], "w1": [200, 600],
+                           "sweep_price": [110.0, 90.0], "target_c1": [100.0, 100.0]})
+    orders = pd.DataFrame({"tw": [150, 150, 550, 300], "direction": ["SHORT", "SHORT", "SHORT", "LONG"],
+                           "raid": [{"price": 110.2}, {"price": 104.0}, {"price": 90.0}, None]})
+    out = classify_orders(orders, setups)
+    assert out.cls.tolist() == ["with", "with", "against", "outside"]
+    assert out.raid_is_c1.tolist() == [True, False, None, None]                # within 5% of C1's range, or not

@@ -830,6 +830,23 @@ The trader's TradingView indicator, ported from Pine and shown on Noculus at the
   - **Done 2026-10-19.** 4 tests and the walk-through. The existing walk-throughs (`load_engine.js`, `reconnect_ui.js`) now load `fractal.js`.
   - **Validates: Requirements 23.1–23.3**
 
+### Update 2026-10-20: the indicator's setups against the engine (task 338)
+
+- [x] 338. The diff **(user review)**
+  - **338a. RED**
+    - A setup's row carries its levels and the time each was known.
+    - A setup that fails in C3 (an xC2) is still traded from C3, its expiry taken from the HTF clock. This is the look-ahead that showed +0.58R for what is −0.14R.
+    - Engine orders are classed as with, against, or outside a live setup.
+  - **338b. GREEN** — `fractal_poi/setups.py`; `fractal_poi/diff.py`; the model keeps an `archive` of its setups when asked.
+  - **Done 2026-10-20.** 3 tests. Exploration slice, XAUUSD, EURUSD and GBPUSD, against the base run `72b9ce1fd2ca`:
+    - **The engine doesn't see your C1/C2/C3.** Of its 92 orders inside a setup, 26 raided C1's extreme. Raids were a median 10.5 h old, and 192 of 255 entries were M15 breakers.
+    - **Your setups alone are a coin flip:** 0R gross on all three executions.
+    - **With the day's real direction (hindsight):** +0.29R / +0.37R gross; against it, −0.23R / −0.33R.
+    - The bias to clear these after costs is about 56% (market) to 61% (C3 limit).
+    - The findings are in `docs/research/FRACTAL_POI_VS_ENGINE.md`.
+    - Next is the trader's choice: the engine's setup model as the indicator's CRT, and the bias as an input.
+  - **Validates: Requirements 24.1–24.3**
+
 ---
 
 ## Task Dependency Graph
@@ -951,7 +968,7 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
     },
     {
       "name": "Fractal + POI",
-      "tasks": ["333", "334", "335", "336", "337"],
+      "tasks": ["333", "334", "335", "336", "337", "338"],
       "description": "Update 2026-10-19: the trader's TradingView indicator ported from Pine and shown on Noculus at the clock (333-336 the port, 337 the page)",
       "dependencies": ["Noculus"]
     }

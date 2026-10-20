@@ -466,3 +466,22 @@ The indicator is the trader's own TradingView tool: Pine v6, 3,501 lines, in `ba
 | D33 | Shown in blind sessions | It is what the trader uses on TradingView, so a blind read includes it, as a live read would. The engine's work stays withheld (D27). |
 | D34 | SMT partners from the focus triads | The indicator resolves its partners with the fstarcapital AssetCorrelationUtils library, which isn't part of its source. Until the trader names that library's pairs: EURUSD with GBPUSD and DXY (inverse); GBPUSD with EURUSD and DXY (inverse); DXY with EURUSD and GBPUSD (both inverse); XAUUSD with DXY (inverse) and EURUSD; US100, US500 and US30 with each other; GER40 with UK100 and US500; UK100 with GER40 and US500. BTCUSDT has no partner in the snapshot. Manual mode takes any two. |
 | D35 | The script's quirks are kept | For example, the micro cycle lists no session from 21:45 to midnight, so its 21:22 candle runs to midnight. The FVG list keeps only the newest three, and a gap that is closed through is deleted, not inverted. The port shows what TradingView shows. Where the trader means otherwise, the Pine script changes first. |
+
+## Update 2026-10-20: The Indicator's Setups Against the Engine
+
+The trader asked (2026-10-20): "try to use now the setups that the indicator is suggesting and lets see where the flaw is in our engine. I noticed that it does not interpret C1, C2 and C3 like it is supposed to. FVG the same thing, and then this will allow us to refine our executions."
+
+### Requirement 24: The Diff
+
+1. THE indicator's setups SHALL be a table (`fractal_poi.setups.setup_rows`): one row per setup that reached its history, with every level and the time each became known.
+2. `python -m algo_research.fractal_poi.diff` SHALL compare them with a backtest run's journal over the exploration slice, per instrument and in total:
+   - each engine order is with, against, or outside a live setup, and its raid is or isn't C1's extreme;
+   - for each setup, what the engine did during it;
+   - the setups traded three ways (market at C2 + CISD; a limit at the C3 zone's EQ edge; a limit at the C4 zone with the stop at C3), alone, with the day's real direction (hindsight) and with the previous day's.
+3. AN order SHALL use only what was known when it is placed. C3's and C4's closes come from the HTF clock, never from the setup's later record.
+
+The findings are in `docs/research/FRACTAL_POI_VS_ENGINE.md`. The "day's real direction" rows are an upper bound, not a strategy (D36).
+
+| Id | Decision | Source |
+|---|---|---|
+| D36 | Exploration only; hindsight as the bound | The comparison reads the exploration slice. A rule that comes out of it is pre-registered and tested once on the confirmation slice. The hindsight rows measure what a right bias is worth, not a rule that can be traded. |

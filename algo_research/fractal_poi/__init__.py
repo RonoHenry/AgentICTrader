@@ -102,7 +102,7 @@ class FractalPOI:
     """The indicator over one instrument and one chart timeframe, with one set of computing inputs."""
 
     def __init__(self, m1: pd.DataFrame, tf: str, settings: FractalSettings, symbol: str,
-                 partners: Optional[dict[str, tuple[pd.DataFrame, bool]]] = None) -> None:
+                 partners: Optional[dict[str, tuple[pd.DataFrame, bool]]] = None, archive: bool = False) -> None:
         if tf not in PERIOD:
             raise ValueError(f"tf: one of {', '.join(PERIOD)}")
         self.tf, self.s, self.symbol = tf, settings, symbol.upper()
@@ -113,7 +113,7 @@ class FractalPOI:
             aligned.append(Partner(name, *self._align(frame), inverse))
             self.partner_names.append(name)
         self.events: list[dict] = []
-        self.model = Model(self.chart, settings, self.symbol, tuple(aligned), self.events)
+        self.model = Model(self.chart, settings, self.symbol, tuple(aligned), self.events, archive=archive)
         self.liquidity = Liquidity(self.chart, settings)
         self.imbalance = Imbalance(self.chart, settings)
         self.pos = -1
