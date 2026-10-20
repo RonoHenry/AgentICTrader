@@ -73,7 +73,7 @@ global.LightweightCharts = {
 global.ReplayUI = { Prefs: { get: (k, d) => d, set() {} }, toolSettings() {}, contextMenu() {} };
 global.Shell = { init: async () => {}, setInstrument() {}, refresh() {} };
 
-const order = ["drawings.js", "settings.js", "motion.js", "noculus.js", "shell.js", "engine.js"];
+const order = ["drawings.js", "settings.js", "motion.js", "noculus.js", "fractal.js", "shell.js", "engine.js"];
 for (const name of order) {
   const file = path.join(STATIC, name);
   if (!fs.existsSync(file)) { console.log(`MISSING ${name}`); continue; }

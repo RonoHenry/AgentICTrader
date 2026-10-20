@@ -21,7 +21,7 @@ from algo_backtester.noculus import (NoculusJournal, build_mark, close, compare,
                                      write_report)
 from algo_backtester.watch import STATIC, WatchApp, from_wall, wall
 from algo_research.atlas.arrays import fvgs, order_blocks
-from algo_research.replay.timeframes import seconds_of
+from algo_research.replay.timeframes import seconds_of, wall_seconds
 from liquidity_engine.models import Timeframe
 from tests.test_backtest_watch import DAY, session, setup  # noqa: F401  (fixtures)
 
@@ -675,3 +675,84 @@ def test_no_new_marks_or_trades_after_the_reveal(blind, session, tmp_path):  # n
     rows = blind.trades({"t": later})                                     # a trade from before still plays out
     if rows[0]["state"] == "OPEN":
         assert blind.close_trade({"id": placed["id"], "t": later})["outcome"] == "MANUAL"   # and can be closed
+
+
+# ── task 337: the trader's Fractal + POI indicator on Noculus (Requirements 21-23) ──
+def test_the_session_serves_the_trader_s_indicator_at_the_clock(session):  # noqa: F811
+    from algo_research.fractal_poi import FractalPOI, FractalSettings
+
+    clock = wall(session.start) + 9 * 3600 + 5 * 60
+    view = session.fractal({"tf": "M15", "t": clock, "s": "{}"})
+    assert view["items"] and view["dashboard"]["htf1"] == "4H" and view["dashboard"]["asset"] == "EURUSD"
+    assert all(wall(session.start) <= e["t"] <= clock for e in view["events"])          # the session's own, so far
+    # the same chart candles as the page's, and nothing read from a candle that closes after the clock
+    reader = next(r for k, r in session._fractal.items() if k[0] == "M15")
+    shown = session.bars_until("M15", clock, None)
+    closed = {b["time"]: b for b in shown if b["time"] + 900 <= clock}
+    assert closed and all(reader.chart.time[i] not in closed or
+                          (reader.chart.o[i], reader.chart.h[i], reader.chart.l[i], reader.chart.c[i]) ==
+                          tuple(closed[reader.chart.time[i]][k] for k in ("open", "high", "low", "close"))
+                          for i in range(reader.chart.n))
+    m1 = session._m1("EURUSD", 120)
+    cut = m1[wall_seconds(m1["time"]) + 60 <= clock]
+    alone = FractalPOI(cut[cut["time"] >= reader_start(reader, m1)], "M15", FractalSettings(), "EURUSD").at(clock)
+    assert alone["items"] == view["items"] and alone["dashboard"] == view["dashboard"]
+    later = session.fractal({"tf": "M15", "t": clock + 900, "s": json.dumps({"bias": "Bearish"})})
+    assert later["clock"] == clock + 900 and len(session._fractal) == 1     # a drawing input: the same reader
+
+
+def reader_start(reader, m1):
+    """The first M1 the session's reader holds (its warm-up start)."""
+    return m1["time"].iloc[int(np.searchsorted(wall_seconds(m1["time"]), int(reader.chart.m1_wall[0])))]
+
+
+def test_a_blind_session_serves_the_indicator_too(blind):
+    view = blind.fractal({"tf": "H1", "t": wall(blind.start) + 6 * 3600})
+    assert view["items"] and blind.withheld                                  # the trader's tool, not the engine's
+
+
+def test_the_indicator_endpoints(setup, tmp_path):  # noqa: F811
+    import threading
+    import time
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    from algo_backtester.watch import make_watch_server
+
+    root, snap = setup
+    app = WatchApp(root / "base.toml", snap, (DAY, DAY + timedelta(days=1)), noculus_root=tmp_path, studies_root=root)
+    server = make_watch_server(app, port=0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+
+    def call(path, body=None):
+        data = None if body is None else json.dumps(body).encode()
+        req = urllib.request.Request(base + path, data=data, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read())
+
+    try:
+        defaults = call("/api/watch/fractal-defaults")
+        assert defaults["settings"]["fractal_mode"] == "Automatic" and "bias" in defaults["draw_only"]
+        call("/api/watch/start", {"instrument": "EURUSD", "first_day": DAY.isoformat(), "days": 1, "blind": True})
+        for _ in range(600):
+            if call("/api/watch/status")["state"] == "ready":
+                break
+            time.sleep(0.2)
+        t = wall(app.session.start) + 4 * 3600
+        q = urllib.parse.quote(json.dumps({"fractal_mode": "Scalp"}))
+        view = call(f"/api/watch/fractal?tf=M5&t={t}&s={q}")
+        assert view["dashboard"]["htf1"] == "15m" and view["clock"] == t
+        with pytest.raises(urllib.error.HTTPError) as bad:
+            call(f"/api/watch/fractal?tf=M5&t={t}&s={urllib.parse.quote(json.dumps({'max_display': 1}))}")
+        assert bad.value.code == 400 and "max_display" in json.loads(bad.value.read())["error"]
+    finally:
+        server.shutdown()
+
+
+def test_the_page_carries_the_indicator_layer():
+    page = (STATIC / "engine.html").read_text(encoding="utf-8")
+    script = (STATIC / "engine.js").read_text(encoding="utf-8")
+    assert '<script src="/static/fractal.js"></script>' in page and 'id="fractal"' in page
+    assert '["fractal", "Fractal + POI"]' in script and "fractal.tick()" in script

@@ -12,6 +12,10 @@ A session may be started **blind** (Noculus, Requirement 17): it then serves the
 withholds everything the engine made until the trader reveals it. The trader's own marks and trades live in
 ``noculus.py``, one journal per blind session, so the comparison measures the trader, not the engine.
 
+The trader's own indicator, Fractal + POI (Requirements 21-23), is served at the clock for any chart timeframe:
+``algo_research.fractal_poi`` reads the snapshot's candles closed by then. It is the trader's tool, not the
+engine's, so a blind session serves it too (D33).
+
 Nothing here decides anything: the engine and the simulation are the backtester's own; this module only runs
 them over a short window and serialises what they produced. Times go to the page as New York wall-clock seconds.
 """
@@ -21,6 +25,7 @@ import io
 import json
 import tempfile
 import threading
+from collections import OrderedDict
 import traceback
 import webbrowser
 from bisect import bisect_right
@@ -43,6 +48,8 @@ from algo_backtester.report import journal_csv
 from algo_backtester.run import run_backtest
 from algo_backtester.signals import entry_closes, signals_at
 from algo_research.config import load_research_config, trading_date_open
+from algo_research.fractal_poi import FractalPOI, FractalSettings, partners_for, warmup_days
+from algo_research.fractal_poi import defaults as fractal_defaults
 from algo_research.frame import frame_from_data
 from algo_research.narrative import PriceBasis
 from algo_research.races import RaceCosts
@@ -64,7 +71,7 @@ STATIC = REPO_ROOT / "algo_research" / "replay" / "static"
 FILES = {"engine.html": "text/html; charset=utf-8", "engine.js": "text/javascript; charset=utf-8",
          "drawings.js": "text/javascript; charset=utf-8", "settings.js": "text/javascript; charset=utf-8",
          "motion.js": "text/javascript; charset=utf-8", "noculus.js": "text/javascript; charset=utf-8",
-         "app.css": "text/css; charset=utf-8"}
+         "fractal.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8"}
 MAX_DAYS = 5
 KEPT_SESSIONS = 3
 #: The trader's picks against the engine's choice (Requirement 16.3): local, git-ignored.
@@ -76,6 +83,8 @@ _ARRAYS_SHOWN, _POOLS_SHOWN, _CANDIDATES_SHOWN = 80, 50, 30
 MODEL_A_SETS = ("model_d1", "model_h4")
 _MODEL_A_KEEP = {"model_d1": 86400, "model_h4": 4 * 3600}
 _MODEL_A_HISTORY = pd.Timedelta(days=100)
+#: The indicator readers a session keeps (chart timeframe x computing inputs), and the events it sends.
+_FRACTAL_READERS, _FRACTAL_EVENTS = 4, 200
 
 
 def wall(t) -> int:
@@ -189,6 +198,9 @@ class WatchSession:
         self._keys: list[int] = []
         self.summary: dict = {}
         self.model_a: dict[str, list[dict]] = {}
+        self._fractal: "OrderedDict[tuple, FractalPOI]" = OrderedDict()
+        self._fractal_lock = threading.Lock()
+        self._snapshot_m1: dict[str, pd.DataFrame] = {}
 
     # ── preparing ───────────────────────────────────────────────────────────
     def prepare(self) -> None:
@@ -589,6 +601,39 @@ class WatchSession:
             out.append(y)
         return out
 
+    # ── the trader's indicator (Requirements 21-23) ─────────────────────────
+    def _m1(self, instrument: str, days: int) -> pd.DataFrame:
+        """The snapshot's M1 for ``instrument`` from ``days`` before the session to its end."""
+        if instrument not in self._snapshot_m1:
+            frame = SnapshotSource(self.snapshot)._frame(instrument)
+            self._snapshot_m1[instrument] = frame[["time", "open", "high", "low", "close"]]
+        frame = self._snapshot_m1[instrument]
+        return frame[(frame["time"] >= self.start - pd.Timedelta(days=days)) & (frame["time"] < self.end)]
+
+    def fractal(self, q: dict) -> dict:
+        """The Fractal + POI indicator at the clock ``t`` on a chart of ``tf``, with the settings ``s`` (JSON).
+
+        A reader is kept per chart timeframe and computing inputs, so playing forward reads only the new
+        candles, and changing a drawing input only redraws. The events are the session's own, the latest few."""
+        tf, t = str(q.get("tf") or "M15"), int(q["t"])
+        settings = FractalSettings.from_dict(json.loads(q.get("s") or "{}"))
+        key = (tf, settings.compute_key())
+        with self._fractal_lock:
+            reader = self._fractal.pop(key, None)
+            if reader is None:
+                days = warmup_days(tf, settings)
+                held = [path.name.split("_")[0] for path in self.snapshot.glob("*_M1.parquet")]
+                partners = {name: (self._m1(name, days), inverse)
+                            for name, inverse in partners_for(self.instrument, settings, held)}
+                reader = FractalPOI(self._m1(self.instrument, days), tf, settings, self.instrument, partners)
+            self._fractal[key] = reader
+            while len(self._fractal) > _FRACTAL_READERS:
+                self._fractal.popitem(last=False)
+            view = reader.at(min(t, wall(self.end)), settings)
+        since = wall(self.start)
+        view["events"] = [e for e in view["events"] if e["t"] >= since][-_FRACTAL_EVENTS:]
+        return view
+
     def state_at(self, w: int) -> Optional[dict]:
         i = bisect_right(self._keys, int(w)) - 1
         if i < 0:
@@ -729,6 +774,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: {"trades": self.app.need().trades(q)})
         elif url.path == "/api/watch/noculus/comparison":
             self._answer(self.app.need().comparison)
+        elif url.path == "/api/watch/fractal-defaults":
+            self._answer(fractal_defaults)
+        elif url.path == "/api/watch/fractal":
+            self._answer(lambda: self.app.need().fractal(q))
         elif url.path == "/api/watch/model-a":
             self._answer(lambda: {"set": q.get("set", "model_d1"),
                                   "instances": self.app.need().model_a_at(q.get("set", "model_d1"), int(q["t"]))})
