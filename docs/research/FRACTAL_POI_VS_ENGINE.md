@@ -145,3 +145,37 @@ The full tables, including the C3 limit and the ranges, are in the command's rep
 - **The trend calls the day about as often as the simpler reads.** Coded this way, the trend points the day's way 47–56% of the time. Section 4's bar is about 56–61%.
 
 What a mechanical swing rule can't see is which swings you count. A trader reading structure picks the swings that matter: the one that took liquidity, the one that broke structure with displacement. A three- or five-candle rule counts every one of them. That choice may be where your read differs. Your blind Noculus sessions, with your Bias set before each day, would measure the read as you make it.
+
+## 8. Small moves, profits locked in, size scaled (asked 2026-10-20)
+
+You asked: "how about we tried high frequency (not like quant style generally, like we extract those small moves in price while closing in and locking in whatever profits is made, and scaling dynamically with this style".
+
+**How big a small move is, next to the spread.** These are median candle ranges in spreads, exploration slice, using the profile's typical spread:
+
+| Market | M1 | M5 | M15 | H1 |
+|---|---|---|---|---|
+| EURUSD | 2.1 | 5.1 | 9.0 | 18.4 |
+| GBPUSD | 2.0 | 4.6 | 8.1 | 16.1 |
+| XAUUSD | 4.0 | 9.3 | 16.6 | 34.1 |
+| US100 | 5.8 | 14.2 | 25.6 | 53.7 |
+| US30 | 9.2 | 22.4 | 40.2 | 85.1 |
+
+Taking a one-minute move on EURUSD pays about half of it in spread. Small moves are four to five times cheaper on US30, US100 and gold.
+
+**Locking in, on the same entries.** These are the 710 market entries of section 3, on the setup's own stop distance, held at most 8 hours, priced on bid and ask with commission. The same exits also ran on the same entries with a coin-flip direction. Scratch: `lockin.py`.
+
+| Exit | Your setups: win, net R | Coin-flip direction: win, net R |
+|---|---|---|
+| hold to C1's other side (as tested) | 58%, −0.03 | 56%, −0.03 |
+| a quick 0.5R target | 65%, +0.01 | 61%, −0.05 |
+| a quick 1R target | 50%, −0.01 | 48%, −0.05 |
+| break-even at +0.5R, then 2R | 26%, −0.01 | 23%, −0.06 |
+| a stepped lock every 0.5R (BE at +0.5R, +0.5R at +1R…) | 35%, −0.02 | 33%, −0.05 |
+| a trail 0.5R behind the peak | 62%, −0.02 | 58%, −0.05 |
+
+- **How you exit changes how often you win (26% to 65%), not what you make (−0.03R to +0.01R).** On a coin-flip direction every exit loses about the cost of trading.
+- **Locking profits** is the right way to execute a direction that is right: it keeps more of the follow-through and makes a smoother equity curve. It does not make a direction right.
+- **Scaling** multiplies the result per trade, whatever its sign. With an edge near zero, scaling up only deepens the drawdowns. The best size for no edge is none. It is the next step once an edge is measured (deferred until then).
+- **The earlier tests agree.** The October break-even replay: +0.07R, its interval spanning 0. The compressed-ladder M1 test: −0.20R; with stops of 3–5 spreads, −0.29R.
+
+If small moves are the way, they belong on the markets where a move is many spreads (US30, US100, gold), and in a direction that is already right.
