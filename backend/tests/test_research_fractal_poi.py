@@ -392,3 +392,17 @@ def test_the_d1_structure_read_turns_on_a_close_through_the_last_confirmed_swing
     # the swing high 12 (day 2) is confirmed at day 4; day 8 closes 12.0 (not above), day 9 closes 12.5 above it;
     # the swing low 8 (day 5) is confirmed at day 7; day 14 closes 7.5, below it (a close at 8.0 would not be)
     assert trend[:9].tolist() == [0] * 9 and trend[9] == 1 and trend[13] == 1 and trend[14] == -1
+
+
+def test_the_trader_s_trend_is_higher_highs_and_higher_lows_on_confirmed_swings():
+    from algo_research.fractal_poi.diff import structure_states
+    high = np.array([1, 3, 2, 4, 3, 5, 4], dtype=float)
+    low = high - 1
+    state, lo, hi = structure_states(high, low, high - 0.5)
+    # swing highs 3, 4, 5 (confirmed a candle later); swing lows 1 then 2: up once two of each have risen
+    assert state.tolist() == [0, 0, 0, 0, 0, 1, 1]
+    assert (lo[6], hi[6]) == (2, 5)                                    # the leg: the last swing low to the high since
+    down, dlo, dhi = structure_states(10 - low, 10 - high, 10 - high + 0.5)   # the mirror: lower highs and lows
+    assert down.tolist() == [0, 0, 0, 0, 0, -1, -1] and (dlo[6], dhi[6]) == (5, 8)
+    mixed = np.array([1, 3, 2, 4, 0, 5, 4], dtype=float)               # a higher high and a lower low: a range
+    assert structure_states(mixed, mixed - 1, mixed - 0.5)[0][6] == 0

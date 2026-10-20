@@ -212,6 +212,107 @@ def htf_trends(m1: pd.DataFrame, known: np.ndarray, path: Mapping[str, np.ndarra
     return out[list(TRENDS)]
 
 
+#: The trader's trend (2026-10-20): "a series of higher highs and higher lows (retracements, often to the OTE of the
+#: range)", the mirror for a downtrend, and a range when price fails to break the range's high or low. Primary is
+#: W1/MN, secondary D1/H4, minor H1 and below. Swings are three-candle swings (the trader's: no reversal without one).
+STRUCTURE_TFS = {"MN1": "1M", "W1": "1W", "D1": "1D", "H4": "240", "H1": "60"}
+
+
+def structure_states(high: np.ndarray, low: np.ndarray, close: np.ndarray, lookback: int = 1):
+    """After each closed candle: the trend (+1 up: the last two swing highs and the last two swing lows both rose;
+    -1 down: both fell; 0 a range: anything else, or too few swings yet) and the current leg (low, high).
+
+    In an uptrend the leg runs from the last swing low to the highest high since it, in a downtrend from the last
+    swing high to the lowest low since; in a range it is the last swing low and high. A swing at candle i is known
+    once candle i + lookback has closed."""
+    n = len(close)
+    state, leg_lo, leg_hi = np.zeros(n), np.full(n, np.nan), np.full(n, np.nan)
+    sh, sl = [], []                                   # (value, index) of confirmed swings
+    for k in range(n):
+        i = k - lookback
+        if i - lookback >= 0:
+            if high[i] > high[i - lookback:i].max() and high[i] > high[i + 1:k + 1].max():
+                sh.append((high[i], i))
+            if low[i] < low[i - lookback:i].min() and low[i] < low[i + 1:k + 1].min():
+                sl.append((low[i], i))
+        if len(sh) >= 2 and len(sl) >= 2:
+            up = sh[-1][0] > sh[-2][0] and sl[-1][0] > sl[-2][0]
+            down = sh[-1][0] < sh[-2][0] and sl[-1][0] < sl[-2][0]
+            state[k] = 1 if up else -1 if down else 0
+        if state[k] == 1:
+            leg_lo[k], leg_hi[k] = sl[-1][0], high[sl[-1][1]:k + 1].max()
+        elif state[k] == -1:
+            leg_lo[k], leg_hi[k] = low[sh[-1][1]:k + 1].min(), sh[-1][0]
+        elif sh and sl:
+            leg_lo[k], leg_hi[k] = sl[-1][0], sh[-1][0]
+    return state, leg_lo, leg_hi
+
+
+def structure_at(m1: pd.DataFrame, known: np.ndarray, path: Mapping[str, np.ndarray], lookback: int = 1) -> pd.DataFrame:
+    """Each ``STRUCTURE_TFS`` timeframe's trend at each time in ``known``, from its candles closed by then, and where
+    the price then sits in that timeframe's leg (0 at the leg's low, 1 at its high)."""
+    wall = wall_seconds(pd.to_datetime(m1["time"], utc=True))
+    ohlc = [m1[k].to_numpy(float) for k in ("open", "high", "low", "close")]
+    known = np.asarray(known, dtype=np.int64)
+    at = np.searchsorted(np.asarray(path["time"], dtype=np.int64), known - 60, side="right") - 1
+    price = np.asarray(path["close"], dtype=float)[np.clip(at, 0, None)]
+    out = pd.DataFrame(index=range(len(known)))
+    for tf, pine in STRUCTURE_TFS.items():
+        bars = aggregate(wall, *ohlc, tf)
+        ends = np.array([period_end(int(t), pine) for t in bars.time], dtype=np.int64)
+        state, lo, hi = structure_states(bars.high.to_numpy(), bars.low.to_numpy(), bars.close.to_numpy(), lookback)
+        k = np.searchsorted(ends, known, side="right") - 1                 # the last candle closed by then
+        ok = k >= 0
+        s = np.where(ok, state[np.clip(k, 0, None)], 0)
+        span = (hi - lo)[np.clip(k, 0, None)]
+        pos = np.where(ok & (span > 0), (price - lo[np.clip(k, 0, None)]) / np.where(span > 0, span, 1), np.nan)
+        out[f"s_{tf}"], out[f"pos_{tf}"] = s, pos
+    return out
+
+
+def _structure_table(trades: pd.DataFrame) -> list[str]:
+    """The trader's trend definition: each timeframe with, against or ranging; the tiers together; positioning."""
+    sign = np.where(trades.direction == "LONG", 1, -1)
+    one = trades[trades.variant == "A"]
+    lines = ["| Your trend read | Calls the day | A: n, gross, net | B: n, gross, net |", "|---|---|---|---|"]
+
+    def row(label: str, mask, called: Optional[pd.Series] = None) -> None:
+        cells = []
+        for v in ("A", "B"):
+            x = _summary(trades[(trades.variant == v) & mask])
+            cells.append(f"{x['n']}, {x['gross']:+.3f}, {x['net']:+.3f}" if x["n"] else "—")
+        right = "—"
+        if called is not None:
+            c = one[called.loc[one.index] & (one["dir"] != 0)]
+            col = c[f"s_{label.split()[0]}"] if f"s_{label.split()[0]}" in c else None
+            if col is not None and len(c):
+                right = f"{(col == c['dir']).mean():.0%}"
+        lines.append(f"| {label} | {right} | " + " | ".join(cells) + " |")
+
+    for tf in STRUCTURE_TFS:
+        s = trades[f"s_{tf}"].to_numpy()
+        row(f"{tf} with the trend", pd.Series(sign * s == 1, index=trades.index), pd.Series(s != 0, index=trades.index))
+        row(f"{tf} against it", pd.Series(sign * s == -1, index=trades.index))
+        row(f"{tf} in a range", pd.Series(s == 0, index=trades.index))
+    for tfs in (("W1", "D1"), ("D1", "H4"), ("W1", "D1", "H4"), ("H4", "H1")):
+        agree = np.all([trades[f"s_{tf}"].to_numpy() == trades[f"s_{tfs[0]}"].to_numpy() for tf in tfs], axis=0)
+        s = np.where(agree, trades[f"s_{tfs[0]}"].to_numpy(), 0)
+        name = " + ".join(tfs)
+        row(f"{name} agree, with them", pd.Series(sign * s == 1, index=trades.index))
+        row(f"{name} agree, against them", pd.Series(sign * s == -1, index=trades.index))
+    for tf in ("D1", "H4"):
+        s, pos = trades[f"s_{tf}"].to_numpy(), trades[f"pos_{tf}"].to_numpy()
+        with_trend = sign * s == 1
+        cheap = np.where(sign == 1, pos < 0.5, pos > 0.5)                    # a long in discount, a short in premium
+        ote = np.where(sign == 1, (pos >= 0.21) & (pos <= 0.38), (pos >= 0.62) & (pos <= 0.79))
+        row(f"{tf} with the trend, in its discount (longs) / premium (shorts)",
+            pd.Series(with_trend & cheap, index=trades.index))
+        row(f"{tf} with the trend, in its OTE (a 62-79% retracement of the leg)",
+            pd.Series(with_trend & ote, index=trades.index))
+        row(f"{tf} with the trend, not yet retraced to half the leg", pd.Series(with_trend & ~cheap, index=trades.index))
+    return lines
+
+
 def _trend_table(trades: pd.DataFrame) -> list[str]:
     sign = np.where(trades.direction == "LONG", 1, -1)
     lines = ["| HTF trend read | Calls the day | A with it: n, gross, net | A against it | B with it | B against it |",
@@ -265,7 +366,7 @@ def _summary(trades: pd.DataFrame) -> dict:
 
 
 # ── the run ──────────────────────────────────────────────────────────────────────────────────────────────────
-def run(instruments, run_dir: Path, out: Optional[Path] = None) -> str:
+def run(instruments, run_dir: Path, out: Optional[Path] = None, swing: int = 1, save: Optional[Path] = None) -> str:
     from algo_research.config import load_research_config
     from algo_research.dataset import build_frames
     from algo_research.fractal_poi import FractalPOI, FractalSettings, partners_for, warmup_days
@@ -289,6 +390,12 @@ def run(instruments, run_dir: Path, out: Optional[Path] = None) -> str:
 
     def wall(values) -> np.ndarray:
         return wall_seconds(pd.to_datetime(values, utc=True))
+
+    def history(inst: str) -> pd.DataFrame:
+        """All of the snapshot before the slice's end, for the weekly and monthly structure."""
+        f = pd.read_parquet(snapdir / f"{inst}_M1.parquet", columns=["time", "open", "high", "low", "close"])
+        f["time"] = pd.to_datetime(f["time"], utc=True)
+        return f[f.time < end_utc + pd.Timedelta(days=2)]
 
     journal = pd.read_csv(run_dir / "journal.csv", low_memory=False)
     journal["t_utc"] = pd.to_datetime(journal["t"], utc=True)
@@ -320,7 +427,8 @@ def run(instruments, run_dir: Path, out: Optional[Path] = None) -> str:
         day = ((trades.known.astype(np.int64) - 61200) // 86400) * 86400 + 61200
         trades = trades.join(days_, on=day.rename("day"))
         trades = pd.concat([trades.reset_index(drop=True),
-                            htf_trends(m1(inst), trades.known.to_numpy(np.int64), path)], axis=1)
+                            htf_trends(m1(inst), trades.known.to_numpy(np.int64), path),
+                            structure_at(history(inst), trades.known.to_numpy(np.int64), path, swing)], axis=1)
         every_trade.append(trades)
         every_order.append(orders)
         every_setup.append(setups)
@@ -340,6 +448,8 @@ def run(instruments, run_dir: Path, out: Optional[Path] = None) -> str:
                   "- **During the indicator's setups the engine:** " + ", ".join(
                       f"{k} {v}" for k, v in setups.engine.value_counts().items()) + ".", ""]
         lines += _table(trades) + [""]
+    if save is not None:                                 # every order, for a closer look
+        pd.concat([t.assign(instrument=i) for t, i in zip(every_trade, instruments)], ignore_index=True).to_pickle(save)
     if len(instruments) > 1:
         trades, orders, setups = (pd.concat(x, ignore_index=True) for x in (every_trade, every_order, every_setup))
         filled = orders[orders.filled_at.notna()]
@@ -352,6 +462,11 @@ def run(instruments, run_dir: Path, out: Optional[Path] = None) -> str:
         lines += _table(trades) + [""]
         lines += ["### With the HTF trend", "", "Each read is known when the setup can be traded (no hindsight).", ""]
         lines += _trend_table(trades) + [""]
+        lines += ["### Your trend definition: higher highs and higher lows", "",
+                  f"Swings of {2 * swing + 1} candles ({swing} each side) on each timeframe, known once the last of "
+                  "them closes. Up: the last two swing highs and lows both rose; down: both fell; a range: anything else.",
+                  ""]
+        lines += _structure_table(trades) + [""]
     text = "\n".join(lines) + "\n"
     if out is not None:
         Path(out).write_text(text, encoding="utf-8")
@@ -364,6 +479,8 @@ def main(argv=None) -> int:
     parser.add_argument("--run", type=Path, help="a backtest run's directory (default: the latest base run)")
     parser.add_argument("--instruments", nargs="+", default=["XAUUSD", "EURUSD", "GBPUSD"])
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--swing", type=int, default=1, help="candles each side of a structure swing (1: three-candle)")
+    parser.add_argument("--save", type=Path, help="also write every order with its reads (a pickle)")
     args = parser.parse_args(argv)
     run_dir = args.run
     if run_dir is None:
@@ -374,7 +491,7 @@ def main(argv=None) -> int:
             print("no base backtest run under data/backtests", file=sys.stderr)
             return 1
         run_dir = runs[-1]
-    print(run(args.instruments, run_dir, args.out))
+    print(run(args.instruments, run_dir, args.out, args.swing, args.save))
     return 0
 
 

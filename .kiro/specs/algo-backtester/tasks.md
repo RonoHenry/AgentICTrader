@@ -850,6 +850,11 @@ The trader's TradingView indicator, ported from Pine and shown on Noculus at the
     - with them and against them the setups are within 0.06R of each other, both near 0;
     - the open-side reads (the engine's own D1/W1 bias) call it 58-69%, but only the part of the day already moved, and don't help either.
     - So the bias must be decided before the day. 1 test (`_d1_structure`).
+  - **Added 2026-10-20: the trader's own trend definition** (higher highs and higher lows; a range otherwise; primary W1/MN, secondary D1/H4, minor H1-).
+    - `structure_states`/`structure_at`, with three- or five-candle swings (`--swing`); each timeframe with, against, ranging; the tiers agreeing; discount and OTE of the leg.
+    - No stable answer: rows change sign with the swing size (D1 + H4 with: -0.14 vs +0.19 gross).
+    - The best row, W1 + D1 agree at market with them on five-candle swings, is +0.14R net (74 trades, 95% [-0.07, +0.35]): a pre-registration candidate.
+    - The trend calls the day 47-56%. 1 test.
   - **Validates: Requirements 24.1–24.3**
 
 ---

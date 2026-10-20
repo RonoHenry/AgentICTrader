@@ -107,3 +107,41 @@ Each read below is known when the setup can be traded. "Calls the day" is how of
    Add the FVG fix for the forming candle. This makes the engine's executions yours. It changes engine code, so the 539 MB Phase A cache is rebuilt, which takes hours.
 2. **Supply the bias.** Your blind Noculus sessions already record your direction per day. Scoring your calls against the day's real direction measures what the 56–61% bar asks. If you clear it, the engine executes your bias with your setups.
 3. **Confirm first.** Whichever goes forward is pre-registered and tested once on the confirmation slice before it counts.
+
+## 7. Your trend definition (asked 2026-10-20)
+
+You defined it:
+- **an uptrend** is higher highs and higher lows, with retracements often to the OTE of the range;
+- **a downtrend** is lower highs and lower lows;
+- **a range** is price failing to break the range's high or low, engineering liquidity for the next phase;
+- **the tiers:** primary W1/MN, secondary D1/H4, minor H1 and below.
+
+**How it was coded.** On each timeframe, swings are confirmed once the candles after them close.
+- **The trend:** up when the last two swing highs and the last two swing lows both rose, down when both fell, a range otherwise.
+- **The leg:** in an uptrend, the last swing low to the highest high since. Discount is below its half; the OTE is a 62–79% retracement. A downtrend mirrors this.
+- **Two swing sizes:** three candles (one each side) and five (two each side).
+
+Run with `--swing 1` or `--swing 2`.
+
+| Read (market at C2 + CISD, gross R) | 3-candle swings: n, gross | 5-candle swings: n, gross |
+|---|---|---|
+| W1: with the trend / against it | 257, +0.00 / 282, −0.01 | 206, +0.06 / 211, −0.02 |
+| D1: with / against | 217, −0.03 / 226, +0.13 | 223, +0.11 / 249, +0.01 |
+| H4: with / against | 212, −0.02 / 213, +0.07 | 222, −0.02 / 223, +0.08 |
+| W1 + D1 agree: with / against | 119, −0.01 / 133, +0.06 | 74, +0.22 / 92, −0.06 |
+| D1 + H4 agree: with / against | 64, −0.14 / 65, +0.26 | 74, +0.19 / 83, +0.06 |
+| D1 with the trend, in its OTE | 21, +0.01 | 16, +0.39 |
+| H4 with the trend, in its OTE | 22, −0.41 | 21, −0.49 |
+
+**How often each timeframe's trend calls the day's direction:**
+- three-candle swings: W1 56%, D1 50%, H4 49%;
+- five-candle swings: W1 55%, D1 54%, H4 47%.
+
+The full tables, including the C3 limit and the ranges, are in the command's report.
+
+- **No stable answer.** The rows change sign when the swing size changes: D1 + H4 "with" is −0.14 with three-candle swings and +0.19 with five-candle ones. An effect in the market would not do that.
+- **The best row includes zero.** W1 + D1 agreeing, five-candle swings, at market with them: +0.14R net over 74 trades, 95% interval −0.07 to +0.35. Most of it is EURUSD (38 trades, +0.22R); gold has 12. It is a candidate for one pre-registered test, not a finding.
+- **Buying the OTE of an H4 up-leg lost** on both swing sizes (−0.41 and −0.49 gross, about 20 trades each).
+- **The trend calls the day about as often as the simpler reads.** Coded this way, the trend points the day's way 47–56% of the time. Section 4's bar is about 56–61%.
+
+What a mechanical swing rule can't see is which swings you count. A trader reading structure picks the swings that matter: the one that took liquidity, the one that broke structure with displacement. A three- or five-candle rule counts every one of them. That choice may be where your read differs. Your blind Noculus sessions, with your Bias set before each day, would measure the read as you make it.
