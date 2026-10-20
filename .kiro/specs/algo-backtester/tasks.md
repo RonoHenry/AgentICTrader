@@ -769,6 +769,67 @@ The trader's marks and trades against the engine's, on the same bars, blind unti
     and the look of the panel on a chart, are the user's to run.**
   - **Validates: Requirements 20.1–20.3**
 
+### Update 2026-10-19: the Fractal + POI indicator on Noculus (tasks 333–337)
+
+The trader's TradingView indicator, ported from Pine and shown on Noculus at the clock (Requirements 21–23).
+
+- [x] 333. The clocks: Fractal modes, candle boundaries, the reader
+  - **333a. RED** (`test_research_fractal_poi.py`)
+    - Each Fractal mode picks the indicator's HTF for each chart timeframe, and `ValidTimeframe` refuses a non-multiple.
+    - Candles start as TradingView's FX charts start them: H4 from 17:00, D1 at 17:00, W1 on Sunday, the month on its eve, and the three Quarterly clocks (the micro cycle with its 21:45–00:00 gap).
+    - Names read as the indicator writes them, and the settings refuse what it wouldn't take.
+  - **333b. GREEN** — `frames.py`, `chart.py`, `settings.py`; `FractalPOI` steps the parts to the clock, with checkpoints.
+  - **Done 2026-10-19.** 5 tests.
+  - **Validates: Requirements 21.1, 21.3, 21.4, 22.1**
+
+- [x] 334. The model: C1 to C4, CISD, IC-CISD, the zones, SD, formation liquidity, SMT
+  - **334a. RED.** One bearish setup built candle by candle on an M15 chart with a custom H1, every value against Pine's rules:
+    - the sweep of C1's high (110 by 111) and C2's close back inside;
+    - CISD at the open of the up-run (106), triggered by the close below it;
+    - the C3 zone: C2's mid 108 inside the run's bodies, so 108–108.25;
+    - the C4 zone: C3's mid 106.025 to C4's open 105.3, to C4's close;
+    - two IC-CISDs;
+    - the SD levels 91.75 to 111;
+    - formation liquidity at C1's low (99) and the candle before's (95).
+
+    Also: C3 above C2's high after CISD gives xC2 and a new setup from C2; a C2 closing beyond C1 is no setup; bias filters what is drawn; the HTF candles sit 10, 13, 16 and 19 candles right of the clock's.
+  - **334b. GREEN** — `model.py`, a port of `Monitor`, `Update`, `ICUpdate`, `CheckSMTDivergence` and `DrawAll`, one statement for one.
+  - **Done 2026-10-19.** 5 tests.
+  - **Validates: Requirement 21.2**
+
+- [x] 335. The liquidity suite
+  - **335a. RED**
+    - **PDH and PDL:** each runs from its own candle until price trades through it; equal lows take the last, as Pine's `>=` does; a purged one turns grey and dotted, with a ✕.
+    - **Sessions:** a session's high runs to the clock's candle and stops where it is touched, with a ✕.
+    - **BSL:** an H1 swing high appears once the candle after it closes, and is purged on the cross.
+  - **335b. GREEN** — `liquidity.py`: sessions, TDO, PD/PW/PM, BSL/SSL on three HTFs, the purged registry, relevant swings, reconciliation.
+  - **Done 2026-10-19.** 3 tests.
+  - **Validates: Requirement 21.2**
+
+- [x] 336. HTF fair value gaps, and Property 11
+  - **336a. RED**
+    - A gap appears at the next HTF open, from C1's open, and is deleted by a close beyond its far edge.
+    - Only the newest three are kept.
+    - **Property 11:** what is drawn at six random clocks equals what a reader of the data cut at each clock draws, on M15, M5 and H1, with a partner, PM levels, HTF2/HTF3 BSL, swings and HTF2 candles on.
+    - Going back reads as a fresh reader would.
+  - **336b. GREEN** — `imbalance.py`.
+  - **Done 2026-10-19.** 7 tests. On real gold (2025-01-27/28) the reader's candles equal the chart's on M1, M5, M15 and H1 (no differences). The first read takes 0.1–0.8 s; a 15-minute step afterwards about 1 ms.
+  - **Validates: Requirements 21.2, 22.2**
+
+- [x] 337. On Noculus **(user review)**
+  - **337a. RED**
+    - The session serves the indicator at the clock: the same candles as the chart, nothing read after the clock, and the session's own events.
+    - A blind session serves it.
+    - The endpoints: the defaults, a Scalp read on M5 (HTF 15m), and a refused input as a 400 with its reason.
+    - The page carries the layer. A node walk-through of `fractal.js` checks 21 things a person would look for (`fractal_ui.js`).
+  - **337b. GREEN**
+    - `WatchSession.fractal`, `GET /api/watch/fractal` and `/api/watch/fractal-defaults` (`watch.py`).
+    - `static/fractal.js`: the painter, the dashboard and the five-tab settings dialog.
+    - The Fractal + POI layer in `engine.js`/`engine.html`, on by default, with ⚙ for its settings; its alerts go to the event log.
+  - **337c. REFACTOR.** The look of it on a real chart, and the SMT partners (D34), are the trader's to check.
+  - **Done 2026-10-19.** 4 tests and the walk-through. The existing walk-throughs (`load_engine.js`, `reconnect_ui.js`) now load `fractal.js`.
+  - **Validates: Requirements 23.1–23.3**
+
 ---
 
 ## Task Dependency Graph
@@ -887,6 +948,12 @@ Tasks are grouped into waves. A wave can start once every wave in its `dependenc
       "name": "Noculus",
       "tasks": ["329", "330", "331", "332"],
       "description": "Update 2026-10-16: blind sessions, marks by candles, pseudo trades, the comparison (in order; builds on the engine watch, tasks 305 and 308)"
+    },
+    {
+      "name": "Fractal + POI",
+      "tasks": ["333", "334", "335", "336", "337"],
+      "description": "Update 2026-10-19: the trader's TradingView indicator ported from Pine and shown on Noculus at the clock (333-336 the port, 337 the page)",
+      "dependencies": ["Noculus"]
     }
   ]
 }

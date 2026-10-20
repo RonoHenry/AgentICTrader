@@ -420,3 +420,49 @@ The research so far says the edge, if any, is in the trader's selection (which a
 | D28 | Marking by candles; matching by formation candle | The trader's choice. Matching uses the candle that formed an array, not its edges, because the engine's FVG spans all three candles until the liquidity-engine fix (task 326) while the trader marks the gap. |
 | D29 | Pseudo trades priced as races | They are the rules AlgoResearch already checks against the fill model (its Property 5). No management yet: a manual exit is the one action. Partials and break-even wait until an edge exists. |
 | D30 | The name | Noculus: the trader's name for the chart, for both modes of the charts app. |
+
+## Update 2026-10-19: The Trader's Fractal + POI Indicator on Noculus
+
+The trader asked (2026-10-19): "I have something new I would like us to introduce to noculus that will aid the Engine through this process. Please find a copy of an Fractal POI indicator and take it to Noculus, we will then begin to adjust how our engine sees PD Arrays."
+
+The indicator is the trader's own TradingView tool: Pine v6, 3,501 lines, in `backend/FractalPOI.md`. On Noculus it shows what the trader sees on TradingView, on the same bars and at the same moments as the engine's work. It then becomes the reference that the engine's PD arrays are adjusted against: how many arrays, which ones, and from which timeframe.
+
+### Requirement 21: The Indicator, Ported
+
+1. THE indicator SHALL be ported to Python as `algo_research.fractal_poi`. It is one definition: Noculus draws it, and the engine can later be measured against it.
+2. IT SHALL do what the Pine script does, rule for rule:
+   - **the Fractal modes** (Automatic, Intraday, Scalp, Swing, Quarterly, Custom and the fixed pairs) and the HTF each one picks for each chart timeframe;
+   - **the HTF candles** drawn to the right of price, with their opens, highs, lows, labels and timer, and the optional HTF2 preview;
+   - **the model:**
+     - C1 swept by C2, which closes back inside;
+     - CISD (the open of the run that made the sweep's extreme), early CISD and IC-CISD;
+     - the C3 and C4 entry zones and EQ lines, and their invalidation (xC2, xC4);
+     - the SD projections, formation liquidity, and SMT against two correlated symbols;
+   - **the liquidity suite:** sessions, the true day open, PDH/PDL, PWH/PWL, PMH/PML, BSL/SSL on up to three HTFs, purged levels, relevant swings and the relevance filter;
+   - **the HTF fair value gaps.**
+3. CANDLES SHALL start where TradingView's FX charts start them: the trading day opens at 17:00 New York, as Noculus already counts.
+4. THE settings SHALL be the indicator's inputs, with its defaults. Colours, line styles and sizes stay at its defaults, painted in the page's theme.
+
+### Requirement 22: Read on Closed Candles, at the Clock
+
+1. THE indicator SHALL read each chart candle once it has closed by the replay clock, which is its own default ("Calculate on Close"). It then draws what it would show on its last bar.
+2. NOTHING sent to the page SHALL come from a candle that closes after the clock (Property 11).
+
+### Requirement 23: On the Chart
+
+1. NOCULUS'S Engine mode SHALL have a Fractal + POI layer, on by default, with:
+   - a settings dialog of the indicator's inputs;
+   - its dashboard in the side panel;
+   - its alerts in the event log.
+2. A BLIND session SHALL show it too: it is the trader's tool, not the engine's (D33).
+3. CHANGING an input that only chooses what is drawn SHALL redraw at once. Changing one that changes what is read rereads the window.
+
+### Decisions (2026-10-19)
+
+| Id | Decision | Source |
+|---|---|---|
+| D31 | A Python port, served at the clock | It gives one definition, which the engine can be diffed against or built on. The page can't leak what the server never sends, and tests pin the port to Pine's rules. A JavaScript port would be a second definition. |
+| D32 | Calculate on Close | The indicator's own default. On TradingView a realtime tick can show a setup intrabar and then take it back. The replay reads closed candles, so the layer moves when a chart candle closes. |
+| D33 | Shown in blind sessions | It is what the trader uses on TradingView, so a blind read includes it, as a live read would. The engine's work stays withheld (D27). |
+| D34 | SMT partners from the focus triads | The indicator resolves its partners with the fstarcapital AssetCorrelationUtils library, which isn't part of its source. Until the trader names that library's pairs: EURUSD with GBPUSD and DXY (inverse); GBPUSD with EURUSD and DXY (inverse); DXY with EURUSD and GBPUSD (both inverse); XAUUSD with DXY (inverse) and EURUSD; US100, US500 and US30 with each other; GER40 with UK100 and US500; UK100 with GER40 and US500. BTCUSDT has no partner in the snapshot. Manual mode takes any two. |
+| D35 | The script's quirks are kept | For example, the micro cycle lists no session from 21:45 to midnight, so its 21:22 candle runs to midnight. The FVG list keeps only the newest three, and a gap that is closed through is deleted, not inverted. The port shows what TradingView shows. Where the trader means otherwise, the Pine script changes first. |
