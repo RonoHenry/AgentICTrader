@@ -478,6 +478,7 @@ The trader asked (2026-10-20): "try to use now the setups that the indicator is 
    - each engine order is with, against, or outside a live setup, and its raid is or isn't C1's extreme;
    - for each setup, what the engine did during it;
    - the setups traded three ways (market at C2 + CISD; a limit at the C3 zone's EQ edge; a limit at the C4 zone with the stop at C3), alone, with the day's real direction (hindsight) and with the previous day's.
+   - the same, with and against seven HTF trend reads known in advance (`TRENDS`), and how often each read calls the day.
 3. AN order SHALL use only what was known when it is placed. C3's and C4's closes come from the HTF clock, never from the setup's later record.
 
 The findings are in `docs/research/FRACTAL_POI_VS_ENGINE.md`. The "day's real direction" rows are an upper bound, not a strategy (D36).

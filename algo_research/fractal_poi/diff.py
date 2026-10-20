@@ -153,6 +153,83 @@ def trade_setups(setups: pd.DataFrame, path: Mapping[str, np.ndarray], costs=Non
     return pd.DataFrame(rows)
 
 
+#: The HTF trend reads (the trader's question, 2026-10-20: "trading in the direction of the HTF trend and using the
+#: indicator to show us where to position ourselves"). Each is +1 or -1, known when the setup can be traded.
+TRENDS = {
+    "d1_average": "the last D1 close above (below) its 20-day average",
+    "d1_structure": "the last D1 break of structure up (down)",
+    "last_week": "last week's candle up (down)",
+    "week_open": "price above (below) this week's open (the engine's W1 bias)",
+    "day_open": "price above (below) today's 17:00 open (the engine's D1 bias)",
+    "d1_both": "the D1 average and the D1 structure agree",
+    "all_three": "the D1 average, the D1 structure and last week agree",
+}
+
+
+def _d1_structure(high: np.ndarray, low: np.ndarray, close: np.ndarray, lookback: int = 2) -> np.ndarray:
+    """After each D1 close, the direction of the last break of structure: a close above the last confirmed swing
+    high (two candles each side) is up, a close below the last confirmed swing low is down; 0 before the first."""
+    out, trend, sh, sl = np.zeros(len(close)), 0, np.nan, np.nan
+    for k in range(len(close)):
+        i = k - lookback                                    # the candle a swing at k - lookback is confirmed by
+        if i - lookback >= 0:
+            if high[i] > high[i - lookback:i].max() and high[i] > high[i + 1:k + 1].max():
+                sh = high[i]
+            if low[i] < low[i - lookback:i].min() and low[i] < low[i + 1:k + 1].min():
+                sl = low[i]
+        if close[k] > sh:
+            trend = 1
+        elif close[k] < sl:
+            trend = -1
+        out[k] = trend
+    return out
+
+
+def htf_trends(m1: pd.DataFrame, known: np.ndarray, path: Mapping[str, np.ndarray]) -> pd.DataFrame:
+    """``TRENDS`` at each time in ``known`` (wall seconds): the daily and weekly reads from candles closed before the
+    trading day, the open-side reads from the price at that time."""
+    wall = wall_seconds(pd.to_datetime(m1["time"], utc=True))
+    ohlc = [m1[k].to_numpy(float) for k in ("open", "high", "low", "close")]
+    d1 = aggregate(wall, *ohlc, "D1").set_index("time")
+    w1 = aggregate(wall, *ohlc, "W1").set_index("time")
+    avg = np.sign(d1.close - d1.close.rolling(20).mean())
+    daily = pd.DataFrame({"d1_average": avg.shift(1),
+                          "d1_structure": pd.Series(_d1_structure(d1.high.to_numpy(), d1.low.to_numpy(),
+                                                                  d1.close.to_numpy()), index=d1.index).shift(1),
+                          "day_open_price": d1.open})
+    weekly = pd.DataFrame({"last_week": np.sign(w1.close - w1.open).shift(1), "week_open_price": w1.open})
+    known = np.asarray(known, dtype=np.int64)
+    day = ((known - 61200) // 86400) * 86400 + 61200
+    from algo_research.replay.timeframes import bucket
+    out = daily.reindex(day).reset_index(drop=True).join(weekly.reindex(bucket(day, "W1")).reset_index(drop=True))
+    at = np.searchsorted(np.asarray(path["time"], dtype=np.int64), known - 60, side="right") - 1
+    price = np.asarray(path["close"], dtype=float)[np.clip(at, 0, None)]
+    out["week_open"] = np.sign(price - out.week_open_price.to_numpy())
+    out["day_open"] = np.sign(price - out.day_open_price.to_numpy())
+    out["d1_both"] = np.where(out.d1_average == out.d1_structure, out.d1_average, 0)
+    out["all_three"] = np.where((out.d1_average == out.d1_structure) & (out.d1_structure == out.last_week),
+                                out.d1_average, 0)
+    return out[list(TRENDS)]
+
+
+def _trend_table(trades: pd.DataFrame) -> list[str]:
+    sign = np.where(trades.direction == "LONG", 1, -1)
+    lines = ["| HTF trend read | Calls the day | A with it: n, gross, net | A against it | B with it | B against it |",
+             "|---|---|---|---|---|---|"]
+
+    def cell(mask) -> str:
+        x = _summary(trades[mask])
+        return f"{x['n']}, {x['gross']:+.3f}, {x['net']:+.3f}" if x["n"] else "—"
+    one = trades[trades.variant == "A"]                      # one row per setup: how often the read is the day's way
+    for name, text in TRENDS.items():
+        col = trades[name].to_numpy()
+        called = one[(one[name] != 0) & (one["dir"] != 0)]
+        right = f"{(called[name] == called['dir']).mean():.0%}" if len(called) else "—"
+        row = [cell((trades.variant == v) & (sign * col == side)) for v in ("A", "B") for side in (1, -1)]
+        lines.append(f"| {text} | {right} | " + " | ".join(row) + " |")
+    return lines
+
+
 def _day_directions(m1: pd.DataFrame) -> pd.DataFrame:
     """Each trading day's direction (+1 up, -1 down) and the previous day's, by the day's 17:00 open in wall seconds."""
     wall = wall_seconds(pd.to_datetime(m1["time"], utc=True))
@@ -242,6 +319,8 @@ def run(instruments, run_dir: Path, out: Optional[Path] = None) -> str:
         days_ = _day_directions(m1(inst))
         day = ((trades.known.astype(np.int64) - 61200) // 86400) * 86400 + 61200
         trades = trades.join(days_, on=day.rename("day"))
+        trades = pd.concat([trades.reset_index(drop=True),
+                            htf_trends(m1(inst), trades.known.to_numpy(np.int64), path)], axis=1)
         every_trade.append(trades)
         every_order.append(orders)
         every_setup.append(setups)
@@ -271,6 +350,8 @@ def run(instruments, run_dir: Path, out: Optional[Path] = None) -> str:
                   "- Engine net R per filled trade: " + ", ".join(
                       f"{k} {g.net_r.mean():+.2f} ({len(g)})" for k, g in filled.groupby("cls")) + ".", ""]
         lines += _table(trades) + [""]
+        lines += ["### With the HTF trend", "", "Each read is known when the setup can be traded (no hindsight).", ""]
+        lines += _trend_table(trades) + [""]
     text = "\n".join(lines) + "\n"
     if out is not None:
         Path(out).write_text(text, encoding="utf-8")

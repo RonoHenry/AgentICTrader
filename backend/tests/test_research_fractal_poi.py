@@ -381,3 +381,14 @@ def test_engine_orders_are_with_against_or_outside_a_live_setup():
     out = classify_orders(orders, setups)
     assert out.cls.tolist() == ["with", "with", "against", "outside"]
     assert out.raid_is_c1.tolist() == [True, False, None, None]                # within 5% of C1's range, or not
+
+
+def test_the_d1_structure_read_turns_on_a_close_through_the_last_confirmed_swing():
+    from algo_research.fractal_poi.diff import _d1_structure
+    high = np.array([10, 11, 12, 11, 10, 9, 10, 11, 12.5, 13, 12, 11, 10, 9.5, 8.0])
+    low = high - 1
+    close = high - 0.5
+    trend = _d1_structure(high, low, close)
+    # the swing high 12 (day 2) is confirmed at day 4; day 8 closes 12.0 (not above), day 9 closes 12.5 above it;
+    # the swing low 8 (day 5) is confirmed at day 7; day 14 closes 7.5, below it (a close at 8.0 would not be)
+    assert trend[:9].tolist() == [0] * 9 and trend[9] == 1 and trend[13] == 1 and trend[14] == -1

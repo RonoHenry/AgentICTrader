@@ -845,6 +845,11 @@ The trader's TradingView indicator, ported from Pine and shown on Noculus at the
     - The bias to clear these after costs is about 56% (market) to 61% (C3 limit).
     - The findings are in `docs/research/FRACTAL_POI_VS_ENGINE.md`.
     - Next is the trader's choice: the engine's setup model as the indicator's CRT, and the bias as an input.
+  - **Added 2026-10-20 (the trader's question): the HTF trend.** Seven reads known in advance (`diff.TRENDS`) are a coin flip:
+    - the D1 average, the D1 structure, last week's candle and their agreement call the day 45-49% of the time;
+    - with them and against them the setups are within 0.06R of each other, both near 0;
+    - the open-side reads (the engine's own D1/W1 bias) call it 58-69%, but only the part of the day already moved, and don't help either.
+    - So the bias must be decided before the day. 1 test (`_d1_structure`).
   - **Validates: Requirements 24.1–24.3**
 
 ---

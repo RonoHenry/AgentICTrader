@@ -75,6 +75,27 @@ You asked (2026-10-20): "try to use now the setups that the indicator is suggest
 3. **The direction is the whole edge.** With the day's real direction the same setups make +0.29R to +0.37R gross; against it they lose about as much. In the indicator, the direction is the one thing it doesn't decide: your Bias input. The previous day's direction is no stand-in.
 4. **How right a bias must be.** Taking these setups only on your bias's side pays if your bias calls the day right about **56%** of the time for A (market), or **61%** for B (the C3 limit), after costs. Those are the break-even points from the hindsight rows above.
 
+   The bias must be decided **before the day**, as at the 17:00 open in your blind sessions. A read taken during the day "calls the day" more often, but only because part of the day has already happened (section 6).
+
+## 6. With the HTF trend (asked 2026-10-20)
+
+You asked: "have we factored in the trend in which we are trading, like trading in the direction of the HTF trend and using the Fractals indicator to show us where to position ourselves?"
+
+Each read below is known when the setup can be traded. "Calls the day" is how often the read points the way the trading day closed. Cells give trades, gross R and net R.
+
+| HTF trend read | Calls the day | A with it | A against it | B with it | B against it |
+|---|---|---|---|---|---|
+| the last D1 close above (below) its 20-day average | 45% | 318, +0.04, −0.02 | 355, +0.01, −0.06 | 212, −0.01, −0.09 | 232, −0.08, −0.18 |
+| the last D1 break of structure up (down) | 49% | 335, +0.01, −0.05 | 372, +0.05, −0.02 | 223, −0.10, −0.18 | 243, +0.01, −0.09 |
+| last week's candle up (down) | 47% | 365, +0.04, −0.02 | 345, +0.02, −0.04 | 233, −0.10, −0.18 | 234, +0.01, −0.10 |
+| the D1 average, the D1 structure and last week agree | 46% | 197, +0.04, −0.02 | 209, +0.03, −0.05 | 132, −0.07, −0.15 | 138, −0.02, −0.14 |
+| price above (below) this week's open (the engine's W1 bias) | 58% | 323, −0.02, −0.08 | 387, +0.07, +0.01 | 220, −0.01, −0.10 | 247, −0.08, −0.17 |
+| price above (below) today's 17:00 open (the engine's D1 bias) | 69% | 336, +0.04, −0.02 | 373, +0.02, −0.05 | 230, −0.02, −0.11 | 236, −0.08, −0.17 |
+
+- **The HTF trend reads don't call the day.** The D1 average, the D1 structure and last week's candle point the day's way 45–49% of the time, alone or together. So trading only with them changes nothing: with and against are within 0.06R of each other, both near 0.
+- **The open-side reads call it more often, and still don't help.** Price against today's or this week's open points the day's way 58–69% of the time. But it is read when the setup appears, after part of the day has moved, so it is calling the part already behind it. With it and against it the setups are the same.
+- **What's needed.** A direction for the rest of the day, decided before it, that is right more often than these. A mechanical HTF trend isn't that, on this sample. Whether your own read is, is what the blind sessions can measure.
+
 ## 5. Next steps (yours to choose)
 
 1. **Make the engine read your way.** The indicator's CRT becomes the engine's setup model, behind a strategy setting:
