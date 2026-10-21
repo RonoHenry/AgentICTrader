@@ -21,12 +21,15 @@ const TOOLS = [
   { type: "vline", icon: "│", title: "Vertical line (Alt+V)", key: "v" }, { type: "rect", icon: "▭", title: "Box (Alt+R)", key: "r" },
   { type: "fib", icon: "≣", title: "Fib / SD (Alt+F)", key: "f" }, { type: "range", icon: "⇕", title: "Range (or Shift + drag)", key: "m" },
   { type: "text", icon: "T", title: "Text (Alt+N)", key: "n" },
+  // TradingView's position tools (Requirement 25): select one and place it at the clock, beside the engine's trade
+  { type: "long", icon: "▲", title: "Long position: entry, stop, target (Alt+L)", key: "l" },
+  { type: "short", icon: "▼", title: "Short position: entry, stop, target (Alt+S)", key: "s" },
 ];
 const LAYERS = [["fractal", "Fractal + POI"], ["modelA", "Model A"], ["arrays", "Arrays"], ["pools", "Pools"],
                 ["profile", "Day bias & draw"], ["sequence", "Setup"], ["candidates", "Candidates"], ["orders", "Orders & trades"]];
 // Model A (context-engine Requirement 17): the trader's frame sets.
 const MA_SETS = [["model_d1", "Model A: D1 / H1 / M5"], ["model_h4", "Model A: H4 / M15 / M1"]];
-const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, journal: [], playing: false, busy: false, picks: {}, hl: null,
+const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, journal: [], ideas: [], playing: false, busy: false, picks: {}, hl: null,
             ma: [], maSet: Prefs.get("watch.maSet", "model_d1"), maAt: null,
             speed: 1, digits: 5, layers: Prefs.get("watch.layers", { arrays: true, pools: true, profile: true, sequence: true, orders: true }),
             arrayMode: Prefs.get("watch.arrayMode", "interval"), arrayVis: Prefs.get("watch.arrayVis", {}) };
@@ -95,8 +98,10 @@ const templates = Prefs.get("templates", {});
 const drawKey = () => S.status ? `watch.drawings.${S.status.instrument}.${S.status.first_day}` : "watch.drawings";
 const draw = new Drawings(chart, series, {
   container: $("chart"), timeline, palette, tf: () => S.tf, digits: () => S.digits, template: (type) => templates[type],
-  onChange: (items) => Prefs.set(drawKey(), items), onSelect: () => {}, onEdit: (item, start) => window.ReplayUI.toolSettings(draw, item, uiCtx, start),
+  onChange: (items) => Prefs.set(drawKey(), items.map(({ status, ...d }) => d)), onSelect: (item) => noculus.select(item),
+  onEdit: (item, start) => window.ReplayUI.toolSettings(draw, item, uiCtx, start),
   onContext: (item, x, y) => { if (item) window.ReplayUI.contextMenu(x, y, [{ label: "Settings…", action: () => window.ReplayUI.toolSettings(draw, item, uiCtx) },
+    ...(item.type === "long" || item.type === "short" ? [{ label: `Place it as my trade at ${fmtTime(S.t)}`, action: () => act(() => noculus.placePosition(item)) }] : []),
     { label: "Delete", action: () => draw.remove(item) }]);
     else window.ReplayUI.contextMenu(x, y, [{ label: "Reset the chart view", action: () => { const n = S.bars.length; motion.fit();
       chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 140), to: n + 12 }); } }, ...motion.menu()]); },
@@ -119,9 +124,10 @@ const noculus = new Noculus(chart, series, {
   box: $("noculus"), timeline, palette, seconds: (tf) => SECONDS[tf], timeframes: MARK_TFS, tf: () => S.tf,
   digits: () => S.digits, clock: () => S.t, status: () => S.status, api: (path, body) => api(path, body),
   say: (t) => say(t), refresh: () => refresh(), timeLabel: (t) => fmtTime(t), X, Y,
+  drawings: () => draw.items, redraw: () => draw.refresh(),
   onReveal: async (status) => {                         // the clock stays where it is; the engine joins it
     S.status = status;
-    S.journal = (await api("/api/watch/journal")).rows;
+    await loadJournal();
     summaryLine(); await loadState(); noculus.render();
   },
 });
@@ -216,6 +222,21 @@ function paintEngine(ctx, size) {
     }
   }
   if (S.layers.orders) {
+    for (const i of S.ideas) {                           // a trade the engine wanted but its limits refused (Req 26.1)
+      if (i.kind !== "SKIPPED" || i.from > S.t || i.until <= S.t) continue;
+      const long = i.direction === "LONG", c = long ? pal.up : pal.bad;
+      const x1 = X(i.from), x2 = Math.max(X(S.t), x1 + 40), ey = Y(i.entry), sy = Y(i.stop), ty = Y(i.target);
+      if (!isFinite(ey) || !isFinite(x1)) continue;
+      const shade = (col, a) => rgba(col.startsWith("#") ? col : "#888888", a);
+      ctx.fillStyle = shade(pal.bad, 0.07); ctx.fillRect(x1, Math.min(ey, sy), x2 - x1, Math.abs(sy - ey));
+      ctx.fillStyle = shade(pal.good, 0.07); ctx.fillRect(x1, Math.min(ey, ty), x2 - x1, Math.abs(ty - ey));
+      ctx.strokeStyle = c; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+      ctx.strokeRect(x1, Math.min(sy, ty), x2 - x1, Math.abs(ty - sy)); ctx.setLineDash([]);
+      line(x1, ey, x2, ey, c, [4, 3], 1.5);
+      text(`engine wanted ${i.direction} @ ${fmt(i.entry)} · stop ${fmt(i.stop)} · target ${fmt(i.target)} (R:R ${i.r_ratio ? i.r_ratio.toFixed(1) : "—"}${i.grade ? ", " + i.grade : ""})`,
+           x1 + 3, ey - 2, c);
+      text(`refused: ${i.reason}`, x1 + 3, long ? ey + 12 : ey - 13, pal.muted);
+    }
     for (const r of S.journal) {
       if (r.decision !== "EXECUTE" || r.placed_at == null || r.placed_at > S.t) continue;
       const long = r.direction === "LONG", c = long ? pal.up : pal.bad;
@@ -449,11 +470,16 @@ async function openSession(st, resumeAt) {
     ? "The engine is hidden. Mark what you see and place your trades, then reveal it (Noculus, on the right)."
     : "Play, step, or jump to the next order. Your own drawings are kept in this browser for this session.";
   $("prog").style.width = "100%";
-  S.journal = (await api("/api/watch/journal")).rows;
+  await loadJournal();
   S.picks = Object.fromEntries((await api("/api/watch/picks")).picks.map((p) => [p.t, p]));
   draw.load(Prefs.get(drawKey(), []));
   await noculus.sync();
   await jumpTo(resumeAt != null ? resumeAt : st.start + 3600);
+}
+
+async function loadJournal() {                          // the engine's orders and the trades it wanted (none while blind)
+  const j = await api("/api/watch/journal");
+  S.journal = j.rows; S.ideas = j.ideas || [];
 }
 
 function summaryLine() {

@@ -857,6 +857,52 @@ The trader's TradingView indicator, ported from Pine and shown on Noculus at the
     - The trend calls the day 47-56%. 1 test.
   - **Validates: Requirements 24.1–24.3**
 
+### Update 2026-10-21: your position against the engine's trade (tasks 340–341)
+
+- [x] 340. The position tool on the engine chart
+  - **340a. RED**
+    - A drawn long at the price is a market order; one below the ask is a limit at its entry; one above the ask by more than two spreads is refused with the reason (D37).
+    - An open session keeps its own journal, apart from the blind one; a position placed there carries `engine_seen`; marks and the ticket stay blind-only.
+    - The endpoint places a position and the trades endpoint settles it.
+    - The page: Long and Short in the toolbar; placing from a selected drawing; the drawing shows its live R (walk-through).
+  - **340b. GREEN** — `position_ticket`, `WatchSession.place_position`, `POST /api/watch/noculus/position`, the open journal; the tools, the panel's place button and the linked drawings.
+  - **340c. REFACTOR** — the walk-through, then the trader's own positions.
+  - **Done 2026-10-21.** `noculus.position_ticket` turns a drawing into `place`'s ticket: at market within two
+    spreads of the price on its side, a limit at the entry on the pullback side, refused with the reason beyond
+    the price (no stop entries, D37). `WatchSession.place_position` places it in any session and stamps `drawing`,
+    the drawn `entry` and `engine_seen`; `WatchApp.start` gives every session a journal, an open one as
+    `<first day>-<days>d-<variant>-open.json` (D39). Marks and the ticket now refuse an open session ("made blind").
+    `POST /api/watch/noculus/position`. The page: ▲ ▼ in the toolbar (Alt+L, Alt+S); a selected position shows
+    in the Noculus panel with "Place it at <clock>", and its context menu offers the same; each linked drawing
+    carries its trade's state (waiting, open +0.35R, TARGET +3.56R), and its status is never saved with the
+    drawing. The Noculus panel now shows in every session: positions only when open. 4 tests; the walk-through
+    (`noculus_ui.js`) has 70 checks.
+  - **Validates: Requirements 25.1–25.5**
+
+- [x] 341. The engine's trade beside yours **(user review)**
+  - **341a. RED**
+    - SKIP rows at consecutive closes with the same side, entry and stop are one idea, placed as the sim broker would (a limit when the entry is better than the price, else market) at the first; an order's outcome is the backtest's.
+    - A position pairs with the idea live at its clock, else the day's next one, else none.
+    - The measures: stops, targets and entries in price and in the M15/H1/D1 average range of the last 14 closed candles; the R:Rs; the minutes apart.
+    - The labels: the other side, scale (2×), location (more than the trader's stop apart), agree, none.
+    - While blind, the engine's side is withheld; the report gains the positions section.
+  - **341b. GREEN** — `engine_ideas`, `idea_at`, `next_idea`, `average_ranges`, `compare_positions`, `GET /api/watch/noculus/positions`, the report; the SKIP box and the pairs in the panel.
+  - **341c. REFACTOR** — the walk-through; then the trader places positions beside the engine's ideas, and the pairs are read for the flaw.
+  - **Done 2026-10-21.** `noculus.engine_ideas` (orders with the backtest's outcome, an unfilled limit ending at its
+    expiry; runs of SKIPs priced as the sim broker would have placed them), `idea_at`, `next_idea`,
+    `average_ranges` (the mean true range of the last 14 closed M15/H1/D1 candles; nothing after the clock is
+    read), `compare_positions` (pairs, measures, labels, summary), `WatchSession.positions` and
+    `GET /api/watch/noculus/positions?t=` (withheld while blind; saved once in sight); `/api/watch/journal` also
+    serves `ideas`; `write_report` adds "Your positions against the engine's trade". The page draws a refused
+    idea live at the clock as a dashed position labelled with its reason, and lists each position beside the
+    engine's. 6 tests.
+    **On the real session** (GBPUSD, 2025-04-15, base config): the trader's long at 21:50 (1.31756, stop 1.31690,
+    target 1.31991; TARGET +3.56R) pairs with the engine's short at 02:00 (later that day, 250 min apart):
+    *the other side*. Stops 0.9 vs 2.9 M15 ATR; targets 3.2 vs 20.5 M15 ATR (the engine's is 1.09 ADR); R:R
+    3.56 vs 7.01; the engine's SL −0.84R. The check also caught an unfilled limit reported as CLOSED, now EXPIRED.
+    **The trader's own positions, and reading the pairs for the flaw, are the user's to run.**
+  - **Validates: Requirements 26.1–26.5**
+
 ---
 
 ## Task Dependency Graph

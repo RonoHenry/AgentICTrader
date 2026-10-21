@@ -44,7 +44,18 @@ revealed, so the match rates and the two net Rs can be read over many days at on
     compare(marks, trades, arrays, journal, clock)   # one session's diff, saved with it
     write_report(root)                                # data/journal/noculus/REPORT.md, over every session
 
-Validates: Requirements 17.4, 18.1-18.3, 19.1-19.3, 20.1-20.3 (.kiro/specs/algo-backtester/requirements.md)
+A position drawn on the engine chart (update 2026-10-21, Requirements 25-26) becomes a trade by where its entry
+sits (``position_ticket``: at market near the price, a limit on the pullback side, D37), in any session. Each is
+then set beside the engine's idea at its clock: an order it placed, or a trade its limits refused (a SKIP),
+priced the same way (``engine_ideas``). The pair is measured in the market's own average ranges and given a
+first label: the other side, scale, location or agree (``compare_positions``, D38).
+
+    position_ticket(body, path, clock)                # a drawing as place()'s ticket
+    engine_ideas(journal, path, end, costs)           # the engine's orders and refused trades, priced
+    compare_positions(trades, ideas, ranges_at, clock)
+
+Validates: Requirements 17.4, 18.1-18.3, 19.1-19.3, 20.1-20.3, 25.2, 26.1-26.5
+(.kiro/specs/algo-backtester/requirements.md)
 """
 from __future__ import annotations
 
@@ -60,8 +71,9 @@ import pandas as pd
 from algo_backtester.config import REPO_ROOT
 from algo_research.replay.timeframes import DAY, DAY_OPEN, seconds_of
 
-__all__ = ["FAMILY", "MARK_TOOLS", "NOCULUS_DIR", "NoculusJournal", "build_mark", "close", "compare",
-           "place", "settle", "write_report"]
+__all__ = ["FAMILY", "MARK_TOOLS", "NOCULUS_DIR", "NoculusJournal", "average_ranges", "build_mark", "close",
+           "compare", "compare_positions", "engine_ideas", "idea_at", "next_idea", "place", "position_ticket",
+           "settle", "write_report"]
 
 #: Where the sessions' journals live (local, git-ignored).
 NOCULUS_DIR = REPO_ROOT / "data" / "journal" / "noculus"
@@ -520,6 +532,236 @@ def compare(marks: list[dict], trades: list[dict], arrays: list[dict], journal: 
             "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
 
 
+# ── positions beside the engine's trade (Requirements 25-26) ─────────────────
+#: A drawn entry this many spreads or less from the price on its side means "now": a market order (D37).
+NEAR_SPREADS = 2.0
+#: One stop or target at least this many times the other's: the pair parts on scale (D38).
+SCALE_RATIO = 2.0
+#: The average ranges a pair is measured in: the mean true range of the last ``RANGE_CANDLES`` closed candles.
+RANGE_TFS, RANGE_CANDLES = ("M15", "H1", "D1"), 14
+LABELS = ("other side", "scale", "location", "agree", "none")
+
+
+def position_ticket(body: dict, path: Mapping[str, np.ndarray], clock: int) -> dict:
+    """A drawn position (direction, entry, stop, target) as ``place``'s ticket at the clock (D37).
+
+    At market when the entry is within ``NEAR_SPREADS`` spreads of the price on its side (the ask for a long, the
+    bid for a short); a limit at the entry when it is further away on the pullback side; refused when it is
+    further away on the other side, where it would need a stop entry the race rules don't model.
+    """
+    direction = str(body.get("direction", "")).upper()
+    if direction not in DIRECTIONS:
+        raise ValueError("direction: LONG or SHORT")
+    n = _closed(path, clock)
+    if not n:
+        raise ValueError("no M1 bar has closed by the clock yet")
+    entry, stop, target = (float(body[k]) for k in ("entry", "stop", "target"))
+    bid, spread = float(path["close"][n - 1]), float(path["spread"][n - 1])
+    long_ = direction == "LONG"
+    side = bid + spread if long_ else bid
+    away = side - entry if long_ else entry - side          # above zero: on the pullback side
+    ticket = {"direction": direction, "stop": stop, "target": target, "note": str(body.get("note") or ""),
+              "mark": body.get("mark") or None}
+    if abs(away) <= NEAR_SPREADS * spread:
+        ticket["kind"] = "MARKET"
+    elif away > 0:
+        ticket.update(kind="LIMIT", price=entry)
+    else:
+        raise ValueError(f"entry: {entry:.5f} is {'above the ask' if long_ else 'below the bid'} ({side:.5f}) by more "
+                         "than two spreads, which would need a stop entry, and the race rules don't model one. Draw "
+                         "the entry at the price for a market order, or on the pullback side for a limit.")
+    return ticket
+
+
+def _skip_idea(rows: list[dict], path, end: int, costs, step: int) -> dict:
+    """A run of SKIPs as one idea, placed at its first close as ``SimBroker.place`` would have placed it."""
+    first, last = rows[0], rows[-1]
+    long_ = first["direction"] == "LONG"
+    until = int(last["t"]) + step
+    idea = {"id": f"e{int(first['t'])}", "kind": "SKIPPED", "direction": first["direction"], "entry": first["entry"],
+            "stop": first["stop"], "target": first["target"], "r_ratio": first.get("r_ratio"),
+            "grade": first.get("grade"), "from": int(first["t"]), "until": until, "reason": first.get("reason") or "",
+            "order": None, "state": "REFUSED", "outcome": None, "fill": None, "filled_at": None, "exit_at": None,
+            "net_r": None, "best_r": None}
+    n = _closed(path, int(first["t"]))
+    if not n:
+        return idea
+    bid = float(path["close"][n - 1])
+    market = bid + float(path["spread"][n - 1]) if long_ else bid
+    better = first["entry"] < market if long_ else first["entry"] > market      # sim_broker's pending rule
+    body = {"direction": first["direction"], "kind": "LIMIT" if better else "MARKET", "stop": first["stop"],
+            "target": first["target"]}
+    if better:
+        body.update(price=first["entry"], expiry=until)
+    try:
+        trade = place(body, path, int(first["t"]), until=end)
+    except ValueError:
+        return idea                                          # a stop or target already on the wrong side
+    settle(trade, path, end, costs)
+    idea.update(order=body["kind"], state=trade["state"], outcome=trade["outcome"], fill=trade["fill"],
+                filled_at=trade["filled_at"], exit_at=trade["exit_at"], net_r=trade["net_r"], best_r=trade["mfe_r"])
+    return idea
+
+
+def _order_idea(r: dict, end: int) -> dict:
+    """An order the engine placed, with the backtest's own outcome."""
+    placed = int(r.get("placed_at") or r["t"])
+    if r.get("filled_at") is None:                       # a limit that never filled ends at its expiry
+        ends = r.get("closed_at") if r.get("closed_at") is not None else r.get("expires_at")
+        until, state = (int(ends), "EXPIRED") if ends is not None and int(ends) < end else (int(end), "PENDING")
+    elif r.get("closed_at") is not None:
+        until, state = int(r["closed_at"]), "CLOSED"
+    else:
+        until, state = int(end), "OPEN"
+    return {"id": f"e{placed}", "kind": "ORDER", "direction": r["direction"], "entry": r["entry"], "stop": r["stop"],
+            "target": r["target"], "r_ratio": r.get("r_ratio"), "grade": r.get("grade"), "from": placed,
+            "until": until, "reason": r.get("reason") or "", "order": r.get("order_kind"), "state": state,
+            "outcome": r.get("exit_reason"), "fill": r.get("fill"), "filled_at": r.get("filled_at"),
+            "exit_at": r.get("closed_at"), "net_r": r.get("net_r"), "best_r": r.get("mfe_r")}
+
+
+def engine_ideas(journal: list[dict], path: Mapping[str, np.ndarray], end: int, costs=None,
+                 step: int = 900) -> list[dict]:
+    """The engine's high-probability trades over a session, oldest first (Requirement 26.1).
+
+    Every EXECUTE row is an order, with the backtest's outcome. SKIP rows at consecutive closes with the same side,
+    entry and stop are one trade its limits refused, priced by the race rules from the first of them. ``step`` is
+    the entry timeframe's length: a refused idea lasts one candle past its last SKIP.
+    """
+    rows = sorted((r for r in journal if r.get("t") is not None), key=lambda r: r["t"])
+    ideas, run = [], []
+
+    def flush() -> None:
+        if run:
+            ideas.append(_skip_idea(run, path, end, costs, step))
+            run.clear()
+
+    for r in rows:
+        priced = bool(r.get("direction")) and all(r.get(k) is not None for k in ("entry", "stop", "target"))
+        if r.get("decision") == "SKIP" and priced:
+            if run and (r["direction"], r["entry"], r["stop"]) != (run[0]["direction"], run[0]["entry"], run[0]["stop"]):
+                flush()
+            run.append(r)
+            continue
+        flush()
+        if r.get("decision") == "EXECUTE" and priced:
+            ideas.append(_order_idea(r, end))
+    flush()
+    return sorted(ideas, key=lambda i: i["from"])
+
+
+def idea_at(ideas: list[dict], clock: int) -> Optional[dict]:
+    """The latest idea live at the clock: placed by then and not yet closed, expired or given up."""
+    live = [i for i in ideas if i["from"] <= int(clock) < i["until"]]
+    return max(live, key=lambda i: i["from"]) if live else None
+
+
+def next_idea(ideas: list[dict], clock: int) -> Optional[dict]:
+    """The engine's first idea after the clock on the same trading day."""
+    day = trading_day(int(clock))
+    later = [i for i in ideas if i["from"] > int(clock) and trading_day(i["from"]) == day]
+    return min(later, key=lambda i: i["from"]) if later else None
+
+
+def average_ranges(m1: pd.DataFrame, clock: int) -> dict[str, Optional[float]]:
+    """The mean true range of the last ``RANGE_CANDLES`` M15, H1 and D1 candles closed by the clock (Req 26.3).
+
+    ``m1`` holds UTC times; only M1 bars closed by the clock are read, so nothing after it moves the answer."""
+    from algo_research.replay.timeframes import aggregate, wall_seconds
+
+    w = np.asarray(wall_seconds(pd.to_datetime(m1["time"], utc=True)), dtype=np.int64)
+    keep = w + _M1 <= int(clock)
+    ohlc = [m1[k].to_numpy(float)[keep] for k in ("open", "high", "low", "close")]
+    out: dict[str, Optional[float]] = {}
+    for tf in RANGE_TFS:
+        bars = aggregate(w[keep], *ohlc, tf)
+        bars = bars[bars["time"].to_numpy() + seconds_of(tf) <= int(clock)].tail(RANGE_CANDLES + 1)
+        if len(bars) < 2:
+            out[tf] = None
+            continue
+        high, low, close_ = (bars[k].to_numpy(float) for k in ("high", "low", "close"))
+        prev = close_[:-1]
+        tr = np.maximum(high[1:] - low[1:], np.maximum(np.abs(high[1:] - prev), np.abs(low[1:] - prev)))
+        out[tf] = float(tr.mean())
+    return out
+
+
+def _in_ranges(distance: float, ranges: Mapping[str, Optional[float]]) -> dict:
+    return {tf: round(distance / v, 2) for tf, v in ranges.items() if v}
+
+
+def _side_of(x: dict, ranges: Mapping[str, Optional[float]], at: int, entry: float) -> dict:
+    risk, reward = abs(entry - x["stop"]), abs(x["target"] - entry)
+    return {"id": x["id"], "direction": x["direction"], "entry": entry, "stop": x["stop"], "target": x["target"],
+            "risk": risk, "reward": reward, "rr": round(reward / risk, 2) if risk else None, "at": int(at),
+            "stop_atr": _in_ranges(risk, ranges), "target_atr": _in_ranges(reward, ranges),
+            "outcome": x.get("outcome") or x.get("state"), "net_r": x.get("net_r"),
+            "best_r": x["mfe_r"] if "mfe_r" in x else x.get("best_r")}
+
+
+def _label(mine: dict, engine: Optional[dict]) -> str:
+    """Where the pair parts (D38): the other side, scale, location, or not at all."""
+    if engine is None:
+        return "none"
+    if mine["direction"] != engine["direction"]:
+        return "other side"
+    ratio = lambda a, b: max(a, b) / min(a, b) if min(a, b) > 0 else float("inf")  # noqa: E731
+    if ratio(mine["risk"], engine["risk"]) >= SCALE_RATIO or ratio(mine["reward"], engine["reward"]) >= SCALE_RATIO:
+        return "scale"
+    if abs(mine["entry"] - engine["entry"]) > mine["risk"]:
+        return "location"
+    return "agree"
+
+
+def _median(values) -> Optional[float]:
+    values = [v for v in values if v is not None]
+    return round(float(np.median(values)), 2) if values else None
+
+
+def compare_positions(trades: list[dict], ideas: list[dict], ranges_at, clock: int, hidden: bool = False) -> dict:
+    """Each of the trader's trades placed by the clock beside the engine's idea (Requirements 26.2-26.4).
+
+    The idea is the one live at the trade's placement, else the engine's next that trading day, else none.
+    ``ranges_at(clock)`` gives the average ranges at a clock. ``hidden``: the engine's side is withheld (blind)."""
+    pairs = []
+    for x in sorted(trades, key=lambda x: x["placed_at"]):
+        if x.get("state") == "REJECTED" or int(x["placed_at"]) > int(clock):
+            continue
+        at = int(x["placed_at"])
+        ranges = ranges_at(at)
+        entry = x["fill"] if x.get("fill") is not None else x["price"] if x.get("price") is not None else x.get("entry")
+        mine = _side_of(x, ranges, at, entry)
+        if hidden:
+            pairs.append({"mine": mine, "engine": None})
+            continue
+        live = idea_at(ideas, at)
+        idea, when = (live, "live") if live else (next_idea(ideas, at), "later that day")
+        engine = None if idea is None else {**_side_of(idea, ranges, idea["from"], idea["entry"]),
+                                             "kind": idea["kind"], "reason": idea["reason"], "grade": idea.get("grade")}
+        pairs.append({"mine": mine, "engine": engine, "when": when if engine else None,
+                      "same_side": bool(engine and engine["direction"] == mine["direction"]),
+                      "label": _label(mine, engine),
+                      "minutes_apart": round(abs(engine["at"] - at) / 60, 1) if engine else None})
+    summary = None
+    if not hidden:
+        seen = {p["engine"]["id"]: p["engine"] for p in pairs if p["engine"]}
+        labels: dict[str, int] = {}
+        for p in pairs:
+            labels[p["label"]] = labels.get(p["label"], 0) + 1
+
+        def medians(key: str) -> dict:
+            return {"mine": _median(p["mine"][key].get("M15") for p in pairs),
+                    "engine": _median(e[key].get("M15") for e in seen.values())}
+
+        summary = {"pairs": len(pairs), "labels": labels, "same_side": sum(p["same_side"] for p in pairs),
+                   "mine_r": round(sum(p["mine"]["net_r"] or 0.0 for p in pairs), 2),
+                   "engine_r": round(sum(e["net_r"] or 0.0 for e in seen.values()), 2),
+                   "median_stop_atr": medians("stop_atr"), "median_target_atr": medians("target_atr"),
+                   "median_rr": {"mine": _median(p["mine"]["rr"] for p in pairs),
+                                 "engine": _median(e["rr"] for e in seen.values())}}
+    return {"clock": int(clock), "hidden": bool(hidden), "pairs": pairs, "summary": summary}
+
+
 # ── the report over every saved session (Requirement 20.3) ───────────────────
 def _rate(matched: int, mine: int) -> str:
     return "—" if not mine else f"{matched}/{mine} ({round(100 * matched / mine)}%)"
@@ -532,20 +774,31 @@ def _r(value: float) -> str:
 def write_report(root: Optional[Path] = None) -> str:
     """Summarise every revealed session in ``<root>/REPORT.md``, and give the text back."""
     root = Path(root or NOCULUS_DIR)
-    sessions = []
+    sessions, positioned = [], []
     for path in sorted(root.glob("*/*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
         if data.get("comparison"):
             sessions.append((path.parent.name, path.stem, data))
+        if (data.get("positions") or {}).get("pairs"):
+            positioned.append((path.parent.name, path.stem, data))
     lines = ["# Noculus: the trader against the engine", "",
              f"{len(sessions)} sessions compared, from `{root}`. Written {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC.",
              ""]
     if not sessions:
-        lines += ["No revealed session has been compared yet."]
-        text = "\n".join(lines) + "\n"
-        root.mkdir(parents=True, exist_ok=True)
-        (root / "REPORT.md").write_text(text, encoding="utf-8")
-        return text
+        lines += ["No revealed session has been compared yet.", ""]
+    else:
+        lines += _sessions_report(sessions)
+    if positioned:
+        lines += _positions_report(positioned)
+    text = "\n".join(lines).rstrip("\n") + "\n"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "REPORT.md").write_text(text, encoding="utf-8")
+    return text
+
+
+def _sessions_report(sessions: list[tuple]) -> list[str]:
+    """The marks and the days, over every revealed session (Requirement 20.3)."""
+    lines: list[str] = []
     kinds: dict[str, dict] = {}
     frames: dict[str, dict] = {}
     mine_r = engine_r = 0.0
@@ -577,7 +830,49 @@ def write_report(root: Optional[Path] = None) -> str:
         for day in data["comparison"]["trades"]["days"]:
             apart_here = "yes" if day.get("disagreed") else "no"
             lines.append(f"| {instrument} | {day['day']} | {_r(day['mine_r'])} | {_r(day['engine_r'])} | {apart_here} |")
-    text = "\n".join(lines) + "\n"
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "REPORT.md").write_text(text, encoding="utf-8")
-    return text
+    return lines + [""]
+
+
+def _one_side(x: Optional[dict]) -> str:
+    if not x:
+        return "—"
+    kind = " (refused by its limits)" if x.get("kind") == "SKIPPED" else ""
+    stop, target = x.get("stop_atr", {}).get("M15"), x.get("target_atr", {}).get("M15")
+    return (f"{x['direction']}{kind} {x['entry']:.5g}, stop {stop if stop is not None else '—'} / target "
+            f"{target if target is not None else '—'} ATR, R:R {x['rr'] if x.get('rr') is not None else '—'}")
+
+
+def _positions_report(positioned: list[tuple]) -> list[str]:
+    """The trader's positions beside the engine's ideas, over every session that has some (Requirement 26.5)."""
+    pairs = [(instrument, name, p) for instrument, name, data in positioned for p in data["positions"]["pairs"]]
+    engines = {(i, n, p["engine"]["id"]): p["engine"] for i, n, p in pairs if p.get("engine")}
+    labels: dict[str, int] = {}
+    for _i, _n, p in pairs:
+        labels[p.get("label", "hidden")] = labels.get(p.get("label", "hidden"), 0) + 1
+    m15 = lambda xs, key: _median((x.get(key) or {}).get("M15") for x in xs)  # noqa: E731
+    mine = [p["mine"] for _i, _n, p in pairs]
+    theirs = list(engines.values())
+    mine_r = sum(x.get("net_r") or 0.0 for x in mine)
+    engine_r = sum(x.get("net_r") or 0.0 for x in theirs)
+    num = lambda v: "—" if v is None else f"{v}"  # noqa: E731
+    lines = ["## Your positions against the engine's trade", "",
+             f"{len(pairs)} positions in {len(positioned)} sessions, each beside the engine's idea at its clock (an "
+             "order, or a trade its limits refused). Distances are in the M15 average range (the mean true range of "
+             "the last 14 closed candles) at the clock.", "",
+             "- **where they parted:** " + ", ".join(f"{k} {v}" for k, v in sorted(labels.items())),
+             f"- **the same side:** {sum(1 for _i, _n, p in pairs if p.get('same_side'))} of {len(pairs)}",
+             f"- **median stop:** yours {num(m15(mine, 'stop_atr'))} M15 ATR, the engine's {num(m15(theirs, 'stop_atr'))}",
+             f"- **median target:** yours {num(m15(mine, 'target_atr'))} M15 ATR, the engine's "
+             f"{num(m15(theirs, 'target_atr'))}",
+             f"- **median R:R:** yours {num(_median(x.get('rr') for x in mine))}, the engine's "
+             f"{num(_median(x.get('rr') for x in theirs))}",
+             f"- **net R:** yours **{_r(mine_r)}**, the engine's **{_r(engine_r)}**", "",
+             "| instrument | session | placed | you | the engine | parted on | your R | its R |",
+             "|---|---|---|---|---|---|---|---|"]
+    for instrument, name, p in pairs:
+        at = pd.Timestamp(int(p["mine"]["at"]), unit="s").strftime("%a %d %b %H:%M")
+        e = p.get("engine")
+        lines.append(f"| {instrument} | {name} | {at} | {_one_side(p['mine'])} | {_one_side(e)} | "
+                     f"{p.get('label', 'hidden')} | {_r(p['mine'].get('net_r') or 0.0)} | "
+                     f"{_r(e['net_r']) if e and e.get('net_r') is not None else '—'} |")
+    return lines + [""]

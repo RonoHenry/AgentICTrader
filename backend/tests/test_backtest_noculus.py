@@ -756,3 +756,247 @@ def test_the_page_carries_the_indicator_layer():
     script = (STATIC / "engine.js").read_text(encoding="utf-8")
     assert '<script src="/static/fractal.js"></script>' in page and 'id="fractal"' in page
     assert '["fractal", "Fractal + POI"]' in script and "fractal.tick()" in script
+
+
+# ── task 340: the position tool on the engine chart (Requirement 25) ─────────
+def _at_clock(session, clock: int) -> tuple[float, float]:  # noqa: F811
+    """The bid and the spread at the clock, as ``place`` reads them: the last M1 closed by it."""
+    n = int(np.searchsorted(session.path["time"], clock - 60, side="right"))
+    return float(session.path["close"][n - 1]), float(session.path["spread"][n - 1])
+
+
+def test_a_drawn_position_is_a_market_order_a_limit_or_refused(session):  # noqa: F811
+    from algo_backtester.noculus import position_ticket
+
+    clock = wall(session.start) + 7200
+    bid, spread = _at_clock(session, clock)
+    ask = bid + spread
+    near = position_ticket({"direction": "LONG", "entry": ask + spread, "stop": bid - 0.004, "target": bid + 0.008},
+                           session.path, clock)
+    assert near["kind"] == "MARKET" and near["stop"] == bid - 0.004 and "price" not in near
+    below = position_ticket({"direction": "LONG", "entry": ask - 10 * spread, "stop": bid - 0.004,
+                             "target": bid + 0.008}, session.path, clock)
+    assert below["kind"] == "LIMIT" and below["price"] == ask - 10 * spread
+    with pytest.raises(ValueError, match="stop entry"):
+        position_ticket({"direction": "LONG", "entry": ask + 10 * spread, "stop": bid - 0.004, "target": bid + 0.008},
+                        session.path, clock)
+    above = position_ticket({"direction": "SHORT", "entry": bid + 10 * spread, "stop": bid + 0.006,
+                             "target": bid - 0.008}, session.path, clock)
+    assert above["kind"] == "LIMIT" and above["price"] == bid + 10 * spread
+    placed = place(above, session.path, clock, until=wall(session.end))     # the ticket is one place() takes
+    assert placed["kind"] == "LIMIT" and placed["state"] == "PENDING"
+
+
+def _ready(app) -> None:
+    import time
+    for _ in range(600):
+        if app.session.state == "ready":
+            return
+        time.sleep(0.2)
+    raise AssertionError(app.session.message)
+
+
+def test_an_open_session_keeps_its_own_journal_and_its_positions_say_the_engine_was_seen(setup, tmp_path):  # noqa: F811
+    root, snap = setup
+    app = WatchApp(root / "base.toml", snap, (DAY, DAY + timedelta(days=1)), noculus_root=tmp_path, studies_root=root)
+    app.start({"instrument": "EURUSD", "first_day": DAY.isoformat(), "days": 1})
+    _ready(app)
+    s = app.session
+    assert s.noculus is not None and s.noculus.path.name.endswith("-open.json")
+    clock = wall(s.start) + 7200
+    bid, spread = _at_clock(s, clock)
+    x = s.place_position({"direction": "LONG", "entry": bid + spread, "stop": bid - 0.004, "target": bid + 0.008,
+                          "t": clock, "drawing": "d1"})
+    assert x["kind"] == "MARKET" and x["drawing"] == "d1" and x["engine_seen"] is True
+    assert json.loads(s.noculus.path.read_text(encoding="utf-8"))["trades"][0]["drawing"] == "d1"
+    with pytest.raises(LookupError, match="blind"):                          # the ticket and the marks stay blind
+        s.place({"direction": "LONG", "kind": "MARKET", "stop": bid - 0.004, "target": bid + 0.008, "t": clock})
+    with pytest.raises(LookupError, match="blind"):
+        s.mark({"tool": "FVG", "tf": "H1", "t": clock, "candle": clock - 3 * 3600})
+    app.start({"instrument": "EURUSD", "first_day": DAY.isoformat(), "days": 1, "blind": True})
+    _ready(app)
+    b = app.session
+    assert not b.noculus.path.name.endswith("-open.json") and b.noculus.path != s.noculus.path
+    y = b.place_position({"direction": "SHORT", "entry": bid, "stop": bid + 0.004, "target": bid - 0.008, "t": clock})
+    assert y["engine_seen"] is False                                          # blind: a read of its own
+    b.reveal(clock + 900)
+    later = _at_clock(b, clock + 1800)[0]
+    z = b.place_position({"direction": "SHORT", "entry": later, "stop": later + 0.006, "target": later - 0.008,
+                          "t": clock + 1800})
+    assert z["engine_seen"] is True                                           # after the reveal: still placed, flagged
+
+
+def test_the_position_endpoint_places_and_the_trades_endpoint_settles_it(setup, tmp_path):  # noqa: F811
+    import threading
+    import urllib.request
+
+    from algo_backtester.watch import make_watch_server
+
+    root, snap = setup
+    app = WatchApp(root / "base.toml", snap, (DAY, DAY + timedelta(days=1)), noculus_root=tmp_path, studies_root=root)
+    server = make_watch_server(app, port=0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+
+    def call(path, body=None):
+        data = None if body is None else json.dumps(body).encode()
+        req = urllib.request.Request(base + path, data=data, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read())
+
+    try:
+        call("/api/watch/start", {"instrument": "EURUSD", "first_day": DAY.isoformat(), "days": 1})
+        _ready(app)
+        t = wall(app.session.start) + 7200
+        bid, spread = _at_clock(app.session, t)
+        placed = call("/api/watch/noculus/position", {"direction": "LONG", "entry": bid + spread, "stop": bid - 0.005,
+                                                      "target": bid + 0.005, "t": t, "drawing": "d9"})
+        assert placed["id"] == "t1" and placed["drawing"] == "d9"
+        rows = call(f"/api/watch/noculus/trades?t={t + 3600}")["trades"]
+        assert rows[0]["state"] in ("OPEN", "CLOSED") and rows[0]["fill"] is not None
+        assert "ideas" in call("/api/watch/journal")
+        got = call(f"/api/watch/noculus/positions?t={t + 3600}")
+        assert got["hidden"] is False and got["pairs"][0]["mine"]["id"] == "t1"
+    finally:
+        server.shutdown()
+
+
+def test_the_page_carries_the_position_tools():
+    script = (STATIC / "engine.js").read_text(encoding="utf-8")
+    js = (STATIC / "noculus.js").read_text(encoding="utf-8")
+    assert 'type: "long"' in script and 'type: "short"' in script
+    assert "/api/watch/noculus/position" in js and "/api/watch/noculus/positions" in js
+
+
+# ── task 341: the engine's trade beside yours (Requirement 26) ───────────────
+def test_skips_in_a_row_are_one_idea_placed_as_the_broker_would_and_orders_keep_their_outcome(session):  # noqa: F811
+    from algo_backtester.noculus import engine_ideas
+
+    t0 = wall(session.start) + 3 * 3600
+    bid, spread = _at_clock(session, t0)
+    end = wall(session.end)
+    skip = dict(decision="SKIP", reason="concurrent trades 3 has reached the 3 trade limit", direction="SHORT",
+                entry=bid - spread, stop=bid + 0.0040, target=bid - 0.0080, order_kind=None, placed_at=None,
+                filled_at=None, fill=None, closed_at=None, exit=None, exit_reason=None, net_r=None, mfe_r=None)
+    rows = [_row(t=t0 - 900, decision="NO_TRADE", direction=None),
+            _row(t=t0, **skip), _row(t=t0 + 900, **skip), _row(t=t0 + 1800, **{**skip, "target": bid - 0.0060}),
+            _row(t=t0 + 2700, **{**skip, "entry": bid + 0.0030, "stop": bid + 0.0070}),  # another entry: another idea
+            _row(t=t0 + 3600, decision="IN_TRADE", direction=None),
+            _row(t=t0 + 4500, placed_at=t0 + 4500, filled_at=t0 + 4560, closed_at=t0 + 9000, net_r=-1.02, mfe_r=0.4),
+            _row(t=t0 + 9900, order_kind="LIMIT", placed_at=t0 + 9900, expires_at=t0 + 12600, filled_at=None, fill=None,
+                 closed_at=t0 + 12600, exit=None, exit_reason="EXPIRED", net_r=None, mfe_r=None)]
+    ideas = engine_ideas(rows, session.path, end, session.costs)
+    assert [i["kind"] for i in ideas] == ["SKIPPED", "SKIPPED", "ORDER", "ORDER"]
+    first, second, order, expired = ideas
+    assert expired["state"] == "EXPIRED" and expired["until"] == t0 + 12600 and expired["net_r"] is None
+    assert first["from"] == t0 and first["until"] == t0 + 1800 + 900 and first["reason"].startswith("concurrent")
+    expected = place({"direction": "SHORT", "kind": "MARKET", "stop": bid + 0.0040, "target": bid - 0.0080},
+                     session.path, t0, until=end)                             # entry below the bid: no better, market
+    settle(expected, session.path, end, session.costs)
+    assert first["order"] == "MARKET" and first["net_r"] == expected["net_r"] and first["fill"] == expected["fill"]
+    assert second["order"] == "LIMIT" and second["entry"] == bid + 0.0030        # above the bid: a sell limit
+    assert order["net_r"] == -1.02 and order["best_r"] == 0.4 and order["from"] == t0 + 4500
+    assert order["until"] == t0 + 9000 and order["state"] == "CLOSED"
+
+
+def _idea(**kw) -> dict:
+    row = {"id": "e1", "kind": "ORDER", "direction": "LONG", "entry": 1.1002, "stop": 1.0991, "target": 1.1028,
+           "r_ratio": 2.4, "grade": "B", "from": 1790553600, "until": 1790560000, "reason": "", "order": "MARKET",
+           "state": "CLOSED", "outcome": "TARGET", "fill": 1.1002, "net_r": 2.3, "best_r": 2.4}
+    row.update(kw)
+    return row
+
+
+def test_a_position_pairs_with_the_idea_live_at_its_clock_else_the_day_s_next_else_none():
+    from algo_backtester.noculus import compare_positions
+
+    ranges = lambda clock: {"M15": 0.001, "H1": 0.002, "D1": 0.008}  # noqa: E731
+    mine = [_trade(id="t1", placed_at=1790555000, fill=1.1, stop=1.099, target=1.103, risk=0.001),
+            _trade(id="t2", placed_at=1790563000, fill=1.1, stop=1.099, target=1.103, risk=0.001),
+            _trade(id="t3", placed_at=1790620000, fill=1.1, stop=1.099, target=1.103, risk=0.001)]
+    ideas = [_idea(id="e1", **{"from": 1790553600, "until": 1790560000}),
+             _idea(id="e2", direction="SHORT", entry=1.1, stop=1.104, target=1.09, **{"from": 1790565000,
+                                                                                       "until": 1790570000})]
+    out = compare_positions(mine, ideas, ranges, 1790630000)
+    pairs = {p["mine"]["id"]: p for p in out["pairs"]}
+    assert pairs["t1"]["engine"]["id"] == "e1" and pairs["t1"]["when"] == "live"
+    assert pairs["t2"]["engine"]["id"] == "e2" and pairs["t2"]["when"] == "later that day"
+    assert pairs["t3"]["engine"] is None and pairs["t3"]["label"] == "none"     # 18:26: the next trading day
+
+
+def test_the_pair_is_measured_on_the_market_s_own_scale_and_labelled():
+    from algo_backtester.noculus import compare_positions
+
+    ranges = lambda clock: {"M15": 0.001, "H1": 0.002, "D1": 0.008}  # noqa: E731
+    mine = _trade(id="t1", placed_at=1790555000, fill=1.1, stop=1.099, target=1.103, risk=0.001, net_r=2.9)
+
+    def one(**kw):
+        return compare_positions([mine], [_idea(**kw)], ranges, 1790610000)["pairs"][0]
+
+    other = one(direction="SHORT", entry=1.1, stop=1.104, target=1.09)
+    assert other["label"] == "other side" and other["same_side"] is False
+    wide = one(entry=1.1, stop=1.096, target=1.103)                            # a 4x stop on the same side
+    assert wide["label"] == "scale"
+    assert wide["engine"]["stop_atr"] == {"M15": 4.0, "H1": 2.0, "D1": 0.5} and wide["mine"]["stop_atr"]["M15"] == 1.0
+    far = one(entry=1.106, stop=1.1048, target=1.109)                          # the same scale, 6 pips away
+    assert far["label"] == "location"
+    agree = one(entry=1.1002, stop=1.0991, target=1.1028)
+    assert agree["label"] == "agree" and agree["minutes_apart"] == round((1790555000 - 1790553600) / 60, 1)
+    assert agree["mine"]["rr"] == 3.0 and agree["engine"]["rr"] == round(0.0026 / 0.0011, 2)
+    summary = compare_positions([mine], [_idea(direction="SHORT")], ranges, 1790610000)["summary"]
+    assert summary["labels"] == {"other side": 1} and summary["same_side"] == 0 and summary["mine_r"] == 2.9
+
+
+def test_average_ranges_read_only_candles_closed_by_the_clock(session):  # noqa: F811
+    from algo_backtester.noculus import average_ranges
+    from algo_research.replay.timeframes import aggregate
+
+    m1 = session._m1(session.instrument, 30)
+    clock = wall(session.start) + 5 * 3600
+    got = average_ranges(m1, clock)
+    w = wall_seconds(m1["time"])
+    keep = w + 60 <= clock
+    bars = aggregate(w[keep], *(m1[k].to_numpy(float)[keep] for k in ("open", "high", "low", "close")), "H1")
+    bars = bars[bars["time"] + 3600 <= clock].tail(15)
+    prev = bars["close"].shift(1)
+    tr = np.maximum(bars["high"] - bars["low"], np.maximum((bars["high"] - prev).abs(), (bars["low"] - prev).abs()))
+    assert got["H1"] == pytest.approx(float(tr.iloc[1:].mean()))
+    later = m1.copy()
+    later.loc[wall_seconds(later["time"]) >= clock, ["high"]] += 1.0       # what happens after the clock is unseen
+    assert average_ranges(later, clock) == got
+
+
+def test_while_blind_the_engine_s_side_of_each_pair_is_withheld(blind, tmp_path):  # noqa: F811
+    blind.noculus = NoculusJournal(tmp_path / "EURUSD" / "s1.json", {"instrument": "EURUSD"})
+    clock = wall(blind.start) + 7200
+    bid, spread = _at_clock(blind, clock)
+    blind.place_position({"direction": "LONG", "entry": bid + spread, "stop": bid - 0.004, "target": bid + 0.008,
+                          "t": clock})
+    hidden = blind.positions({"t": clock + 3600})
+    assert hidden["hidden"] is True and hidden["pairs"][0]["engine"] is None and "label" not in hidden["pairs"][0]
+    assert "positions" not in blind.noculus.data
+    blind.reveal(clock + 3600)
+    shown = blind.positions({"t": clock + 3600})
+    assert shown["hidden"] is False and shown["pairs"][0]["label"] in ("other side", "scale", "location", "agree", "none")
+    assert NoculusJournal(blind.noculus.path).data["positions"]["pairs"][0]["mine"]["id"] == "t1"
+
+
+def test_the_report_adds_the_positions(tmp_path):
+    j = NoculusJournal(tmp_path / "GBPUSD" / "2025-04-14-1d-base-open.json", {"instrument": "GBPUSD"})
+    pair = {"mine": {"id": "t1", "direction": "LONG", "entry": 1.31756, "stop": 1.3169, "target": 1.31991,
+                     "rr": 3.56, "stop_atr": {"M15": 0.6, "H1": 0.3, "D1": 0.06}, "target_atr": {"M15": 2.1},
+                     "outcome": "TARGET", "net_r": 3.56, "best_r": 3.56, "at": 1744681800},
+            "engine": {"id": "e1", "kind": "SKIPPED", "direction": "SHORT", "entry": 1.32006, "stop": 1.32222,
+                       "target": 1.30491, "rr": 7.0, "stop_atr": {"M15": 1.9, "H1": 0.9, "D1": 0.2},
+                       "target_atr": {"M15": 13.6}, "outcome": "STOP", "net_r": -1.02, "best_r": 1.13,
+                       "at": 1744696800},
+            "same_side": False, "label": "other side", "when": "later that day", "minutes_apart": 250.0}
+    j.data["positions"] = {"clock": 1744700000, "pairs": [pair],
+                           "summary": {"pairs": 1, "labels": {"other side": 1}, "same_side": 0, "mine_r": 3.56,
+                                       "engine_r": -1.02, "median_stop_atr": {"mine": 0.6, "engine": 1.9},
+                                       "median_target_atr": {"mine": 2.1, "engine": 13.6},
+                                       "median_rr": {"mine": 3.56, "engine": 7.0}}}
+    j.save()
+    text = write_report(tmp_path)
+    assert "Your positions against the engine's trade" in text and "other side" in text
+    assert "1.9" in text and "13.6" in text and "+3.56R" in text and "-1.02R" in text
