@@ -1,5 +1,6 @@
-# The trader's focus markets (2026-10-16) that the Exness profile prices: the engine fixes against the reference
-# (liquidity-engine update 2026-10-21, task 344). DXY is the trader's reference index and BTC has no Exness spec.
+# The trader's focus markets (2026-10-16) that the Exness profile prices in USD: the engine fixes against the
+# reference (liquidity-engine update 2026-10-21, task 344). DXY is the trader's reference index and BTC has no
+# Exness spec. GER40 (EUR) and UK100 (GBP) wait for the backtester's currency conversion (run.py refuses crosses).
 #   python -m algo_backtester run config/backtests/focus.toml --snapshot focus-2025-2026h1 \
 #       --variant base --variant fresh --variant fresh_near --variant gap --variant fresh_gap --variant fresh_near_gap
 # Candles come from the research snapshot, the M1 the research and Noculus read. The period is the research's
@@ -7,7 +8,7 @@
 
 [run]
 profile = "exness-standard"
-instruments = ["XAUUSD", "EURUSD", "GBPUSD", "US100", "US500", "US30", "GER40", "UK100"]
+instruments = ["XAUUSD", "EURUSD", "GBPUSD", "US100", "US500", "US30"]
 start = 2025-01-01                                       # [start, end), UTC: the exploration slice
 end = 2025-07-01
 study = "baseline-2026q3"                                # hold-out: config/backtests/studies/<study>.toml
