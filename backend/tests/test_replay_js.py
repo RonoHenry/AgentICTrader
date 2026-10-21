@@ -8,7 +8,8 @@ into node with just enough DOM and Lightweight Charts to run them, and drives th
   blank page: 2026-10-17, a stale server 404ed noculus.js and engine.js died at its first line);
 - noculus_ui.js: arm the tools, click a candle, place and close a trade, reveal, compare;
 - drawings_ui.js: the magnet off / weak / strong, Shift keeping a line level, Shift still measuring alone;
-- reconnect_ui.js: the server restarts under an open page, and the same session comes back at the same clock.
+- reconnect_ui.js: the server restarts under an open page, and the same session comes back at the same clock;
+- fractal_ui.js: the trader's Fractal + POI indicator asked for at the clock, painted, set up in its dialog.
 
 Skipped when node is not installed.
 """
@@ -26,7 +27,8 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
 
-@pytest.mark.parametrize("script", ["load_engine.js", "noculus_ui.js", "drawings_ui.js", "reconnect_ui.js"])
+@pytest.mark.parametrize("script", ["load_engine.js", "noculus_ui.js", "drawings_ui.js", "reconnect_ui.js",
+                                    "fractal_ui.js"])
 def test_the_page_scripts(script):
     run = subprocess.run([NODE, str(JS / script)], capture_output=True, text=True, timeout=120, cwd=JS)
     assert run.returncode == 0, f"{script} failed:\n{run.stdout[-3000:]}\n{run.stderr[-3000:]}"

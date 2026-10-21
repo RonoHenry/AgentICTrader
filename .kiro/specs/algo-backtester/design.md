@@ -824,3 +824,61 @@ The open list is walked from the end, guarded against an empty list, because a P
 - the details panel shows it.
 
 Without the file, rows carry no `mode` and the filter is absent, so older runs and the golden report render unchanged.
+
+---
+
+## Update 2026-10-19: The Fractal + POI Indicator (Requirements 21–23)
+
+Decisions D31–D35. The port is `algo_research/fractal_poi/`. Noculus serves it from `watch.py` and paints it with `static/fractal.js`.
+
+### The port (`algo_research/fractal_poi/`)
+
+| Module | Pine source | What it holds |
+|---|---|---|
+| `frames.py` | `getHigherTF` … `getFractalHTF`, `getAutoHTF2`, `fvg_get_htf_period`, `lq_f_bsl_auto_tf`, `ValidTimeframe`, the Quarterly sessions | the HTF for a chart; `starts(wall, tf)` and `period_end(start, tf)` for every timeframe the indicator uses, on the charts' clock |
+| `chart.py` | — | `Chart`: the chart's candles aggregated from M1 as Noculus aggregates them, with their close times; `Now`, the clock's candle; Pine's box, line and label as plain data |
+| `settings.py` | the inputs | `FractalSettings` with the indicator's defaults; `DRAW_ONLY`, the inputs that only choose what is drawn |
+| `model.py` | `Monitor`, `Update`, `ICUpdate`, `CheckSMTDivergence`, `DrawAll`, `DrawSetups`, `DrawHTF2` | HTF candles and setups: C1–C4, CISD, IC-CISD, zones, SD, formation liquidity, SMT |
+| `liquidity.py` | `f_lq_*`, `f_prev_level`, `f_bsl_mini`, `f_bsl_ssl_v2`, the swings, `f_rc_*` | the liquidity suite |
+| `imbalance.py` | the FVG engine, `fvg_detect` | HTF fair value gaps |
+| `__init__.py` | the main execution | `FractalPOI`, the reader; `PARTNERS` (D34), `partners_for`, `warmup_days`, `defaults` |
+
+**Reading.** `FractalPOI.at(clock)` reads each chart candle once it has closed by the clock (`Chart.closed_by`). Each candle is read in the script's own order: the liquidity suite, the FVG engine, the SMT trackers, `Monitor`, `Update`, then HTF2. The reader then draws what the script draws on its last bar, taking the clock's candle (`Chart.now`: the candle holding the last M1 closed by the clock) as that bar:
+- the HTF candles sit `offset` candles to its right;
+- lines that run "to now" end on it;
+- an entry zone runs to its close, until the zone's own end.
+
+**Positions.** Pine counts some positions in bars (`bar_index`). A bar already read takes its own open time. A bar not yet read (a position ahead of price) is counted in chart candles from the clock's candle. So no time comes from a candle the clock hasn't reached, and the page's own logical mapping places it where TradingView would.
+
+**State.** Pine's `na` is NaN for prices, so comparisons with it are false in both. For bar indexes it is None.
+- Forward is incremental: one candle per step.
+- Going back restores the nearest checkpoint, taken every 250 candles. Checkpoints share the candle-boundary arrays.
+
+**Warm-up.** `warmup_days(tf, s)`: enough HTF candles for the setups kept, 60 FVG-timeframe candles, 40 candles of each BSL timeframe shown, and the previous week (and the previous month when PM levels are on). At most 120 days.
+
+### On Noculus (`watch.py`, `static/fractal.js`)
+
+- **`WatchSession.fractal(q)`** answers `GET /api/watch/fractal?tf=&t=&s=`, where `s` is the trader's changed inputs as JSON.
+  - The candles come from the session's snapshot M1, from the warm-up to the session's end. Partners come from the snapshot too.
+  - Up to four readers are kept, by chart timeframe and computing inputs. A drawing input reuses its reader and only redraws.
+  - The events are the session's own: from its start, the latest 200.
+  - It answers while the session is blind (D33).
+- **`GET /api/watch/fractal-defaults`** gives the inputs' defaults, the Fractal modes and `DRAW_ONLY`, for the dialog.
+- **`fractal.js`** asks again only when something can have changed:
+  - another timeframe or input;
+  - the clock reaching the view's `refresh_at` (the clock's candle closing);
+  - the clock going back.
+
+  It paints Pine's three objects, with the indicator's black as the theme's ink, and counts the HTF timer down from the clock between fetches. Its panel is the dashboard. Its settings dialog has five tabs (Inputs, Model, HTF, Liquidity, FVG & SMT), and the trader's changes are kept in this browser.
+
+### Property 11: The Indicator Reads Nothing After the Clock
+
+*For any* clock `t`, chart timeframe and inputs, `FractalPOI(data).at(t)` equals `FractalPOI(data truncated to the M1 bars closed by t).at(t)`, partners included.
+
+**Validates: Requirements 22.1, 22.2**
+
+| Requirement | Design element |
+|---|---|
+| 21 The indicator, ported | `algo_research/fractal_poi/` (D31, D34, D35) |
+| 22 Read at the clock | `FractalPOI.at`, `Chart.closed_by`, `Chart.now`, Property 11 (D32) |
+| 23 On the chart | `WatchSession.fractal`, the two endpoints, `static/fractal.js` (D33) |

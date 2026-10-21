@@ -98,7 +98,7 @@ global.fetch = async (url, init) => {
   return reply(200, {});
 };
 
-const files = ["drawings.js", "settings.js", "motion.js", "noculus.js", "shell.js"];
+const files = ["drawings.js", "settings.js", "motion.js", "noculus.js", "fractal.js", "shell.js"];
 for (const name of files) (0, eval)(fs.readFileSync(path.join(STATIC, name), "utf8"));
 global.__calls = calls; global.__status = status;
 (0, eval)(fs.readFileSync(path.join(STATIC, "engine.js"), "utf8") + fs.readFileSync(path.join(__dirname, "reconnect_probe.txt"), "utf8"));

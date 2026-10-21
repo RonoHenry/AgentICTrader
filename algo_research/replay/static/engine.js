@@ -22,8 +22,8 @@ const TOOLS = [
   { type: "fib", icon: "≣", title: "Fib / SD (Alt+F)", key: "f" }, { type: "range", icon: "⇕", title: "Range (or Shift + drag)", key: "m" },
   { type: "text", icon: "T", title: "Text (Alt+N)", key: "n" },
 ];
-const LAYERS = [["modelA", "Model A"], ["arrays", "Arrays"], ["pools", "Pools"], ["profile", "Day bias & draw"], ["sequence", "Setup"],
-                ["candidates", "Candidates"], ["orders", "Orders & trades"]];
+const LAYERS = [["fractal", "Fractal + POI"], ["modelA", "Model A"], ["arrays", "Arrays"], ["pools", "Pools"],
+                ["profile", "Day bias & draw"], ["sequence", "Setup"], ["candidates", "Candidates"], ["orders", "Orders & trades"]];
 // Model A (context-engine Requirement 17): the trader's frame sets.
 const MA_SETS = [["model_d1", "Model A: D1 / H1 / M5"], ["model_h4", "Model A: H4 / M15 / M1"]];
 const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, journal: [], playing: false, busy: false, picks: {}, hl: null,
@@ -36,6 +36,7 @@ const ARRAY_SHOWS = { M1: ["M1", "M5"], M3: ["M1", "M10"], M5: ["M1", "M15"], M1
                       H12: ["H1", "W1"], D1: ["H1", "W1"], W1: ["H4", "W1"] };
 const arrayInterval = (tf) => S.arrayVis[tf] || ARRAY_SHOWS[tf] || null;
 if (S.layers.modelA === undefined) S.layers.modelA = true;      // new in 2026-10-15: on until switched off
+if (S.layers.fractal === undefined) S.layers.fractal = true;    // new in 2026-10-19: the trader's indicator
 
 // ── the chart ─────────────────────────────────────────────────────────────
 const chart = LightweightCharts.createChart($("chart"), {
@@ -105,6 +106,13 @@ const motion = new Motion(chart, series, {
   container: $("chart"), draw, prefs: Prefs, palette, bars: () => S.bars, tfSeconds: () => SECONDS[S.tf],
   now: () => (S.status ? S.t : null), onChange: () => refresh(),
 });
+// ── Fractal + POI: the trader's own indicator, read at the clock (Requirement 23); blind sessions show it too ──
+const fractal = new FractalPOI(chart, series, {
+  X, Y, palette, api: (path) => api(path), tf: () => S.tf, clock: () => S.t, status: () => S.status,
+  instruments: () => (S.meta ? S.meta.instruments : []), prefs: Prefs, say: (t) => say(t),
+  refresh: () => { renderFractal(); renderLog(); refresh(); }, onView: () => renderFractal(),
+});
+fractal.setOn(S.layers.fractal);
 // ── Noculus: the trader's marks, blind until they reveal the engine (Requirements 17-18) ──
 const MARK_TFS = ["M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1"];
 const noculus = new Noculus(chart, series, {
@@ -327,7 +335,13 @@ async function loadModelA() {
   S.maAt = key;
   S.ma = (await api(`/api/watch/model-a?set=${S.maSet}&t=${S.t}`)).instances;
 }
-function refresh() { engineUpdate(); noculus.update(); draw.refresh(); }
+function refresh() { engineUpdate(); fractal.update(); noculus.update(); draw.refresh(); }
+function renderFractal() {
+  const box = $("fractal");
+  box.innerHTML = fractal.panel();
+  const b = box.querySelector("[data-fractal]");
+  if (b) b.onclick = () => act(() => fractal.dialog());
+}
 
 // ── API ───────────────────────────────────────────────────────────────────
 async function api(path, body, retried = false) {
@@ -461,6 +475,8 @@ async function loadBars(fit) {
 async function loadState() {
   S.state = (await api(`/api/watch/state?t=${S.t}`)).state;
   await loadModelA();
+  await fractal.tick();
+  renderFractal();
   Shell.refresh("t=" + S.t);
   renderEngine(); renderLog(); refresh();
 }
@@ -484,7 +500,7 @@ async function advance(dt) {
     const got = (await api(`/api/watch/bars?tf=${S.tf}&until=${S.t}&since=${last ? last.time : S.t - 86400}`)).bars;
     try { for (const b of got) put(b); } catch (e) { await loadBars(false); }
     if (Math.floor(S.t / 900) !== Math.floor(before / 900)) await loadState();
-    else { await loadModelA(); renderEngine(); renderLog(); refresh(); }
+    else { await loadModelA(); await fractal.tick(); renderFractal(); renderEngine(); renderLog(); refresh(); }
     await noculus.tick();                               // the trader's own trades settle to the clock too
     renderHeader();
   } finally { S.busy = false; }
@@ -518,7 +534,7 @@ function buildTfs() {
     if (gi) box.append(Object.assign(document.createElement("span"), { className: "sep" }));
     for (const tf of g) {
       const b = document.createElement("button"); b.textContent = tfLabel(tf); b.dataset.tf = tf; b.classList.toggle("on", tf === S.tf);
-      b.onclick = () => act(async () => { S.tf = tf; buildTfs(); if (S.status) { await loadBars(true); refresh(); } });
+      b.onclick = () => act(async () => { S.tf = tf; buildTfs(); if (S.status) { await loadBars(true); await fractal.tick(); renderFractal(); refresh(); } });
       box.append(b);
     }
   });
@@ -561,8 +577,15 @@ function buildLayers() {
     const l = document.createElement("label"), c = document.createElement("input");
     c.type = "checkbox"; c.checked = !!S.layers[key];
     c.onchange = () => act(async () => { S.layers[key] = c.checked; Prefs.set("watch.layers", S.layers); S.maAt = null;
+                                         fractal.setOn(S.layers.fractal); await fractal.tick(); renderFractal();
                                          await loadModelA(); renderEngine(); renderLog(); refresh(); });
     l.append(c, " " + name); box.append(l);
+    if (key === "fractal") {
+      const gear = document.createElement("button");
+      gear.className = "boxed"; gear.id = "fractalSettings"; gear.textContent = "⚙"; gear.title = "Fractal + POI settings";
+      gear.onclick = () => act(() => fractal.dialog());
+      box.append(gear);
+    }
   }
   const ma = document.createElement("select");
   ma.id = "maSet"; ma.title = "Which of your frame sets Model A reads";
@@ -708,6 +731,9 @@ function renderLog() {
                                                                + (r.path ? ` (best +${r.path.best_r.toFixed(2)}R at ${fmtTime(r.path.best_at)})` : ""),
                                                                cls: (r.net_r || 0) > 0 ? "good" : "bad" });
     else if (r.filled_at == null && r.expires_at != null && r.expires_at <= S.t) items.push({ t: r.expires_at, text: "order expired unfilled", cls: "muted" });
+  }
+  if (S.layers.fractal) {
+    for (const e of fractal.events()) items.push({ t: e.t, text: `Fractal + POI: ${e.text}`, cls: e.dir === "bull" ? "good" : "bad" });
   }
   if (S.layers.modelA) {
     for (const y of S.ma) for (const [state, t, why] of y.events) {
