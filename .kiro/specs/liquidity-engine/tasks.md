@@ -928,6 +928,43 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     `config/backtests/base.toml` gains the `gap` and `anticipation_gap` variants for 326c.
   - **326c is open:** the variant run and the user's review, before the default changes (LE-D18).
 
+### Update 2026-10-21: a fresh raid, and arrays from closed candles
+
+- [x] 342. A fresh raid (Req 27)
+  - **342a. RED**
+    - Under `raid_window = "H4"`: a raid in the current or previous H4 candle is ordered; one before them is refused as `STALE_RAID`, with both times in the detail; `raid_window_candles = 3` admits it.
+    - The window follows the strategy calendar: at a candle's open the window is that candle and the one before.
+    - Off by default: every existing decision is unchanged.
+    - The cache key changes with both settings; `base.toml` loads the `fresh` and `fresh_gap` variants.
+    - Under `max_stop_atr = 1.0`: a stop within one average range of the last 14 closed M15 candles is ordered (an in-progress candle isn't read, and the ruler stays M15 on M5 entries), a wider one is refused as `STOP_TOO_WIDE`; too few bars is an error, not a silent pass; off by default.
+  - **342b. GREEN** — `StrategyConfig.raid_window`, `raid_window_candles` and `max_stop_atr`; `_candle_policy` and the stop checks in `agent/order_intent.py`; the variants `fresh`, `fresh_gap`, `fresh_near`, `fresh_near_gap`.
+  - **Done 2026-10-21.** `StrategyConfig.raid_window`, `raid_window_candles`, `max_stop_atr`; in
+    `agent/order_intent.py` the `STALE_RAID` rule (first in `_candle_policy`; `raid_window_start` reads the view's
+    own bars of the frame, so weekend periods don't count) and `STOP_TOO_WIDE` after the minimum-stop check (the
+    closed M15 candles' average range, whatever the entry timeframe). Variants `fresh`, `fresh_gap`, `fresh_near`,
+    `fresh_near_gap` in `base.toml`; `config/backtests/focus.toml` for task 344, with `m5_gap` and
+    `m5_fresh_near_gap`. `algo_backtester run --snapshot` reads a research snapshot instead of the store. The
+    smoke run caught a latent bug: `_run_many` grouped variants without `fvg_zone`, so a gap variant shared the
+    reference's Phase A until `generate_many` refused it; the grouping now includes it. 9 tests (order intent 5,
+    config 2, CLI 2) and the two guard tests updated.
+  - **Validates: Requirements 27.1–27.7**
+
+- [x] 343. Arrays from closed candles under the gap (Req 26.6)
+  - **343a. RED**
+    - Under `"gap"`, an FVG whose third candle is still forming is not reported, and a forming candle trading beyond a gap's far edge doesn't fill or invert it; the same view under `"candles"` is unchanged.
+    - The entry timeframe, whose view holds closed bars only, reads the same under both.
+    - The closed test is the strategy calendar's: a D1 candle is closed at the next 17:00 New York, a W1 at its week's end, an MN1 at its month's end.
+  - **343b. GREEN** — `closed_candles` in `liquidity_engine/utils/time_utils.py`; `LiquidityMappingEngine.analyze` gives the PD array detector and the breakers' swing structure the closed candles under `"gap"`.
+  - **Done 2026-10-21.** `closed_candles` (the strategy calendar's period ends) in `liquidity_engine/utils/time_utils.py`;
+    under `"gap"` `LiquidityMappingEngine.analyze` gives `PDArrayDetector` the closed candles and a swing structure
+    read from them. 4 tests in `test_liquidity_closed_candles.py`. The default (`"candles"`) and the golden run are
+    unchanged. Engine code changed, so the Phase A cache is rebuilt by the next run.
+  - **Validates: Requirement 26.6**
+
+- [ ] 344. The comparison run **(user review)**
+  - Run `config/backtests/focus.toml` (the trader's focus markets the profile prices, from the research snapshot: `--snapshot focus-2025-2026h1`) over the exploration slice with `base`, `fresh`, `fresh_near` (one engine analysis), `gap`, `fresh_gap`, `fresh_near_gap` (another), and `m5_gap`, `m5_fresh_near_gap` (a third, on M5), in one command with capped workers. Record trades, R, win rate, stops and targets in average ranges, holding time, against the reference.
+  - The default changes only after the trader's review (LE-D18). Any rule that comes out of it is then confirmed once, pre-registered.
+
 ---
 
 ## Task Dependency Graph

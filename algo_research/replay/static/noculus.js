@@ -13,6 +13,12 @@
 // A trade is a ticket at the clock: long or short, market or limit, with a stop and a target, optionally tied to
 // one of the marks. The server prices it by the race rules and settles it as the clock advances; the page draws
 // each one's entry, stop and target, and its exit once it has one.
+//
+// A position (update 2026-10-21, Requirements 25-26) is TradingView's Long or Short Position drawn on the chart,
+// in any session: selected, it is placed at the clock, and the server makes it a market order or a limit by where
+// its entry sits. The drawing then carries its trade's state, and the panel sets each position beside the
+// engine's trade at that moment, measured in the market's own average range. While a blind session is unrevealed,
+// the engine's side stays hidden.
 "use strict";
 
 (function () {
@@ -34,6 +40,7 @@
       this.chart = chart; this.series = series; this.opts = opts;
       this.data = null;                                  // the session's journal, as the server keeps it
       this.trades = []; this.diff = null;                // the comparison, once the engine is revealed
+      this.pairs = null; this.position = null;           // the positions beside the engine's; the selected drawing
       this.tool = null; this.field = null; this.tf = null; this.dir = 0; this.side = "LONG"; this.builtKey = null;
       this.update = () => {};
       series.attachPrimitive({
@@ -50,27 +57,72 @@
     get marking() { return this.blind && this.revealed == null; }
     armed() { return !!(this.blind && (this.tool || this.field)); }
 
-    /** The session's journal and its trades, or nothing when the session is not blind. */
+    /** The session's journal, its trades and its positions beside the engine's. Every session keeps one. */
     async sync() {
-      this.data = null; this.trades = []; this.builtKey = null;
-      if (this.blind) {
+      this.data = null; this.trades = []; this.pairs = null; this.builtKey = null;
+      if (this.opts.status()) {
         try {
           this.data = await this.opts.api("/api/watch/noculus");
           this.trades = this.data.trades || [];
-          if (this.revealed != null) this.diff = await this.opts.api("/api/watch/noculus/comparison");
-        } catch (e) { this.opts.say(e.message); }
+          if (this.blind && this.revealed != null) this.diff = await this.opts.api("/api/watch/noculus/comparison");
+          await this.loadPairs();
+        } catch (e) { this.data = null; this.opts.say(e.message); }
       }
       this.tool = this.field = null;
       this.render();
+      this.link();
     }
 
-    /** The clock moved: the server settles every trade up to it. */
+    /** The clock moved: the server settles every trade up to it, and sets the positions beside the engine's. */
     async tick() {
-      if (!this.blind || !this.data) return;
+      if (!this.data) return;
       try {
         this.trades = (await this.opts.api(`/api/watch/noculus/trades?t=${this.opts.clock()}`)).trades;
-        this.fillTrades();
+        await this.loadPairs();
+        this.fillTrades(); this.fillPosition(); this.fillPairs(); this.link();
       } catch (e) { /* the session may be between states; the next tick will catch up */ }
+    }
+
+    async loadPairs() {
+      this.pairs = this.trades.length ? await this.opts.api(`/api/watch/noculus/positions?t=${this.opts.clock()}`) : null;
+    }
+
+    // ── positions (Requirements 25-26) ────────────────────────────────────
+    /** The drawing selected on the chart: a long or short position is offered for placing. */
+    select(d) {
+      this.position = d && (d.type === "long" || d.type === "short") ? d : null;
+      this.fillPosition();
+    }
+
+    /** Place a drawn position at the clock; the server picks market or limit from where its entry sits. */
+    async placePosition(d) {
+      d = d || this.position;
+      if (!d || !this.data) return;
+      const [entry, stop, target] = d.points.map((q) => q.p);
+      try {
+        const trade = await this.opts.api("/api/watch/noculus/position", {
+          direction: d.type === "long" ? "LONG" : "SHORT", entry, stop, target, t: this.opts.clock(), drawing: d.id });
+        this.trades.push(trade);
+        await this.loadPairs();
+        this.opts.say(`${trade.id}: ${trade.direction} ${trade.kind === "LIMIT" ? `limit at ${this.price(trade.price)}` : "at market"} placed.`);
+      } catch (e) { this.opts.say(e.message); }
+      this.fillTrades(); this.fillPosition(); this.fillPairs(); this.link();
+      this.opts.refresh();
+    }
+
+    /** Each position drawing carries its trade's state, as TradingView's tool shows its P&L. */
+    link() {
+      const items = this.opts.drawings ? this.opts.drawings() : [];
+      const by = {};
+      for (const x of this.trades) if (x.drawing) by[x.drawing] = x;
+      for (const d of items) {
+        if (d.type !== "long" && d.type !== "short") continue;
+        const x = by[d.id];
+        if (!x) { delete d.status; continue; }
+        d.status = x.state === "OPEN" ? `open ${this.r(x.live_r)}` : x.state === "CLOSED" ? `${x.outcome} ${this.r(x.net_r)}`
+          : LIVE[x.state] || x.state;
+      }
+      if (this.opts.redraw) this.opts.redraw();
     }
 
     arm(tool) {
@@ -177,6 +229,7 @@
         document.body.classList.remove("picking");
         await this.opts.onReveal(status);
         this.diff = await this.opts.api("/api/watch/noculus/comparison");
+        await this.loadPairs();                          // the engine's side of each position, now in sight
         this.builtKey = null;                            // the panel becomes the comparison
         this.render();
       } catch (e) { this.opts.say(e.message); }
@@ -187,15 +240,22 @@
     price(p) { return p == null ? "—" : Number(p).toFixed(this.opts.digits()); }
 
     render() {
-      const key = `${this.blind}|${this.marking}`;
+      const key = `${!!this.data}|${this.blind}|${this.marking}`;
       if (this.builtKey !== key) { this.build(); this.builtKey = key; }
-      if (!this.blind) return;
-      this.fillTools(); this.fillMarks(); this.fillTrades(); this.fillDiff();
+      if (!this.data) return;
+      this.fillTools(); this.fillMarks(); this.fillTrades(); this.fillDiff(); this.fillPosition(); this.fillPairs();
     }
 
     build() {
       const box = this.opts.box;
-      if (!this.blind) { box.innerHTML = ""; return; }
+      if (!this.data) { box.innerHTML = ""; return; }
+      if (!this.blind) {
+        box.innerHTML = `<h2>Your positions</h2>
+          <div class="hint">Draw a Long or Short position (▲ ▼ or Alt+L, Alt+S), select it and place it at the clock.
+            Each is set beside the engine's trade at that moment.</div>
+          <div id="nPosition"></div><div class="ntrades" id="nTrades"></div><div id="nPairs"></div>`;
+        return;
+      }
       const tools = this.marking ? `
         <div class="row ntools" id="nTools"></div>
         <div class="row"><label>On</label><select id="nTf">${this.opts.timeframes.map((tf) =>
@@ -221,8 +281,10 @@
           : `Revealed at ${esc(this.opts.timeLabel(this.revealed))}. The marking is done; the engine is on the chart.`}</div>
         ${tools}
         <div class="nmarks" id="nMarks"></div>
+        <div id="nPosition"></div>
         ${ticket}
         <div class="ntrades" id="nTrades"></div>
+        <div id="nPairs"></div>
         ${this.marking ? `<div class="row"><button class="boxed" id="nReveal">Reveal the engine</button></div>`
                        : `<div id="nDiff"></div>`}`;
       const tf = box.querySelector("#nTf"), dir = box.querySelector("#nDir"), rev = box.querySelector("#nReveal");
@@ -293,6 +355,48 @@
       for (const b of list.querySelectorAll("[data-close]")) b.onclick = () => this.closeTrade(b.dataset.close);
     }
 
+    /** The selected position drawing, with its place button until it is placed. */
+    fillPosition() {
+      const el = this.opts.box.querySelector("#nPosition");
+      if (!el) return;
+      const d = this.position;
+      if (!d) { el.innerHTML = ""; return; }
+      const placed = this.trades.find((x) => x.drawing === d.id);
+      const [e, s, tg] = d.points.map((q) => q.p);
+      const rr = Math.abs(e - s) ? (Math.abs(tg - e) / Math.abs(e - s)).toFixed(2) : "—";
+      el.innerHTML = `<div class="card"><b>${d.type === "long" ? "Long" : "Short"} position</b>
+        <span class="muted">entry ${this.price(e)} · stop ${this.price(s)} · target ${this.price(tg)} · R:R ${rr}</span>
+        <div class="row">${placed ? `<span class="good">Placed as ${esc(placed.id)}</span>`
+          : `<button class="primary" id="nPlacePos">Place it at ${esc(this.opts.timeLabel(this.opts.clock()))}</button>`}</div>
+        ${placed ? "" : `<div class="hint">Within two spreads of the price it is a market order; on the pullback side, a limit at its entry.</div>`}</div>`;
+      const b = this.opts.box.querySelector("#nPlacePos");
+      if (b) b.onclick = () => this.placePosition(d);
+    }
+
+    /** Each position beside the engine's trade at its clock, measured in the M15 average range. */
+    fillPairs() {
+      const el = this.opts.box.querySelector("#nPairs");
+      if (!el) return;
+      const p = this.pairs;
+      if (!p || !p.pairs || !p.pairs.length) { el.innerHTML = ""; return; }
+      const atr = (m) => (m && m.M15 != null ? Number(m.M15).toFixed(1) : "—");
+      const num = (v) => (v == null ? "—" : String(v));
+      const one = (x) => `${esc(x.direction)}${x.kind === "SKIPPED" ? " (refused by its limits)" : ""} ${this.price(x.entry)}
+        <span class="muted">· stop ${atr(x.stop_atr)} / target ${atr(x.target_atr)} M15 ATR · R:R ${x.rr == null ? "—" : Number(x.rr).toFixed(1)}
+        · ${esc(x.outcome || "")} ${this.r(x.net_r)}</span>`;
+      const rows = p.pairs.map((q) => `<div class="nmark"><b>you</b> ${one(q.mine)}</div>` + (p.hidden
+        ? `<div class="cond muted">the engine: hidden until you reveal</div>`
+        : q.engine ? `<div class="cond"><b>engine</b> ${one(q.engine)} <span class="muted">${esc(q.when)}, ${q.minutes_apart} min apart</span>
+            ${q.engine.kind === "SKIPPED" && q.engine.reason ? `<div class="muted">${esc(q.engine.reason)}</div>` : ""}</div>
+            <div class="cond">parted on: <b class="${q.label === "agree" ? "good" : "warn"}">${esc(q.label)}</b></div>`
+          : `<div class="cond muted">the engine had no trade then, nor later that day</div>`)).join("");
+      const s = p.summary;
+      const tail = s ? `<div class="hint">${s.pairs} position(s): ${Object.entries(s.labels).map(([k, v]) => `${esc(k)} ${v}`).join(", ")}.
+        Median stop in M15 ATR: yours ${num(s.median_stop_atr.mine)}, the engine's ${num(s.median_stop_atr.engine)};
+        median target: yours ${num(s.median_target_atr.mine)}, the engine's ${num(s.median_target_atr.engine)}.</div>` : "";
+      el.innerHTML = `<h2>You beside the engine</h2>${rows}${tail}`;
+    }
+
     /** The comparison, once the engine is out: where the marks agreed, and the days side by side. */
     fillDiff() {
       const box = this.opts.box.querySelector("#nDiff");
@@ -322,7 +426,7 @@
 
     // ── the chart ─────────────────────────────────────────────────────────
     paint(ctx, size) {
-      if (!this.blind) return;
+      if (!this.data) return;
       const pal = this.opts.palette(), W = size.width;
       const X = (t) => this.opts.X(t), Y = (p) => this.opts.Y(p);
       ctx.save();
@@ -333,7 +437,7 @@
         ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke(); ctx.setLineDash([]);
       };
       const text = (s, x, y, color) => { ctx.fillStyle = color; ctx.textAlign = "left"; ctx.fillText(s, x, y); };
-      for (const m of this.marks) {
+      for (const m of this.blind ? this.marks : []) {
         const y1 = Y(m.high), y2 = Y(m.low), x1 = Math.max(X(m.candles[0]), -10);
         if (!isFinite(y1) || !isFinite(y2) || !isFinite(x1)) continue;
         const c = m.direction > 0 ? pal.good : pal.warn;   // the trader's own colours, not the engine's
@@ -345,7 +449,7 @@
         text(`mine: ${m.tf} ${m.tool}`, Math.max(x1, 0) + 3, top - 1, c);
       }
       for (const x of this.trades) {
-        if (x.state === "REJECTED" || x.state === "EXPIRED") continue;
+        if (x.state === "REJECTED" || x.state === "EXPIRED" || x.drawing) continue;   // a drawn position shows itself
         const from = Math.max(X(x.filled_at != null ? x.filled_at : x.placed_at), -10);
         const to = x.exit_at != null ? X(x.exit_at) : W;
         if (!isFinite(from)) continue;

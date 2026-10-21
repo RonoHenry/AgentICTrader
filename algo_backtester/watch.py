@@ -11,6 +11,8 @@ fill, the exit), so a flaw in its logic can be seen on the chart.
 A session may be started **blind** (Noculus, Requirement 17): it then serves the bars and the clock alone, and
 withholds everything the engine made until the trader reveals it. The trader's own marks and trades live in
 ``noculus.py``, one journal per blind session, so the comparison measures the trader, not the engine.
+Every session also takes the trader's drawn positions (update 2026-10-21, Requirements 25-26), each set beside
+the engine's idea at its clock; an open session keeps them in a journal of its own.
 
 The trader's own indicator, Fractal + POI (Requirements 21-23), is served at the clock for any chart timeframe:
 ``algo_research.fractal_poi`` reads the snapshot's candles closed by then. It is the trader's tool, not the
@@ -42,8 +44,8 @@ from agent.broker_profiles import load_profile
 from algo_backtester.cache import SignalCache, engine_code_fingerprint
 from algo_backtester.config import REPO_ROOT, load_or_create_study, load_run_config
 from algo_backtester.data import StoredBar, load_instrument
-from algo_backtester.noculus import (NOCULUS_DIR, NoculusJournal, build_mark, close as close_trade, compare,
-                                     place, settle)
+from algo_backtester.noculus import (NOCULUS_DIR, NoculusJournal, average_ranges, build_mark, close as close_trade,
+                                     compare, compare_positions, engine_ideas, place, position_ticket, settle)
 from algo_backtester.report import journal_csv
 from algo_backtester.run import run_backtest
 from algo_backtester.signals import entry_closes, signals_at
@@ -194,6 +196,8 @@ class WatchSession:
         self.path: dict = {}
         self.costs: Optional[RaceCosts] = None
         self.journal: list[dict] = []
+        self.ideas: list[dict] = []            # the engine's orders and refused trades, priced (Requirement 26.1)
+        self._ranges: dict[int, dict] = {}     # the average ranges at each position's clock, read once
         self.states: dict[int, dict] = {}
         self._keys: list[int] = []
         self.summary: dict = {}
@@ -261,6 +265,8 @@ class WatchSession:
         frame = pd.read_csv(io.StringIO(journal_csv(result.journal, result.open_orders)))
         self.journal = [self._journal_row(r) for r in frame.to_dict("records")]
         self._paths(data.m1)
+        self.ideas = engine_ideas(self.journal, self.path, wall(self.end), self.costs,
+                                  step=seconds_of(cfg.strategy.entry_tf.value))
         decisions = {r["t"]: r for r in self.journal}
         for w_, state in states.items():
             state["decision"] = decisions.get(w_)
@@ -340,6 +346,10 @@ class WatchSession:
         """The backtest's orders and trades, or nothing at all while the session is blind."""
         return [] if self.withheld else self.journal
 
+    def engine_ideas(self) -> list[dict]:
+        """The engine's orders and the trades its limits refused, or nothing while the session is blind."""
+        return [] if self.withheld else self.ideas
+
     # ── the trader's own marks (Requirement 18) ─────────────────────────────
     def own_journal(self) -> NoculusJournal:
         if self.noculus is None:
@@ -350,6 +360,8 @@ class WatchSession:
         """The journal, while the trader may still add to their read: once the engine is seen it is closed, so
         nothing made after can pass for a blind read. An open trade can still be closed."""
         journal = self.own_journal()
+        if not self.blind:
+            raise LookupError("marks and the ticket are made blind: start the session blind (positions work in any)")
         if self.revealed_at is not None:
             raise LookupError(f"the session was revealed at {self.revealed_at}: the marking is done")
         return journal
@@ -376,6 +388,42 @@ class WatchSession:
         journal = self._still_marking()
         clock = min(int(body["t"]), wall(self.end))
         return journal.add_trade(place(body, self.path, clock, until=wall(self.end)))
+
+    # ── the trader's positions beside the engine's ideas (Requirements 25-26) ──
+    def place_position(self, body: dict) -> dict:
+        """A drawn position placed at the clock, in any session that keeps a journal (Requirement 25.2-25.3).
+
+        It becomes a market order or a limit by where its entry sits (D37). It records its drawing and whether the
+        engine was in sight when it was placed, so a position made after seeing the engine never passes for a
+        blind read (D39)."""
+        journal = self.own_journal()
+        clock = min(int(body["t"]), wall(self.end))
+        trade = place(position_ticket(body, self.path, clock), self.path, clock, until=wall(self.end))
+        trade.update(entry=float(body["entry"]), drawing=str(body.get("drawing") or "") or None,
+                     engine_seen=not self.withheld)
+        return journal.add_trade(trade)
+
+    def positions(self, q: dict) -> dict:
+        """Every trade of the trader's, settled to the clock, beside the engine's idea at its own clock (26.2-26.4).
+
+        While blind the engine's side is withheld; once it is in sight the pairs are kept with the session."""
+        journal = self.own_journal()
+        clock = min(int(q.get("t") or wall(self.end)), wall(self.end))
+        self.trades({"t": clock})
+
+        def ranges_at(at: int) -> dict:
+            if at not in self._ranges:
+                self._ranges[at] = average_ranges(self._m1(self.instrument, 30), at)
+            return self._ranges[at]
+
+        out = compare_positions(journal.data["trades"], self.ideas, ranges_at, clock, hidden=self.withheld)
+        if not self.withheld:
+            kept = journal.data.get("positions") or {}
+            changed = json.dumps([kept.get("pairs"), kept.get("summary")], sort_keys=True, default=str) !=                 json.dumps([out["pairs"], out["summary"]], sort_keys=True, default=str)
+            journal.data["positions"] = out
+            if changed:
+                journal.save()                              # the page asks on every tick; write only on a change
+        return out
 
     def trades(self, body: dict) -> list[dict]:
         """Every pseudo trade, each advanced to the clock. The journal keeps what they have become."""
@@ -695,8 +743,8 @@ class WatchApp:
             return kept.status()
         session = WatchSession(self.config, None if variant == "base" else variant, instrument, day, days, self.snapshot,
                                studies_root=self.studies_root, blind=blind)
+        session.noculus = self._journal(session)            # an open session's positions are kept too (D39)
         if blind:
-            session.noculus = self._journal(session)
             reveal = session.noculus.data.get("reveal")
             if reveal:                                       # the engine was seen once: it can't be un-seen
                 session.revealed_at = int(reveal["t"])
@@ -707,8 +755,10 @@ class WatchApp:
         return session.status()
 
     def _journal(self, session: WatchSession) -> NoculusJournal:
-        """A blind session's own journal, one file per instrument and window (Requirement 17.4)."""
-        name = f"{session.first_day.isoformat()}-{session.days}d-{session.variant or 'base'}.json"
+        """A session's own journal, one file per instrument and window (Requirement 17.4); an open session's
+        is apart from the blind one's over the same days (D39)."""
+        name = f"{session.first_day.isoformat()}-{session.days}d-{session.variant or 'base'}"
+        name += ".json" if session.blind else "-open.json"
         return NoculusJournal(self.noculus_root / session.instrument / name,
                               {"instrument": session.instrument, "first_day": session.first_day.isoformat(),
                                "days": session.days, "variant": session.variant or "base",
@@ -724,7 +774,7 @@ class WatchApp:
     def need_journal(self) -> NoculusJournal:
         session = self.need()
         if session.noculus is None:
-            raise LookupError("the session is not blind: it keeps no Noculus journal")
+            raise LookupError("the session keeps no Noculus journal")
         return session.noculus
 
 
@@ -767,11 +817,13 @@ class _Handler(BaseHTTPRequestHandler):
         elif url.path == "/api/watch/state":
             self._answer(lambda: {"state": self.app.need().state_at(int(q["t"]))})
         elif url.path == "/api/watch/journal":
-            self._answer(lambda: {"rows": self.app.need().journal_rows()})
+            self._answer(lambda: {"rows": self.app.need().journal_rows(), "ideas": self.app.need().engine_ideas()})
         elif url.path == "/api/watch/noculus":
             self._answer(lambda: self.app.need_journal().data)
         elif url.path == "/api/watch/noculus/trades":
             self._answer(lambda: {"trades": self.app.need().trades(q)})
+        elif url.path == "/api/watch/noculus/positions":
+            self._answer(lambda: self.app.need().positions(q))
         elif url.path == "/api/watch/noculus/comparison":
             self._answer(self.app.need().comparison)
         elif url.path == "/api/watch/fractal-defaults":
@@ -789,7 +841,8 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path not in ("/api/watch/start", "/api/watch/pick", "/api/watch/reveal", "/api/watch/noculus/mark",
-                        "/api/watch/noculus/unmark", "/api/watch/noculus/place", "/api/watch/noculus/close"):
+                        "/api/watch/noculus/unmark", "/api/watch/noculus/place", "/api/watch/noculus/close",
+                        "/api/watch/noculus/position"):
             self._send(404, {"error": f"no such path {self.path}"})
             return
         try:
@@ -809,6 +862,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.app.need().place(body))
         elif path == "/api/watch/noculus/close":
             self._answer(lambda: self.app.need().close_trade(body))
+        elif path == "/api/watch/noculus/position":
+            self._answer(lambda: self.app.need().place_position(body))
         else:
             self._answer(lambda: self.app.start(body))
 

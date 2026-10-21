@@ -882,3 +882,45 @@ Decisions D31–D35. The port is `algo_research/fractal_poi/`. Noculus serves it
 | 21 The indicator, ported | `algo_research/fractal_poi/` (D31, D34, D35) |
 | 22 Read at the clock | `FractalPOI.at`, `Chart.closed_by`, `Chart.now`, Property 11 (D32) |
 | 23 On the chart | `WatchSession.fractal`, the two endpoints, `static/fractal.js` (D33) |
+
+## Update 2026-10-21: Your Position Against the Engine's Trade (Requirements 25–26)
+
+Decisions D37–D39. The server side is in `noculus.py` and `watch.py`; the page adds the tools to `engine.js` and the positions to `noculus.js`.
+
+### Positions (`noculus.py`)
+
+- **`position_ticket(body, path, clock)`** turns a drawing (`direction`, `entry`, `stop`, `target`, `drawing`) into `place`'s ticket (D37). The price at the clock is the last M1 close by it, as `place` reads it. "Near" is two typical spreads (the path's spread floor).
+- **Engine ideas.** `engine_ideas(journal, path, clock_end, costs)` reads the backtest's journal rows:
+  - an EXECUTE row is an idea from its `placed_at` to its `closed_at`, or its expiry when it never filled. Its outcome, net R and fill are the backtest's; its best R is `mfe_r`;
+  - consecutive SKIP rows with the same side, entry and stop are one idea, from the first row's close to one entry candle after the last. It is placed with `place` at the first close as `SimBroker.place` would: a limit at the entry when the entry is better than the price (expiring when the idea ends), else at market. `settle` runs it to the session's end, so it is priced as the trader's trades are. A stop or target already on the wrong side is kept, unpriced, as REFUSED.
+- **`idea_at(ideas, clock)`**: the latest idea live at the clock; **`next_idea(ideas, clock)`**: the first idea after it on the same trading day.
+- **Scale.** `average_ranges(m1, clock)`: the mean true range of the last 14 M15, H1 and D1 candles closed by the clock, from `aggregate` on the session's snapshot M1, with the D1 candles on the 17:00 clock.
+- **`compare_positions(trades, ideas, ranges_at, clock)`** pairs each of the trader's trades placed by the clock (Requirement 26.2), measures both sides (26.3) and labels the pair (D38):
+  - *other side*: the directions differ;
+  - *scale*: the same side, and the larger stop is at least 2× the smaller, or the larger target distance at least 2× the smaller;
+  - *location*: the same side and scale, and the entries are more than the trader's stop distance apart;
+  - *agree*: anything else; *none*: no engine idea.
+
+  It returns the pairs and a summary: the labels counted, the side agreement, the medians of the stops and targets in M15 ATR and of the R:Rs, and both net Rs.
+- **`write_report`** also reads the journals that hold `positions`, including open sessions' (`*-open.json`), and adds a positions section.
+
+### The session (`watch.py`)
+
+- **Journals.** `WatchApp.start` gives every session a journal. A blind one keeps its name; an open one is `<first day>-<days>d-<variant>-open.json`.
+- **`place_position(body)`** places a drawn position at the clock in any session that keeps a journal, and stamps it with `drawing` and `engine_seen` (D39). The ticket (`place`) and the marks stay blind-only: `_still_marking` now also refuses an open session.
+- **`engine_ideas`** are built once, after the backtest, from `self.journal`, and served with the journal (`GET /api/watch/journal` → `ideas`). While blind they are withheld, as the rows are.
+- **`positions(q)`** (`GET /api/watch/noculus/positions?t=`) settles the trades to the clock, then returns `compare_positions`. While blind and unrevealed, the engine's side of each pair is withheld (26.4). When the engine is in sight, the result is saved in the journal as `positions`.
+- **`POST /api/watch/noculus/position`** is `place_position`.
+
+### The page
+
+- **Tools.** `engine.js` adds Long (▲, Alt+L) and Short (▼, Alt+S) to its toolbar; `drawings.js` already draws them.
+- **Placing.** Selecting a position drawing shows it in the Noculus panel with "Place at <clock>" (and the same in its context menu). The panel's text says which order it becomes (market, or a limit at the entry).
+- **Live.** On each tick, `noculus.js` writes each linked drawing's `status` (waiting, open +0.42R, TARGET +3.56R) and repaints the drawings.
+- **The engine's idea.** Under "Orders & trades", a SKIP idea live at the clock is drawn as a dashed position box, labelled "engine wanted … skipped: <reason>".
+- **The pairs.** The Noculus panel lists each position beside the engine's idea, with the label and the measures in M15 ATR. It shows in every session; in a blind one, the engine's side reads "hidden until you reveal".
+
+| Requirement | Design element |
+|---|---|
+| 25 The position tool | `position_ticket`, `WatchSession.place_position`, `POST /api/watch/noculus/position`, the toolbar and panel (D37, D39) |
+| 26 The engine's trade beside yours | `engine_ideas`, `idea_at`, `average_ranges`, `compare_positions`, `GET /api/watch/noculus/positions`, the SKIP box, the report (D38) |

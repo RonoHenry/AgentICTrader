@@ -916,6 +916,7 @@ The engine stores something else (Requirement 4.1–4.2, `PDArrayDetector._detec
    - Phase A's cache key and the live runner include it;
    - the golden run is unchanged under the default.
 5. A variant run of the reference configuration under `"gap"` SHALL be compared with the reference before the default changes.
+6. UNDER `fvg_zone = "gap"`, the PD arrays (FVGs, IFVGs, BPRs, order blocks, breakers, CISD levels) and the swing structure that confirms breakers SHALL be read from candles closed by the decision time: the in-progress higher-timeframe candle of the as-of view is left out of them (LE-D20, update 2026-10-21). The pools, the bias and the candle profile still read it.
 
 ### Decisions (2026-10h)
 
@@ -923,3 +924,32 @@ The engine stores something else (Requirement 4.1–4.2, `PDArrayDetector._detec
 |---|---|---|
 | LE-D17 | The FVG is the gap, with its CE and formation time; trading into it doesn't end it, a close beyond its far edge inverts it | User 2026-10-16 (algo-research AR-D27) |
 | LE-D18 | The fix ships behind `fvg_zone`, default `"candles"`, until a variant run is reviewed: the golden run and every cached run stay comparable | The validation protocol (a flag, the golden run unchanged, a variant run) |
+
+## Update 2026-10-21: A Fresh Raid, and Arrays From Closed Candles
+
+The trader placed five positions on Noculus (US500, 11-14 April 2025) beside the engine's trades. Their stops sat at the tip of the sweep just taken, 6.5-15 points (a median 0.47 M15 average ranges). The engine's stop was 91 points (3.3-5.2), its target 1.43 days' range, and its one trade lasted four days. On Monday it wanted to buy at the day's high, built on Friday's sweep of the 5225.54 low, with a 237-point stop.
+
+The protected-swing stop (LE-D5) is the trader's own rule. What breaks it is the raid's age: the detector takes a raid of any age (task 338: a median 10.5 h, 21% over a day). The stop then sits at an old extreme, and the SD target (Requirement 18.15), measured on a leg that spans days, lands beyond a day's range. The trader (2026-10-21): "Now the work is on your side... Dont forget the issue about FVGs on the engine as well."
+
+### Requirement 27: A Fresh Raid
+
+**User Story:** As the user, I want the engine to trade only a sweep that is still fresh, so that its stop sits at the tip of that sweep and its target is measured on the move it started.
+
+#### Acceptance Criteria
+
+1. UNDER `raid_window = <timeframe>` (default off), a setup SHALL be ordered only when its raid happened at or after the open of the `<timeframe>` candle `raid_window_candles - 1` candles before the one containing the decision time. The default, 2 candles, is that frame's current candle and the one before: C3 and C2.
+2. A setup the rule refuses SHALL be journaled as a `NoTrade` with the reason `STALE_RAID`, naming the raid's time and the window's start. It is checked first among the candle anticipation rules.
+3. THE rule SHALL be an order rule. The setup sequence detector already chooses the most recent qualifying raid across all arrays, so when its choice is stale, no array has a fresh one (LE-D19). Runs with and without the rule share the engine's analysis.
+4. THE reference configuration SHALL gain the variants `fresh` (`raid_window = "H4"`, the trader's indicator's frame for M15) and `fresh_gap` (with `fvg_zone = "gap"` too).
+5. UNDER `max_stop_atr = k` (default 0, off), a setup SHALL be ordered only when its stop is at most `k` average true ranges of the last 14 closed M15 candles from the entry, whatever the entry timeframe (the frame the trader's stops were measured on); otherwise it is journaled `STOP_TOO_WIDE`. A fresh raid bounds the setup in time, not in distance: on US500, 7 April 2025, a raid 4 hours old still gave a 309-point stop, with the entry array 270 points above the sweep. The trader enters at the sweep: their stops were 0.3-0.9 M15 ranges (LE-D21).
+6. THE variants `fresh_near` (`fresh`, `max_stop_atr = 1.0`, `target_mode = "NEAREST"`) and `fresh_near_gap` (the same with `fvg_zone = "gap"`) SHALL carry the trader's execution: a fresh sweep, the stop at its tip, and TP1 the nearer of SD 2.0 and the day's draw.
+7. THE trader executes on M1-M5, and on M15 the sequence from sweep to entry often never forms in time: on US500, 11-14 April 2025, M15 offered one setup near the trader's five positions, three hours late, while M5 offered two at the same sweeps and stops (LE-D22). `config/backtests/focus.toml` SHALL therefore also carry `m5_gap` and `m5_fresh_near_gap`: entries on M5, the fresh raid read on H1 (the indicator's frame for M5), the stop cap still in M15 ranges.
+
+### Decisions (2026-10-21)
+
+| Id | Decision | Source |
+|---|---|---|
+| LE-D19 | The raid must fall in the frame's current or previous candle (C3 or C2), H4 for M15 entries, as an order rule. Refusing the detector's stale pick equals an engine that never builds a stale sequence, because the pick has the latest raid of all qualifying ones. | Every one of the trader's five US500 positions entered in the same or the next H4 candle as its sweep. Their indicator frames M15 on H4. |
+| LE-D21 | The stop cap is one M15 average range, from the trader's own positions (US500 11-14 April: 0.30, 0.37, 0.47, 0.60, 0.92; GBPUSD 14 April: 0.89), not from outcomes. TP1 takes the nearer of SD 2.0 and the draw, because SD 2.0 of a long leg lands beyond a day's range. | The trader's stops and targets, 2026-10-21 |
+| LE-D22 | The comparison runs on the exploration slice (2025-01 to 2025-07) and the trader's focus markets that the profile prices, from the research snapshot. The rest of the data, to the hold-out, is kept for one pre-registered confirmation of the version that comes out of it. | The research protocol (AR-D3); the focus list of 2026-10-16 |
+| LE-D20 | Under `"gap"`, the arrays are read from closed candles only. The gap fix alone made higher-timeframe inversions worse (gold H1: 5 → 18 false, 8 taken back), because the in-progress candle's running price counted as a close. Gap plus closed candles matched the trader's definition with no differences. | The FVG audits of 2026-10-17 and 2026-10-21 |

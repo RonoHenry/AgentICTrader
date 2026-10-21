@@ -108,6 +108,40 @@ def test_anticipation_variants_in_base_config():
         assert variant.model_copy(update={"variant": None, "strategy": base.strategy}) == base, name
 
 
+def test_fresh_raid_variants_in_base_config():
+    # The variants task 344 measures (liquidity-engine Req 27, update 2026-10-21).
+    base_toml = Path(__file__).resolve().parents[2] / "config" / "backtests" / "base.toml"
+    base = load_run_config(base_toml)
+    fresh = load_run_config(base_toml, variant="fresh").strategy
+    both = load_run_config(base_toml, variant="fresh_gap").strategy
+    assert base.strategy.raid_window is None
+    assert (fresh.raid_window, fresh.raid_window_candles, fresh.fvg_zone.value) == (Timeframe.H4, 2, "candles")
+    assert (both.raid_window, both.fvg_zone.value) == (Timeframe.H4, "gap")
+    near = load_run_config(base_toml, variant="fresh_near").strategy
+    full = load_run_config(base_toml, variant="fresh_near_gap").strategy
+    assert (near.raid_window, near.max_stop_atr, near.target_mode.value, near.fvg_zone.value) == (
+        Timeframe.H4, 1.0, "NEAREST", "candles")
+    assert (full.raid_window, full.max_stop_atr, full.target_mode.value, full.fvg_zone.value) == (
+        Timeframe.H4, 1.0, "NEAREST", "gap")
+    assert base.strategy.max_stop_atr == 0.0
+    for name in ("fresh", "fresh_gap", "fresh_near", "fresh_near_gap"):
+        variant = load_run_config(base_toml, variant=name)
+        assert variant.model_copy(update={"variant": None, "strategy": base.strategy}) == base, name
+
+
+def test_focus_config_loads_every_variant():
+    # The task 344 run: the trader's focus markets over the exploration slice, the fixes as variants.
+    focus = Path(__file__).resolve().parents[2] / "config" / "backtests" / "focus.toml"
+    base = load_run_config(focus)
+    assert (base.run.start.isoformat(), base.run.end.isoformat()) == ("2025-01-01", "2025-07-01")
+    assert "USDJPY" not in base.run.instruments and "US500" in base.run.instruments
+    full = load_run_config(focus, variant="m5_fresh_near_gap").strategy
+    assert (full.entry_tf, full.raid_window, full.max_stop_atr, full.target_mode.value, full.fvg_zone.value) == (
+        Timeframe.M5, Timeframe.H1, 1.0, "NEAREST", "gap")
+    for name in ("gap", "fresh", "fresh_near", "fresh_gap", "fresh_near_gap", "m5_gap"):
+        assert load_run_config(focus, variant=name).run == base.run, name
+
+
 @pytest.mark.parametrize("edit, key", [
     (("[account]", "[account]\nrisk_per_trde = 0.02"), "risk_per_trde"),       # typo in a section
     (("[report]", "[reports]"), "reports"),                                     # unknown section

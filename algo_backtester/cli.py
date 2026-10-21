@@ -113,6 +113,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                                                  "instruments also slices each instrument's period in time)")
     run.add_argument("--no-cache", action="store_true", help="recompute Phase A instead of using the cache")
     run.add_argument("--runs-dir", type=Path, default=RUNS_DIR, help=f"where runs are written (default {RUNS_DIR})")
+    run.add_argument("--snapshot", help="read M1 from a research snapshot (a name under data/research/snapshots, or a "
+                                        "path) instead of the TimescaleDB store")
 
     cmp = commands.add_parser("compare", help="put finished runs side by side")
     cmp.add_argument("run_dirs", nargs="+", type=Path, help="run directories, data/backtests/<run_id>")
@@ -179,11 +181,12 @@ def main(argv: Optional[Sequence[str]] = None, source_factory: Optional[SourceFa
     names = args.variant if args.command == "run" else [args.variant]
     if args.command == "run" and not names:
         names = [None]
+    store = source_factory or (_snapshot(args.snapshot) if getattr(args, "snapshot", None) else _store)
     if len(names) > 1:
-        return _run_many(args, names, source_factory or _store, studies_root)
+        return _run_many(args, names, store, studies_root)
     cfg = load_run_config(args.config, _variant(names[0]))
     profile = load_profile(cfg.run.profile)
-    source = (source_factory or _store)(profile)
+    source = store(profile)
     try:
         study, created = _study(cfg, source, studies_root)
         if args.command == "check-data":
@@ -204,6 +207,19 @@ def _store(profile: BrokerProfile) -> CandleSource:
     if not url:
         raise SystemExit("TIMESCALE_URL is not set (add it to .env)")
     return TimescaleSource(url, source=profile.venue)
+
+
+def _snapshot(name: str) -> SourceFactory:
+    """M1 from a research snapshot instead of the store (update 2026-10-21): the same bars the research and
+    Noculus read, so a run needs no database. The manifest's data fingerprint still names exactly what was read."""
+    from algo_backtester.watch import SnapshotSource
+    from algo_research.snapshot import SNAPSHOTS_DIR
+
+    root = Path(name) if Path(name).is_dir() else SNAPSHOTS_DIR / name
+    if not root.is_dir():
+        raise SystemExit(f"--snapshot: no snapshot at {root}")
+    print(f"candles from the snapshot {root}")
+    return lambda profile: SnapshotSource(root)
 
 
 def _study(cfg: RunConfig, source: CandleSource, root: Path) -> tuple[StudyConfig, bool]:
@@ -267,7 +283,7 @@ def _run_many(args: argparse.Namespace, names: Sequence[str], source_factory: So
     groups: dict[str, list[RunConfig]] = {}
     for cfg in cfgs:
         view = (cfg.run, cfg.data, cfg.strategy.entry_tf, sorted(cfg.strategy.candle_counts.items()),
-                cfg.strategy.timeframes)
+                cfg.strategy.timeframes, cfg.strategy.fvg_zone)    # the engine's own reading too (same_view)
         groups.setdefault(repr(view), []).append(cfg)
     cache = SignalCache.default()
     codes = []

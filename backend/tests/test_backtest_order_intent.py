@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import pytest
 from hypothesis import given, settings
@@ -509,3 +510,74 @@ def test_property_37_38_policy_gates_and_nearest_target(long, direction, frame_o
     tp1 = result.take_profit_1
     assert (tp1 > result.entry) if long else (tp1 < result.entry)
     assert abs(tp1 - result.entry) <= abs(sd2 - result.entry)
+
+
+# ── a fresh raid (liquidity-engine Req 27, task 342) ─────────────────────────
+_NY = ZoneInfo("America/New_York")
+
+
+def _raided(day: int, hour: int, minute: int = 0):
+    """The policy map's setup, with its raid at <day> January 2026, hour:minute New York."""
+    lm = _policy_map(profile=_profile())
+    at = datetime(2026, 1, day, hour, minute, tzinfo=_NY).astimezone(timezone.utc)
+    raid = lm.setup_sequence.raid.model_copy(update={"raided_at": at, "reclaimed_at": at})
+    lm.setup_sequence = lm.setup_sequence.model_copy(update={"raid": raid})
+    return lm
+
+
+def test_a_fresh_raid_is_one_in_the_frame_s_current_or_previous_candle():
+    # AS_OF is 09:00 New York, the open of an H4 candle: the window is that candle and the 05:00 one.
+    cfg = policy(raid_window="H4")
+    assert reason(decide(_raided(14, 8, 30), cfg)) == "ORDER"
+    assert reason(decide(_raided(14, 5, 0), cfg)) == "ORDER"                  # the window's first minute
+    stale = decide(_raided(14, 4, 59), cfg)
+    assert isinstance(stale, NoTrade) and (stale.grade, stale.reason) == ("A", "STALE_RAID")
+    assert "09:59" in stale.detail and "10:00" in stale.detail                # the raid and the window, UTC
+    assert reason(decide(_raided(14, 4, 59), policy(raid_window="H4", raid_window_candles=3))) == "ORDER"
+    assert reason(decide(_raided(14, 0, 59), policy(raid_window="H4", raid_window_candles=3))) == "STALE_RAID"
+    assert reason(decide(_raided(12, 3, 0), CFG)) == "ORDER"                   # off by default: any age
+
+
+def test_a_stale_raid_is_refused_before_the_other_candle_rules():
+    cfg = policy(raid_window="H4", bias_mode="PROFILE")
+    lm = _raided(13, 9, 0)
+    lm.candle_profile = _profile(direction=BEAR, draw=1.0950)                 # against the profile too
+    assert reason(decide(lm, cfg)) == "STALE_RAID"
+
+
+def test_the_raid_window_is_a_setting_with_two_candles_by_default():
+    cfg = StrategyConfig(raid_window="H4")
+    assert cfg.raid_window == Timeframe.H4 and cfg.raid_window_candles == 2
+    assert StrategyConfig().raid_window is None
+    with pytest.raises(ValueError):
+        StrategyConfig(raid_window="H4", raid_window_candles=0)
+
+
+# ── the stop at the sweep's tip (liquidity-engine Req 27.5, task 342) ────────
+def _ranged_view(width: float, price: float = 1.1000) -> dict[Timeframe, list[Candle]]:
+    """_view() with 15 closed M15 candles, each ``width`` from low to high around ``price``, and an in-progress one
+    far wider that the cap must not read: an M15 average range of width."""
+    view = _view(price)
+    view[Timeframe.M15] = [
+        Candle(timestamp=AS_OF - timedelta(minutes=15 * (15 - i)), open=price, high=price + width / 2,
+               low=price - width / 2, close=price, volume=1, timeframe=Timeframe.M15, instrument="EURUSD")
+        for i in range(15)
+    ] + [Candle(timestamp=AS_OF, open=price, high=price + 0.01, low=price - 0.01, close=price, volume=1,
+                timeframe=Timeframe.M15, instrument="EURUSD")]
+    return view
+
+
+def test_a_stop_wider_than_the_average_range_cap_is_refused():
+    lm = _policy_map(profile=_profile())                                     # a 10-pip stop
+    near = build_order_intent(lm, _ranged_view(0.00101), "EURUSD", AS_OF, policy(max_stop_atr=1.0))
+    assert isinstance(near, OrderIntent)                                     # under 1.0 x a 10.1-pip range
+    wide = build_order_intent(lm, _ranged_view(0.0008), "EURUSD", AS_OF, policy(max_stop_atr=1.0))
+    assert isinstance(wide, NoTrade) and (wide.grade, wide.reason) == ("A", "STOP_TOO_WIDE")
+    assert "1.0" in wide.detail and "M15" in wide.detail          # the M15 ruler, though the entry is on M5
+    assert isinstance(build_order_intent(lm, _ranged_view(0.0008), "EURUSD", AS_OF, policy()), OrderIntent)  # off
+
+
+def test_the_stop_cap_needs_enough_closed_bars():
+    lm = _policy_map(profile=_profile())
+    with pytest.raises(ValueError, match="average range"):
+        build_order_intent(lm, _view(), "EURUSD", AS_OF, policy(max_stop_atr=1.0))    # one bar: no range to read

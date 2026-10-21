@@ -18,26 +18,28 @@ setup leg.
 
 The candle anticipation policy (update 2026-10b) runs after the grade gates
 and before the stop checks; the first rule a setup fails names its NoTrade:
-the anticipated direction (bias_mode), the false move (require_false_move),
+a fresh raid (raid_window, update 2026-10-21), the anticipated direction (bias_mode), the false move (require_false_move),
 the manipulation window (time_window), the higher-timeframe POI
 (require_htf_poi). Then the stop must be beyond the entry and at least
 min_stop_spreads typical spreads away, and TP1 may be the profile's draw
 when it is nearer (target_mode).
 
 Validates: Requirements 1.2, 1.3 (.kiro/specs/algo-backtester/requirements.md);
-Requirements 19, 23, 25.2 (.kiro/specs/liquidity-engine/requirements.md)
+Requirements 19, 23, 25.2, 27 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal, Optional
 
 from agent.strategy_config import BiasMode, StopMode, StrategyConfig, TargetMode, TimeWindow
 from liquidity_engine.models import BiasDirection, Candle, LiquidityMap, SetupGrade, SetupSequence, Timeframe
 from liquidity_engine.utils.id_utils import deterministic_id
+from liquidity_engine.utils.time_utils import closed_candles
 from ml.features.session_features import TimeFeatures, TimeWindowClassifier
+from services.market_data.strategy_calendar import StrategyCalendar
 
 __all__ = ["OWN_DECISION_REASONS", "NoTrade", "OrderIntent", "build_order_intent", "setup_id_for"]
 
@@ -45,14 +47,19 @@ Direction = Literal["LONG", "SHORT"]
 NoTradeReason = Literal[
     "NO_GRADE", "NO_TRADE", "RR_BELOW_MIN", "INVALID_STOP",
     "NO_ANTICIPATION", "AGAINST_PROFILE", "NO_FALSE_MOVE", "OUTSIDE_WINDOW", "NO_POI", "STOP_TOO_TIGHT",
+    "STALE_RAID", "STOP_TOO_WIDE",
 ]
 #: Reasons the backtest journal records as their own decision rather than NO_TRADE
 #: (liquidity-engine Req 23.6): a graded setup refused by a rule, not by the grader.
 OWN_DECISION_REASONS = (
     "RR_BELOW_MIN", "INVALID_STOP",
     "NO_ANTICIPATION", "AGAINST_PROFILE", "NO_FALSE_MOVE", "OUTSIDE_WINDOW", "NO_POI", "STOP_TOO_TIGHT",
+    "STALE_RAID", "STOP_TOO_WIDE",
 )
 _POI_TIMEFRAMES = (Timeframe.H4, Timeframe.D1)
+#: The stop cap's ruler (Req 27.5): the average true range of the last STOP_ATR_BARS closed M15 candles, the
+#: frame the trader's stops were measured on, whatever the entry timeframe.
+STOP_ATR_TF, STOP_ATR_BARS = Timeframe.M15, 14
 
 
 @dataclass(frozen=True)
@@ -164,7 +171,7 @@ def build_order_intent(
     # counter-trend setup trades against it, capped at B. (It was inferred
     # from the stop's side of the entry.)
     direction: Direction = "LONG" if sequence.direction == BiasDirection.BULLISH else "SHORT"
-    refused = _candle_policy(liquidity_map, sequence, cfg)
+    refused = _candle_policy(liquidity_map, sequence, cfg, view, as_of)
     if refused is not None:
         return NoTrade(instrument, as_of, setup_grade.grade.value, *refused)
 
@@ -185,6 +192,16 @@ def build_order_intent(
             f"{cfg.stop_mode.value} stop {risk:.6g} away is under {cfg.min_stop_spreads} x the "
             f"{typical_spread:.6g} typical spread",
         )
+
+    if cfg.max_stop_atr > 0:
+        atr = _average_range(closed_candles({STOP_ATR_TF: view.get(STOP_ATR_TF, [])}, as_of)[STOP_ATR_TF],
+                             STOP_ATR_BARS)
+        if risk > cfg.max_stop_atr * atr:
+            return NoTrade(
+                instrument, as_of, setup_grade.grade.value, "STOP_TOO_WIDE",
+                f"{cfg.stop_mode.value} stop {risk:.6g} away is over {cfg.max_stop_atr} x the {atr:.6g} "
+                f"{STOP_ATR_TF.value} average range",
+            )
 
     take_profit_1, take_profit_2 = _pick_targets(liquidity_map, entry, direction, cfg)
     r_ratio = abs(take_profit_1 - entry) / risk
@@ -225,12 +242,19 @@ def build_order_intent(
 
 def _candle_policy(
     liquidity_map: LiquidityMap, sequence: SetupSequence, cfg: StrategyConfig,
+    view: Mapping[Timeframe, Sequence[Candle]], as_of: datetime,
 ) -> Optional[tuple[NoTradeReason, str]]:
     """The first candle anticipation rule the setup fails, as (reason, detail);
-    None when it passes them all (liquidity-engine Req 23.1-23.4)."""
+    None when it passes them all (liquidity-engine Req 23.1-23.4, 27)."""
     profile = liquidity_map.candle_profile
     bullish = sequence.direction == BiasDirection.BULLISH
     wick = sequence.protected_swing.wick
+    if cfg.raid_window is not None:
+        start = raid_window_start(view, as_of, cfg.raid_window, cfg.raid_window_candles)
+        if sequence.raid.raided_at < start:
+            return "STALE_RAID", (f"raid at {sequence.raid.raided_at:%Y-%m-%d %H:%M} UTC is before "
+                                  f"{start:%Y-%m-%d %H:%M} UTC, the open of the last {cfg.raid_window_candles} "
+                                  f"{cfg.raid_window.value} candles")
     if cfg.bias_mode == BiasMode.PROFILE:
         if profile is None or profile.direction == BiasDirection.NEUTRAL:
             return "NO_ANTICIPATION", "no anticipated direction for the candle"
@@ -252,6 +276,29 @@ def _candle_policy(
     ):
         return "NO_POI", f"protected swing {wick} is not inside an unfilled H4 or D1 {sequence.direction.value} PD array"
     return None
+
+
+def _average_range(bars: Sequence[Candle], n: int) -> float:
+    """The mean true range of the last ``n`` bars (each against the close before it)."""
+    if len(bars) < n + 1:
+        raise ValueError(f"the stop cap needs {n + 1} closed bars for the average range, the view has {len(bars)}")
+    last = bars[-(n + 1):]
+    return sum(max(b.high - b.low, abs(b.high - a.close), abs(b.low - a.close)) for a, b in zip(last, last[1:])) / n
+
+
+def raid_window_start(view: Mapping[Timeframe, Sequence[Candle]], as_of: datetime, tf: Timeframe,
+                      candles: int) -> datetime:
+    """The open of the ``tf`` candle ``candles - 1`` before the one containing ``as_of`` (Req 27.1, LE-D19).
+
+    The current candle is the strategy calendar's period holding ``as_of``, even before it has a bar. The ones
+    before it are the view's own ``tf`` bars, so the weekend's empty periods don't count; without such bars,
+    the calendar's periods."""
+    calendar = StrategyCalendar()
+    start = calendar.period_start(as_of, tf)
+    earlier = [c.timestamp for c in view.get(tf, ()) if c.timestamp < start]
+    for _ in range(candles - 1):
+        start = earlier.pop() if earlier else calendar.period_start(start - timedelta(minutes=1), tf)
+    return start
 
 
 def _pick_targets(

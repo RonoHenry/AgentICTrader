@@ -69,6 +69,24 @@ def ny_time_in_day(day_open: datetime, at: time) -> datetime:
     return datetime.combine(day, at, tzinfo=_NY_TZ).astimezone(timezone.utc)
 
 
+def closed_candles(candles_by_tf, t: datetime):
+    """Each timeframe's candles that have closed by ``t``, on the strategy calendar (Requirement 26.6).
+
+    The as-of view ends every timeframe above the entry one with its in-progress candle; this leaves it out.
+    A candle has closed when its calendar period has ended by ``t``: an H4 at its fourth hour, a D1 at the
+    next 17:00 New York, a W1 at its week's end, an MN1 at its month's end."""
+    from services.market_data.strategy_calendar import StrategyCalendar   # the one calendar the views follow
+
+    calendar = StrategyCalendar()
+    out = {}
+    for tf, candles in candles_by_tf.items():
+        n = len(candles)
+        while n and calendar.period_end(candles[n - 1].timestamp, tf) > t:
+            n -= 1
+        out[tf] = candles if n == len(candles) else candles[:n]
+    return out
+
+
 def trading_week_open(dt: datetime) -> datetime:
     """UTC open of the W1 period containing dt: Saturday 17:00 New York, the label the
     strategy calendar gives weekly bars (the FX week itself opens Sunday 17:00)."""

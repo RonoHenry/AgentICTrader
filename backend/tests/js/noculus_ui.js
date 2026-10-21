@@ -1,5 +1,6 @@
 // A walk-through of noculus.js without a browser: stub the few DOM and chart pieces it touches,
-// then arm each tool, click a candle, draw, delete, place and close a trade, and reveal.
+// then arm each tool, click a candle, draw, delete, place and close a trade, place a drawn position and see it
+// beside the engine's trade, reveal, and open a session that isn't blind.
 // Checks what a human would look for: the right body goes to the server, the panel lists what
 // came back, the boxes and the trade lines paint, and nothing throws.
 "use strict";
@@ -93,6 +94,31 @@ async function api(p, b) {
     journal.trades.push(x);
     return x;
   }
+  if (p === "/api/watch/noculus/position") {
+    const long = b.direction === "LONG", limit = long ? b.entry < 1.104 : b.entry > 1.106;
+    const x = { id: `t${journal.trades.length + 1}`, direction: b.direction, kind: limit ? "LIMIT" : "MARKET",
+                price: limit ? b.entry : null, stop: b.stop, target: b.target, expiry: null, mark: null, placed_at: b.t,
+                note: "", state: "PENDING", fill: null, fill_bid: null, filled_at: null, exit: null, exit_bid: null,
+                exit_at: null, outcome: null, risk: null, gross_r: null, net_r: null, commission_r: null, mfe_r: null,
+                mae_r: null, live_r: null, ambiguous: false, settled_to: b.t, entry: b.entry, drawing: b.drawing,
+                engine_seen: !status.blind || status.revealed_at != null };
+    journal.trades.push(x);
+    return x;
+  }
+  if (p.startsWith("/api/watch/noculus/positions")) {
+    const hidden = status.blind && status.revealed_at == null;
+    const pairs = journal.trades.map((x) => ({
+      mine: { id: x.id, direction: x.direction, entry: x.fill || x.entry || x.price, stop_atr: { M15: 0.6 },
+              target_atr: { M15: 2.1 }, rr: 3.6, outcome: x.outcome || x.state, net_r: x.net_r },
+      engine: hidden ? null : { id: "e1", kind: "SKIPPED", direction: "SHORT", entry: 1.1062, stop_atr: { M15: 1.9 },
+                                target_atr: { M15: 13.6 }, rr: 7.0, outcome: "STOP", net_r: -1.02,
+                                reason: "concurrent trades 3 has reached the 3 trade limit" },
+      ...(hidden ? {} : { when: "live", minutes_apart: 15, label: "other side", same_side: false }) }));
+    return { clock: CLOCK, hidden, pairs, summary: hidden ? null : {
+      pairs: pairs.length, labels: { "other side": pairs.length }, same_side: 0, mine_r: 0, engine_r: -1.02,
+      median_stop_atr: { mine: 0.6, engine: 1.9 }, median_target_atr: { mine: 2.1, engine: 13.6 },
+      median_rr: { mine: 3.6, engine: 7.0 } } };
+  }
   if (p.startsWith("/api/watch/noculus/trades")) {
     for (const x of journal.trades) {
       if (x.state === "PENDING") Object.assign(x, { state: "OPEN", fill: 1.1051, fill_bid: 1.105, filled_at: BARS[21].time,
@@ -124,7 +150,9 @@ eval(fs.readFileSync(SRC, "utf8"));                   // installs window.Noculus
 const Noculus = global.window.Noculus;
 
 const CLOCK = BARS[20].time + 900;
-let revealed = null;
+let revealed = null, redraws = 0;
+const drawing = { id: "d1", type: "long", points: [{ t: BARS[20].time, p: 1.1052 }, { t: BARS[20].time, p: 1.1030 },
+                                                     { t: BARS[22].time, p: 1.1110 }] };
 const opts = {
   box: panel, palette: () => ({ good: "#1a9c5b", warn: "#c08a00", muted: "#888888", accent: "#3b7ddd", bad: "#c0392b" }),
   timeline: { barAt: (i) => BARS[Math.max(0, Math.min(BARS.length - 1, Math.round(i)))] },
@@ -132,6 +160,7 @@ const opts = {
   clock: () => CLOCK, status: () => status, api, say: (t) => said.push(t), refresh: () => { paints++; },
   timeLabel: (t) => "Wed " + new Date(t * 1000).getUTCHours() + ":00", X: (t) => (t - BARS[0].time) / 900 * 8,
   Y: (p) => 400 - (p - 1.09) * 10000, onReveal: async (s) => { revealed = s; },
+  drawings: () => [drawing], redraw: () => { redraws++; },
 };
 
 const ok = [], bad = [];
@@ -201,9 +230,27 @@ const last = (a) => a[a.length - 1];
   await n.place();
   check("a refused ticket says why", last(said).includes("above the entry"));
 
+  // ── a drawn position (Requirements 25-26) ────────────────────────────────
+  n.select({ id: "x", type: "rect", points: [] });
+  check("a box is no position", panel.querySelector("#nPosition").innerHTML === "");
+  n.select(drawing);
+  check("a selected position offers to be placed", panel.querySelector("#nPosition").innerHTML.includes('id="nPlacePos"'));
+  check("with its R:R", panel.querySelector("#nPosition").innerHTML.includes("R:R 2.64"));
+  await n.placePosition();
+  const posted = sent.find(([q]) => q === "/api/watch/noculus/position");
+  check("placing posts the drawing", posted && posted[1].drawing === "d1" && posted[1].direction === "LONG");
+  check("with its entry, stop and target at the clock", posted && posted[1].entry === 1.1052 && posted[1].stop === 1.103
+        && posted[1].target === 1.111 && posted[1].t === CLOCK);
+  check("the drawing says it is waiting", drawing.status === "waiting" && redraws > 0);
+  check("the panel says it is placed", panel.querySelector("#nPosition").innerHTML.includes("Placed as t2"));
+  check("blind, the engine's side is hidden", panel.querySelector("#nPairs").innerHTML.includes("hidden until you reveal"));
+  check("and the server says which order it became", last(said).includes("t2: LONG at market"));
+
   // the clock moves: the trade fills and shows its live R
   await n.tick();
-  check("the clock settles the trades", last(sent)[0].startsWith("/api/watch/noculus/trades"));
+  check("the drawing carries its live R", drawing.status === "open +0.35R");
+  check("the clock settles the trades", sent.slice(-2)[0][0].startsWith("/api/watch/noculus/trades"));
+  check("then sets the positions beside the engine's", last(sent)[0].startsWith("/api/watch/noculus/positions"));
   check("an open trade shows its live R", panel.querySelector("#nTrades").innerHTML.includes("+0.35R now"));
   check("and offers to close it", panel.querySelector("#nTrades").innerHTML.includes('data-close="t1"'));
 
@@ -212,6 +259,7 @@ const last = (a) => a[a.length - 1];
   n.paint(ctx, { width: 900, height: 500 });
   check("every mark is drawn with its label", drawn.filter((s) => s.startsWith("mine: M15 FVG")).length === 1);
   check("the open trade is drawn", drawn.some((s) => s.startsWith("mine: LONG +0.35R")));
+  check("but not the drawn position: its drawing shows it", drawn.filter((s) => s.startsWith("mine: LONG")).length === 1);
 
   await n.closeTrade("t1");
   check("closing by hand is posted", last(sent)[0] === "/api/watch/noculus/close");
@@ -240,10 +288,19 @@ const last = (a) => a[a.length - 1];
   check("it puts the day's trades side by side", diff.includes("the other side") && diff.includes("12.5 min apart"));
   check("and flags the day", diff.includes("read differently"));
   check("marking is over", !n.marking && !n.armed());
+  const shown = panel.querySelector("#nPairs").innerHTML;
+  check("revealed, each position stands beside the engine's", shown.includes("You beside the engine") && shown.includes("parted on"));
+  check("the engine's refused trade is named so", shown.includes("refused by its limits") && shown.includes("3 trade limit"));
+  check("measured in the market's average range", shown.includes("stop 0.6 / target 2.1 M15 ATR") && shown.includes("stop 1.9 / target 13.6"));
 
   status = { ...status, blind: false, revealed_at: null };
   await n.sync();
-  check("an open session shows no Noculus panel", panel.innerHTML === "");
+  check("an open session shows the positions only", panel.innerHTML.includes("Your positions")
+        && !panel.innerHTML.includes("data-arm=") && !panel.innerHTML.includes('id="nPlace"') && !panel.innerHTML.includes('id="nReveal"'));
+  check("with the engine beside each", panel.querySelector("#nPairs").innerHTML.includes("parted on"));
+  status = null;
+  await n.sync();
+  check("no session, no panel", panel.innerHTML === "");
 
   console.log(ok.map((s) => "  ok   " + s).join("\n"));
   if (bad.length) console.log(bad.map((s) => "  FAIL " + s).join("\n"));

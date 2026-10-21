@@ -487,3 +487,41 @@ The findings are in `docs/research/FRACTAL_POI_VS_ENGINE.md`. The "day's real di
 | Id | Decision | Source |
 |---|---|---|
 | D36 | Exploration only; hindsight as the bound | The comparison reads the exploration slice. A rule that comes out of it is pre-registered and tested once on the confirmation slice. The hindsight rows measure what a right bias is worth, not a rule that can be traded. |
+
+## Update 2026-10-21: Your Position Against the Engine's Trade
+
+The trader asked (2026-10-21), after watching the engine short GBPUSD into a long they saw on 15 April 2025: "the targets are so huge and the stops so wide that by the time price has moved a short distance, our order barely has even a single [R]… I do not know if that is scale or perception… I want a feature in Noculus that will allow me to place the long short pnl tool alongside what the engine is perceiving as the high probability trade, you will do the comparison and discover the flaw there after."
+
+Noculus already prices the trader's trades (Requirement 19), but only from a typed ticket and only in a blind session. The You mode has TradingView's position tools; the Engine mode does not. The engine's trade is drawn only once it is an order, and an order its limits blocked (a SKIP) is not drawn at all.
+
+### Requirement 25: The Position Tool on the Engine Chart
+
+1. THE Engine mode's toolbar SHALL carry the Long Position and Short Position tools (Alt+L, Alt+S): entry, stop and target, with the distances and the R:R on the drawing, as in the You mode.
+2. A position drawn SHALL be placed as a pseudo trade at the replay clock, in any session, blind or open:
+   - **at market** when its entry is within two typical spreads of the price on its side (the ask for a long, the bid for a short); it keeps the drawn stop and target;
+   - **as a limit at its entry** when the entry is further away on the pullback side (below the ask for a long, above the bid for a short), until the session ends;
+   - **refused, with the reason,** when the entry is further away on the other side: a stop entry is not simulated.
+3. EACH placed position SHALL be kept in the session's Noculus journal with its drawing, and record whether the engine was in sight when it was placed (an open session, or a blind one already revealed). A blind session's journal is unchanged; an open session keeps its own, apart from the blind one over the same days.
+4. THE drawing SHALL show its trade as the clock advances: waiting, open with its live R, or its outcome and net R.
+5. MARKS stay blind-only (Requirement 18, D27).
+
+### Requirement 26: The Engine's Trade Beside Yours
+
+1. THE engine's idea at the clock SHALL be drawn as a position in the same look: every order it placed, and every trade it wanted but its limits refused (a SKIP), labelled with the reason. A run of SKIPs at consecutive closes with the same side, entry and stop is one idea.
+   - A SKIP idea is priced by the race rules (Requirement 19.2) as the engine would have placed it at the first close that wanted it: a limit at its entry when the entry is better than the price (the sim broker's rule), lasting while the engine still wants it; otherwise at market. It keeps its own stop and target. An order's outcome is the backtest's.
+2. EACH of the trader's positions SHALL be paired with the engine's idea live at its placement (placed by then and not yet closed, expired or given up); failing that, with the engine's next idea of the same trading day; failing that, it stands alone.
+3. A pair SHALL be compared on the market's own scale at the placement clock:
+   - **the side**: the same or the other;
+   - **the entry, the stop and the target**: in price, and in the average true range of the last 14 closed M15, H1 and D1 candles (the D1 one is the ADR);
+   - **the R:R** of each;
+   - **the time** between them;
+   - **the outcome** of each: outcome, net R, and the best R reached;
+   - **a label** for where they part (D38): *the other side* (perception); *scale*, when on the same side one stop or target is at least twice the other's; *location*, when on the same side and scale the entries are more than the trader's stop apart; *agree* otherwise; *the engine had none*.
+4. WHILE a blind session is unrevealed, the engine's side of each pair SHALL stay hidden.
+5. `python -m algo_backtester noculus` SHALL add the positions to `REPORT.md`: each pair, the labels counted, how often the sides agreed, both sides' median stop and target in M15 ATR and median R:R, and both net Rs.
+
+| Id | Decision | Source |
+|---|---|---|
+| D37 | A drawn position is a market or a limit by where its entry sits; no stop entries | Within two typical spreads the trader means "now". The race rules model market and limit fills only (D29); a buy-stop would need a new fill rule, so it is refused with the reason. |
+| D38 | The labels are a first sort, not a verdict | "Scale or perception" is the trader's question. The 2× and one-stop thresholds are round numbers chosen before any position exists. Each pair keeps its raw measures, so the sort can be redone. |
+| D39 | Open sessions keep a journal too | The trader wants their position beside the engine's. Positions placed with the engine in sight carry `engine_seen`, so they are never counted as blind reads (D27). |
