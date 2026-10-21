@@ -25,7 +25,7 @@ from collections.abc import Mapping
 from datetime import timedelta
 from enum import Enum
 from types import MappingProxyType
-from typing import Annotated, TypeVar
+from typing import Annotated, Optional, TypeVar
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializer, PositiveInt, field_validator, model_validator
 
@@ -130,9 +130,17 @@ class StrategyConfig(BaseModel):
     bias_mode: BiasMode = BiasMode.OPEN
     require_false_move: bool = False     # the protected wick beyond the candle's open on the false-move side
     time_window: TimeWindow = TimeWindow.ANY
+    # A fresh raid (liquidity-engine Req 27, LE-D19): the setup's raid in the raid_window frame's current candle
+    # or the raid_window_candles - 1 before it (C3 and C2 by default). Off by default; an order rule, so runs
+    # with and without it share the engine's analysis.
+    raid_window: Optional[Timeframe] = None
+    raid_window_candles: PositiveInt = 2
     require_htf_poi: bool = False        # the protected wick inside an unfilled H4/D1 PD array (LE-D14)
     target_mode: TargetMode = TargetMode.SD
     min_stop_spreads: float = Field(default=0.0, ge=0)   # a stop of at least k typical spreads; 0 is off
+    # The stop at the sweep's tip (liquidity-engine Req 27.5): at most k average true ranges of the last 14
+    # closed M15 candles away, whatever the entry timeframe, as the trader's are (0.3-0.9); 0 is off.
+    max_stop_atr: float = Field(default=0.0, ge=0)
     pending_expiry: PendingExpiry = PendingExpiry.KILLZONE_END
     fallback_ttl_minutes: PositiveInt = 180
     # What the engine reads an FVG as (liquidity-engine Req 26). Unlike the rules above this one changes the

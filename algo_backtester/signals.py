@@ -298,7 +298,7 @@ def generate_many(datas: Sequence[InstrumentData], cfgs: Sequence[StrategyConfig
     what generate_all gives it alone, cached under its own key."""
     cfgs = list(cfgs)
     if not same_view(cfgs):
-        raise ValueError("generate_many needs configurations with the same entry_tf and candle_counts")
+        raise ValueError("generate_many needs configurations with the same entry_tf, candle_counts and fvg_zone")
     spreads = spreads or {}
     keys = ({(d.instrument, k): cache.key(d, cfg, start, end, spreads.get(d.instrument))
              for d in datas for k, cfg in enumerate(cfgs)} if cache else {})

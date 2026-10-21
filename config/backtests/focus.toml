@@ -1,0 +1,71 @@
+# The trader's focus markets (2026-10-16) that the Exness profile prices: the engine fixes against the reference
+# (liquidity-engine update 2026-10-21, task 344). DXY is the trader's reference index and BTC has no Exness spec.
+#   python -m algo_backtester run config/backtests/focus.toml --snapshot focus-2025-2026h1 \
+#       --variant base --variant fresh --variant fresh_near --variant gap --variant fresh_gap --variant fresh_near_gap
+# Candles come from the research snapshot, the M1 the research and Noculus read. The period is the research's
+# exploration slice: the rest, to the hold-out, stays for one pre-registered confirmation of what comes out of it.
+
+[run]
+profile = "exness-standard"
+instruments = ["XAUUSD", "EURUSD", "GBPUSD", "US100", "US500", "US30", "GER40", "UK100"]
+start = 2025-01-01                                       # [start, end), UTC: the exploration slice
+end = 2025-07-01
+study = "baseline-2026q3"                                # hold-out: config/backtests/studies/<study>.toml
+
+[account]
+initial_equity = 10000.0
+risk_per_trade = 0.01
+compounding = false
+
+[strategy]
+entry_tf = "M15"
+min_rr = 3.0
+pending_expiry = "KILLZONE_END"
+fallback_ttl_minutes = 180
+
+[data]
+max_gap_minutes = 30
+allow_gaps = true             # the markets' own closures (holidays, the indices' daily break), as base.toml
+
+[report]
+min_trades = 30
+cost_flag_fraction = 0.25
+bootstrap_resamples = 10000
+
+# The FVG as the trader reads it: the gap, read from closed candles (Req 26, LE-D17, LE-D20).
+[variants.gap]
+strategy.fvg_zone = "gap"
+
+# A fresh raid: in the current or previous H4 candle (Req 27, LE-D19).
+[variants.fresh]
+strategy.raid_window = "H4"
+
+# The trader's execution: a fresh raid, the stop at its tip (one M15 range at most), TP1 the nearer of SD 2.0
+# and the day's draw (Req 27.5-27.6, LE-D21).
+[variants.fresh_near]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+
+[variants.fresh_gap]
+strategy.raid_window = "H4"
+strategy.fvg_zone = "gap"
+
+[variants.fresh_near_gap]       # the full fix, on M15
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+
+# On M5, where the trader executes (M1-M5): the sequence from sweep to entry forms there inside one M15 candle.
+# The fresh raid is then read on H1, the trader's indicator's frame for M5; the stop cap stays in M15 ranges.
+[variants.m5_gap]
+strategy.entry_tf = "M5"
+strategy.fvg_zone = "gap"
+
+[variants.m5_fresh_near_gap]    # the full fix, on M5
+strategy.entry_tf = "M5"
+strategy.fvg_zone = "gap"
+strategy.raid_window = "H1"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"

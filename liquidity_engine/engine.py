@@ -48,6 +48,7 @@ from liquidity_engine.ote.calculator import OTECalculator
 from liquidity_engine.profile.candle_profile import CandleProfileAnalyzer
 from liquidity_engine.projections.standard_deviation import StandardDeviationCalculator
 from liquidity_engine.unicorn.detector import UnicornDetector
+from liquidity_engine.utils.time_utils import closed_candles
 
 # Finest-to-coarsest, used to pick a single "live price" source and to
 # supply the Fractal Model / OTE displacement leg with intraday resolution.
@@ -118,7 +119,13 @@ class LiquidityMappingEngine:
         draw_on_liquidity = self._find_draw_on_liquidity(htf_bias, liquidity_levels)
 
         swing_structure = SwingStructureClassifier().classify(candles_by_tf)
-        pd_arrays = PDArrayDetector(self.fvg_zone).detect(candles_by_tf, swing_structure)
+        if self.fvg_zone == "gap":
+            # The trader's reading (Requirement 26.6, LE-D20): arrays come from closed candles only, so an
+            # in-progress HTF candle neither completes a gap nor inverts one with its running price.
+            closed = closed_candles(candles_by_tf, timestamp)
+            pd_arrays = PDArrayDetector(self.fvg_zone).detect(closed, SwingStructureClassifier().classify(closed))
+        else:
+            pd_arrays = PDArrayDetector(self.fvg_zone).detect(candles_by_tf, swing_structure)
 
         key_level = self._fractal_key_level(draw_on_liquidity, htf_bias)
         fractal_model = FractalModelTracker().track(finest_candles, key_level)

@@ -16,6 +16,7 @@ import pytest
 
 from algo_backtester.cli import main, parse_args
 from liquidity_engine import LiquidityMappingEngine
+from liquidity_engine.models import Timeframe
 from tests.test_backtest_signals import FixtureSource
 
 UTC = timezone.utc
@@ -105,6 +106,29 @@ def test_run_writes_outputs_to_run_dir(setup, capsys):
     assert len((run_dir / "journal.csv").read_text(encoding="utf-8").splitlines()) > 50   # a day of M15 closes
     out = capsys.readouterr().out
     assert str(run_dir) in out and "report.html" in out and "autopsy.md" in out
+
+
+def test_run_reads_a_research_snapshot_with_snapshot(setup, capsys):
+    """--snapshot: M1 from a research snapshot instead of the TimescaleDB store (task 344, update 2026-10-21)."""
+    import pandas as pd
+
+    config, root = setup
+    # The fixture's M1 starts days before the run: the HTF warm-up the store's native bars give is short here.
+    config.write_text(CONFIG + "\n[data]\nallow_gaps = true\n", encoding="utf-8")
+    study(root, "2026-10-01")
+    snap = root / "snapshot"
+    snap.mkdir()
+    bars = Source("EURUSD").bars("EURUSD", Timeframe.M1, datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 10, 10, tzinfo=UTC))
+    pd.DataFrame({"time": [b.timestamp for b in bars], "open": [b.open for b in bars], "high": [b.high for b in bars],
+                  "low": [b.low for b in bars], "close": [b.close for b in bars], "volume": [b.volume for b in bars],
+                  "spread": [b.spread for b in bars]}).to_parquet(snap / "EURUSD_M1.parquet", index=False)
+    runs = root / "runs"
+    args = ["run", str(config), "--snapshot", str(snap), "--runs-dir", str(runs), "--no-cache", "--workers", "1"]
+    assert main(args, studies_root=root) == 0                                   # no store: it never asks for one
+    [run_dir] = list(runs.iterdir())
+    assert len((run_dir / "journal.csv").read_text(encoding="utf-8").splitlines()) > 50
+    with pytest.raises(SystemExit, match="no snapshot"):
+        main(["run", str(config), "--snapshot", str(root / "nowhere"), "--runs-dir", str(runs)], studies_root=root)
 
 
 def test_report_regenerates_from_run_dir(setup, capsys):
@@ -197,6 +221,20 @@ def test_run_several_variants_shares_phase_a(setup, capsys, monkeypatch):
         variant = json.loads((d / "manifest.json").read_text(encoding="utf-8"))["variant"]
         assert (d / "journal.csv").read_text(encoding="utf-8") == (shared[variant] / "journal.csv").read_text(
             encoding="utf-8")
+
+
+def test_variants_that_read_another_fvg_get_their_own_phase_a(setup, capsys, monkeypatch):
+    """The FVG setting changes the engine's own map, so a gap variant can't share the reference's analysis;
+    an order rule (the fresh raid) can (task 344: the four variants in one command)."""
+    config, root = setup
+    config.write_text(CONFIG + '\n[variants.gap]\nstrategy.fvg_zone = "gap"\n'
+                      '\n[variants.fresh]\nstrategy.raid_window = "H4"\n', encoding="utf-8")
+    study(root, "2026-10-01")
+    monkeypatch.setattr("algo_backtester.cache.CACHE_DIR", root / "cache")
+    assert cli(["run", str(config), "--variant", "base", "--variant", "gap", "--variant", "fresh",
+                "--runs-dir", str(root / "runs"), "--workers", "1"], root) == 0
+    out = capsys.readouterr().out
+    assert "Phase A, shared by base, fresh" in out and "Phase A, shared by gap" in out
 
 
 def test_run_several_variants_refuses_no_cache_and_repeats(setup, capsys):

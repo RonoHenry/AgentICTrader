@@ -78,3 +78,25 @@ strategy.time_window = "MANIPULATION"
 strategy.target_mode = "NEAREST"
 strategy.min_stop_spreads = 2.0
 strategy.fvg_zone = "gap"
+
+# A fresh raid (liquidity-engine Req 27, LE-D19): the raid in the current or previous H4 candle, so the stop
+# sits at the tip of the sweep just taken and the SD target is measured on the move it started.
+[variants.fresh]
+strategy.raid_window = "H4"
+
+[variants.fresh_gap]            # the fresh raid, with the FVG as the gap, read from closed candles (Req 26.6)
+strategy.raid_window = "H4"
+strategy.fvg_zone = "gap"
+
+# The trader's execution (Req 27.5): a fresh raid, the stop at its tip (at most one M15 average range away, as
+# the trader's 0.3-0.9 are), and TP1 the nearer of SD 2.0 and the day's draw.
+[variants.fresh_near]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+
+[variants.fresh_near_gap]       # the same, with the gap read from closed candles: the full fix
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
