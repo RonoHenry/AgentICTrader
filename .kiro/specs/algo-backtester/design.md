@@ -924,3 +924,30 @@ Decisions D37–D39. The server side is in `noculus.py` and `watch.py`; the page
 |---|---|
 | 25 The position tool | `position_ticket`, `WatchSession.place_position`, `POST /api/watch/noculus/position`, the toolbar and panel (D37, D39) |
 | 26 The engine's trade beside yours | `engine_ideas`, `idea_at`, `average_ranges`, `compare_positions`, `GET /api/watch/noculus/positions`, the SKIP box, the report (D38) |
+
+## Update 2026-10-22: Live on Noculus (Requirement 27)
+
+Decisions D40–D41. The terminal is read in `live.py`; the session, the app and the charts take it in `watch.py` and `charts.py`; the page follows it in `engine.js`.
+
+- **`live.py`.** `LiveSource(rates, instruments, history=240 days, now)` has the same shape as `SnapshotSource` (`_frame`, `bars`, `last_time`, `held`):
+  - an instrument's M1 is read on first use and topped up by `refresh`;
+  - other timeframes come straight from `rates`, for a warm-up the M1 doesn't reach;
+  - only bars closed by `now` are kept.
+
+  `Terminal(profile)` is the real `rates`. It calls `copy_rates_range` in chunks, on the profile's symbol and server clock, and gives the spread in price. It connects on first use and takes one call at a time.
+- **`WatchSession(…, live=source)`.** The session reads `self.source` wherever it read the snapshot: the data, Model A and the indicator. In a live session:
+  - `_prepare` first tops up the M1 and sets `end` to the last closed minute. The run reaches to the end of that UTC day but holds nothing after the clock.
+  - The engine's record at each close is kept in `_records`, so a refresh reads only the new closes.
+  - Phase B runs again over all the closes, with `final` set (D40).
+  - The journal is built whole before it is swapped in.
+- **`refresh()` / `status()`.** `status()` starts a background `refresh()` when the session is live and ready, and the last refresh began `LIVE_EVERY` (30) seconds ago or more. Refreshes take a lock. `version` counts the refreshes that moved the end.
+- **`WatchApp`.**
+  - `live=` takes a factory: `live_feed(config)` gives the profile's `Terminal`, or None when the profile isn't MT5. The factory makes one `LiveSource` on the first live start.
+  - `start({"live": true, …})` sets the first day with `live_first_day(now, days)`. A live session is kept apart from the replayed ones.
+  - `meta()` says whether live is offered.
+- **The charts.** `charts.serve` passes the feed. In a live session, `watchlist_for` reads each instrument's last four days of terminal M1 (`ChartsApp._live_bars`).
+- **The page.** A "Live" box, shown when the server offers it, disables the first day. A live session opens at its end, and `follow()` asks after it every 10 s. When its `version` or `end` moves, the page reads the orders again, and the clock follows if it was at the end.
+
+| Requirement | Design element |
+|---|---|
+| 27 A live session | `live.py`, `WatchSession(live=…)`, `refresh`, `live_first_day`, `live_feed`, `ChartsApp._live_bars`, the page's `follow()` (D40, D41) |

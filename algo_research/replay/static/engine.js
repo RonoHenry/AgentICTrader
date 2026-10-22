@@ -386,7 +386,7 @@ async function recover() {
   try {
     say("The server restarted: starting your session again where you were…");
     await api("/api/watch/start", { instrument: st.instrument, first_day: st.first_day, days: st.days,
-                                   variant: st.variant, blind: !!st.blind }, true);
+                                   variant: st.variant, blind: !!st.blind, live: !!st.live }, true);
     await waitReady(t);
     say("Your session is back.");
   } finally { S.recovering = false; }
@@ -409,6 +409,11 @@ async function boot() {
     else overlay("No session yet", `Start a session for ${i} on the right.`);
   }) });
   for (const id of ["sInst", "sDay", "sDays"]) $(id).addEventListener("change", () => { Shell.setInstrument($("sInst").value); blindCheck(); });
+  $("sLiveRow").style.display = S.meta.live ? "" : "none";       // the broker's terminal, now (Requirement 27)
+  $("sLive").checked = !!S.meta.live && Prefs.get("watch.live", false);
+  const liveForm = () => { $("sDay").disabled = $("sLive").checked; };
+  $("sLive").addEventListener("change", () => { Prefs.set("watch.live", $("sLive").checked); liveForm(); blindCheck(); });
+  liveForm();
   blindCheck();
   $("sStart").onclick = () => act(startSession);
   buildTfs(); buildTools(); buildLayers(); buildControls();
@@ -417,6 +422,7 @@ async function boot() {
   else overlay("No session yet", "Pick an instrument, a first day and how many days on the right, then Start session.");
 }
 async function blindCheck() {                         // days still unread in the blind replay
+  if ($("sLive").checked) { S.unread = 0; $("blindWarn").textContent = ""; return; }   // live days are not in it
   try {
     const b = await api(`/api/blind?inst=${$("sInst").value}&first_day=${$("sDay").value}&days=${$("sDays").value}`);
     S.unread = b.unread;
@@ -426,13 +432,14 @@ async function blindCheck() {                         // days still unread in th
 }
 async function startSession() {
   const blind = $("sBlind").checked;                    // a blind session spoils nothing: the engine stays hidden
+  const live = $("sLive").checked;
   await blindCheck();
   if (!blind && S.unread && !confirm(`${S.unread} of these days are still unread in your blind replay. Watching the engine on them spoils `
                                      + "them for a blind read. Start anyway?")) return;
-  Prefs.set("watch.day", $("sDay").value);
+  if (!live) Prefs.set("watch.day", $("sDay").value);
   stop();
   await api("/api/watch/start", { instrument: $("sInst").value, first_day: $("sDay").value, days: Number($("sDays").value),
-                                 variant: $("sVariant").value, blind });
+                                 variant: $("sVariant").value, blind, live });
   await waitReady();
 }
 function overlay(title, text, progress) {
@@ -451,7 +458,7 @@ async function waitReady(resumeAt) {
     $("prog").style.width = pct + "%";
     $("sMsg").textContent = st.message || "";
     const secs = Math.round((Date.now() - started) / 1000);
-    overlay(`Preparing ${st.instrument}, ${st.days} day(s) from ${st.first_day}`,
+    overlay(`Preparing ${st.instrument}, ${st.live ? "live: " : ""}${st.days} day(s) from ${st.first_day}`,
             `${st.message || "starting"} — ${pct}% (${secs} s). The backtest runs for real; about 20-30 s a day.`, st.progress || 0);
     if (st.state === "ready") { overlay(null); await openSession(st, resumeAt); return; }
     if (st.state === "error") { $("status").textContent = "error"; overlay("The session failed", st.message); throw new Error(st.message); }
@@ -463,18 +470,50 @@ async function openSession(st, resumeAt) {
   S.status = st; S.digits = st.digits;
   $("sInst").value = st.instrument; Shell.setInstrument(st.instrument);
   $("inst").textContent = `${st.instrument} · ${st.variant}`;
-  $("status").textContent = st.blind && st.revealed_at == null ? "blind" : "ready";
+  $("status").textContent = st.blind && st.revealed_at == null ? "blind" : st.live ? "live" : "ready";
   $("status").className = "pill REVEALED";
   summaryLine();
   $("sMsg").textContent = st.blind && st.revealed_at == null
     ? "The engine is hidden. Mark what you see and place your trades, then reveal it (Noculus, on the right)."
+    : st.live ? "Live: the clock follows the last closed minute and the engine reads each new 15-minute close. "
+                + "Step back to look; Play returns to now."
     : "Play, step, or jump to the next order. Your own drawings are kept in this browser for this session.";
   $("prog").style.width = "100%";
   await loadJournal();
   S.picks = Object.fromEntries((await api("/api/watch/picks")).picks.map((p) => [p.t, p]));
   draw.load(Prefs.get(drawKey(), []));
   await noculus.sync();
-  await jumpTo(resumeAt != null ? resumeAt : st.start + 3600);
+  await jumpTo(resumeAt != null ? resumeAt : st.live ? st.end : st.start + 3600);
+  if (st.live) follow();
+}
+
+// A live session (Requirement 27): the page asks after it every few seconds, and the server reads the terminal
+// again while asked. When the session has moved on, the engine's orders are read again, and the clock follows
+// if it was at the end; stepped back, it stays where the trader put it.
+const LIVE_POLL_MS = 10000;
+const liveKey = (st) => (st && st.live ? [st.instrument, st.first_day, st.days, st.variant, !!st.blind].join("|") : null);
+async function follow() {
+  const key = liveKey(S.status);
+  if (!key || S.follow === key) return;
+  S.follow = key;
+  while (S.follow === key && liveKey(S.status) === key) {
+    await sleep(LIVE_POLL_MS);
+    if (liveKey(S.status) !== key) break;
+    try {
+      const st = await api("/api/watch/status");
+      if (liveKey(st) !== key) break;                  // another session took the server
+      if (st.message) say(st.message);
+      const was = S.status;
+      if (st.state !== "ready" || (st.version === was.version && st.end === was.end)) continue;
+      const atEnd = S.t >= was.end;
+      S.status = { ...was, ...st };
+      summaryLine();
+      await loadJournal();
+      if (atEnd && !S.playing && !S.busy) await advance(st.end - S.t);
+      else { renderLog(); refresh(); }
+    } catch (e) { say(e.message); }
+  }
+  if (S.follow === key) S.follow = null;
 }
 
 async function loadJournal() {                          // the engine's orders and the trades it wanted (none while blind)
@@ -484,9 +523,10 @@ async function loadJournal() {                          // the engine's orders a
 
 function summaryLine() {
   const st = S.status, s = st.summary || {};
+  const days = `${st.live ? "live, " : ""}${st.days} day(s) from ${st.first_day}`;
   $("summaryTop").textContent = st.blind && st.revealed_at == null
-    ? `${st.days} day(s) from ${st.first_day}: blind — the engine's side is hidden`
-    : `${st.days} day(s) from ${st.first_day}: ${s.orders} orders, ${s.trades} trades, ${s.total_r >= 0 ? "+" : ""}${s.total_r}R`;
+    ? `${days}: blind — the engine's side is hidden`
+    : `${days}: ${s.orders} orders, ${s.trades} trades, ${s.total_r >= 0 ? "+" : ""}${s.total_r}R`;
 }
 
 // ── time ──────────────────────────────────────────────────────────────────

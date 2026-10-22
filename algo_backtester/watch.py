@@ -18,6 +18,10 @@ The trader's own indicator, Fractal + POI (Requirements 21-23), is served at the
 ``algo_research.fractal_poi`` reads the snapshot's candles closed by then. It is the trader's tool, not the
 engine's, so a blind session serves it too (D33).
 
+A session may also be **live** (update 2026-10-22, Requirement 27): its candles come from the broker's MT5 terminal
+(``live.py``), its window runs from the first day's open to the last closed minute, and while the page watches it
+moves on with each new minute, reading the engine only at the new closes.
+
 Nothing here decides anything: the engine and the simulation are the backtester's own; this module only runs
 them over a short window and serialises what they produced. Times go to the page as New York wall-clock seconds.
 """
@@ -27,6 +31,7 @@ import io
 import json
 import tempfile
 import threading
+import time
 from collections import OrderedDict
 import traceback
 import webbrowser
@@ -34,7 +39,7 @@ from bisect import bisect_right
 from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, NamedTuple, Optional
+from typing import Any, Callable, NamedTuple, Optional
 from urllib.parse import parse_qs, urlparse
 
 import numpy as np
@@ -44,6 +49,7 @@ from agent.broker_profiles import load_profile
 from algo_backtester.cache import SignalCache, engine_code_fingerprint
 from algo_backtester.config import REPO_ROOT, load_or_create_study, load_run_config
 from algo_backtester.data import StoredBar, load_instrument
+from algo_backtester.live import LiveSource, Terminal, stored_bars
 from algo_backtester.noculus import (NOCULUS_DIR, NoculusJournal, average_ranges, build_mark, close as close_trade,
                                      compare, compare_positions, engine_ideas, place, position_ticket, settle)
 from algo_backtester.report import journal_csv
@@ -66,7 +72,7 @@ from liquidity_engine.models import BiasDirection, PDArray, SetupSequence, Timef
 from services.market_data.as_of_view import compose_as_of_view
 from services.market_data.strategy_calendar import StrategyCalendar
 
-__all__ = ["SnapshotSource", "WatchSession", "make_watch_server", "serve"]
+__all__ = ["SnapshotSource", "WatchSession", "live_feed", "live_first_day", "make_watch_server", "serve"]
 
 NY = "America/New_York"
 STATIC = REPO_ROOT / "algo_research" / "replay" / "static"
@@ -87,6 +93,8 @@ _MODEL_A_KEEP = {"model_d1": 86400, "model_h4": 4 * 3600}
 _MODEL_A_HISTORY = pd.Timedelta(days=100)
 #: The indicator readers a session keeps (chart timeframe x computing inputs), and the events it sends.
 _FRACTAL_READERS, _FRACTAL_EVENTS = 4, 200
+#: How often a live session watched by a page reads the terminal again (Requirement 27.2), in seconds.
+LIVE_EVERY = 30
 
 
 def wall(t) -> int:
@@ -117,16 +125,14 @@ class SnapshotSource:
         if tf != Timeframe.M1:
             return []
         f = self._frame(instrument)
-        f = f[(f["time"] >= pd.Timestamp(start)) & (f["time"] < pd.Timestamp(end))]
-        spread = f["spread"] if "spread" in f else pd.Series([None] * len(f))
-        volume = f["volume"] if "volume" in f else pd.Series([None] * len(f))
-        return [StoredBar(t.to_pydatetime(), o, h, lo, c, None if pd.isna(v) else int(v), None if pd.isna(s) else float(s),
-                          Timeframe.M1, instrument)
-                for t, o, h, lo, c, v, s in zip(f["time"], f["open"], f["high"], f["low"], f["close"], volume, spread)]
+        return stored_bars(f[(f["time"] >= pd.Timestamp(start)) & (f["time"] < pd.Timestamp(end))], instrument, Timeframe.M1)
 
     def last_time(self, instrument: str, tf: Timeframe) -> Optional[datetime]:
         f = self._frame(instrument)
         return None if f.empty or tf != Timeframe.M1 else f["time"].iloc[-1].to_pydatetime()
+
+    def held(self) -> list[str]:
+        return [path.name.split("_")[0] for path in self.root.glob("*_M1.parquet")]
 
 
 def _iso_wall(value) -> Optional[int]:
@@ -181,13 +187,22 @@ class WatchSession:
     """One instrument over a few trading days: the backtest's journal, the chart's bars and the engine's state."""
 
     def __init__(self, config: Path, variant: Optional[str], instrument: str, first_day: date, days: int,
-                 snapshot: Path, studies_root: Path = REPO_ROOT, blind: bool = False) -> None:
+                 snapshot: Path, studies_root: Path = REPO_ROOT, blind: bool = False,
+                 live: Optional[LiveSource] = None) -> None:
         self.config, self.variant, self.instrument = Path(config), variant, instrument.upper()
         self.first_day, self.days = first_day, days
         # Noculus (Requirement 17.2): a blind session keeps the engine's work to itself until the trader reveals it.
         self.blind, self.revealed_at = bool(blind), None
         self.noculus: Optional[NoculusJournal] = None
         self.snapshot, self.studies_root = Path(snapshot), studies_root
+        # Live (Requirement 27): the terminal's candles, a window that ends at its last closed minute, and the
+        # engine's record at each close kept, so moving on reads only the new closes.
+        self.live = live is not None
+        self.source = live if live is not None else SnapshotSource(self.snapshot)
+        self.version = 0
+        self._records: dict = {}
+        self._refreshing, self._refreshed_at = False, 0.0
+        self._refresh_lock = threading.Lock()           # one refresh at a time
         self.state, self.progress, self.message = "preparing", 0.0, "loading candles"
         self.start = pd.Timestamp(trading_date_open(first_day))
         self.end = pd.Timestamp(trading_date_open(first_day + timedelta(days=days)))
@@ -210,15 +225,48 @@ class WatchSession:
     def prepare(self) -> None:
         try:
             self._prepare()
+            self._refreshed_at = time.monotonic()
             self.state, self.progress, self.message = "ready", 1.0, ""
         except Exception as exc:  # shown on the page; the server keeps running
             self.state, self.message = "error", f"{type(exc).__name__}: {exc}"
             traceback.print_exc()
 
+    def refresh(self) -> None:
+        """A live session moves on to the terminal's last closed minute (Requirement 27.2): the new candles, the
+        engine at each new close, then the account again. The page keeps reading the session meanwhile."""
+        with self._refresh_lock:
+            self._refreshed_at = time.monotonic()
+            try:
+                before = self.end
+                self._prepare()
+                if self.end != before:
+                    self.version += 1
+                self.message = ""
+            except Exception as exc:  # the session stays as it was; the page shows why
+                self.message = f"the live refresh failed: {type(exc).__name__}: {exc}"
+                traceback.print_exc()
+            finally:
+                self._refreshing = False
+
+    def _maybe_refresh(self) -> None:
+        """While a page asks after a live session, read the terminal again every LIVE_EVERY seconds, in the background."""
+        if not self.live or self.state != "ready" or self._refreshing or time.monotonic() - self._refreshed_at < LIVE_EVERY:
+            return
+        self._refreshing, self._refreshed_at = True, time.monotonic()
+        threading.Thread(target=self.refresh, daemon=True).start()
+
     def _prepare(self) -> None:
         cfg = load_run_config(self.config, self.variant)
+        end = self.end                 # a live session's new end is shown with the states that reach it, not before
+        if self.live:
+            self.source.refresh(self.instrument)
+            last = self.source.last_time(self.instrument, Timeframe.M1)
+            if last is None:
+                raise LookupError(f"the terminal has no M1 for {self.instrument}")
+            end = pd.Timestamp(last) + pd.Timedelta(minutes=1)
         run_start = (self.start - pd.Timedelta(hours=12)).date()
-        run_end = (self.end + pd.Timedelta(hours=12)).date()
+        # A live run reaches past the clock to the end of its UTC day; it holds no candle after the clock.
+        run_end = end.date() + timedelta(days=1) if self.live else (end + pd.Timedelta(hours=12)).date()
         cfg = cfg.model_copy(update={"run": cfg.run.model_copy(update={"instruments": (self.instrument,),
                                                                          "start": run_start, "end": run_end})})
         profile = load_profile(cfg.run.profile)
@@ -226,7 +274,7 @@ class WatchSession:
         study = load_or_create_study(cfg.run.study, date.today(), self.studies_root)
         start_dt = datetime(run_start.year, run_start.month, run_start.day, tzinfo=timezone.utc)
         end_dt = datetime(run_end.year, run_end.month, run_end.day, tzinfo=timezone.utc)
-        data = load_instrument(SnapshotSource(self.snapshot), self.instrument, start_dt, end_dt, cfg.strategy,
+        data = load_instrument(self.source, self.instrument, start_dt, end_dt, cfg.strategy,
                                profile.clock() if profile.venue == "mt5" else None, venue=profile.venue,
                                max_gap_minutes=cfg.data.max_gap_minutes)
         m1 = pd.DataFrame({"time": [b.timestamp for b in data.m1], "open": [b.open for b in data.m1],
@@ -239,15 +287,18 @@ class WatchSession:
         self.costs = RaceCosts.from_spec(spec, specs.account_ccy)
         self.path = {"time": np.asarray(wall_seconds(self.frame.m1["time"]), dtype=np.int64),
                      **{k: self.frame.arrays[k] for k in ("open", "high", "low", "close", "spread")}}
-        # Phase A, once: the backtest's own records, with the engine's view of each close kept for the page.
+        # Phase A, once a close: the backtest's own records, with the engine's view of each close kept for the page.
+        # A live session's earlier closes read the same closed candles, so only the new ones are read.
         closes = entry_closes(data, cfg.strategy.entry_tf, start_dt, end_dt)
         spread = spec.default_spread
         engine = _Capturing(cfg.strategy.fvg_zone)
-        records, states = [], {}
-        for n, t in enumerate(closes):
-            self.message = f"the engine at close {n + 1} of {len(closes)}"
+        states = dict(self.states)
+        new = [t for t in closes if t not in self._records]
+        for n, t in enumerate(new):
+            if self.state == "preparing":
+                self.message = f"the engine at close {n + 1} of {len(new)}"
             engine.last = None
-            records.append(signals_at(data, (cfg.strategy,), t, engine, spread)[0])
+            self._records[t] = signals_at(data, (cfg.strategy,), t, engine, spread)[0]
             try:
                 state = (self._state(*engine.last, t, cfg.strategy.entry_tf) if engine.last
                          else {"error": "the engine raised: see the decision"})
@@ -255,36 +306,47 @@ class WatchSession:
                 state = {"error": f"{type(exc).__name__}: {exc}"}
             state["t"] = wall(t)
             states[state["t"]] = state
-            self.progress = 0.05 + 0.85 * (n + 1) / max(1, len(closes))
-        # Phase B: the backtest itself, served those records from a temporary cache.
-        self.message = "simulating the account (orders, fills, exits)"
+            if self.state == "preparing":
+                self.progress = 0.05 + 0.85 * (n + 1) / max(1, len(new))
+        records = [self._records[t] for t in closes]
+        # Phase B: the backtest itself, served those records from a temporary cache. A live session is forward data,
+        # the days being traded now: the hold-out guard, which keeps a fixed past unread for the final run, is not
+        # its question (D40).
+        if self.state == "preparing":
+            self.message = "simulating the account (orders, fills, exits)"
         with tempfile.TemporaryDirectory(prefix="watch-") as tmp:
             cache = SignalCache(Path(tmp), engine_code_fingerprint())
             cache.store(cache.key(data, cfg.strategy, start_dt, end_dt, spread), records)
-            result = run_backtest(cfg, study, False, {self.instrument: data}, specs, cache=cache, workers=1)
+            result = run_backtest(cfg, study, self.live, {self.instrument: data}, specs, cache=cache, workers=1)
         frame = pd.read_csv(io.StringIO(journal_csv(result.journal, result.open_orders)))
-        self.journal = [self._journal_row(r) for r in frame.to_dict("records")]
-        self._paths(data.m1)
-        self.ideas = engine_ideas(self.journal, self.path, wall(self.end), self.costs,
+        journal = [self._journal_row(r) for r in frame.to_dict("records")]
+        self._paths(data.m1, journal, end)
+        self.ideas = engine_ideas(journal, self.path, wall(end), self.costs,
                                   step=seconds_of(cfg.strategy.entry_tf.value))
-        decisions = {r["t"]: r for r in self.journal}
+        self.journal = journal
+        decisions = {r["t"]: r for r in journal}
         for w_, state in states.items():
             state["decision"] = decisions.get(w_)
-        filled = [r for r in self.journal if r["net_r"] is not None and r["filled_at"] is not None]
-        self.summary = {"orders": sum(1 for r in self.journal if r["decision"] == "EXECUTE"), "trades": len(filled),
+        filled = [r for r in journal if r["net_r"] is not None and r["filled_at"] is not None]
+        self.summary = {"orders": sum(1 for r in journal if r["decision"] == "EXECUTE"), "trades": len(filled),
                         "total_r": round(sum(r["net_r"] for r in filled), 2)}
-        self.states, self._keys = states, sorted(states)
-        self.message = "reading Model A"
+        self.states, self._keys, self.end = states, sorted(states), end
+        if self.state == "preparing":
+            self.message = "reading Model A"
+        if self.live:                                   # the indicator reads the new minutes too
+            with self._fractal_lock:
+                self._snapshot_m1.clear()
+                self._fractal.clear()
         self.model_a = self._read_model_a()
 
-    def _paths(self, m1) -> None:
+    def _paths(self, m1, journal: list[dict], end: pd.Timestamp) -> None:
         """Each filled trade's best and worst point from the fill to the exit (or the session's end), in R and at
         their times (Requirement 16.1). The backtest never moves a stop or takes a partial, so this is all the
         managing there was to see. Within the fill's minute the extremes may precede the fill."""
         times = np.array(wall_seconds([b.timestamp for b in m1])) if m1 else np.array([], dtype=np.int64)
         highs = np.array([b.high for b in m1]); lows = np.array([b.low for b in m1])
-        end_of_session = wall(self.end)
-        for r in self.journal:
+        end_of_session = wall(end)
+        for r in journal:
             r["path"] = None
             if r["filled_at"] is None or r["fill"] is None or r["stop"] is None or r["fill"] == r["stop"]:
                 continue
@@ -589,17 +651,18 @@ class WatchSession:
 
     # ── what the page asks ──────────────────────────────────────────────────
     def status(self) -> dict:
+        self._maybe_refresh()
         return {"state": self.state, "progress": round(self.progress, 3), "message": self.message, "instrument": self.instrument,
                 "variant": self.variant or "base", "first_day": self.first_day.isoformat(), "days": self.days,
                 "start": wall(self.start), "end": wall(self.end), "digits": self.bars.digits if self.bars else 5,
                 "summary": {} if self.withheld else self.summary, "closes": len(self._keys),
-                "blind": self.blind, "revealed_at": self.revealed_at}
+                "blind": self.blind, "revealed_at": self.revealed_at, "live": self.live, "version": self.version}
 
     def _read_model_a(self) -> dict[str, list[dict]]:
         """Model A's instances over the session, both of the trader's frame sets, both sides (Requirement 17), with
-        volatility and time (``MODEL_A_VT``, Requirement 18), on the snapshot's prices with 100 days of history."""
+        volatility and time (``MODEL_A_VT``, Requirement 18), on the session's prices with 100 days of history."""
         from liquidity_engine.context.model_a import MODEL_A_VT, MODEL_SETS, ModelAReader
-        frame = SnapshotSource(self.snapshot)._frame(self.instrument)
+        frame = self.source._frame(self.instrument)
         frame = frame[(frame["time"] >= self.start - _MODEL_A_HISTORY) & (frame["time"] < self.end)]
         if frame.empty:
             return {}
@@ -651,9 +714,10 @@ class WatchSession:
 
     # ── the trader's indicator (Requirements 21-23) ─────────────────────────
     def _m1(self, instrument: str, days: int) -> pd.DataFrame:
-        """The snapshot's M1 for ``instrument`` from ``days`` before the session to its end."""
+        """The session's M1 (the snapshot's or the terminal's) for ``instrument`` from ``days`` before the session to
+        its end."""
         if instrument not in self._snapshot_m1:
-            frame = SnapshotSource(self.snapshot)._frame(instrument)
+            frame = self.source._frame(instrument)
             self._snapshot_m1[instrument] = frame[["time", "open", "high", "low", "close"]]
         frame = self._snapshot_m1[instrument]
         return frame[(frame["time"] >= self.start - pd.Timedelta(days=days)) & (frame["time"] < self.end)]
@@ -670,7 +734,7 @@ class WatchSession:
             reader = self._fractal.pop(key, None)
             if reader is None:
                 days = warmup_days(tf, settings)
-                held = [path.name.split("_")[0] for path in self.snapshot.glob("*_M1.parquet")]
+                held = self.source.held()
                 partners = {name: (self._m1(name, days), inverse)
                             for name, inverse in partners_for(self.instrument, settings, held)}
                 reader = FractalPOI(self._m1(self.instrument, days), tf, settings, self.instrument, partners)
@@ -708,41 +772,76 @@ class _Capturing:
         return lm
 
 
+def live_first_day(now: datetime, days: int) -> date:
+    """The first trading date of a live window of ``days`` that ends now: today's trading date (from 17:00 New
+    York; a weekend's is Friday's) and the weekdays before it."""
+    day = (pd.Timestamp(now).tz_convert(NY) + pd.Timedelta(hours=7)).date()
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    for _ in range(days - 1):
+        day -= timedelta(days=3 if day.weekday() == 0 else 1)
+    return day
+
+
+def live_feed(config: Path) -> Optional[Callable[[], LiveSource]]:
+    """The broker's terminal for live sessions (Requirement 27), from the configuration's profile; None when the
+    profile isn't an MT5 one. The terminal connects on the first live session, not before."""
+    profile = load_profile(load_run_config(Path(config), None).run.profile)
+    if profile.venue != "mt5":
+        return None
+    research = load_research_config()
+    return lambda: LiveSource(Terminal(profile), research.instruments)
+
+
 class WatchApp:
     def __init__(self, config: Path, snapshot: Path, slice_: tuple[date, date], picks: Optional[Path] = None,
-                 noculus_root: Optional[Path] = None, studies_root: Path = REPO_ROOT) -> None:
+                 noculus_root: Optional[Path] = None, studies_root: Path = REPO_ROOT,
+                 live: Optional[Callable[[], LiveSource]] = None) -> None:
         self.config, self.snapshot, self.slice = Path(config), Path(snapshot), slice_
         self.picks_path = Path(picks) if picks else PICKS
         self.noculus_root = Path(noculus_root) if noculus_root else NOCULUS_DIR
         self.studies_root = Path(studies_root)
         self.session: Optional[WatchSession] = None
         self._kept: dict[tuple, WatchSession] = {}          # the last few sessions, so a tab can come back to one
+        self._live_feed, self._live = live, None             # the terminal, made on the first live session
+
+    def live_source(self) -> LiveSource:
+        if self._live_feed is None:
+            raise ValueError("live: this server has no live feed (its profile is not an MT5 broker's)")
+        if self._live is None:
+            self._live = self._live_feed()
+        return self._live
 
     def meta(self) -> dict:
         import tomllib
         variants = sorted(tomllib.loads(self.config.read_text(encoding="utf-8")).get("variants", {}))
         instruments = sorted(p.name.split("_")[0] for p in self.snapshot.glob("*_M1.parquet"))
-        return {"instruments": instruments, "variants": ["base", *variants], "first": self.slice[0].isoformat(),
+        return {"instruments": instruments, "variants": ["base", *variants], "live": self._live_feed is not None,
+                "first": self.slice[0].isoformat(),
                 "last": (self.slice[1] - timedelta(days=1)).isoformat(), "max_days": MAX_DAYS, "timeframes": list(TIMEFRAMES),
                 "config": str(self.config.relative_to(REPO_ROOT) if self.config.is_relative_to(REPO_ROOT) else self.config)}
 
     def start(self, body: dict) -> dict:
-        day = date.fromisoformat(str(body.get("first_day")))
         days = int(body.get("days", 1))
-        if not self.slice[0] <= day < self.slice[1]:
-            raise ValueError(f"first_day: within the exploration slice, {self.slice[0]} to {self.slice[1] - timedelta(days=1)}")
         if not 1 <= days <= MAX_DAYS:
             raise ValueError(f"days: 1 to {MAX_DAYS}")
+        live = self.live_source() if body.get("live") else None
+        if live is not None:                                 # the last ``days`` trading days, up to now (Requirement 27.1)
+            day = live_first_day(live.now(), days)
+        else:
+            day = date.fromisoformat(str(body.get("first_day")))
+            if not self.slice[0] <= day < self.slice[1]:
+                raise ValueError(f"first_day: within the exploration slice, {self.slice[0]} to {self.slice[1] - timedelta(days=1)}")
         variant = body.get("variant") or "base"
         instrument = str(body.get("instrument", "XAUUSD")).upper()
         blind = bool(body.get("blind"))
-        key = (instrument, day, days, variant, blind)       # a blind session is not the open one over the same days
+        key = (instrument, day, days, variant, blind, live is not None)   # blind, open and live sessions are apart
         kept = self._kept.get(key)
         if kept is not None and kept.state != "error":
             self.session = kept
             return kept.status()
         session = WatchSession(self.config, None if variant == "base" else variant, instrument, day, days, self.snapshot,
-                               studies_root=self.studies_root, blind=blind)
+                               studies_root=self.studies_root, blind=blind, live=live)
         session.noculus = self._journal(session)            # an open session's positions are kept too (D39)
         if blind:
             reveal = session.noculus.data.get("reveal")
@@ -757,11 +856,11 @@ class WatchApp:
     def _journal(self, session: WatchSession) -> NoculusJournal:
         """A session's own journal, one file per instrument and window (Requirement 17.4); an open session's
         is apart from the blind one's over the same days (D39)."""
-        name = f"{session.first_day.isoformat()}-{session.days}d-{session.variant or 'base'}"
+        name = f"{'live-' if session.live else ''}{session.first_day.isoformat()}-{session.days}d-{session.variant or 'base'}"
         name += ".json" if session.blind else "-open.json"
         return NoculusJournal(self.noculus_root / session.instrument / name,
                               {"instrument": session.instrument, "first_day": session.first_day.isoformat(),
-                               "days": session.days, "variant": session.variant or "base",
+                               "days": session.days, "variant": session.variant or "base", "live": session.live,
                                "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
 
     def need(self) -> WatchSession:
@@ -877,7 +976,8 @@ def make_watch_server(app: WatchApp, host: str = "127.0.0.1", port: int = 8767) 
 
 def serve(config: Path, port: int = 8767, browser: bool = True, picks: Optional[Path] = None) -> int:
     research = load_research_config()
-    app = WatchApp(Path(config), SNAPSHOTS_DIR / research.snapshot, research.slices.explore, picks=picks)
+    app = WatchApp(Path(config), SNAPSHOTS_DIR / research.snapshot, research.slices.explore, picks=picks,
+                   live=live_feed(config))
     server = make_watch_server(app, port=port)
     url = f"http://127.0.0.1:{server.server_address[1]}/"
     print(f"engine watch at {url} (strategy from {config}; days from the exploration slice). Ctrl+C stops.")

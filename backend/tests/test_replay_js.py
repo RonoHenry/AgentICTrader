@@ -10,7 +10,9 @@ into node with just enough DOM and Lightweight Charts to run them, and drives th
   engine's trade, reveal, compare, and an open session's positions panel;
 - drawings_ui.js: the magnet off / weak / strong, Shift keeping a line level, Shift still measuring alone;
 - reconnect_ui.js: the server restarts under an open page, and the same session comes back at the same clock;
-- fractal_ui.js: the trader's Fractal + POI indicator asked for at the clock, painted, set up in its dialog.
+- fractal_ui.js: the trader's Fractal + POI indicator asked for at the clock, painted, set up in its dialog;
+- live_ui.js: a live session started, opened at the last closed minute, followed as it moves on, left where the
+  trader stepped back to, and live again after a restart (Requirement 27).
 
 Skipped when node is not installed.
 """
@@ -29,7 +31,7 @@ pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
 
 @pytest.mark.parametrize("script", ["load_engine.js", "noculus_ui.js", "drawings_ui.js", "reconnect_ui.js",
-                                    "fractal_ui.js"])
+                                    "fractal_ui.js", "live_ui.js"])
 def test_the_page_scripts(script):
     run = subprocess.run([NODE, str(JS / script)], capture_output=True, text=True, timeout=120, cwd=JS)
     assert run.returncode == 0, f"{script} failed:\n{run.stdout[-3000:]}\n{run.stderr[-3000:]}"
