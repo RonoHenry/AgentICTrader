@@ -70,3 +70,13 @@ strategy.fvg_zone = "gap"
 strategy.raid_window = "H1"
 strategy.max_stop_atr = 1.0
 strategy.target_mode = "NEAREST"
+
+# The trader's execution, trading only the day's thesis side (market-narrative Requirement 17). The thesis file is
+# written by `python -m algo_research.thesis export --model <id> --out data/research/theses/engine_theses.json`.
+[variants.fresh_near_gap_thesis]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.bias_mode = "THESIS"
+strategy.thesis_file = "data/research/theses/engine_theses.json"

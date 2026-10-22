@@ -55,6 +55,7 @@ class BiasMode(str, Enum):
     """Which bias a setup must agree with before it is ordered (liquidity-engine Req 23.1)."""
     OPEN = "OPEN"        # none here: the grader's D1-open bias only caps counter-trend setups at B
     PROFILE = "PROFILE"  # the candle profile's anticipated direction (LE-D9)
+    THESIS = "THESIS"    # the day's thesis from a thesis file (market-narrative Requirement 17)
 
 
 class TimeWindow(str, Enum):
@@ -128,6 +129,9 @@ class StrategyConfig(BaseModel):
     # Candle anticipation (liquidity-engine update 2026-10b). Each rule is off by
     # default, so each one is measured as a variant against the others.
     bias_mode: BiasMode = BiasMode.OPEN
+    # Under THESIS: a JSON file {instrument: {trading date: BULLISH | BEARISH | NO_THESIS}} (market-narrative Req 17).
+    # Its content is part of Phase A's cache key.
+    thesis_file: Optional[str] = None
     require_false_move: bool = False     # the protected wick beyond the candle's open on the false-move side
     time_window: TimeWindow = TimeWindow.ANY
     # A fresh raid (liquidity-engine Req 27, LE-D19): the setup's raid in the raid_window frame's current candle
@@ -198,6 +202,12 @@ class StrategyConfig(BaseModel):
         if bad:
             raise ValueError(f"grade_confidence values must be in (0, 1], got {bad}")
         return confidence
+
+    @model_validator(mode="after")
+    def _thesis_mode_needs_a_file(self) -> StrategyConfig:
+        if self.bias_mode == BiasMode.THESIS and not self.thesis_file:
+            raise ValueError("bias_mode THESIS needs a thesis_file")
+        return self
 
     @model_validator(mode="after")
     def _window_for_every_timeframe(self) -> StrategyConfig:

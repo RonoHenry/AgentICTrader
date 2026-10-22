@@ -29,8 +29,12 @@ Requirements 19, 23, 25.2, 27 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta
 from typing import Literal, Optional
 
@@ -47,16 +51,17 @@ Direction = Literal["LONG", "SHORT"]
 NoTradeReason = Literal[
     "NO_GRADE", "NO_TRADE", "RR_BELOW_MIN", "INVALID_STOP",
     "NO_ANTICIPATION", "AGAINST_PROFILE", "NO_FALSE_MOVE", "OUTSIDE_WINDOW", "NO_POI", "STOP_TOO_TIGHT",
-    "STALE_RAID", "STOP_TOO_WIDE",
+    "STALE_RAID", "STOP_TOO_WIDE", "AGAINST_THESIS", "NO_THESIS",
 ]
 #: Reasons the backtest journal records as their own decision rather than NO_TRADE
 #: (liquidity-engine Req 23.6): a graded setup refused by a rule, not by the grader.
 OWN_DECISION_REASONS = (
     "RR_BELOW_MIN", "INVALID_STOP",
     "NO_ANTICIPATION", "AGAINST_PROFILE", "NO_FALSE_MOVE", "OUTSIDE_WINDOW", "NO_POI", "STOP_TOO_TIGHT",
-    "STALE_RAID", "STOP_TOO_WIDE",
+    "STALE_RAID", "STOP_TOO_WIDE", "AGAINST_THESIS", "NO_THESIS",
 )
 _POI_TIMEFRAMES = (Timeframe.H4, Timeframe.D1)
+_NEW_YORK = ZoneInfo("America/New_York")
 #: The stop cap's ruler (Req 27.5): the average true range of the last STOP_ATR_BARS closed M15 candles, the
 #: frame the trader's stops were measured on, whatever the entry timeframe.
 STOP_ATR_TF, STOP_ATR_BARS = Timeframe.M15, 14
@@ -255,6 +260,13 @@ def _candle_policy(
             return "STALE_RAID", (f"raid at {sequence.raid.raided_at:%Y-%m-%d %H:%M} UTC is before "
                                   f"{start:%Y-%m-%d %H:%M} UTC, the open of the last {cfg.raid_window_candles} "
                                   f"{cfg.raid_window.value} candles")
+    if cfg.bias_mode == BiasMode.THESIS:
+        day = trading_date(as_of)
+        side = theses(cfg.thesis_file).get(liquidity_map.instrument, {}).get(day)
+        if side not in ("BULLISH", "BEARISH"):
+            return "NO_THESIS", f"no thesis for {liquidity_map.instrument} on trading date {day}"
+        if side != sequence.direction.value:
+            return "AGAINST_THESIS", f"{sequence.direction.value} setup on a {side} thesis day ({day})"
     if cfg.bias_mode == BiasMode.PROFILE:
         if profile is None or profile.direction == BiasDirection.NEUTRAL:
             return "NO_ANTICIPATION", "no anticipated direction for the candle"
@@ -284,6 +296,23 @@ def _average_range(bars: Sequence[Candle], n: int) -> float:
         raise ValueError(f"the stop cap needs {n + 1} closed bars for the average range, the view has {len(bars)}")
     last = bars[-(n + 1):]
     return sum(max(b.high - b.low, abs(b.high - a.close), abs(b.low - a.close)) for a, b in zip(last, last[1:])) / n
+
+
+def trading_date(t: datetime) -> str:
+    """The trading date ``t`` falls in: the day whose session opened at 17:00 New York the evening before."""
+    return (t.astimezone(_NEW_YORK) + timedelta(hours=7)).date().isoformat()
+
+
+def theses(path: str) -> dict:
+    """The thesis file's {instrument: {trading date: side}}, read once per version of the file."""
+    p = Path(path)
+    stat = p.stat()
+    return _read_theses(str(p.resolve()), stat.st_mtime_ns, stat.st_size)
+
+
+@lru_cache(maxsize=8)
+def _read_theses(path: str, mtime_ns: int, size: int) -> dict:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def raid_window_start(view: Mapping[Timeframe, Sequence[Candle]], as_of: datetime, tf: Timeframe,

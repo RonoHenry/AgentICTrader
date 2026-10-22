@@ -113,6 +113,7 @@ _CHANGED = {
     "target_mode": TargetMode.NEAREST,
     "min_stop_spreads": 2.0,
     "max_stop_atr": 1.0,
+    "thesis_file": "theses.json",
     "pending_expiry": PendingExpiry.FIXED_TTL,
     "fallback_ttl_minutes": 181,
     "fvg_zone": FvgZone.GAP,

@@ -325,3 +325,52 @@ The trader wants AgentICTrader to become "a technical analyst living in the char
    - the drawing strip on the left;
    - a right-hand panel with a watchlist (each instrument's last price and change as of the replay's clock, never later) above the mode's own panel.
 3. THE Engine mode plays days from the same exploration slice the blind replay serves. Before a session starts on days still unread in that instrument's blind journal, the page SHALL say how many, and ask; watching a day spoils it for a blind read.
+
+## Update 2026-10-22: The Thesis Developer, and the Engine That Trades Only Its Side
+
+The trader (2026-10-22): "The LLM is supposed to use the inbuilt logic with the help of the fractal indicator to discern bias and then the engine will filter out low probability ones instead of trading everything... Can we try that?"
+
+Nine results so far say the same thing:
+- the engine's executions are a coin flip without a side;
+- they pay with the day's real side (+0.14 to +0.37R);
+- every mechanical read of the side lands near chance (task 338; price delivery phases; Silver Bullet and macros).
+
+The thesis developer is the trader's idea for the side. A reasoning model reads what the engine and the trader's indicator see at the day's open and decides the day's bias, draw and invalidation, or no thesis. The engine then trades only that side. The model runs on OpenRouter (the trader's key, `.env`), free models first.
+
+### Requirement 16: The Thesis at the Day's Open
+
+**User Story:** As the trader, I want a model to read the engine's map and my Fractal + POI indicator at each day's 17:00 open and give the day's thesis, so that the engine trades the side the context supports and nothing else.
+
+#### Acceptance Criteria
+
+1. AT each trading day's 17:00 New York open, from closed candles only, the facts SHALL be:
+   - the last candles of MN1, W1, D1, H4 and H1;
+   - the engine's read: price against each timeframe's open, the untaken pools, the unfilled PD arrays near price (the gap read from closed candles, LE-D20) and the day profile;
+   - the trader's Fractal + POI indicator on the H1 and H4 charts: the HTF candles, the live C2/C3/C4 setups with their CISD and zones, the liquidity levels and the HTF FVGs;
+   - each timeframe's phase (liquidity-engine Requirement 28).
+2. THE facts SHALL be blind (ND-D3):
+   - no dates and no market name: the time is the weekday and the New York clock;
+   - every price rescaled so that the day's open is 1000 and one D1 average true range is 100.
+
+   The model's answer is mapped back the same way. Exploration days lie inside these models' training data, so without this a thesis could be recall.
+3. THE model SHALL answer in a fixed form: bias (bullish, bearish or neutral), one draw, one invalidation, confidence, and a short reason. A malformed answer is retried once, then recorded as no thesis.
+4. ONLY market data, the engine's and the indicator's reads, and a generic ICT procedure SHALL be sent. Nothing from the trader's journal or method blueprint, because free endpoints may log prompts.
+5. EVERY call SHALL be cached by model and prompt, so a rerun pays nothing and reproduces the thesis exactly. A run stops at its call budget, and records the model id, the tokens, the cost and the time.
+6. A thesis SHALL be scored as the blind replay scores the trader's reads (Requirement 10):
+   - DRAW, INVALIDATED or NEITHER by the day's close;
+   - the coin's chance from the two distances;
+   - the direction against the day's close.
+
+### Requirement 17: The Engine Trades the Thesis's Side
+
+1. UNDER `bias_mode = "THESIS"`, with a thesis file, a setup SHALL be ordered only when its direction is the day's thesis. A neutral day, or a day without a thesis, orders nothing. The refusals are journaled as `AGAINST_THESIS` and `NO_THESIS`.
+2. THE thesis file's content SHALL be part of Phase A's cache key.
+3. THE comparison SHALL run the trader's M15 execution (`fresh_near_gap`, liquidity-engine Requirement 27) with and without the thesis, over the exploration slice. Any version that comes out of it is registered before the one confirmation run.
+
+### Decisions (2026-10-22)
+
+| Id | Decision | Source |
+|---|---|---|
+| ND-D3 | Blind facts: weekday and New York clock only; prices rescaled to open 1000, one D1 ATR 100 | The exploration months are in the models' training data |
+| ND-D4 | OpenRouter, free models first (`nvidia/nemotron-3-ultra-550b-a55b:free`); market data only | The trader's choice, 2026-10-22 |
+| ND-D5 | One thesis a day, at the 17:00 open | "One HTF thesis per day (or none), LTF only times it" (the trader) |

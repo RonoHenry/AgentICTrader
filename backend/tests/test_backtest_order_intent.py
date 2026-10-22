@@ -581,3 +581,34 @@ def test_the_stop_cap_needs_enough_closed_bars():
     lm = _policy_map(profile=_profile())
     with pytest.raises(ValueError, match="average range"):
         build_order_intent(lm, _view(), "EURUSD", AS_OF, policy(max_stop_atr=1.0))    # one bar: no range to read
+
+
+# ── the engine trades the thesis's side (market-narrative Requirement 17, task 351) ──
+def _theses(tmp_path, side):
+    """A thesis file: AS_OF (09:00 New York, 14 January 2026) falls in trading date 2026-01-14."""
+    path = tmp_path / "theses.json"
+    path.write_text(json.dumps({"EURUSD": {"2026-01-14": side, "2026-01-13": "BEARISH"}}), encoding="utf-8")
+    return str(path)
+
+
+def test_under_the_thesis_only_its_side_is_ordered(tmp_path):
+    lm = _policy_map(profile=_profile())                                         # a LONG setup
+    assert reason(decide(lm, policy(bias_mode="THESIS", thesis_file=_theses(tmp_path, "BULLISH")))) == "ORDER"
+    against = decide(lm, policy(bias_mode="THESIS", thesis_file=_theses(tmp_path, "BEARISH")))
+    assert isinstance(against, NoTrade) and (against.grade, against.reason) == ("A", "AGAINST_THESIS")
+    assert reason(decide(lm, policy(bias_mode="THESIS", thesis_file=_theses(tmp_path, "NO_THESIS")))) == "NO_THESIS"
+    short = _policy_map(SHORT, profile=_profile(direction=BEAR, frame_open=1.1005, draw=1.0950))
+    assert reason(decide(short, policy(bias_mode="THESIS", thesis_file=_theses(tmp_path, "BEARISH")))) == "ORDER"
+
+
+def test_a_day_without_a_thesis_orders_nothing(tmp_path):
+    path = tmp_path / "theses.json"
+    path.write_text(json.dumps({"EURUSD": {"2026-01-13": "BULLISH"}, "GBPUSD": {"2026-01-14": "BULLISH"}}),
+                    encoding="utf-8")
+    result = decide(_policy_map(profile=_profile()), policy(bias_mode="THESIS", thesis_file=str(path)))
+    assert isinstance(result, NoTrade) and result.reason == "NO_THESIS" and "2026-01-14" in result.detail
+
+
+def test_the_thesis_mode_needs_a_file():
+    with pytest.raises(ValueError, match="thesis_file"):
+        StrategyConfig(bias_mode="THESIS")
