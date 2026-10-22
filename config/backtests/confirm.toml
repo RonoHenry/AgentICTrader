@@ -1,0 +1,42 @@
+# The pre-registered confirmation run (docs/backtests/CONFIRMATION_TRADER_EXECUTION.md, 2026-10-22): the trader's
+# execution, m5_fresh_near_gap, once, on the period after the exploration slice and before the hold-out.
+#   python -m algo_backtester run config/backtests/confirm.toml --snapshot focus-2025-2026h1 \
+#       --variant base --variant m5_fresh_near_gap --workers 8
+# Everything but the period is focus.toml's. Nothing here changes after the commit that pre-registers it.
+
+[run]
+profile = "exness-standard"
+instruments = ["XAUUSD", "EURUSD", "GBPUSD", "US100", "US500", "US30"]
+start = 2025-07-01                                       # [start, end), UTC: after the exploration slice
+end = 2026-07-01                                         # the study's hold-out starts 2026-07-07
+study = "baseline-2026q3"
+
+[account]
+initial_equity = 10000.0
+risk_per_trade = 0.01
+compounding = false
+
+[strategy]
+entry_tf = "M15"
+min_rr = 3.0
+pending_expiry = "KILLZONE_END"
+fallback_ttl_minutes = 180
+
+[data]
+max_gap_minutes = 30
+allow_gaps = true
+
+[report]
+min_trades = 30
+cost_flag_fraction = 0.25
+bootstrap_resamples = 10000
+
+# The version under test: entries on M5; the raid in the current or previous H1 candle; the stop at most one
+# closed-M15 average range from the entry; TP1 the nearer of SD 2.0 and the day's draw; the FVG as the gap, read
+# from closed candles (liquidity-engine Req 26.6, 27).
+[variants.m5_fresh_near_gap]
+strategy.entry_tf = "M5"
+strategy.fvg_zone = "gap"
+strategy.raid_window = "H1"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
