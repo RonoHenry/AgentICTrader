@@ -965,6 +965,38 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
   - Run `config/backtests/focus.toml` (the trader's focus markets the profile prices, from the research snapshot: `--snapshot focus-2025-2026h1`) over the exploration slice with `base`, `fresh`, `fresh_near` (one engine analysis), `gap`, `fresh_gap`, `fresh_near_gap` (another), and `m5_gap`, `m5_fresh_near_gap` (a third, on M5), in one command with capped workers. Record trades, R, win rate, stops and targets in average ranges, holding time, against the reference.
   - The default changes only after the trader's review (LE-D18). Any rule that comes out of it is then confirmed once, pre-registered.
 
+### Update 2026-10-22: price delivery phases
+
+- [x] 345. The phase reader (Req 28.1)
+  - **345a. RED** — on hand-made candles:
+    - 8 candles within 2 average ranges open a consolidation, and a ninth wider one doesn't end it until a close leaves the box;
+    - a wick beyond the box that closes back inside is the episode's manipulation;
+    - the close outside the box is the expansion, its leg from the box's opposite extreme (wicks included);
+    - a move back into the leg is a retracement, and a close beyond the leg's origin a reversal;
+    - nothing is read from a candle after the one being labelled.
+  - **345b. GREEN** — `algo_research/phases.py`: `label_phases(...)` and `episodes(...)`.
+  - **Done 2026-10-22.** 4 tests in `test_research_phases.py`, including that no later candle changes a label.
+  - **Validates: Requirement 28.1**
+
+- [x] 346. The diagnostic: when and which way (Req 28.2) **(user review)**
+  - The exploration slice; the trader's focus markets; M15, H1 and H4 with their higher timeframes (H4, D1, W1).
+  - The break hours against all hours; each direction read's hit rate with its interval, alone and in the killzones.
+  - Written to `docs/research/PRICE_DELIVERY_PHASES.md`.
+  - **Done 2026-10-22,** with a control: the same pipeline on shuffled paths (each hour's volatility kept, no memory
+    of direction).
+    - **Time:** consolidations end in expansions at the London and New York opens, as the shuffled paths do: it is
+      the session clock.
+    - **Side:** no read clears the bar. Opposite the manipulation 36% (shuffled 36%); with it 64% (shuffled 65%,
+      geometry); higher-timeframe discount/premium 47-49% (50%); the previous expansion 52% (50%); killzones add
+      nothing.
+    - So task 347's condition isn't met: no gate is added, and the registered version stands.
+  - **Validates: Requirement 28.2**
+
+- [ ] 347. The gate, if a read clears the bar (Req 28.3–28.4) — **not triggered 2026-10-22: no read cleared the bar (task 346)**
+  - A `StrategyConfig` setting that admits only the expansion's side out of the current consolidation or the retracement inside a live expansion; a variant; the phases on Noculus.
+  - Then the combined version is registered in `docs/backtests/CONFIRMATION_TRADER_EXECUTION.md` and confirmed once.
+  - **Validates: Requirements 28.3, 28.4**
+
 ---
 
 ## Task Dependency Graph

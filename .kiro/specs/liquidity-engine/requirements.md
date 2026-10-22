@@ -953,3 +953,43 @@ The protected-swing stop (LE-D5) is the trader's own rule. What breaks it is the
 | LE-D21 | The stop cap is one M15 average range, from the trader's own positions (US500 11-14 April: 0.30, 0.37, 0.47, 0.60, 0.92; GBPUSD 14 April: 0.89), not from outcomes. TP1 takes the nearer of SD 2.0 and the draw, because SD 2.0 of a long leg lands beyond a day's range. | The trader's stops and targets, 2026-10-21 |
 | LE-D22 | The comparison runs on the exploration slice (2025-01 to 2025-07) and the trader's focus markets that the profile prices, from the research snapshot. The rest of the data, to the hold-out, is kept for one pre-registered confirmation of the version that comes out of it. | The research protocol (AR-D3); the focus list of 2026-10-16 |
 | LE-D20 | Under `"gap"`, the arrays are read from closed candles only. The gap fix alone made higher-timeframe inversions worse (gold H1: 5 → 18 false, 8 taken back), because the in-progress candle's running price counted as a close. Gap plus closed candles matched the trader's definition with no differences. | The FVG audits of 2026-10-17 and 2026-10-21 |
+
+## Update 2026-10-22: Price Delivery Phases
+
+The trader (2026-10-22), from ICT's Interbank Price Delivery Algorithm (Monthly Mentorship, September 2016): price delivery cycles through expansion, retracement, reversal and consolidation. "Price never moves from Consolidation-Reversal, Consolidation-Retracement. A price move is always going to start from Consolidation - Expansion... Notice how easy it becomes then to arrive at a bias once you pair this logic with the element of time." The same teaching splits a trade setup into **A. the context** (expansion, retracement, reversal, consolidation) and **B. the reference points** (order blocks, FVGs and liquidity voids, liquidity pools and stop runs, equilibrium).
+
+The engine has B only. It has a CRT labeller (`ipda/classifier.py`: C1 a tight 8-candle range, C3 a break of 1.5 average ranges), but it never uses it to choose a trade, and it has no retracement or reversal state. So it trades a sweep in the middle of an expansion as readily as one at the edge of a consolidation.
+
+The trader chose (2026-10-22) to add this before the confirmation run, and to confirm the combined version once.
+
+### Requirement 28: The Phase of Price Delivery
+
+**User Story:** As the user, I want the engine to know which phase price is in on each timeframe, and which way the next expansion is likely to go, so that it trades the move out of a consolidation, and the retracement inside an expansion, at the right time.
+
+#### Acceptance Criteria
+
+1. A phase reader SHALL label each closed candle of a timeframe with consolidation, expansion, retracement or reversal, from closed candles only, with the engine's own thresholds (LE-D23):
+   - **consolidation:** the last 8 candles span at most 2 average true ranges (the 14 candles before them);
+   - **expansion:** a close beyond the consolidation's box. The leg runs from the box's opposite extreme, manipulation wicks included;
+   - **retracement:** after an expansion, a move back into its leg that doesn't take the leg's origin;
+   - **reversal:** a close beyond the leg's origin.
+
+   Each consolidation is kept as an episode: its box, its first manipulation (a wick beyond one side that closed back inside), the time and side of the close that ended it, and how far that move went, in average ranges.
+2. BEFORE any engine change, the research SHALL measure on the exploration slice only:
+   - **time:** at which New York hours consolidations end in an expansion, against the hours of all candles;
+   - **direction, the bias:** how often each read known before the break calls the expansion's side:
+     - the manipulation's opposite side;
+     - the box's place in the higher timeframe's range (discount up, premium down);
+     - the previous expansion's side;
+     - the same reads in the killzones only.
+
+     Each comes with its interval, against 50% and against the 56–61% a setup needs to clear its costs (task 338).
+3. IF a read clears the bar on the exploration slice, it SHALL become a setting that gates the engine's setups (only the expansion's side out of the current consolidation, or the retracement inside a live expansion). It is then measured as a backtest variant and registered for the one confirmation run before that run.
+4. THE phases SHALL be drawn on Noculus, so the trader can judge the labels on a chart.
+
+### Decisions (2026-10-22)
+
+| Id | Decision | Source |
+|---|---|---|
+| LE-D23 | The phase thresholds are the engine's existing CRT ones: 8 candles within 2 average ranges for a consolidation, 1.5 for an expansion. Nothing is tuned on the data. | `ipda/classifier.py` (`_C1_LOOKBACK`, `_C1_TIGHT_RATIO`, `_C3_EXPANSION_RATIO`) |
+| LE-D24 | "Consolidation never goes straight to retracement or reversal" holds by construction: both are measured against an expansion. What can be tested is when the expansion comes and which way it goes. | The definitions above |
