@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -198,3 +199,25 @@ def test_same_entry_bar_not_evaluated_twice():
     assert first["decision"] != "NO NEW BAR"
     assert again == {"instrument": "EURUSD", "grade": "-", "decision": "NO NEW BAR", "trade_id": None}
     assert evaluated == {"EURUSD": t}
+
+
+# ── the live runner trades a backtested version (update 2026-10-22) ──────────
+def test_the_runner_can_take_a_backtested_version_and_its_broker_symbols():
+    focus = Path(__file__).resolve().parents[2] / "config" / "backtests" / "focus.toml"
+    args = SimpleNamespace(config=str(focus), variant="fresh_near_gap", timeframe="M15", min_rr=3.0)
+    cfg, symbol_of = runner._strategy(args)
+    assert (cfg.raid_window, cfg.max_stop_atr, cfg.target_mode.value, cfg.fvg_zone.value) == (TF.H4, 1.0, "NEAREST", "gap")
+    assert symbol_of("US100") == "USTECm" and symbol_of("GER40") == "DE30m" and symbol_of("XAUUSD") == "XAUUSDm"
+    plain, none = runner._strategy(SimpleNamespace(config=None, variant=None, timeframe="M5", min_rr=4.0))
+    assert plain == StrategyConfig(entry_tf="M5", min_rr=4.0) and none is None
+    with pytest.raises(SystemExit, match="--config"):
+        runner._strategy(SimpleNamespace(config=None, variant="fresh_near_gap", timeframe="M15", min_rr=3.0))
+
+
+def test_every_timeframe_the_engine_reads_has_an_mt5_code():
+    # 2026-10-22: the live path died on M30, which the engine reads since the liquidity-engine update (LE-D13).
+    if not runner._MT5_TIMEFRAME:
+        pytest.skip("MetaTrader5 is not installed")
+    for cfg in (StrategyConfig(), StrategyConfig(entry_tf="M5")):
+        missing = [tf.value for tf in (*cfg.timeframes, TF.M1) if tf not in runner._MT5_TIMEFRAME]
+        assert not missing, missing
