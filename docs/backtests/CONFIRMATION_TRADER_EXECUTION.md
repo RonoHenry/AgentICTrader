@@ -1,5 +1,9 @@
 # The trader's execution: one confirmation run
 
+> **On hold, 2026-10-22, before any run.** The trader chose to add the price-delivery phase logic first
+> (consolidation → expansion, with time; liquidity-engine update 2026-10-22). The combined version will be
+> registered here again, before it runs, and confirmed once on this same period. Nothing below was run.
+
 **Pre-registered 2026-10-22.** The commit that adds this file is the pre-registration. It comes before the M5 exploration result was seen, and before any run of the version below on the confirmation period. Nothing in this section changes after that commit. The result is appended below it.
 
 ## Why
