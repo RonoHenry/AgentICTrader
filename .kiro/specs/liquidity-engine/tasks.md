@@ -964,6 +964,11 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
 - [ ] 344. The comparison run **(user review)**
   - Run `config/backtests/focus.toml` (the trader's focus markets the profile prices, from the research snapshot: `--snapshot focus-2025-2026h1`) over the exploration slice with `base`, `fresh`, `fresh_near` (one engine analysis), `gap`, `fresh_gap`, `fresh_near_gap` (another), and `m5_gap`, `m5_fresh_near_gap` (a third, on M5), in one command with capped workers. Record trades, R, win rate, stops and targets in average ranges, holding time, against the reference.
   - The default changes only after the trader's review (LE-D18). Any rule that comes out of it is then confirmed once, pre-registered.
+  - **Run 2026-10-21/22** (`docs/backtests/ENGINE_SCALE_FIX.md`; GER40 and UK100 left out until the backtester converts
+    crosses). On M15 the trader's execution made +0.33R (`fresh_near`) and +0.27R (`fresh_near_gap`) a trade after
+    costs (+0.46 to +0.52 before), the best so far, but the intervals include zero, the drawdown is 27R in six months
+    and the win rate one in six. On M5 the same execution has no gross edge (−0.01R before costs, −0.23R after). No
+    variant meets the pass mark. The registered M5 confirmation is on hold; the next step is the trader's.
 
 ### Update 2026-10-22: price delivery phases
 

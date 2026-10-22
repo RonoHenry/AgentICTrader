@@ -3,6 +3,10 @@
 > **On hold, 2026-10-22, before any run.** The trader chose to add the price-delivery phase logic first
 > (consolidation → expansion, with time; liquidity-engine update 2026-10-22). The combined version will be
 > registered here again, before it runs, and confirmed once on this same period. Nothing below was run.
+>
+> **2026-10-22:** the phase logic added no gate (`docs/research/PRICE_DELIVERY_PHASES.md`), and the M5 exploration of
+> the version below lost (−0.01R a trade before costs, −0.23R after; `ENGINE_SCALE_FIX.md`). It has not been run on
+> this period. What is confirmed here, and when, is the trader's decision.
 
 **Pre-registered 2026-10-22.** The commit that adds this file is the pre-registration. It comes before the M5 exploration result was seen, and before any run of the version below on the confirmation period. Nothing in this section changes after that commit. The result is appended below it.
 
