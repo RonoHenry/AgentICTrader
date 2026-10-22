@@ -946,8 +946,21 @@ Decisions D40–D41. The terminal is read in `live.py`; the session, the app and
   - `start({"live": true, …})` sets the first day with `live_first_day(now, days)`. A live session is kept apart from the replayed ones.
   - `meta()` says whether live is offered.
 - **The charts.** `charts.serve` passes the feed. In a live session, `watchlist_for` reads each instrument's last four days of terminal M1 (`ChartsApp._live_bars`).
-- **The page.** A "Live" box, shown when the server offers it, disables the first day. A live session opens at its end, and `follow()` asks after it every 10 s. When its `version` or `end` moves, the page reads the orders again, and the clock follows if it was at the end.
+- **The market now.** `LiveSource.forming(instrument)` is for the chart only. It takes the closed M1 of the last 8 days, then the feed's minutes after them, the forming one included; it keeps nothing. `LiveSource.quote` / `Terminal.quote` give the last tick.
+
+  `WatchSession.live_now(tf)` (`GET /api/watch/live?tf=`) returns:
+  - the chart's bars from the one holding the last closed minute, read from `forming` with `ReplayBars.as_of(…, since=)`;
+  - the bid and ask;
+  - the session's `end` and `version`.
+
+  It also asks for a refresh. That refresh tops up the minutes every `LIVE_EVERY` (5) seconds, and runs `_prepare` only when the source holds a minute past this session's end. Another session on the same market may have topped up the shared source already, so the check is against this session's end, not against the top-up's count.
+- **A cross.** When the account's currency is neither of the instrument's, `_prepare` gives the run `InstrumentSpecs(venue, quote_ccy, {instrument: spec})` (D42).
+- **The page.** A "Live" box, shown when the server offers it, disables the first day. A live session opens at its end, and `follow()` asks for `/api/watch/live` every second:
+  - at the end, it puts the forming bars on the chart, and the header shows `LIVE`, the time, the bid and the ask;
+  - when `version` or `end` moves, it reads the status and the orders again, and steps the clock to the new end if the clock was there.
+
+  In a live session the Play button reads "● Live" at the end, and "⏭ Back to live" (which jumps to the end) when stepped back. The speed menu is hidden.
 
 | Requirement | Design element |
 |---|---|
-| 27 A live session | `live.py`, `WatchSession(live=…)`, `refresh`, `live_first_day`, `live_feed`, `ChartsApp._live_bars`, the page's `follow()` (D40, D41) |
+| 27 A live session | `live.py` (`LiveSource`, `forming`, `quote`, `Terminal`), `WatchSession(live=…)`, `refresh`, `live_now`, `live_first_day`, `live_feed`, `ChartsApp._live_bars`, the page's `follow()` (D40–D42) |

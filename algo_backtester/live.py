@@ -6,7 +6,9 @@ research snapshot; a live one reads the broker's MT5 terminal instead, through `
 minute. ``Terminal`` reads the terminal as the live runner does: the broker profile's symbols and server clock, and
 the credentials from ``.env`` (MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, MT5_PATH).
 
-Only closed candles are served: the forming one waits for its close, so nothing a session shows can change.
+The engine and the backtest read closed candles only: the forming one waits for its close, so nothing they made
+can change. The chart also gets the market now (``forming``, ``quote``): the forming candle and the last tick, so
+price moves through what the engine drew at its last close.
 """
 from __future__ import annotations
 
@@ -96,6 +98,26 @@ class LiveSource:
         f = self._frame(instrument)
         return None if f.empty or tf != Timeframe.M1 else f["time"].iloc[-1].to_pydatetime()
 
+    def forming(self, instrument: str, days: int = 8) -> pd.DataFrame:
+        """The market now, for the chart only (Requirement 27.6): the closed M1 of the last ``days`` (a week's
+        candle and more), then the feed's minutes after them, the forming one included. Nothing here is kept,
+        and nothing the engine reads comes from it."""
+        held = self._frame(instrument)
+        now = pd.Timestamp(self.now())
+        closed = held[held["time"] >= now - pd.Timedelta(days=days)]
+        since = now - pd.Timedelta(days=days) if closed.empty else closed["time"].iloc[-1] + pd.Timedelta(minutes=1)
+        fresh = self.rates(instrument, Timeframe.M1, since.to_pydatetime(), (now + pd.Timedelta(minutes=1)).to_pydatetime())
+        if fresh is None or fresh.empty:
+            return closed.reset_index(drop=True)
+        fresh = fresh.assign(time=pd.to_datetime(fresh["time"], utc=True))
+        return (pd.concat([closed, fresh[fresh["time"] >= since]], ignore_index=True)
+                .drop_duplicates("time", keep="last").sort_values("time").reset_index(drop=True))
+
+    def quote(self, instrument: str) -> Optional[tuple[datetime, float, float]]:
+        """The feed's last tick: (UTC time, bid, ask), or None when the feed gives none."""
+        ask = getattr(self.rates, "quote", None)
+        return ask(instrument) if ask is not None else None
+
 
 def _closed(frame: pd.DataFrame, tf: Timeframe, now: pd.Timestamp) -> pd.DataFrame:
     """The bars of ``frame`` closed by ``now``, in time order, one per time."""
@@ -149,3 +171,13 @@ class Terminal:
                                      int(r["tick_volume"]), float(r["spread"]) * info.point))
                 cursor = upto
             return pd.DataFrame(rows, columns=COLUMNS)
+
+    def quote(self, instrument: str) -> Optional[tuple[datetime, float, float]]:
+        """The symbol's last tick: (UTC time, bid, ask)."""
+        with self._lock:
+            mt5 = self._connect()
+            symbol = self.profile.symbol(instrument)
+            tick = mt5.symbol_info_tick(symbol) if mt5.symbol_select(symbol, True) else None
+            if tick is None or not tick.time:
+                return None
+            return self.clock.to_utc(tick.time), float(tick.bid), float(tick.ask)

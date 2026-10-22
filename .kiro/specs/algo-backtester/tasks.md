@@ -925,7 +925,14 @@ The trader's TradingView indicator, ported from Pine and shown on Noculus at the
   - **Done 2026-10-22.** 9 tests and the walk-through (`live_ui.js`, 12 checks).
     - On the real terminal (Exness, `focus.toml` `fresh_near_gap`), a live XAUUSD session for today was ready in 14 s: 142 closes to 12:29 UTC. A refresh takes about 4 s.
     - At the 12:15 UTC close the engine read gold as grade A, bullish, drawing to 4142.33, and refused it as STALE_RAID: its raid was at 20:45 UTC the day before.
-  - **Validates: Requirements 27.1–27.5**
+  - **Revised 2026-10-22 after the trader's first look** ("as though it is on backtesting mode"):
+    - the market now every second: `forming`, `quote`, `live_now`, `GET /api/watch/live`, and the page's one-second loop;
+    - a refresh within seconds of each minute's close;
+    - Live / Back to live in place of Play and the speed menu;
+    - crosses watched in their own currency (D42).
+
+    3 more tests; the walk-through now has 19 checks. On the real terminal a `live_now` call takes 3–16 ms, and gold's bid moved every second. A live GER40 session opened: grade A, bullish, drawing to 25736.0, refused as STALE_RAID.
+  - **Validates: Requirements 27.1–27.7**
 
 ---
 

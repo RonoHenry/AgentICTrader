@@ -31,6 +31,11 @@ class FakeTerminal:
         self.frame = SnapshotSource(snap)._frame("EURUSD")
         self.calls = []
 
+    def quote(self, instrument):
+        """The last tick: the last bar opened by the clock's close as the bid, a 2-point spread."""
+        bar = self.frame[self.frame["time"] <= pd.Timestamp(self.clock[0])].iloc[-1]
+        return self.clock[0], float(bar["close"]), float(bar["close"]) + 0.0002
+
     def __call__(self, instrument, tf, start, end):
         self.calls.append((instrument, tf, start, end))
         if instrument != "EURUSD" or tf != TF.M1:
@@ -48,6 +53,7 @@ def live(setup):  # noqa: F811
         "holdout_start = 2026-09-01\ncreated_from_data_end = 2026-09-30\n", encoding="utf-8")
     clock = [datetime(2026, 9, 30, 10, 0, 30, tzinfo=UTC)]
     terminal = FakeTerminal(snap)
+    terminal.clock = clock
     source = LiveSource(terminal, ["EURUSD"], history=timedelta(days=40), now=lambda: clock[0])
     return root, snap, clock, terminal, source
 
@@ -153,3 +159,65 @@ def test_the_watchlist_reads_the_terminal_in_a_live_session(live):
     assert terminal.calls[-1][1] == TF.M1 and terminal.calls[-1][3] == until.to_pydatetime()
     nothing = ChartsApp._live_bars(LiveSource(lambda *a: pd.DataFrame(columns=COLUMNS), ["EURUSD"]), until)
     assert charts.watchlist(until, nothing)["rows"][0]["last"] is None
+
+
+def test_the_market_now_moves_between_the_engines_closes(live):
+    root, snap, clock, _, source = live
+    app = WatchApp(root / "live.toml", snap, (date(2026, 9, 28), date(2026, 10, 3)), noculus_root=root / "noculus",
+                   studies_root=root, live=lambda: source)
+    app.start({"instrument": "EURUSD", "days": 1, "variant": "base", "live": True})
+    session = _ready(app)
+    ten = wall(pd.Timestamp("2026-09-30 10:00", tz="UTC"))
+    m1 = SnapshotSource(snap)._frame("EURUSD").set_index("time")
+    now = session.live_now("M1")
+    assert [b["time"] for b in now["bars"]] == [ten - 60, ten]                    # the last closed minute, the forming one
+    assert now["bars"][-1]["close"] == pytest.approx(m1.loc[pd.Timestamp("2026-09-30 10:00", tz="UTC"), "close"])
+    assert now["bid"] == now["bars"][-1]["close"] and now["ask"] > now["bid"] and now["end"] == ten
+    m15 = session.live_now("M15")["bars"]
+    assert [b["time"] for b in m15] == [ten - 900, ten]                           # 09:45 closed, 10:00 forming
+    # The forming minute is the chart's only: the engine and the account still end at the last closed minute.
+    assert max(session.states) == ten and source.last_time("EURUSD", TF.M1) == datetime(2026, 9, 30, 9, 59, tzinfo=UTC)
+    with pytest.raises(ValueError):
+        session.live_now("M7")
+
+
+def test_two_live_sessions_on_one_market_both_move_on(live):
+    root, snap, clock, _, source = live
+    app = WatchApp(root / "live.toml", snap, (date(2026, 9, 28), date(2026, 10, 3)), noculus_root=root / "noculus",
+                   studies_root=root, live=lambda: source)
+    app.start({"instrument": "EURUSD", "days": 1, "variant": "base", "live": True})
+    open_ = _ready(app)
+    app.start({"instrument": "EURUSD", "days": 1, "variant": "base", "live": True, "blind": True})
+    blind = _ready(app)
+    assert open_ is not blind and open_.source is blind.source
+    clock[0] = datetime(2026, 9, 30, 10, 30, 30, tzinfo=UTC)
+    open_.refresh()                                          # tops up the shared minutes
+    blind.refresh()                                          # which must not look like "nothing new" to the other
+    half = wall(pd.Timestamp("2026-09-30 10:30", tz="UTC"))
+    assert open_.status()["end"] == blind.status()["end"] == half
+    with pytest.raises(LookupError, match="not live"):
+        WatchSession(root / "base.toml", None, "EURUSD", date(2026, 9, 30), 1, snap).live_now("M1")
+
+
+def test_a_cross_is_watched_in_its_own_currency(setup, monkeypatch):  # noqa: F811
+    # GER40 (EUR) and UK100 (GBP) on a USD account: the backtester refuses to convert them, so the watch follows a
+    # cross in an account of its own quote currency; it shows R, which no currency changes (D42).
+    root, snap = setup
+    real = watch.load_profile
+
+    class Elsewhere:                                         # the same broker, its account in yen
+        def __init__(self, name):
+            self._p = real(name)
+
+        def __getattr__(self, name):
+            return getattr(self._p, name)
+
+        def specs(self):
+            specs = self._p.specs()
+            return watch.InstrumentSpecs(specs.venue, "JPY", {k: specs[k] for k in specs})
+
+    monkeypatch.setattr(watch, "load_profile", Elsewhere)
+    session = WatchSession(root / "base.toml", None, "EURUSD", date(2026, 9, 30), 1, snap, studies_root=root)
+    session.prepare()
+    assert session.state == "ready", session.message
+    assert session.journal and session.costs is not None

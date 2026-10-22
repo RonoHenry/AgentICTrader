@@ -46,6 +46,7 @@ import numpy as np
 import pandas as pd
 
 from agent.broker_profiles import load_profile
+from agent.instruments import InstrumentSpecs
 from algo_backtester.cache import SignalCache, engine_code_fingerprint
 from algo_backtester.config import REPO_ROOT, load_or_create_study, load_run_config
 from algo_backtester.data import StoredBar, load_instrument
@@ -93,8 +94,9 @@ _MODEL_A_KEEP = {"model_d1": 86400, "model_h4": 4 * 3600}
 _MODEL_A_HISTORY = pd.Timedelta(days=100)
 #: The indicator readers a session keeps (chart timeframe x computing inputs), and the events it sends.
 _FRACTAL_READERS, _FRACTAL_EVENTS = 4, 200
-#: How often a live session watched by a page reads the terminal again (Requirement 27.2), in seconds.
-LIVE_EVERY = 30
+#: How often a live session watched by a page asks the terminal for a newly closed minute (Requirement 27.2), in
+#: seconds. Asking is cheap; the engine and the account run again only when a minute has closed.
+LIVE_EVERY = 5
 
 
 def wall(t) -> int:
@@ -237,6 +239,10 @@ class WatchSession:
         with self._refresh_lock:
             self._refreshed_at = time.monotonic()
             try:
+                self.source.refresh(self.instrument)
+                last = self.source.last_time(self.instrument, Timeframe.M1)
+                if self._keys and (last is None or pd.Timestamp(last) + pd.Timedelta(minutes=1) <= self.end):
+                    return                                   # no minute has closed since the session's end
                 before = self.end
                 self._prepare()
                 if self.end != before:
@@ -249,7 +255,8 @@ class WatchSession:
                 self._refreshing = False
 
     def _maybe_refresh(self) -> None:
-        """While a page asks after a live session, read the terminal again every LIVE_EVERY seconds, in the background."""
+        """While a page asks after a live session, ask the terminal for a newly closed minute every LIVE_EVERY
+        seconds, in the background."""
         if not self.live or self.state != "ready" or self._refreshing or time.monotonic() - self._refreshed_at < LIVE_EVERY:
             return
         self._refreshing, self._refreshed_at = True, time.monotonic()
@@ -271,6 +278,11 @@ class WatchSession:
                                                                          "start": run_start, "end": run_end})})
         profile = load_profile(cfg.run.profile)
         specs = profile.specs()
+        own = specs[self.instrument]
+        if specs.account_ccy not in (own.base_ccy, own.quote_ccy):
+            # The backtester can't convert a cross's results to the account's currency yet (run.py). The watch reads
+            # R, which no currency changes, so a cross is followed in an account of its own quote currency (D42).
+            specs = InstrumentSpecs(specs.venue, own.quote_ccy, {self.instrument: own})
         study = load_or_create_study(cfg.run.study, date.today(), self.studies_root)
         start_dt = datetime(run_start.year, run_start.month, run_start.day, tzinfo=timezone.utc)
         end_dt = datetime(run_end.year, run_end.month, run_end.day, tzinfo=timezone.utc)
@@ -746,6 +758,28 @@ class WatchSession:
         view["events"] = [e for e in view["events"] if e["t"] >= since][-_FRACTAL_EVENTS:]
         return view
 
+    def live_now(self, tf: str) -> dict:
+        """The market now, on a chart of ``tf`` (Requirement 27.6): its candles from the session's last closed minute
+        on, the forming one included, and the last bid and ask. The engine still reads closed candles only: this is
+        the price moving through what it drew at its last close. Also the session's end and version, so the page
+        knows when a minute has closed and been read."""
+        if not self.live:
+            raise LookupError("the session is not live")
+        seconds_of(tf)
+        self._maybe_refresh()
+        out = {"state": self.state, "message": self.message, "end": wall(self.end), "version": self.version,
+               "time": wall(pd.Timestamp(self.source.now())), "bars": [], "bid": None, "ask": None}
+        frame = self.source.forming(self.instrument)
+        if not frame.empty:
+            bars = ReplayBars(frame, self.instrument, PriceBasis(instruments=()))
+            rows = bars.as_of(tf, pd.Timestamp(self.source.now()) + pd.Timedelta(minutes=1), since=wall(self.end) - 60)
+            out["bars"] = [{"time": int(r.time), "open": float(r.open), "high": float(r.high), "low": float(r.low),
+                            "close": float(r.close)} for r in rows.itertuples()]
+        quote = self.source.quote(self.instrument)
+        if quote is not None:
+            out["tick"], out["bid"], out["ask"] = wall(pd.Timestamp(quote[0])), quote[1], quote[2]
+        return out
+
     def state_at(self, w: int) -> Optional[dict]:
         i = bisect_right(self._keys, int(w)) - 1
         if i < 0:
@@ -913,6 +947,8 @@ class _Handler(BaseHTTPRequestHandler):
         elif url.path == "/api/watch/bars":
             self._answer(lambda: {"tf": q.get("tf", "M15"), "bars": self.app.need().bars_until(
                 q.get("tf", "M15"), int(q["until"]), int(q["since"]) if q.get("since") else None)})
+        elif url.path == "/api/watch/live":
+            self._answer(lambda: self.app.need().live_now(q.get("tf", "M15")))
         elif url.path == "/api/watch/state":
             self._answer(lambda: {"state": self.app.need().state_at(int(q["t"]))})
         elif url.path == "/api/watch/journal":

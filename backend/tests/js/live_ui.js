@@ -1,5 +1,6 @@
 // A live session on the page (algo-backtester Requirement 27): started live, opened at the last closed minute,
-// following the session as it moves on, staying where the trader stepped back to, and live again after a restart.
+// the forming candle and the price drawn every second, following the session as it moves on, staying where the
+// trader stepped back to (Back to live returns), and live again after a restart.
 // The browser is stubbed as in reconnect_ui.js; timers run fast.
 "use strict";
 const fs = require("fs");
@@ -101,6 +102,11 @@ global.fetch = async (url, init) => {
   if (url.startsWith("/api/watch/bars")) {
     const until = Number(/until=(\d+)/.exec(url)[1]);
     return reply(200, { tf: "M15", bars: [{ time: until - 60, open: 1, high: 2, low: 0.5, close: 1.5 }] });
+  }
+  if (url.startsWith("/api/watch/live")) {                // the market now: the forming candle at the end, a tick
+    live.ticks = (live.ticks || 0) + 1;
+    return reply(200, { state: "ready", message: "", end: live.end, version: live.version, time: live.end + 30, tick: live.end + 30,
+                        bars: [{ time: live.end, open: 1, high: 3, low: 0.5, close: 2.5 }], bid: 2.5, ask: 2.6 });
   }
   if (url.startsWith("/api/watch/state")) return reply(200, { state: { t: Number(/t=(\d+)/.exec(url)[1]), arrays: [], pools: [] } });
   if (url.startsWith("/api/watch/model-a")) return reply(200, { set: "model_d1", instances: [] });

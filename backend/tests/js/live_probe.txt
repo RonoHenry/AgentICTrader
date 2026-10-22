@@ -10,8 +10,18 @@
   const start = calls.find(([u]) => u === "/api/watch/start");
   check("a live start says so", !!start && start[1].live === true, start && JSON.stringify(start[1]));
   check("the clock opens at the last closed minute", S.t === E0, S.t + " vs " + E0);
-  check("the pill says live", $("status").textContent === "live", $("status").textContent);
+  check("the pill says live", $("status").textContent === "● live", $("status").textContent);
   check("the summary says live", /^live, 1 day/.test($("summaryTop").textContent), $("summaryTop").textContent);
+  await until(() => S.now && S.bars.length && S.bars[S.bars.length - 1].close === 2.5);
+  const last = S.bars[S.bars.length - 1];
+  check("the forming candle is drawn at the end", !!last && last.time === E0 && last.close === 2.5, last && JSON.stringify(last));
+  check("the header says live, with the bid and ask", /^LIVE/.test($("when").textContent) && /2\.5.*2\.6/.test($("price").textContent),
+        $("when").textContent + " | " + $("price").textContent);
+  check("the button says Live, and there is no speed to choose", $("play").textContent === "● Live" && $("speed").style.display === "none",
+        $("play").textContent);
+  const ticks = L.ticks;
+  await until(() => L.ticks >= ticks + 2);
+  check("the market is asked every second", L.ticks >= ticks + 2);
 
   const journals = () => calls.filter(([u]) => u === "/api/watch/journal").length;
   const before = journals();
@@ -27,6 +37,11 @@
   await until(() => !S.busy);
   check("the session's end moves on", S.status.end === E0 + 120, S.status.end);
   check("stepped back, the clock stays where the trader put it", S.t === E0 - 900, S.t);
+  check("stepped back, the forming candle isn't drawn", S.bars[S.bars.length - 1].close !== 2.5 || S.bars[S.bars.length - 1].time <= S.t);
+  check("the button offers the way back", $("play").textContent === "⏭ Back to live", $("play").textContent);
+  togglePlay();
+  await until(() => S.t === S.status.end);
+  check("Back to live returns the clock to the end", S.t === E0 + 120, S.t);
 
   calls.length = 0;
   await recover();
