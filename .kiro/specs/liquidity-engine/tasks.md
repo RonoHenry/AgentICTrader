@@ -1020,6 +1020,12 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
 - [ ] 354. The comparison run (Req 29.4) **(user review)**
   - `fresh_near_gap` and `fresh_near_gap_box` in one command (one engine analysis), the exploration slice, `--snapshot focus-2025-2026h1`. Record trades, R with its interval, win rate, drawdown and the `IN_D1_BOX` refusals, against `fresh_near_gap` and its 2026-10-21 run.
   - Written to `docs/backtests/D1_BOX.md`. The default changes only after the trader's review; any adopted version is confirmed once.
+  - **Run 2026-10-23** (`fb2bef51892d`, `e5347180fc81`). The reference reproduces task 344's 114 trades and +0.27R.
+    With the box: 70 trades, +0.69R a trade after costs [−0.13, +1.62], +48.5R against +30.4R, profit factor 1.83,
+    drawdown 14.5R against 27.4R, costs 20% of gross. The box removed 46 trades worth −20.0R and freed slots for 2
+    (−2R); 5 of 6 markets improve. Against the pass mark it passes three of five (fails the trade count and the
+    interval). The rule was found on these trades, so the confirmation slice, run once, is the test; the next step
+    is the trader's.
   - **Validates: Requirement 29.4**
 
 ---
