@@ -24,8 +24,10 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from agent.strategy_config import CisdMode, StrategyConfig
+from liquidity_engine import LiquidityMappingEngine
 from liquidity_engine.detectors.internal import PDArrayDetector
-from liquidity_engine.grader.sequence import SetupSequenceDetector
+from liquidity_engine.grader.sequence import CISD_MODES, SetupSequenceDetector
 from liquidity_engine.models import (
     BiasDirection,
     Candle,
@@ -84,9 +86,9 @@ def with_rows(changes: Dict[int, tuple], rows=BULLISH_ROWS) -> list:
     return [changes.get(i, row) for i, row in enumerate(rows)]
 
 
-def detect(rows=BULLISH_ROWS, arrays=(BULLISH_FVG,), **other_tfs):
+def detect(rows=BULLISH_ROWS, arrays=(BULLISH_FVG,), cisd="next", **other_tfs):
     candles_by_tf = {Timeframe.M15: series(rows), **{Timeframe[k]: v for k, v in other_tfs.items()}}
-    return SetupSequenceDetector().detect(candles_by_tf, list(arrays))
+    return SetupSequenceDetector(cisd).detect(candles_by_tf, list(arrays))
 
 
 def day_bars(prev_low: float, prev_high: float = 103.0) -> List[Candle]:
@@ -367,3 +369,134 @@ def test_property_asian_pools_after_the_session(day_open, minutes):
         assert set(pools) == {LiquiditySource.ASIA_HIGH, LiquiditySource.ASIA_LOW}
         assert {p.known_at for p in pools.values()} == {midnight}
         assert (pools[LiquiditySource.ASIA_HIGH].price, pools[LiquiditySource.ASIA_LOW].price) == (101.4, 99.9)
+
+
+# ── the indicator's CISD (Requirement 30, update 2026-10-23b) ────────────────
+
+LATE = with_rows({8: (100.1, 101.1, 100.0, 100.85)})     # bar 8 closes below 100.9, bar 9 above it
+
+
+def test_next_cisd_carries_its_level_and_run():
+    # The engine's own reading, unchanged: bar 8 closes above 100.9, the open of the run 5-7 right before it.
+    seq = detect()
+    assert (seq.cisd_at, seq.cisd_level, seq.cisd_from) == (m15(8), 100.9, m15(5))
+    assert detect(cisd="run") == seq                          # here the indicator's reading agrees
+
+
+def test_run_cisd_is_a_close_through_the_run_into_the_low_however_late():
+    # The run of down closes into the 99.6 low (bars 5-7) opened at 100.9. Bar 8 closes below it and bar 9 above.
+    # The engine's own reading needs the bar right after the run, so it finds none; the indicator's is bar 9.
+    assert detect(LATE) is None
+    seq = detect(LATE, cisd="run")
+    assert (seq.cisd_at, seq.cisd_level, seq.cisd_from) == (m15(9), 100.9, m15(5))
+    assert (seq.raid.raided_at, seq.protected_swing.candle_at) == (m15(7), m15(7))
+
+
+def test_run_cisd_mirrors_for_a_bearish_setup():
+    seq = detect(mirror(LATE), (BEARISH_FVG,), cisd="run")
+    assert seq.direction == BiasDirection.BEARISH and (seq.cisd_at, seq.cisd_from) == (m15(9), m15(5))
+    assert seq.cisd_level == pytest.approx(202 - 100.9)
+
+
+def test_run_cisd_skips_dojis_in_the_run():
+    # Bar 6 is a doji: the run into the low is still 5-7, so bar 8's close at 100.6 isn't through its 100.9 open.
+    rows = with_rows({6: (100.7, 100.8, 100.2, 100.7), 8: (100.1, 100.7, 100.0, 100.6)})
+    seq = detect(rows, cisd="run")
+    assert (seq.cisd_at, seq.cisd_level, seq.cisd_from) == (m15(9), 100.9, m15(5))
+
+
+def test_run_cisd_moves_with_a_new_low():
+    # After the raid bar 8 rallies and bar 9 makes a new low, 99.4: the run into it is bar 9 alone, its open 100.6
+    # is the level, and bar 10 closes through it at 100.7 (not through the old level, 100.9).
+    rows = with_rows({8: (100.1, 100.65, 100.0, 100.6), 9: (100.6, 100.62, 99.4, 99.9),
+                      10: (99.9, 100.8, 99.85, 100.7), 11: (100.7, 101.3, 100.9, 101.2), 12: (101.2, 101.4, 101.0, 101.3)})
+    seq = detect(rows, (array("fvg", BiasDirection.BULLISH, 100.62, 100.9, 11),), cisd="run")
+    assert (seq.cisd_at, seq.cisd_level, seq.cisd_from) == (m15(10), 100.6, m15(9))
+    assert (seq.protected_swing.candle_at, seq.protected_swing.wick) == (m15(9), 99.4)
+
+
+H4_START = datetime(2024, 1, 1, 22, tzinfo=UTC)          # 17:00 New York: H4 candles open at 22:00, 02:00, 06:00 UTC
+
+
+def h4(rows) -> List[Candle]:
+    return series(rows, Timeframe.H4, H4_START, timedelta(hours=4))
+
+
+def crt_view(c1_low: float, rows=BULLISH_ROWS) -> Dict[Timeframe, List[Candle]]:
+    """The M15 bars inside the 06:00 H4 candle (C2, in progress); C1 is the 02:00 candle."""
+    return {Timeframe.M15: series(rows),
+            Timeframe.H4: h4([(101.0, 101.5, 100.2, 100.5), (100.5, 101.0, c1_low, 100.4), (100.4, 102.3, 99.6, 101.8)])}
+
+
+def test_crt_raid_is_c2_sweeping_c1():
+    # Bar 7 (07:45, inside C2) trades to 99.6 through C1's 99.8 low and closes back above it.
+    seq = SetupSequenceDetector("crt").detect(crt_view(99.8), [BULLISH_FVG])
+    pool = seq.raid.pool
+    assert (pool.side, pool.source, pool.timeframe, pool.price) == (LiquidityType.SSL, LiquiditySource.C1_LOW,
+                                                                     Timeframe.H4, 99.8)
+    assert (pool.formed_at, pool.known_at, pool.raidable_until) == (
+        datetime(2024, 1, 2, 2, tzinfo=UTC), M15_START, datetime(2024, 1, 2, 10, tzinfo=UTC))
+    assert (seq.raid.raided_at, seq.cisd_at, seq.cisd_level, seq.cisd_from) == (m15(7), m15(8), 100.9, m15(5))
+
+
+def test_crt_has_no_other_pools():
+    # Nothing in C2 traded below C1's 99.5 low. Bar 7 took the M15 swing low (100.0), which is a pool to the
+    # engine's own readings but not to "crt".
+    view = crt_view(99.5)
+    assert SetupSequenceDetector("crt").detect(view, [BULLISH_FVG]) is None
+    assert SetupSequenceDetector("run").detect(view, [BULLISH_FVG]).raid.pool.source == LiquiditySource.SWING_LOW
+    assert {p.source for p in SetupSequenceDetector("crt").pools(view)} == {LiquiditySource.C1_HIGH,
+                                                                             LiquiditySource.C1_LOW}
+
+
+def test_crt_c1_is_raidable_only_until_c2_closes():
+    # The M15 bars from 04:15. The 22:00 candle's low (99.8) is C1 to the 02:00 candle, which closes at 06:00;
+    # bar 7 (06:00) trades through it after that close, so it is no raid. The 02:00 candle's low (99.0) is C1 to
+    # the 06:00 candle and nothing reaches it.
+    start = datetime(2024, 1, 2, 4, 15, tzinfo=UTC)
+    view = {Timeframe.M15: series(BULLISH_ROWS, start=start),
+            Timeframe.H4: h4([(100.5, 101.0, 99.8, 100.4), (100.4, 101.3, 99.0, 100.5), (100.5, 102.3, 99.6, 101.8)])}
+    lows = {(p.price, p.known_at, p.raidable_until) for p in SetupSequenceDetector("crt").pools(view)
+            if p.side == LiquidityType.SSL}
+    assert lows == {(99.8, datetime(2024, 1, 2, 2, tzinfo=UTC), datetime(2024, 1, 2, 6, tzinfo=UTC)),
+                    (99.0, datetime(2024, 1, 2, 6, tzinfo=UTC), datetime(2024, 1, 2, 10, tzinfo=UTC))}
+    fvg = BULLISH_FVG.model_copy(update={"formed_at": start + timedelta(minutes=150)})
+    assert SetupSequenceDetector("crt").detect(view, [fvg]) is None
+    assert SetupSequenceDetector("run").detect(view, [fvg]) is not None     # the M15 swing low is still taken
+
+
+@pytest.mark.parametrize("cisd", CISD_MODES)
+def test_the_chart_ranks_as_the_engine_does(cisd):
+    from algo_backtester.watch import ranked_candidates
+
+    view = crt_view(99.8, LATE)
+    chosen = SetupSequenceDetector(cisd).detect(view, [BULLISH_FVG])
+    ranked = ranked_candidates(view, [BULLISH_FVG], None, cisd)
+    assert ranked[0].sequence == chosen
+    assert (chosen is None) == (cisd == "next")                # LATE has no CISD the engine's own way
+
+
+def test_an_unknown_cisd_is_refused_and_the_default_is_the_engines_own():
+    for build in (SetupSequenceDetector, lambda mode: LiquidityMappingEngine(cisd=mode)):
+        with pytest.raises(ValueError, match="cisd"):
+            build("the wick")
+    with pytest.raises(Exception):
+        StrategyConfig(cisd="the wick")
+    assert StrategyConfig().cisd is CisdMode.NEXT and LiquidityMappingEngine().cisd == "next"
+    assert SetupSequenceDetector().cisd == "next"
+
+
+def test_the_setting_reaches_the_engine_everywhere():
+    # Requirement 30.4: it changes the engine's own map, so it splits Phase A and travels with the configuration.
+    import inspect
+
+    import scripts.run_live_agent as live
+    from algo_backtester import cli, signals, watch
+
+    assert not signals.same_view([StrategyConfig(), StrategyConfig(cisd="run")])
+    for name in ("signals_at", "generate_signals", "_generate_closes"):
+        assert "cisd" in inspect.getsource(getattr(signals, name)), name
+    assert "cisd" in inspect.getsource(cli._run_many)
+    assert "cisd" in inspect.getsource(watch.WatchSession._prepare)
+    assert "cisd" in inspect.getsource(watch._Capturing)
+    assert "cisd" in inspect.getsource(live._process_instrument)

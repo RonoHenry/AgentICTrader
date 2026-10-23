@@ -173,10 +173,11 @@ class Candidate(NamedTuple):
     key: Optional[tuple]
 
 
-def ranked_candidates(candles_by_tf, pd_arrays, as_of) -> list[Candidate]:
+def ranked_candidates(candles_by_tf, pd_arrays, as_of, cisd: str = "next") -> list[Candidate]:
     """``SetupSequenceDetector.detect``'s own ranking, from its own parts, listing every array instead of keeping
     the best: those with a sequence first, best first (the engine's choice leads), then those without. The engine's
-    code stays as it is (its fingerprint keys the signal cache); the tests hold the two to the same choice."""
+    code stays as it is (its fingerprint keys the signal cache); the tests hold the two to the same choice.
+    ``cisd`` is the engine's (liquidity-engine Req 30)."""
     arrays_by_tf: dict = {}
     for array in pd_arrays:
         if (not array.is_filled and array.timeframe in _ENTRY_ELIGIBLE_TIMEFRAMES
@@ -184,10 +185,10 @@ def ranked_candidates(candles_by_tf, pd_arrays, as_of) -> list[Candidate]:
             arrays_by_tf.setdefault(array.timeframe, []).append(array)
     if not arrays_by_tf:
         return []
-    pools = SetupSequenceDetector().pools(candles_by_tf, as_of)
+    pools = SetupSequenceDetector(cisd).pools(candles_by_tf, as_of)
     ranked, without = [], []
     for tf, arrays in arrays_by_tf.items():
-        window = _EntryWindow(tf, candles_by_tf, pools)
+        window = _EntryWindow(tf, candles_by_tf, pools, cisd)
         for array in arrays:
             found = window.sequence_for(array)
             if found is None:
@@ -319,7 +320,7 @@ class WatchSession:
         # A live session's earlier closes read the same closed candles, so only the new ones are read.
         closes = entry_closes(data, cfg.strategy.entry_tf, start_dt, end_dt)
         spread = spec.default_spread
-        engine = _Capturing(cfg.strategy.fvg_zone)
+        engine = _Capturing(cfg.strategy.fvg_zone, cfg.strategy.cisd)
         states = dict(self.states)
         new = [t for t in closes if t not in self._records]
         for n, t in enumerate(new):
@@ -328,7 +329,7 @@ class WatchSession:
             engine.last = None
             self._records[t] = signals_at(data, (cfg.strategy,), t, engine, spread)[0]
             try:
-                state = (self._state(*engine.last, t, cfg.strategy.entry_tf) if engine.last
+                state = (self._state(*engine.last, t, cfg.strategy.entry_tf, cfg.strategy.cisd) if engine.last
                          else {"error": "the engine raised: see the decision"})
             except Exception as exc:
                 state = {"error": f"{type(exc).__name__}: {exc}"}
@@ -587,7 +588,7 @@ class WatchSession:
                 "exit": _num(r.get("exit")), "exit_reason": r.get("exit_reason") if isinstance(r.get("exit_reason"), str) else None,
                 "net_r": _num(r.get("net_r")), "mfe_r": _num(r.get("mfe_r"))}
 
-    def _state(self, lm, view, seen, t: datetime, entry_tf: Timeframe) -> dict:
+    def _state(self, lm, view, seen, t: datetime, entry_tf: Timeframe, cisd: str = "next") -> dict:
         price = view[entry_tf][-1].close if view.get(entry_tf) else None
         days = view.get(Timeframe.D1, [])[-6:]
         lo = min((c.low for c in days), default=price) if price else None
@@ -607,7 +608,7 @@ class WatchSession:
         pools = []
         bars = view.get(entry_tf, [])
         opens = [c.timestamp for c in bars]
-        for p in SetupSequenceDetector().pools(view, as_of=t):
+        for p in SetupSequenceDetector(cisd).pools(view, as_of=t):
             if p.known_at > t or not near(p.price):
                 continue
             k = bisect_right(opens, p.known_at)
@@ -633,6 +634,7 @@ class WatchSession:
             sequence = {"direction": seq.direction.value, "pool": {"side": seq.raid.pool.side.value, "source": seq.raid.pool.source.value,
                                                                    "tf": seq.raid.pool.timeframe.value, "price": seq.raid.pool.price},
                         "raided": wall(seq.raid.raided_at), "reclaimed": wall(seq.raid.reclaimed_at), "cisd": wall(seq.cisd_at),
+                        "cisd_level": seq.cisd_level, "cisd_from": wall(seq.cisd_from) if seq.cisd_from else None,
                         "protected": {"wick": seq.protected_swing.wick, "body": seq.protected_swing.body,
                                       "at": wall(seq.protected_swing.candle_at)},
                         "leg_extreme": seq.leg_extreme}
@@ -673,6 +675,7 @@ class WatchSession:
                          "price": s.raid.pool.price, "at": wall(s.raid.raided_at),
                          "age_h": round((pd.Timestamp(t) - pd.Timestamp(s.raid.raided_at)).total_seconds() / 3600, 1)},
                 "cisd": wall(s.cisd_at), "protected": s.protected_swing.wick, "weight": c.key[1],
+                "cisd_level": s.cisd_level, "cisd_from": wall(s.cisd_from) if s.cisd_from else None,
                 "chosen": bool(chosen_sequence is not None and a.array_id == chosen_sequence.entry_array_id and not ranked),
             })
         return {"ranked": ranked, "without": without}
@@ -893,13 +896,13 @@ class WatchSession:
 class _Capturing:
     """The engine, keeping the last view and map it produced, for the page."""
 
-    def __init__(self, fvg_zone: str = "candles") -> None:
-        self.engine = LiquidityMappingEngine(fvg_zone)
+    def __init__(self, fvg_zone: str = "candles", cisd: str = "next") -> None:
+        self.engine = LiquidityMappingEngine(fvg_zone, cisd)
         self.last = None
 
     def analyze(self, view, instrument, t):
         lm = self.engine.analyze(view, instrument, t)
-        self.last = (lm, view, ranked_candidates(view, lm.pd_arrays, t))   # what the detector ranked, for the page
+        self.last = (lm, view, ranked_candidates(view, lm.pd_arrays, t, self.engine.cisd))   # for the page
         return lm
 
 

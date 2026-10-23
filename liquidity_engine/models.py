@@ -73,6 +73,8 @@ class LiquiditySource(str, Enum):
     SWING_LOW = "SWING_LOW"        # a swing low: sell stops rest below it
     ASIA_HIGH = "ASIA_HIGH"        # the Asian range, 20:00-00:00 New York (Requirement 20.2)
     ASIA_LOW = "ASIA_LOW"
+    C1_HIGH = "C1_HIGH"            # a CRT frame candle's high, swept by the next candle, C2 (Requirement 30.3)
+    C1_LOW = "C1_LOW"
 
 
 class CRTPhase(str, Enum):
@@ -477,6 +479,8 @@ class LiquidityPool(BaseModel):
     price: float
     formed_at: datetime          # the swing bar, or the previous period's bar
     known_at: datetime           # the first moment it existed: the open of the bar after its confirming bar
+    # A C1 pool (Requirement 30.3) is raided only by a bar opening before C2 closes; None: no limit.
+    raidable_until: Optional[datetime] = None
 
 
 class LiquidityRaid(BaseModel):
@@ -504,6 +508,9 @@ class SetupSequence(BaseModel):
     cisd_at: datetime            # violation candle of the first CISD in this direction after the raid
     protected_swing: ProtectedSwing
     leg_extreme: float           # far end of the setup leg from the protected wick (Requirement 18.6)
+    # The CISD's level and its run's first candle (Requirement 30.5), for the chart; None in older records.
+    cisd_level: Optional[float] = None
+    cisd_from: Optional[datetime] = None
 
 
 class Objective(BaseModel):

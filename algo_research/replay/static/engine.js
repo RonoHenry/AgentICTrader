@@ -159,6 +159,13 @@ function paintEngine(ctx, size) {
   ctx.font = "10px system-ui, sans-serif"; ctx.textBaseline = "bottom";
   const text = (s, x, y, color, align) => { ctx.fillStyle = color; ctx.textAlign = align || "left"; ctx.fillText(s, x, y); };
   const line = (x1, y1, x2, y2, color, dash, width) => { ctx.strokeStyle = color; ctx.lineWidth = width || 1; ctx.setLineDash(dash || []); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.setLineDash([]); };
+  // The CISD's level, from its run's first candle to the close through it, as the indicator draws it (Req 30.5).
+  const cisdLevel = (s, cx, color) => {
+    if (s.cisd_level == null || s.cisd_from == null) return;
+    const lx = X(s.cisd_from), ly = Y(s.cisd_level);
+    if (!isFinite(lx) || !isFinite(ly)) return;
+    line(lx, ly, Math.max(cx, lx + 20), ly, color, [], 2); text(`CISD ${fmt(s.cisd_level)}`, lx + 3, ly - 3, color);
+  };
   if (st && !st.error && !st.withheld) {
     if (S.layers.arrays) {
       for (const a of st.arrays.filter(showArray)) {
@@ -199,6 +206,7 @@ function paintEngine(ctx, size) {
       text(`raid of ${sq.pool.source.replace("_", " ")} ${sq.pool.tf}`, rx + 8, ry - 4, c);
       const cx = X(sq.cisd);
       line(cx, 0, cx, size.height, rgba(c.startsWith("#") ? c : "#888888", 0.6), [3, 3]); text("CISD", cx + 3, 24, c);
+      cisdLevel(sq, cx, c);
       const px = X(sq.protected.at), py = Y(sq.protected.wick);
       ctx.fillStyle = c; ctx.beginPath();
       if (sq.direction === "BULLISH") { ctx.moveTo(px, py + 2); ctx.lineTo(px - 6, py + 12); ctx.lineTo(px + 6, py + 12); }
@@ -222,6 +230,7 @@ function paintEngine(ctx, size) {
         ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(rx, ry, 6, 0, 2 * Math.PI); ctx.stroke();
         text(`raid ${c.raid.source.replace("_", " ")} ${c.raid.tf}, ${c.raid.age_h} h before`, rx + 8, ry - 4, col);
         line(cx, 0, cx, size.height, rgba(hex, 0.6), [3, 3]); text("CISD", cx + 3, 36, col);
+        cisdLevel(c, cx, col);
       }
     }
   }
@@ -795,7 +804,7 @@ function renderEngine() {
   }
   if (sq) {
     html += `<div class="card"><b>Setup</b>: ${esc(sq.direction)} after a raid of ${esc(sq.pool.source)} ${esc(sq.pool.tf)} ${fmt(sq.pool.price)} at ${fmtTime(sq.raided)}<br>
-      CISD at ${fmtTime(sq.cisd)} · protected swing ${fmt(sq.protected.wick)} (${fmtTime(sq.protected.at)})</div>`;
+      CISD at ${fmtTime(sq.cisd)}${sq.cisd_level != null ? ` through ${fmt(sq.cisd_level)}` : ""} · protected swing ${fmt(sq.protected.wick)} (${fmtTime(sq.protected.at)})</div>`;
   }
   if (S.layers.modelA) {
     const label = (MA_SETS.find(([v]) => v === S.maSet) || ["", S.maSet])[1];
@@ -820,7 +829,7 @@ function renderEngine() {
       <div class="hint">Ranked as the engine ranks them: the latest raid first, then the raided pool's timeframe, then the array's type. Hover to see one; mark the one you would take.</div>
       ${cd.ranked.map((c) => `<div class="cand${c.chosen ? " chosen" : ""}${mine && mine.pick === c.id ? " mine" : ""}" data-id="${esc(c.id)}">
         <span class="rk">#${c.rank}</span> ${esc(c.tf)} ${esc(c.type)} ${c.dir === "BULLISH" ? "▲" : "▼"} ${fmt(c.low)}–${fmt(c.high)}${c.chosen ? " · <b>the engine's choice</b>" : ""}
-        <div class="muted">raid of ${esc(c.raid.source.replace("_", " "))} ${esc(c.raid.tf)} ${fmt(c.raid.price)}, ${c.raid.age_h} h before · CISD ${fmtTime(c.cisd)}</div>
+        <div class="muted">raid of ${esc(c.raid.source.replace("_", " "))} ${esc(c.raid.tf)} ${fmt(c.raid.price)}, ${c.raid.age_h} h before · CISD ${fmtTime(c.cisd)}${c.cisd_level != null ? ` through ${fmt(c.cisd_level)}` : ""}</div>
         <button class="boxed pick" data-pick="${esc(c.id)}">${tag(c.id)}Mine</button></div>`).join("")}
       <div class="row"><button class="boxed pick" data-pick="none">${tag("none")}None: no trade here</button>
         <button class="boxed pick" data-pick="other">${tag("other")}Another array</button></div>

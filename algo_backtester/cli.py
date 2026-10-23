@@ -283,7 +283,7 @@ def _run_many(args: argparse.Namespace, names: Sequence[str], source_factory: So
     groups: dict[str, list[RunConfig]] = {}
     for cfg in cfgs:
         view = (cfg.run, cfg.data, cfg.strategy.entry_tf, sorted(cfg.strategy.candle_counts.items()),
-                cfg.strategy.timeframes, cfg.strategy.fvg_zone)    # the engine's own reading too (same_view)
+                cfg.strategy.timeframes, cfg.strategy.fvg_zone, cfg.strategy.cisd)    # the engine's too (same_view)
         groups.setdefault(repr(view), []).append(cfg)
     cache = SignalCache.default()
     codes = []

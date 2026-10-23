@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from agent.strategy_config import PendingExpiry, StopMode, StrategyConfig
+from agent.strategy_config import CisdMode, PendingExpiry, StopMode, StrategyConfig
 from algo_backtester.config import (
     HoldoutOverlapError,
     RunConfig,
@@ -140,6 +140,18 @@ def test_focus_config_loads_every_variant():
         Timeframe.M5, Timeframe.H1, 1.0, "NEAREST", "gap")
     for name in ("gap", "fresh", "fresh_near", "fresh_gap", "fresh_near_gap", "m5_gap"):
         assert load_run_config(focus, variant=name).run == base.run, name
+
+
+def test_focus_config_carries_the_indicator_cisd_variants():
+    # Liquidity-engine Req 30.6: the base engine and the trader's execution, each with the indicator's CISD.
+    focus = Path(__file__).resolve().parents[2] / "config" / "backtests" / "focus.toml"
+    base = load_run_config(focus).strategy
+    execution = load_run_config(focus, variant="fresh_near_gap").strategy
+    assert base.cisd is CisdMode.NEXT and execution.cisd is CisdMode.NEXT
+    for mode in ("run", "crt"):
+        assert load_run_config(focus, variant=mode).strategy == base.model_copy(update={"cisd": CisdMode(mode)})
+        assert load_run_config(focus, variant=f"fresh_near_gap_{mode}").strategy == execution.model_copy(
+            update={"cisd": CisdMode(mode)})
 
 
 @pytest.mark.parametrize("variant", ["m5_fresh_near_gap", "fresh_near_gap", "fresh_near_gap_box"])

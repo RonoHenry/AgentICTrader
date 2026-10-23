@@ -1016,3 +1016,32 @@ The trader (2026-10-23), on Noculus, GBPUSD 27-29 January 2025 (base engine): "W
 | LE-D25 | The box is the expansion day's range read from D1 closes, not the phase reader's 8-candle box. The reader labelled 27-29 January a retracement (D1) and mostly retracement (H4), and the engine's trades it labelled consolidation did better, not worse (`fresh_near_gap`, H1: +0.80R against -0.44R a trade). | The engine's filled trades, exploration slice (scratch `phase_gate.py`) |
 | LE-D26 | The threshold is 1.2, the one measured first, not a tuned one. On the engine's filled trades, `fresh_near_gap` lost -0.44R a trade inside the box (46 trades) and made +0.74R outside it (68), a difference of +1.18R [+0.12, +2.27], better outside in 5 of 6 markets. At 1.0 and 1.5 the difference points the same way (+0.86, +0.95) but its interval includes zero; for the base engine it is +0.31 [-0.17, +0.81]. Those trades were filtered after the fact, and skipping some frees the 3-trade limit for others, so the run is the measure. | Scratch `d1_box_gate.py` |
 | LE-D27 | The trader's other proposal, entries only from the box's edges with the target capped at its far edge, isn't built. Skipping the middle half removed losers from the base engine (-19R) but winners from `fresh_near_gap` (+3.2R). | The same trades |
+
+## Update 2026-10-23b: The CISD the Trader's Indicator Draws
+
+The trader (2026-10-23), on Noculus with the Fractal + POI layer beside the engine: "Fractal POI is showing high probability CISD while the engine is showing its own shenanigans, I think we should use the CISD that is being shown by the Fractals indicator."
+
+The two are different rules. The indicator anchors its CISD on the sweep: after C2 runs C1's high, the run of up-close candles that made C2's high gives the level (the open of its first candle, dojis skipped), and any later close below it is the CISD; a new high moves the level with it (`FindCISDLevel`, `algo_research/fractal_poi/model.py`). The engine's trade path anchors on nothing: any candle closing beyond the first open of the run right before it is a CISD (`ipda/cisd.py`), and a setup takes the first one after the raid bar (Requirement 18.4). That can be a one-candle pullback hours after the sweep, unrelated to the leg that made it. The context engine's Model A already reads the indicator's way (`cisd = "RUN"`, MA-D4); the trade path doesn't.
+
+The trader chose (2026-10-23) to try both the indicator's rule alone and the rule with the indicator's HTF context.
+
+### Requirement 30: The Indicator's CISD
+
+**User Story:** As the user, I want the engine's CISD to be the one my indicator draws, anchored on the sweep, so that the engine's setups start where I see the change in state of delivery.
+
+#### Acceptance Criteria
+
+1. UNDER `cisd = "next"` (the default), the engine SHALL keep its reading (Requirements 6.3, 18.4): the first CISD after the raid, a candle closing beyond the first open of the run right before it, with a three-candle swing in the run.
+2. UNDER `cisd = "run"`, a setup's CISD SHALL be the indicator's (LE-D28). From the raid's extreme (the protected swing's candle) back, the nearest run of candles closing toward the extreme (down closes into a low), dojis skipped, at most 500 candles: the level is the open of the run's first candle. The CISD is the first candle from the extreme on that closes beyond the level (above it for a bullish setup), however many candles later. No swing is required, as in the indicator. The extreme is the lowest low since the raid and nothing may have traded beyond it since (Requirement 18.4), so a new extreme moves the level with it.
+3. UNDER `cisd = "crt"`, the CISD SHALL be as in 2, and the only raidable pools SHALL be the indicator's C1s (LE-D29): the high and low of each closed candle of the entry timeframe's CRT frame (the indicator's Automatic higher timeframe: M1 → M15, M3 → M30, M5 → H1, M15 → H4), known from that candle's close and raidable only by a candle of the entry timeframe that opens before the next one (C2) closes. The raid still needs a close back beyond the pool (the reclaim), as the indicator's sweep needs a close back inside C1.
+4. THE setting SHALL change the engine's own map, as `fvg_zone` does: configurations that differ in it SHALL NOT share an engine view, and the live runner and Noculus SHALL hand it to the engine.
+5. THE setup sequence SHALL carry the CISD's level and the time of its run's first candle, in every mode, and Noculus SHALL draw the level from there to the CISD candle, as the indicator draws its CISD line.
+6. `config/backtests/focus.toml` SHALL carry `run` and `crt` (the base engine with each) and `fresh_near_gap_run` and `fresh_near_gap_crt` (the trader's execution with each). The last two are run beside `fresh_near_gap` on the exploration slice. The default changes only after the trader's review (LE-D18); any version adopted is confirmed once, pre-registered.
+
+### Decisions (2026-10-23b)
+
+| Id | Decision | Source |
+|---|---|---|
+| LE-D28 | The anchored CISD is the indicator's `FindCISDLevel` line for line: the run nearest the extreme, at or before it, dojis skipped, the 500-candle cap, any later close through the level, no swing prerequisite. It is also Model A's `RUN` (MA-D4). So the engine's CISD is the one the trader sees drawn. | The trader on Noculus, 2026-10-23; `algo_research/fractal_poi/model.py` |
+| LE-D29 | The CRT frame is the indicator's default, the Automatic mode, for the entry timeframe, read from the engine's own candles, which start where the indicator's do (H4 at 17:00 New York, the strategy calendar). Under `"crt"` the C1 pools replace the others (swings, the previous period's extremes, the Asian range): the indicator only marks a CISD after a C2 sweep. | `algo_research/fractal_poi/frames.py` (`getHigherTF`) |
+| LE-D30 | Both are settings with the default unchanged, measured as variants against `fresh_near_gap`. The indicator's setups traded on their own made about 0R gross (task 338): the change fixes the reading, not the direction, so a better read should show first in where the entries and stops sit, and only then, if at all, in R. | Task 338 (`docs/research/FRACTAL_POI_VS_ENGINE.md`) |

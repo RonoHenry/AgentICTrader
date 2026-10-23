@@ -67,6 +67,28 @@ strategy.target_mode = "NEAREST"
 strategy.fvg_zone = "gap"
 strategy.d1_box_expansion = 1.2
 
+# The CISD the trader's indicator draws (Req 30, LE-D28/D29): anchored on the run into the sweep's extreme ("run"),
+# and the same after a C2 sweep of the CRT frame's previous candle only ("crt"; H4 for M15 entries).
+[variants.run]
+strategy.cisd = "run"
+
+[variants.crt]
+strategy.cisd = "crt"
+
+[variants.fresh_near_gap_run]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.cisd = "run"
+
+[variants.fresh_near_gap_crt]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.cisd = "crt"
+
 # On M5, where the trader executes (M1-M5): the sequence from sweep to entry forms there inside one M15 candle.
 # The fresh raid is then read on H1, the trader's indicator's frame for M5; the stop cap stays in M15 ranges.
 [variants.m5_gap]

@@ -1033,6 +1033,46 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     registered on the same trades (`CONFIRMATION_OTE.md`) failed too (66 trades, −0.18R).
   - **Validates: Requirement 29.4**
 
+
+### Update 2026-10-23b: the indicator's CISD
+
+- [x] 360. The indicator's CISD in the engine (Req 30.1–30.4)
+  - **360a. RED** — on hand-made candles:
+    - under `"run"`, the level is the open of the first candle of the down-close run into the low, dojis skipped,
+      and a close above it several candles after the low is the CISD, where `"next"` finds none or another one;
+    - a new low after the raid moves the level to the run into the new low;
+    - under `"crt"`, the previous H4 candle's low swept during the next H4 candle is the raid; a sweep after that
+      candle has closed is none, and a swing low is no pool;
+    - `"next"` keeps every existing sequence test; an unknown mode raises;
+    - configurations that differ only in `cisd` don't share an engine view (`same_view`, the run grouping).
+  - **360b. GREEN** — `StrategyConfig.cisd`; `SetupSequenceDetector(cisd)`, `CISD_MODES` and `CRT_FRAME` in
+    `grader/sequence.py`; `LiquiditySource.C1_HIGH` / `C1_LOW` and `LiquidityPool.raidable_until`;
+    `LiquidityMappingEngine(fvg_zone, cisd)`; the Phase A grouping, the live runner and Noculus pass it on.
+  - **Done 2026-10-23.** `StrategyConfig.cisd` (`CisdMode`, `"next"` by default); in `grader/sequence.py`,
+    `SetupSequenceDetector(cisd)`, `_EntryWindow._anchored_cisd` (the indicator's `FindCISDLevel`) and `c1_pools`
+    (the CRT frame's closed candles, known from C1's close, raidable until C2's close on the strategy calendar).
+    13 tests in `test_liquidity_sequence.py`, the focus variants in `test_backtest_config.py`, the fingerprint
+    guard's row. Under `"next"` the engine's output on the four fixture windows is unchanged apart from the new
+    fields (refreshed with `UPDATE_ENGINE_WINDOWS=1`). The engine changed, so the Phase A cache is rebuilt by the
+    next run.
+  - **Validates: Requirements 30.1–30.4**
+
+- [x] 361. The CISD on Noculus (Req 30.5)
+  - `SetupSequence.cisd_level` and `cisd_from` in every mode; the page's sequence and candidates carry them; the
+    engine layer draws the level from the run's first candle to the CISD candle.
+  - **Done 2026-10-23.** `watch.py` sends `cisd_level` and `cisd_from` with the setup and each candidate, and
+    reads the session's `cisd` for the pools and the ranking; `engine.js` draws the level and names it in the
+    setup and candidate cards. A running server needs a restart for the Python side; the page needs a reload.
+  - **Validates: Requirement 30.5**
+
+- [ ] 362. The comparison run (Req 30.6) **(user review)**
+  - `fresh_near_gap`, `fresh_near_gap_run` and `fresh_near_gap_crt` in one command, the exploration slice,
+    `--snapshot focus-2025-2026h1`. Record trades, R with its interval, win rate, drawdown, and how far the entries
+    and stops sit from the sweep (in M15 ranges), against `fresh_near_gap`'s 2026-10-21 run.
+  - Written to `docs/backtests/INDICATOR_CISD.md`. The default changes only after the trader's review; any adopted
+    version is confirmed once, pre-registered.
+  - **Validates: Requirement 30.6**
+
 ---
 
 ## Task Dependency Graph

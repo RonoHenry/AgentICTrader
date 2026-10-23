@@ -76,6 +76,13 @@ class FvgZone(str, Enum):
     GAP = "gap"          # the gap alone, with its CE, filled only by a close beyond it (LE-D17)
 
 
+class CisdMode(str, Enum):
+    """What a setup's CISD is (liquidity-engine Req 30). The default keeps every run comparable (LE-D18)."""
+    NEXT = "next"        # the first CISD after the raid, read from the run right before it: the engine's original
+    RUN = "run"          # the trader's indicator's, anchored on the run into the raid's extreme (LE-D28)
+    CRT = "crt"          # the same, after a C2 sweep of the CRT frame's previous candle only (LE-D29)
+
+
 K = TypeVar("K")
 V = TypeVar("V")
 # A read-only mapping, so a config's fingerprint can't drift after it is built.
@@ -153,6 +160,8 @@ class StrategyConfig(BaseModel):
     # What the engine reads an FVG as (liquidity-engine Req 26). Unlike the rules above this one changes the
     # engine's own map, not the order rules, so configurations that differ in it cannot share an engine view.
     fvg_zone: FvgZone = FvgZone.CANDLES
+    # What the engine reads a setup's CISD as (liquidity-engine Req 30): an engine setting too, like fvg_zone.
+    cisd: CisdMode = CisdMode.NEXT
 
     @property
     def fallback_ttl(self) -> timedelta:

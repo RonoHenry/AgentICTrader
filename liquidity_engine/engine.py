@@ -30,7 +30,7 @@ from liquidity_engine.detectors.external import LiquidityLevelDetector
 from liquidity_engine.detectors.internal import FVG_ZONES, PDArrayDetector
 from liquidity_engine.detectors.structure import SwingStructureClassifier
 from liquidity_engine.fractal.candle_model import FractalModelTracker
-from liquidity_engine.grader.sequence import SetupSequenceDetector
+from liquidity_engine.grader.sequence import CISD_MODES, SetupSequenceDetector
 from liquidity_engine.grader.setup_grader import SetupGrader
 from liquidity_engine.ipda.classifier import IPDAClassifier
 from liquidity_engine.models import (
@@ -86,18 +86,23 @@ _REQUIRED_TIMEFRAMES: List[Timeframe] = [Timeframe.D1, Timeframe.W1]
 class LiquidityMappingEngine:
     """Main orchestrator class for liquidity analysis. Stateless; safe to reuse across calls.
 
-    ``fvg_zone`` is the one setting the engine itself reads (Requirement 26): whether an FVG is the three
-    candles or the gap alone. Two engines that differ in it produce different maps from the same candles, so
-    a caller that shares one engine across configurations must share the setting too.
+    ``fvg_zone`` and ``cisd`` are the settings the engine itself reads: whether an FVG is the three candles or
+    the gap alone (Requirement 26), and what a setup's CISD is (Requirement 30). Two engines that differ in
+    either produce different maps from the same candles, so a caller that shares one engine across
+    configurations must share both.
     """
 
-    #: The default, also the fallback for a subclass that does not call this constructor.
+    #: The defaults, also the fallback for a subclass that does not call this constructor.
     fvg_zone: str = "candles"
+    cisd: str = "next"
 
-    def __init__(self, fvg_zone: str = "candles") -> None:
+    def __init__(self, fvg_zone: str = "candles", cisd: str = "next") -> None:
         if fvg_zone not in FVG_ZONES:
             raise ValueError(f"fvg_zone: one of {', '.join(FVG_ZONES)}, not {fvg_zone!r}")
+        if cisd not in CISD_MODES:
+            raise ValueError(f"cisd: one of {', '.join(CISD_MODES)}, not {cisd!r}")
         self.fvg_zone = fvg_zone
+        self.cisd = cisd
 
     def analyze(
         self,
@@ -138,7 +143,7 @@ class LiquidityMappingEngine:
 
         ote_zone = self._calculate_ote_zone(finest_candles, htf_bias, current_price)
         unicorn = UnicornDetector().detect(pd_arrays)
-        setup_sequence = SetupSequenceDetector().detect(candles_by_tf, pd_arrays, as_of=timestamp)
+        setup_sequence = SetupSequenceDetector(self.cisd).detect(candles_by_tf, pd_arrays, as_of=timestamp)
         candle_profile = CandleProfileAnalyzer().analyze(candles_by_tf, timestamp, setup_sequence)
 
         liquidity_map = LiquidityMap(
