@@ -512,3 +512,87 @@ The oracle split showed why the order matters:
 **First scores (exploration slice), the theses alone:**
 - **PROFILE:** XAUUSD 53% [44, 61], EURUSD 48%, GBPUSD 47%, USDJPY 53%. A coin flip.
 - **PREV_DAY:** 40% to 51%.
+
+## Update 2026-10-23: The Trader's Trend
+
+Both confirmations of 2026-10-23 failed (liquidity-engine Requirement 29; `docs/backtests/CONFIRMATION_D1_BOX.md`, `CONFIRMATION_OTE.md`). The M15 execution lost out of sample: −0.47R a trade, and −0.25R before costs. Filters on an engine that takes both sides only reshuffled its losers.
+
+The trader then described the model they trade, which sets the side first:
+- in a bearish trend, price raids buy-side liquidity and continues lower, so that is where shorts are hunted;
+- from the raid, project the Fibonacci and anticipate the OTE retracement;
+- at the OTE, to the left of the displacement, look for the PD array that supports the setup;
+- targets are the standard deviation levels in confluence with a PD array or a liquidity pool;
+- the up-close candles left on the way down (bearish order blocks, propulsion blocks) are continuation order blocks. When one traded into an important level (an FVG or a liquidity pool), its tip is a protected swing, and price should not trade through it unless the read is wrong.
+
+How they know the trend is bearish (2026-10-23), in a fractal framework, mostly on the parent timeframe from H1 up:
+1. a consistent bearish structure: lower highs and lower lows;
+2. consecutive bearish closes;
+3. buy-side liquidity swept, with price failing to displace higher;
+4. bearish arrays respected and structure broken lower, while bullish arrays are disrespected and traded through;
+5. bearish PO3 in the down-close candles.
+
+The bullish trend is the mirror. ICT's Market Maker Models are to come later.
+
+### Requirement 20: The Trader's Trend
+
+**User Story:** As the trader, I want the engine to read the trend the way I do, from the five things I look at on the parent timeframe, so that it hunts only the side the trend is delivering.
+
+#### Acceptance Criteria
+
+1. A trend reader SHALL read each closed candle of a frame (H1, H4 and D1 to begin with) and give five signals, each bearish (−1), bullish (+1) or neither (0), from that frame's closed candles only. The working definitions (MA-D19) are to be corrected on the chart by the trader:
+   - **structure:** the last two three-candle swing highs and lows: lower high and lower low, or higher high and higher low;
+   - **closes:** the last closed candle and at least two of the last three closed the same way;
+   - **liquidity:** the most recent sweep of an untaken three-candle swing high (low) that closed back below (above) it. A later close beyond the sweep's wick cancels it;
+   - **arrays:** over the last 20 candles, bearish arrays respected and bullish arrays traded through, against the mirror. Arrays are the frame's FVGs and order blocks (`algo_research/atlas/arrays.py`). Respected means traded into and not closed beyond; traded through means closed beyond the far edge;
+   - **PO3:** among the last three candles, the bearish PO3s against the bullish ones. A bearish PO3 is a down close whose high is at least 20% of its range above the open, closing in the bottom 30% of its range.
+2. THE frame's trend SHALL be the sum of the five: bearish at −3 or below, bullish at +3 or above, otherwise none (MA-D20). Every signal is kept, so the trader can see which ones disagree with their eye.
+3. NO value SHALL be read from a candle after the one it labels (Property 2).
+
+### Requirement 21: The Trend Before Anything Is Built On It
+
+**User Story:** As the trader, I want to know whether the trend read calls the next move better than chance before setups are built on it, so that the engine's side comes from something that carries information.
+
+#### Acceptance Criteria
+
+1. ON the exploration slice and the trader's focus markets, for each frame and each closed candle with a trend, the research SHALL race, on M1 from the next open, one average range (the frame's last 14 candles) in the trend's direction against one in the other, for up to three candles of the frame (MA-D21).
+2. THE hit rate SHALL be read against 50% and against each side's rate over all of the frame's candles (drift), with a trading-date bootstrap interval. The same SHALL be done for each signal on its own, and per market.
+3. THE bar SHALL be the 56-61% a bias needs for the trader's executions to clear their costs (task 338). The continuation setup (Requirement 22) is built on the trend only if it clears that bar. Otherwise the result goes back to the trader with the signals that disagreed, before anything is tuned.
+
+### Requirement 22: The Continuation Setup
+
+**User Story:** As the trader, I want the engine to hunt only the trend's side, at the OTE of a displacement that followed a raid of the opposite liquidity, with targets where the standard deviations meet an array or a pool, and with the continuation order blocks' tips as protected swings.
+
+#### Acceptance Criteria
+
+1. IN a bearish trend (Requirement 20), a setup SHALL be:
+   - a raid of buy-side liquidity, the raiding swing being the protected swing;
+   - a displacement lower;
+   - the Fibonacci from the protected swing to the displacement's low;
+   - an entry in the OTE (0.62-0.79) where a bearish PD array to the left of the displacement lies in it;
+   - the stop beyond the protected swing;
+   - TP at the first standard deviation level of the leg in confluence with a PD array or a liquidity pool.
+
+   The bullish setup is the mirror.
+2. AS price continues, an up-close candle before a down move (a bearish order block or propulsion block) that traded into an FVG or a liquidity pool SHALL make its tip a protected swing. Price trading through it means the read was wrong.
+3. Open until the trader answers (defaults in MA-D22):
+   - which buy-side liquidity counts;
+   - which frames read the trend, and which read the setup;
+   - which standard deviation levels count, and how close confluence must be.
+
+### Requirement 23: The Trend on the Chart
+
+**User Story:** As the trader, I want to see each frame's trend and its five signals on Noculus, so that I can correct the reader where it disagrees with my read.
+
+#### Acceptance Criteria
+
+1. NOCULUS SHALL draw, for a chosen frame, each closed candle's trend and the five signals behind it, without revealing anything after the replay clock.
+
+### Decisions (2026-10-23)
+
+| Id | Topic | Decision |
+|---|---|---|
+| MA-D18 | Source | Every signal comes from the frame's own closed candles and its three-candle swings, the trader's foundation ("a swing point can only be formed by three candles"). |
+| MA-D19 | Working definitions | As in Requirement 20.1. They are not fitted to outcomes; they are the trader's words made countable, and the chart (Requirement 23) is where they get corrected. |
+| MA-D20 | The state | The sum of the five signals; three in agreement name the trend. |
+| MA-D21 | The race | One frame average range each way (the mean range of the 14 candles before), from the next M1 open; a bar reaching both is a loss for the trend; unresolved after three candles of the frame is counted apart. |
+| MA-D22 | Setup defaults | Buy-side liquidity: the setup frame's untaken three-candle swing highs, equal highs and the previous day's high. Frames: the trend on H1 (and H4 above it); raid, displacement, OTE and array on M15, the entry on M5. Standard deviations: −1, −2, −2.5 and −4 of the leg; confluence within 10% of the leg. |
