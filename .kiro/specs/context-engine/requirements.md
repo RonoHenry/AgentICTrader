@@ -619,3 +619,23 @@ The plan's own test: whether intermediate-term swings, or breaks read from close
    - by comparing the last two swings of a rank (`compare_state`);
    - from breaks (`break_state`): a close beyond the latest unbroken swing of a rank, held until the other side breaks. A wick beyond that closes back inside changes nothing. Optionally the breaking candle must be C2 of an FVG in the break's direction, known at C3's close.
 3. THE research SHALL measure five versions on both slices and the focus markets: STH compare (task 355), ITH compare, STH break, ITH break, ITH break with FVG. Each is read on D1 and on the H4 candle closing at 17:00 New York, alone and swapped into the trend score. Each calls the next D1 candle against 50% and drift, with intervals. A version that clears 56-61% on both slices goes to the trader before any engine use. If none does, structure is kept for levels (points 3-5), not direction.
+
+## Update 2026-10-23c: The Entry
+
+Gold, Wednesday 29 January 2025, the trader on Noculus: "notice the contrast in the trades the engine takes and the ones we anticipate it should be taking". The trader shorted the previous day's high twice. The first was a limit filled at 03:34 while C2 ran into the level (+5.4R). The second came on the 05:00 retest after the leg extended (+12.4R). Both stops were about a point away.
+
+Model A (H4/M15/M1) framed the same short at 03:15 (premium; POI the previous day's high). It saw the manipulation and the displacement, with its stop above C2's high and its targets at the same standard deviations. Then it **missed**: its entry waits for the OTE after the displacement, and price broke the new range's low first. On that day the gap between the trader and the model was the entry, not the scale.
+
+### Requirement 25: The Entry
+
+**User Story:** As the trader, I want Model A's entry measured against mine (at the level as price runs into it, or on the retest after the leg extends), so that the engine stops missing setups it has already read, if that pays.
+
+#### Acceptance Criteria
+
+1. ON the Model A record and its arms (the model's, CRT with no context, and random POIs as controls), the research SHALL replay:
+   - **A:** Model A's own OTE fills;
+   - **B1, B2:** a limit at the POI's near edge or midpoint once armed, until C3 closes, with the stop beyond the POI's far edge;
+   - **C:** after a MISSED, a limit at the midpoint of the leg from C2's extreme to the running low until C2's extreme is taken or the day ends, with the stop beyond C2's extreme.
+
+   Each is held to the day's close, paying the spread, at a fixed 3R and at Model A's TP1.
+2. AN entry that beats A, and beats the same entry on random POIs, SHALL go to the trader before Model A's orders (Requirement 14) are built on it.

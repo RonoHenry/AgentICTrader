@@ -349,6 +349,20 @@ Model A replaces the old selection (284) and orders (285) in the Model A modes. 
       for levels (the protected and the weak swing, and a break at a higher-frame level), not for the day's direction.
   - **Validates: Requirements 24.1–24.3**
 
+### Update 2026-10-23c: the entry
+
+- [x] 363. Model A's entry against the trader's two (Requirement 25) **(user review)**
+  - `algo_research/entry_study.py` → `docs/research/MODEL_A_ENTRIES.md`. It reproduces the gold case: on 29 January B1, B2 and C each make 3R, and A has no fill.
+  - **Done 2026-10-23** (the record: 446,720 setups, the exploration slice, 4 markets).
+    - **The trader's entries fill far more often:**
+      - at the level 1,825-8,677 times a cell;
+      - the retest 46-978;
+      - Model A's OTE 29-155 on the model arms.
+    - **They lose like the rest:** at the level −0.11 to −0.20R a trade (3R target); at the midpoint −0.18 to −0.32R; the retest −0.06 to −0.29R; the OTE −0.02 to −0.22R (few fills, wide intervals).
+    - **The POI adds nothing:** the same entries on random POIs did as well or better (at the level −0.07 to −0.10R), as did CRT with no context (the retest −0.07 to −0.13R). The time and volatility gates don't help either.
+    - So fixing the entry would stop the misses, but it adds trades that lose on average. On 29 January the three entries won because the day fell (the FOMC drop), not because of the entry. As 25.2 says, nothing goes to Model A's orders.
+  - **Validates: Requirements 25.1–25.2**
+
 ---
 
 ## Task Dependency Graph
