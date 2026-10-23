@@ -903,6 +903,37 @@ The trader's TradingView indicator, ported from Pine and shown on Noculus at the
     **The trader's own positions, and reading the pairs for the flaw, are the user's to run.**
   - **Validates: Requirements 26.1–26.5**
 
+### Update 2026-10-22: live on Noculus (task 352)
+
+- [x] 352. A live session **(user review)**
+  - **352a. RED**
+    - A live source serves only closed minutes and tops up from the last one held. When the terminal has nothing, nothing is served.
+    - The window ends at today's trading date (from 17:00 New York; a weekend's is Friday's).
+    - A live session:
+      - ends at the clock;
+      - reads only the new closes when the clock moves, and bumps its version;
+      - refreshes in the background when a page asks;
+      - runs inside the study's hold-out, where a replay of the same days is refused (D40).
+    - A server without a feed refuses a live start; the watchlist reads the terminal in a live session.
+    - The page (walk-through):
+      - the Live box and a live start;
+      - the clock at the end, following the session;
+      - staying put when the trader steps back;
+      - live again after a restart.
+  - **352b. GREEN** — `live.py` (`LiveSource`, `Terminal`), `WatchSession(live=…)`, `refresh`, `_maybe_refresh`, `live_first_day`, `live_feed`, `WatchApp.start(live)`, `ChartsApp._live_bars`; the box and `follow()` in `engine.js`.
+  - **352c. REFACTOR** — against the real terminal; then the trader watches the engine live.
+  - **Done 2026-10-22.** 9 tests and the walk-through (`live_ui.js`, 12 checks).
+    - On the real terminal (Exness, `focus.toml` `fresh_near_gap`), a live XAUUSD session for today was ready in 14 s: 142 closes to 12:29 UTC. A refresh takes about 4 s.
+    - At the 12:15 UTC close the engine read gold as grade A, bullish, drawing to 4142.33, and refused it as STALE_RAID: its raid was at 20:45 UTC the day before.
+  - **Revised 2026-10-22 after the trader's first look** ("as though it is on backtesting mode"):
+    - the market now every second: `forming`, `quote`, `live_now`, `GET /api/watch/live`, and the page's one-second loop;
+    - a refresh within seconds of each minute's close;
+    - Live / Back to live in place of Play and the speed menu;
+    - crosses watched in their own currency (D42).
+
+    3 more tests; the walk-through now has 19 checks. On the real terminal a `live_now` call takes 3–16 ms, and gold's bid moved every second. A live GER40 session opened: grade A, bullish, drawing to 25736.0, refused as STALE_RAID.
+  - **Validates: Requirements 27.1–27.7**
+
 ---
 
 ## Task Dependency Graph

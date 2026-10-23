@@ -1,0 +1,55 @@
+;(async () => {
+  const ok = [], bad = [];
+  const check = (n, c, d) => (c ? ok : bad).push(n + (c || d === undefined ? "" : "  (" + d + ")"));
+  const until = async (cond) => { for (let i = 0; i < 400 && !cond(); i++) await new Promise((r) => global.__realSetTimeout(r, 5)); };
+  const calls = global.__calls, L = global.__live, E0 = global.__E0;
+  await until(() => S.meta);
+  check("the server's live feed shows the Live box", $("sLiveRow").style.display === "");
+  $("sLive").checked = true;
+  try { await startSession(); } catch (e) { bad.push("the start failed: " + e.message); }
+  const start = calls.find(([u]) => u === "/api/watch/start");
+  check("a live start says so", !!start && start[1].live === true, start && JSON.stringify(start[1]));
+  check("the clock opens at the last closed minute", S.t === E0, S.t + " vs " + E0);
+  check("the pill says live", $("status").textContent === "● live", $("status").textContent);
+  check("the summary says live", /^live, 1 day/.test($("summaryTop").textContent), $("summaryTop").textContent);
+  await until(() => S.now && S.bars.length && S.bars[S.bars.length - 1].close === 2.5);
+  const last = S.bars[S.bars.length - 1];
+  check("the forming candle is drawn at the end", !!last && last.time === E0 && last.close === 2.5, last && JSON.stringify(last));
+  check("the header says live, with the bid and ask", /^LIVE/.test($("when").textContent) && /2\.5.*2\.6/.test($("price").textContent),
+        $("when").textContent + " | " + $("price").textContent);
+  check("the button says Live, and there is no speed to choose", $("play").textContent === "● Live" && $("speed").style.display === "none",
+        $("play").textContent);
+  const ticks = L.ticks;
+  await until(() => L.ticks >= ticks + 2);
+  check("the market is asked every second", L.ticks >= ticks + 2);
+
+  const journals = () => calls.filter(([u]) => u === "/api/watch/journal").length;
+  const before = journals();
+  L.end = E0 + 60; L.version = 1;                                  // a minute closes
+  await until(() => S.t === E0 + 60);
+  check("the clock follows the session's end", S.t === E0 + 60, S.t);
+  check("the engine's orders are read again", journals() > before);
+  check("the new minute's bars are asked from the last bar", calls.some(([u]) => u.startsWith("/api/watch/bars") && /since=/.test(u)));
+
+  await jumpTo(E0 - 900);                                          // the trader steps back to look
+  L.end = E0 + 120; L.version = 2;
+  await until(() => S.status.end === E0 + 120);
+  await until(() => !S.busy);
+  check("the session's end moves on", S.status.end === E0 + 120, S.status.end);
+  check("stepped back, the clock stays where the trader put it", S.t === E0 - 900, S.t);
+  check("stepped back, the forming candle isn't drawn", S.bars[S.bars.length - 1].close !== 2.5 || S.bars[S.bars.length - 1].time <= S.t);
+  check("the button offers the way back", $("play").textContent === "⏭ Back to live", $("play").textContent);
+  togglePlay();
+  await until(() => S.t === S.status.end);
+  check("Back to live returns the clock to the end", S.t === E0 + 120, S.t);
+
+  calls.length = 0;
+  await recover();
+  const again = calls.find(([u]) => u === "/api/watch/start");
+  check("after a restart the same session starts live again", !!again && again[1].live === true, again && JSON.stringify(again[1]));
+  check("and only one follower runs", typeof S.follow === "string");
+  console.log(ok.map((s) => "  ok   " + s).join("\n"));
+  if (bad.length) console.log(bad.map((s) => "  FAIL " + s).join("\n"));
+  console.log("\n" + ok.length + " ok, " + bad.length + " failed");
+  process.exit(bad.length ? 1 : 0);
+})();

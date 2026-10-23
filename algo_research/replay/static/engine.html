@@ -66,6 +66,8 @@
     <div id="watchlist"></div>
     <h2>Session</h2>
     <div class="row"><label>Instrument</label><select id="sInst"></select></div>
+    <div class="row" id="sLiveRow" style="display:none"><label title="The broker's terminal, now: the last days up to the last closed minute, moving on as each minute closes">
+      <input type="checkbox" id="sLive"> Live (the market now)</label></div>
     <div class="row"><label>First day</label><input type="date" id="sDay"></div>
     <div class="row"><label>Days</label><select id="sDays"></select></div>
     <div class="row"><label>Strategy</label><select id="sVariant"></select></div>
@@ -74,7 +76,7 @@
     <div class="row"><button class="primary" id="sStart">Start session</button></div>
     <div class="hint bad" id="blindWarn"></div>
     <div class="progress"><div id="prog"></div></div>
-    <div class="hint" id="sMsg">Days come from the exploration slice. The backtest runs over them exactly as a real run, then plays here.</div>
+    <div class="hint" id="sMsg">Days come from the exploration slice, or Live from the broker's terminal. The backtest runs over them exactly as a real run, then plays here.</div>
     <div id="noculus"></div>
     <div id="fractal"></div>
     <div id="engine"></div>

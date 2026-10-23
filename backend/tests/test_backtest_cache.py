@@ -96,6 +96,17 @@ def test_typical_spread_keys_only_the_minimum_stop_rule():
     assert key_with(typical_spread=0.0001) == key_with(typical_spread=0.0002) == key_with()
 
 
+def test_the_thesis_file_content_is_part_of_the_key(tmp_path):
+    # market-narrative Requirement 17.2: change a thesis, and Phase A is not served from a stale entry.
+    path = tmp_path / "theses.json"
+    path.write_text('{"EURUSD": {"2026-09-30": "BULLISH"}}', encoding="utf-8")
+    cfg = cfg_with(bias_mode="THESIS", thesis_file=str(path))
+    first = key_with(cfg=cfg)
+    assert key_with(cfg=cfg) == first
+    path.write_text('{"EURUSD": {"2026-09-30": "BEARISH"}}', encoding="utf-8")
+    assert key_with(cfg=cfg) != first
+
+
 def test_execution_only_settings_share_key():
     # Phase A never reads the expiry rule, so an expiry variant reuses the analysis (Req 7.4).
     assert key_with(cfg=cfg_with(pending_expiry="FIXED_TTL", fallback_ttl_minutes=60)) == key_with()

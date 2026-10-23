@@ -151,6 +151,7 @@ _MT5_TIMEFRAME = {} if mt5 is None else {
     Timeframe.M3: mt5.TIMEFRAME_M3,
     Timeframe.M5: mt5.TIMEFRAME_M5,
     Timeframe.M15: mt5.TIMEFRAME_M15,
+    Timeframe.M30: mt5.TIMEFRAME_M30,
     Timeframe.H1: mt5.TIMEFRAME_H1,
     Timeframe.H3: mt5.TIMEFRAME_H3,
     Timeframe.H4: mt5.TIMEFRAME_H4,
@@ -357,6 +358,14 @@ def _parse_args() -> argparse.Namespace:
         + ").",
     )
     parser.add_argument(
+        "--config",
+        default=None,
+        help="A backtest configuration (e.g. config/backtests/focus.toml): the run trades its [strategy], with "
+        "--variant, exactly as it was backtested, and maps MT5 symbols with its broker profile. --timeframe and "
+        "--min-rr are then the configuration's.",
+    )
+    parser.add_argument("--variant", default=None, help="With --config: one of its [variants.<name>].")
+    parser.add_argument(
         "--min-rr",
         type=float,
         default=StrategyConfig().min_rr,
@@ -505,7 +514,7 @@ def _stop_on_sigterm(_signum, _frame) -> None:
 def main() -> None:
     args = _parse_args()
     signal.signal(signal.SIGTERM, _stop_on_sigterm)
-    cfg = StrategyConfig(entry_tf=args.timeframe, min_rr=args.min_rr)
+    cfg, symbol_of = _strategy(args)
     instruments = (
         [s.strip().upper() for s in args.instruments.split(",") if s.strip()]
         if args.instruments
@@ -523,7 +532,7 @@ def main() -> None:
         fetcher = lambda instrument: (lambda tf, count: _fetch_binance_candles(client, instrument, tf, count))
         fetch_m1_range = lambda instrument, start, end: _binance_m1_range(client, instrument, start, end)
     else:
-        fetcher, fetch_m1_range = _connect_mt5(instruments)
+        fetcher, fetch_m1_range = _connect_mt5(instruments, symbol_of)
 
     store = None
     if args.store_candles:
@@ -721,10 +730,27 @@ def _mt5_broker_client():
     )
 
 
-def _connect_mt5(instruments: list[str]):
+def _strategy(args) -> tuple[StrategyConfig, Optional[Callable[[str], str]]]:
+    """The run's strategy settings, and the broker's symbol for each instrument when a backtest configuration
+    names its profile (update 2026-10-22: the live run trades the version that was backtested)."""
+    if args.config:
+        from agent.broker_profiles import load_profile
+        from algo_backtester.config import load_run_config
+
+        run_cfg = load_run_config(Path(args.config), None if args.variant in (None, "base") else args.variant)
+        return run_cfg.strategy, load_profile(run_cfg.run.profile).symbol
+    if args.variant:
+        raise SystemExit("--variant needs --config")
+    return StrategyConfig(entry_tf=args.timeframe, min_rr=args.min_rr), None
+
+
+def _connect_mt5(instruments: list[str], symbol_of: Optional[Callable[[str], str]] = None):
     """Attach to the local MT5 terminal; return (per-instrument candle
-    fetcher factory, M1 range fetcher for paper catch-up)."""
+    fetcher factory, M1 range fetcher for paper catch-up). ``symbol_of`` maps an
+    instrument to the broker's symbol (a profile's [symbols]); without it the
+    symbol is the instrument plus MT5_SYMBOL_SUFFIX."""
     symbol_suffix = config("MT5_SYMBOL_SUFFIX", default="")
+    symbol_of = symbol_of or (lambda instrument: f"{instrument}{symbol_suffix}")
 
     logger.info("Connecting to MT5...")
     if not mt5.initialize(**_mt5_credentials()):
@@ -733,16 +759,16 @@ def _connect_mt5(instruments: list[str]):
 
     # Fail fast on a wrong MT5_SERVER_TIMEZONE rather than grade setups off
     # candles shifted by hours (sessions/killzones/daily open all depend on it).
-    ticks = [mt5.symbol_info_tick(f"{i}{symbol_suffix}") for i in instruments if mt5.symbol_select(f"{i}{symbol_suffix}", True)]
+    ticks = [mt5.symbol_info_tick(symbol_of(i)) for i in instruments if mt5.symbol_select(symbol_of(i), True)]
     _SERVER_CLOCK.check([t.time for t in ticks if t is not None and t.time], datetime.now(timezone.utc))
 
     def fetcher(instrument: str) -> Callable[[Timeframe, int], list[Candle]]:
-        symbol = f"{instrument}{symbol_suffix}"
+        symbol = symbol_of(instrument)
         mt5.symbol_select(symbol, True)
         return lambda tf, count: _fetch_candles(symbol, tf, instrument, count)
 
     def m1_range(instrument: str, start: datetime, end: datetime) -> list[Candle]:
-        symbol = f"{instrument}{symbol_suffix}"
+        symbol = symbol_of(instrument)
         candles: list[Candle] = []
         cursor = start
         while cursor < end:

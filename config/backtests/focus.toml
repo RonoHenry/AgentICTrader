@@ -58,6 +58,15 @@ strategy.max_stop_atr = 1.0
 strategy.target_mode = "NEAREST"
 strategy.fvg_zone = "gap"
 
+# The full fix, standing aside while price is still inside the last expansion day's range (Req 29, LE-D25/D26):
+# GBPUSD 27-29 January 2025, the engine trading the middle of that box with expansion targets.
+[variants.fresh_near_gap_box]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.d1_box_expansion = 1.2
+
 # On M5, where the trader executes (M1-M5): the sequence from sweep to entry forms there inside one M15 candle.
 # The fresh raid is then read on H1, the trader's indicator's frame for M5; the stop cap stays in M15 ranges.
 [variants.m5_gap]
@@ -70,3 +79,13 @@ strategy.fvg_zone = "gap"
 strategy.raid_window = "H1"
 strategy.max_stop_atr = 1.0
 strategy.target_mode = "NEAREST"
+
+# The trader's execution, trading only the day's thesis side (market-narrative Requirement 17). The thesis file is
+# written by `python -m algo_research.thesis export --model <id> --out data/research/theses/engine_theses.json`.
+[variants.fresh_near_gap_thesis]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.bias_mode = "THESIS"
+strategy.thesis_file = "data/research/theses/engine_theses.json"

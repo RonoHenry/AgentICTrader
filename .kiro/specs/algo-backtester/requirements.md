@@ -525,3 +525,40 @@ Noculus already prices the trader's trades (Requirement 19), but only from a typ
 | D37 | A drawn position is a market or a limit by where its entry sits; no stop entries | Within two typical spreads the trader means "now". The race rules model market and limit fills only (D29); a buy-stop would need a new fill rule, so it is refused with the reason. |
 | D38 | The labels are a first sort, not a verdict | "Scale or perception" is the trader's question. The 2× and one-stop thresholds are round numbers chosen before any position exists. Each pair keeps its raw measures, so the sort can be redone. |
 | D39 | Open sessions keep a journal too | The trader wants their position beside the engine's. Positions placed with the engine in sight carry `engine_seen`, so they are never counted as blind reads (D27). |
+
+## Update 2026-10-22: Live on Noculus
+
+The trader ran the fixed engine on the live market with paper orders (`run_live_agent.py --config config/backtests/focus.toml --variant fresh_near_gap`), then said: "i can't see the live session on noculus". A Noculus session replays the research snapshot's exploration slice only, and the live runner writes its decisions to a log. The trader judges visually (Requirement 15), so the live engine belongs on the same chart.
+
+### Requirement 27: A Live Session
+
+1. THE Engine mode SHALL start a session **live**, from the broker's MT5 terminal instead of the snapshot:
+   - the terminal is the configuration's profile: its symbols, its server clock, and the credentials in `.env`;
+   - the session covers today's trading date and the `days - 1` trading dates before it (a weekend's trading date is Friday's);
+   - it runs up to the terminal's last closed minute.
+2. WHILE the page watches a live session, the session SHALL move on with the market:
+   - the new closed minutes are read;
+   - the engine reads each new entry-timeframe close, and only the new ones (earlier closes read the same closed candles);
+   - the backtest's account runs again.
+
+   The page's clock follows the end unless the trader stepped back. A forming candle is never served.
+3. A live session SHALL be the backtest's own, as a replayed session is:
+   - the configuration's strategy, Phase A and Phase B, and the profile's costs;
+   - Model A and the Fractal + POI indicator;
+   - blind or open;
+   - the trader's positions, kept in a journal of its own (`live-<first day>-<days>d-<variant>[-open].json`).
+4. IN a live session, the watchlist SHALL read the terminal's prices, never the snapshot's.
+5. A server whose profile is not an MT5 broker's SHALL refuse a live start with the reason.
+6. WHILE the trader's clock is at the end of a live session, the chart SHALL show the market now, every second: the forming candle of the chart's timeframe, and the last bid and ask.
+   - The engine and the account still read closed candles only, so the price moves through what the engine drew at its last close.
+   - Within seconds of a minute's close, the session reads that minute. Within seconds of an entry-timeframe close, the engine's reading of it is on the chart.
+   - The replay controls give way to **Live**, and to **Back to live** when the trader has stepped back.
+7. A market priced in neither currency of the account (a cross, such as GER40 or UK100 on a USD account) SHALL be watched, replayed or live, in an account of its own quote currency.
+
+The trader's first look at a live session (2026-10-22): "its not working. It is as though it is on backtesting mode, Though I should be seeing live markets while on noculus while the engine craws price in real time". The first version served closed minutes only, stepped once a minute up to 40 s late, and kept the replay's Play and speed. Their GER40 session was refused as a cross. Criteria 6 and 7 answer both.
+
+| Id | Decision | Source |
+|---|---|---|
+| D40 | A live session waives the study hold-out guard | The guard keeps a fixed past unread until the final run (Requirement 7.2). A live session is forward data, the days being traded now, as the paper runner's are; refusing it would make the live chart impossible. The trader's live days do fall after the study's hold-out start (2026-07-07), so a final validation run over them would not be blind to the trader. |
+| D41 | The page drives the refresh | A live session reads the terminal again only while a page asks after it, so a kept session left alone costs nothing. The page asks every second for the market now; the session asks the terminal for a newly closed minute at most every 5 s, and runs the rest only when one has closed. That rest takes about 4 s on a quiet machine (15 s seen while the paper runner and a pilot ran): the backtester's aggregation, the engine at the new closes, and Phase B. |
+| D42 | A cross is watched in its own currency | The backtester can't convert a cross's results to the account's currency yet, so real runs still refuse one. The watch shows R, and R is the same in any currency: risk and result are both in the quote currency. GER40 and UK100 carry no commission on the Exness profile. |

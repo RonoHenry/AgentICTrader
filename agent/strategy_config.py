@@ -55,6 +55,7 @@ class BiasMode(str, Enum):
     """Which bias a setup must agree with before it is ordered (liquidity-engine Req 23.1)."""
     OPEN = "OPEN"        # none here: the grader's D1-open bias only caps counter-trend setups at B
     PROFILE = "PROFILE"  # the candle profile's anticipated direction (LE-D9)
+    THESIS = "THESIS"    # the day's thesis from a thesis file (market-narrative Requirement 17)
 
 
 class TimeWindow(str, Enum):
@@ -128,6 +129,9 @@ class StrategyConfig(BaseModel):
     # Candle anticipation (liquidity-engine update 2026-10b). Each rule is off by
     # default, so each one is measured as a variant against the others.
     bias_mode: BiasMode = BiasMode.OPEN
+    # Under THESIS: a JSON file {instrument: {trading date: BULLISH | BEARISH | NO_THESIS}} (market-narrative Req 17).
+    # Its content is part of Phase A's cache key.
+    thesis_file: Optional[str] = None
     require_false_move: bool = False     # the protected wick beyond the candle's open on the false-move side
     time_window: TimeWindow = TimeWindow.ANY
     # A fresh raid (liquidity-engine Req 27, LE-D19): the setup's raid in the raid_window frame's current candle
@@ -141,6 +145,9 @@ class StrategyConfig(BaseModel):
     # The stop at the sweep's tip (liquidity-engine Req 27.5): at most k average true ranges of the last 14
     # closed M15 candles away, whatever the entry timeframe, as the trader's are (0.3-0.9); 0 is off.
     max_stop_atr: float = Field(default=0.0, ge=0)
+    # The expansion day's box (liquidity-engine Req 29): no order while every D1 close since the latest closed D1
+    # candle at least k times the 20-day mean range has stayed inside its high and low; 0 is off. An order rule.
+    d1_box_expansion: float = Field(default=0.0, ge=0)
     pending_expiry: PendingExpiry = PendingExpiry.KILLZONE_END
     fallback_ttl_minutes: PositiveInt = 180
     # What the engine reads an FVG as (liquidity-engine Req 26). Unlike the rules above this one changes the
@@ -198,6 +205,12 @@ class StrategyConfig(BaseModel):
         if bad:
             raise ValueError(f"grade_confidence values must be in (0, 1], got {bad}")
         return confidence
+
+    @model_validator(mode="after")
+    def _thesis_mode_needs_a_file(self) -> StrategyConfig:
+        if self.bias_mode == BiasMode.THESIS and not self.thesis_file:
+            raise ValueError("bias_mode THESIS needs a thesis_file")
+        return self
 
     @model_validator(mode="after")
     def _window_for_every_timeframe(self) -> StrategyConfig:

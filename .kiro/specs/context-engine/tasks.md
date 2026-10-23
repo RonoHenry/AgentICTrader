@@ -279,6 +279,35 @@ Model A replaces the old selection (284) and orders (285) in the Model A modes. 
   - **RED:** `test_order_at_0705_stop_beyond_c2_high`, `test_tp1_c1_low_else_minus_one_sd`, `test_expiry_at_c3_close`, `test_horizon_close`, `test_legacy_cache_key_unchanged` (MA-D12).
   - **Validates: Requirements 14.1–14.3**
 
+### Update 2026-10-23: the trader's trend
+
+- [x] 355. The trend reader (Requirement 20)
+  - **RED** — on hand-made candles:
+    - lower highs and lower lows read bearish structure, their mirror bullish, a mix neither;
+    - a down close with two of the last three down is a bearish close signal;
+    - a sweep of a swing high closing back below it is bearish until a close above the sweep's wick;
+    - a bullish FVG closed through and a bearish one respected read bearish arrays;
+    - a down close opening low in its range with a wick above the open and closing near its low is a bearish PO3;
+    - three signals in agreement name the trend;
+    - no candle after the one labelled changes its label (Property 2).
+  - **GREEN** — `algo_research/trend.py`: `trend_signals(bars, arrays)`.
+  - **Done 2026-10-23.** `trend_signals` gives each closed candle structure, closes, liquidity, arrays and PO3, their
+    score and the trend (MA-D18 to MA-D20). Arrays come from `algo_research.atlas.arrays` and count once per candle
+    over 20 candles. 7 tests in `test_research_trend.py`, including that no later candle changes a label.
+  - **Validates: Requirements 20.1–20.3**
+
+- [ ] 356. The trend before anything is built on it (Requirement 21) **(user review)**
+  - The exploration slice; the focus markets; H1, H4 and D1. The hit rate of the trend, and of each signal, in the one-range race against 50% and each side's drift rate, with intervals, per frame and market.
+  - Written to `docs/research/TRADER_TREND.md`.
+  - **Validates: Requirements 21.1–21.3**
+
+- [ ] 357. The trend on the chart (Requirement 23)
+  - A Noculus layer: a chosen frame's trend and five signals per closed candle, up to the replay clock.
+  - **Validates: Requirement 23.1**
+
+- [ ] 358. The continuation setup (Requirement 22) — after 356 and the trader's answers to 22.3
+  - **Validates: Requirements 22.1–22.3**
+
 ---
 
 ## Task Dependency Graph

@@ -964,6 +964,74 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
 - [ ] 344. The comparison run **(user review)**
   - Run `config/backtests/focus.toml` (the trader's focus markets the profile prices, from the research snapshot: `--snapshot focus-2025-2026h1`) over the exploration slice with `base`, `fresh`, `fresh_near` (one engine analysis), `gap`, `fresh_gap`, `fresh_near_gap` (another), and `m5_gap`, `m5_fresh_near_gap` (a third, on M5), in one command with capped workers. Record trades, R, win rate, stops and targets in average ranges, holding time, against the reference.
   - The default changes only after the trader's review (LE-D18). Any rule that comes out of it is then confirmed once, pre-registered.
+  - **Run 2026-10-21/22** (`docs/backtests/ENGINE_SCALE_FIX.md`; GER40 and UK100 left out until the backtester converts
+    crosses). On M15 the trader's execution made +0.33R (`fresh_near`) and +0.27R (`fresh_near_gap`) a trade after
+    costs (+0.46 to +0.52 before), the best so far, but the intervals include zero, the drawdown is 27R in six months
+    and the win rate one in six. On M5 the same execution has no gross edge (−0.01R before costs, −0.23R after). No
+    variant meets the pass mark. The registered M5 confirmation is on hold; the next step is the trader's.
+
+### Update 2026-10-22: price delivery phases
+
+- [x] 345. The phase reader (Req 28.1)
+  - **345a. RED** — on hand-made candles:
+    - 8 candles within 2 average ranges open a consolidation, and a ninth wider one doesn't end it until a close leaves the box;
+    - a wick beyond the box that closes back inside is the episode's manipulation;
+    - the close outside the box is the expansion, its leg from the box's opposite extreme (wicks included);
+    - a move back into the leg is a retracement, and a close beyond the leg's origin a reversal;
+    - nothing is read from a candle after the one being labelled.
+  - **345b. GREEN** — `algo_research/phases.py`: `label_phases(...)` and `episodes(...)`.
+  - **Done 2026-10-22.** 4 tests in `test_research_phases.py`, including that no later candle changes a label.
+  - **Validates: Requirement 28.1**
+
+- [x] 346. The diagnostic: when and which way (Req 28.2) **(user review)**
+  - The exploration slice; the trader's focus markets; M15, H1 and H4 with their higher timeframes (H4, D1, W1).
+  - The break hours against all hours; each direction read's hit rate with its interval, alone and in the killzones.
+  - Written to `docs/research/PRICE_DELIVERY_PHASES.md`.
+  - **Done 2026-10-22,** with a control: the same pipeline on shuffled paths (each hour's volatility kept, no memory
+    of direction).
+    - **Time:** consolidations end in expansions at the London and New York opens, as the shuffled paths do: it is
+      the session clock.
+    - **Side:** no read clears the bar. Opposite the manipulation 36% (shuffled 36%); with it 64% (shuffled 65%,
+      geometry); higher-timeframe discount/premium 47-49% (50%); the previous expansion 52% (50%); killzones add
+      nothing.
+    - So task 347's condition isn't met: no gate is added, and the registered version stands.
+  - **Validates: Requirement 28.2**
+
+- [ ] 347. The gate, if a read clears the bar (Req 28.3–28.4) — **not triggered 2026-10-22: no read cleared the bar (task 346)**
+  - A `StrategyConfig` setting that admits only the expansion's side out of the current consolidation or the retracement inside a live expansion; a variant; the phases on Noculus.
+  - Then the combined version is registered in `docs/backtests/CONFIRMATION_TRADER_EXECUTION.md` and confirmed once.
+  - **Validates: Requirements 28.3, 28.4**
+
+### Update 2026-10-23: the expansion day's box
+
+- [x] 353. The box rule (Req 29.1–29.3)
+  - **353a. RED**
+    - With 20 ordinary closed D1 candles, then one at 1.2 times their mean range, then closes inside it: `IN_D1_BOX`, naming the candle, its high and low; at 1.0 off by default, an order.
+    - A close outside the box ends it; a wick beyond it doesn't; a newer expansion candle starts a new box.
+    - The in-progress D1 candle is not read: an expansion still forming starts no box.
+    - Checked after `STALE_RAID` and before the profile rules; a view with too few closed D1 candles raises.
+  - **353b. GREEN** — `StrategyConfig.d1_box_expansion`; `d1_box` and the rule in `agent/order_intent.py`; the variant `fresh_near_gap_box` in `config/backtests/focus.toml`.
+  - **Done 2026-10-23.** `StrategyConfig.d1_box_expansion` (0, off); in `agent/order_intent.py`, `d1_box` (the 20
+    closed D1 candles before a candle give its mean range; a close outside ends the box) and `IN_D1_BOX`, second in
+    `_candle_policy`, after `STALE_RAID`. 5 tests in `test_backtest_order_intent.py`, and the fingerprint guard's
+    row. The order logic changed, so the Phase A cache is rebuilt by the next run.
+  - **Validates: Requirements 29.1–29.3**
+
+- [ ] 354. The comparison run (Req 29.4) **(user review)**
+  - `fresh_near_gap` and `fresh_near_gap_box` in one command (one engine analysis), the exploration slice, `--snapshot focus-2025-2026h1`. Record trades, R with its interval, win rate, drawdown and the `IN_D1_BOX` refusals, against `fresh_near_gap` and its 2026-10-21 run.
+  - Written to `docs/backtests/D1_BOX.md`. The default changes only after the trader's review; any adopted version is confirmed once.
+  - **Run 2026-10-23** (`fb2bef51892d`, `e5347180fc81`). The reference reproduces task 344's 114 trades and +0.27R.
+    With the box: 70 trades, +0.69R a trade after costs [−0.13, +1.62], +48.5R against +30.4R, profit factor 1.83,
+    drawdown 14.5R against 27.4R, costs 20% of gross. The box removed 46 trades worth −20.0R and freed slots for 2
+    (−2R); 5 of 6 markets improve. Against the pass mark it passes three of five (fails the trade count and the
+    interval). The rule was found on these trades, so the confirmation slice, run once, is the test; the next step
+    is the trader's.
+  - **Confirmation 2026-10-23** (pre-registered, `CONFIRMATION_D1_BOX.md`; runs `c0be82a2972a`, `3037e247bfb9`):
+    **fail on all five criteria.** The box: 98 trades, −0.51R [−0.88, −0.05], drawdown 55.6R. The reference itself
+    lost (175 trades, −0.47R [−0.76, −0.11], −0.25R before costs, every quarter negative). The box's refused trades
+    were as bad as its kept ones (−0.50 against −0.43R). Not adopted; the default is unchanged. The OTE split
+    registered on the same trades (`CONFIRMATION_OTE.md`) failed too (66 trades, −0.18R).
+  - **Validates: Requirement 29.4**
 
 ---
 

@@ -146,6 +146,25 @@ Tasks marked **(user review)** end with your review before the next one starts.
 - [ ] 301. Pilot: 50 blind gold days **(user action)**
   - You read 50 exploration-slice gold days; then we look at the summary together, and at the days where your thesis and the engine's candle profile disagreed.
 
+### Update 2026-10-22: the thesis developer (tasks 348–351)
+
+- [x] 348. The model client (Requirement 16.4–16.5)
+  - **348a. RED** — with a fake transport: the request is OpenAI-compatible; the key comes from `.env`; a second identical call is served from the cache without a request; a 429 or a timeout is retried; the budget stops the run; nothing is sent when the key is missing.
+  - **348b. GREEN** — `algo_research/thesis/llm.py`. **Done 2026-10-22:** 7 tests (`test_research_thesis_llm.py`).
+- [x] 349. The blind facts (Requirement 16.1–16.3)
+  - **349a. RED** — the facts read nothing after the open; carry no date or market name; rescale prices both ways exactly; the answer parser accepts the fixed form and rejects anything else.
+  - **349b. GREEN** — `algo_research/thesis/facts.py` and `prompt.py`. **Done 2026-10-22:** 10 tests (`test_research_thesis_facts.py`), including no date, market name or real price in the facts, and nothing after the open changing them; the indicator's section keeps only setups whose C3 or C4 window is still open.
+- [x] 350. The run and the score (Requirement 16.6)
+  - `python -m algo_research.thesis run|score`: the theses in `data/research/theses/<model>/<market>/<date>.json`, scored as the blind replay scores reads. A pilot of about 25 days on one market comes first.
+  - **Done 2026-10-22:** `algo_research/thesis/run.py` (`run`, `score`, `export`), 2 tests with a fake model. The gold
+    pilot (25 days, `nvidia/nemotron-3-ultra-550b-a55b:free`, effort medium) is running.
+- [ ] 351. The engine trades the thesis's side (Requirement 17) **(user review)**
+  - **351a. RED** — under `bias_mode = "THESIS"`: a setup against the day's thesis is `AGAINST_THESIS`, a neutral or missing day `NO_THESIS`, the thesis side is ordered; the thesis file's content changes the cache key.
+  - **351b. GREEN** — `agent/order_intent.py`, `agent/strategy_config.py`, the cache key; the comparison run.
+  - **Code done 2026-10-22:** `BiasMode.THESIS`, `StrategyConfig.thesis_file`, `AGAINST_THESIS`/`NO_THESIS`, the file's
+    sha256 in `cache_key`; 4 tests; the `fresh_near_gap_thesis` variant in `focus.toml`. The comparison waits for theses.
+
+
 ---
 
 ## Task Dependency Graph

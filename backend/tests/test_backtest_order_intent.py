@@ -581,3 +581,103 @@ def test_the_stop_cap_needs_enough_closed_bars():
     lm = _policy_map(profile=_profile())
     with pytest.raises(ValueError, match="average range"):
         build_order_intent(lm, _view(), "EURUSD", AS_OF, policy(max_stop_atr=1.0))    # one bar: no range to read
+
+
+# ── the expansion day's box (liquidity-engine Req 29, task 353) ──────────────
+ORDINARY = (1.0975, 1.1025, 1.1000)                       # low, high, close: a 50-pip day
+
+
+def _days_view(days, forming=(1.0990, 1.1010)) -> dict[Timeframe, list[Candle]]:
+    """_view() with ``days`` (low, high, close) as closed D1 candles, the last one closing at 17:00 New York on
+    13 January 2026, then the in-progress 14 January candle (``forming``: its low and high so far)."""
+    view = _view()
+    last = datetime(2026, 1, 12, 22, tzinfo=timezone.utc)                 # 13 January's trading day opened then
+
+    def day(ts, low, high, close):
+        return Candle(timestamp=ts, open=close, high=high, low=low, close=close, volume=1, timeframe=Timeframe.D1,
+                      instrument="EURUSD")
+    view[Timeframe.D1] = [day(last - timedelta(days=len(days) - 1 - i), *d) for i, d in enumerate(days)] + [
+        day(last + timedelta(days=1), forming[0], forming[1], 1.1000)]
+    return view
+
+
+def _boxed(view, k=1.2):
+    return build_order_intent(_policy_map(profile=_profile()), view, "EURUSD", AS_OF, policy(d1_box_expansion=k))
+
+
+EXPANSION = (1.0940, 1.1010, 1.1000)                      # 70 pips: 1.4 x the 50-pip mean
+
+
+def test_inside_the_last_expansion_day_s_range_the_setup_is_refused():
+    view = _days_view([ORDINARY] * 20 + [EXPANSION, (1.0960, 1.1005, 1.0990), (1.0950, 1.1008, 1.1004)])
+    boxed = _boxed(view)
+    assert isinstance(boxed, NoTrade) and (boxed.grade, boxed.reason) == ("A", "IN_D1_BOX")
+    assert "1.101" in boxed.detail and "1.094" in boxed.detail and "1.2" in boxed.detail
+    assert "2026-01-11" in boxed.detail                                    # the box candle's trading date
+    assert isinstance(_boxed(view, k=1.5), OrderIntent)                    # 70 pips is under 1.5 x 50
+    lm = _policy_map(profile=_profile())
+    assert isinstance(build_order_intent(lm, view, "EURUSD", AS_OF, policy()), OrderIntent)      # off by default
+
+
+def test_a_close_outside_ends_the_box_a_wick_doesn_t_and_a_new_expansion_starts_one():
+    wick = (1.0985, 1.1018, 1.0995)                                        # trades above the box, closes inside
+    boxed = _boxed(_days_view([ORDINARY] * 20 + [EXPANSION, wick]))
+    assert reason(boxed) == "IN_D1_BOX" and "1.094" in boxed.detail       # still the expansion candle's box
+    out = (1.0990, 1.1030, 1.1020)                                         # closes above the box
+    assert reason(_boxed(_days_view([ORDINARY] * 20 + [EXPANSION, out, ORDINARY]))) == "ORDER"
+    second = (1.1000, 1.1090, 1.1080)                                      # a new expansion after the old box broke
+    boxed = _boxed(_days_view([ORDINARY] * 20 + [EXPANSION, out, second, (1.1040, 1.1085, 1.1060)]))
+    assert reason(boxed) == "IN_D1_BOX" and "1.109" in boxed.detail and "1.1" in boxed.detail
+
+
+def test_the_forming_d1_candle_is_not_read():
+    assert reason(_boxed(_days_view([ORDINARY] * 21, forming=(1.0900, 1.1100)))) == "ORDER"
+    assert reason(_boxed(_days_view([ORDINARY] * 20 + [EXPANSION]))) == "IN_D1_BOX"    # the day after: in force
+
+
+def test_the_box_is_checked_after_a_stale_raid_and_before_the_profile():
+    view = _days_view([ORDINARY] * 20 + [EXPANSION])
+    stale = build_order_intent(_raided(13, 9, 0), view, "EURUSD", AS_OF, policy(raid_window="H4", d1_box_expansion=1.2))
+    assert reason(stale) == "STALE_RAID"
+    lm = _policy_map(profile=_profile(direction=BEAR, draw=1.0950))       # a LONG against the profile too
+    against = build_order_intent(lm, view, "EURUSD", AS_OF, policy(bias_mode="PROFILE", d1_box_expansion=1.2))
+    assert reason(against) == "IN_D1_BOX"
+
+
+def test_the_box_needs_the_mean_range_of_twenty_closed_days():
+    with pytest.raises(ValueError, match="D1"):
+        _boxed(_days_view([ORDINARY] * 5 + [EXPANSION]))
+    assert StrategyConfig().d1_box_expansion == 0
+    with pytest.raises(ValueError):
+        StrategyConfig(d1_box_expansion=-1)
+
+
+# ── the engine trades the thesis's side (market-narrative Requirement 17, task 351) ──
+def _theses(tmp_path, side):
+    """A thesis file: AS_OF (09:00 New York, 14 January 2026) falls in trading date 2026-01-14."""
+    path = tmp_path / "theses.json"
+    path.write_text(json.dumps({"EURUSD": {"2026-01-14": side, "2026-01-13": "BEARISH"}}), encoding="utf-8")
+    return str(path)
+
+
+def test_under_the_thesis_only_its_side_is_ordered(tmp_path):
+    lm = _policy_map(profile=_profile())                                         # a LONG setup
+    assert reason(decide(lm, policy(bias_mode="THESIS", thesis_file=_theses(tmp_path, "BULLISH")))) == "ORDER"
+    against = decide(lm, policy(bias_mode="THESIS", thesis_file=_theses(tmp_path, "BEARISH")))
+    assert isinstance(against, NoTrade) and (against.grade, against.reason) == ("A", "AGAINST_THESIS")
+    assert reason(decide(lm, policy(bias_mode="THESIS", thesis_file=_theses(tmp_path, "NO_THESIS")))) == "NO_THESIS"
+    short = _policy_map(SHORT, profile=_profile(direction=BEAR, frame_open=1.1005, draw=1.0950))
+    assert reason(decide(short, policy(bias_mode="THESIS", thesis_file=_theses(tmp_path, "BEARISH")))) == "ORDER"
+
+
+def test_a_day_without_a_thesis_orders_nothing(tmp_path):
+    path = tmp_path / "theses.json"
+    path.write_text(json.dumps({"EURUSD": {"2026-01-13": "BULLISH"}, "GBPUSD": {"2026-01-14": "BULLISH"}}),
+                    encoding="utf-8")
+    result = decide(_policy_map(profile=_profile()), policy(bias_mode="THESIS", thesis_file=str(path)))
+    assert isinstance(result, NoTrade) and result.reason == "NO_THESIS" and "2026-01-14" in result.detail
+
+
+def test_the_thesis_mode_needs_a_file():
+    with pytest.raises(ValueError, match="thesis_file"):
+        StrategyConfig(bias_mode="THESIS")

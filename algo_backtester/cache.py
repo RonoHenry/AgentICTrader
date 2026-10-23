@@ -93,6 +93,8 @@ def cache_key(data_fp: DataFingerprint, engine_fp: str, cfg: StrategyConfig, ins
     spread = typical_spread if cfg.min_stop_spreads > 0 else None     # read by min_stop_spreads only
     parts = [data_fp.rows, data_fp.sha256, engine_fp, strategy, instrument,
              start.astimezone(timezone.utc).isoformat(), end.astimezone(timezone.utc).isoformat(), spread]
+    if cfg.thesis_file:                                                # what the theses say, not where they are
+        parts.append(hashlib.sha256(Path(cfg.thesis_file).read_bytes()).hexdigest())
     return hashlib.sha256(json.dumps(parts, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 

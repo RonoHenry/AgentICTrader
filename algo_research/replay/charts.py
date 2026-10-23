@@ -25,6 +25,7 @@ import pandas as pd
 
 from algo_backtester import watch as watch_mod
 from algo_research.replay.bars import ReplayBars
+from liquidity_engine.models import Timeframe
 from algo_research.replay.journal import Journal, ReplayError
 from algo_research.replay.server import (FILES, STATIC, ReplayApp, static_file,
                                          _Handler as _ReplayHandler)
@@ -79,13 +80,16 @@ class ChartsApp:
     def instrument_list(self) -> dict:
         return {"instruments": self.instruments, "default": self.default}
 
-    def watchlist(self, until: pd.Timestamp) -> dict:
-        """Each instrument's last close by ``until`` and its change from the previous trading day's last close."""
+    def watchlist(self, until: pd.Timestamp, bars_of=None) -> dict:
+        """Each instrument's last close by ``until`` and its change from the previous trading day's last close.
+        ``bars_of`` gives an instrument's bars (default: the snapshot's); None, and the row stays empty."""
         rows = []
         for inst in self.instruments:
-            bars = self.bars(inst)
-            row = {"instrument": inst, "digits": bars.digits, "last": None, "change": None, "change_pct": None}
+            bars = (bars_of or self.bars)(inst)
+            row = {"instrument": inst, "digits": bars.digits if bars is not None else 5, "last": None, "change": None, "change_pct": None}
             try:
+                if bars is None:
+                    raise ValueError(inst)
                 row["last"] = bars.price_at(until)
                 wall = int(watch_mod.wall(until))
                 day_open = (wall - _DAY_OPEN) // _DAY * _DAY + _DAY_OPEN       # the 17:00 New York open of the day
@@ -113,9 +117,24 @@ class ChartsApp:
             session = self.watch.session
             if session is not None and session.state == "ready":
                 t = min(t, watch_mod.wall(session.end))
+                if session.live:                       # the terminal's prices, not the snapshot's (Requirement 27.4)
+                    return self.watchlist(watch_mod.from_wall(t), self._live_bars(session.source, watch_mod.from_wall(t)))
             return self.watchlist(watch_mod.from_wall(t))
         day = self.replay(query.get("inst")).journal.current()
         return self.watchlist(pd.Timestamp(day["revealed_until"]))
+
+
+    @staticmethod
+    def _live_bars(source, until: pd.Timestamp):
+        """Each instrument's last four days of M1 from the live terminal, by ``until``: enough for its last close
+        and the previous trading day's."""
+        def bars_of(inst: str) -> Optional[ReplayBars]:
+            try:
+                frame = source.rates(inst, Timeframe.M1, (until - pd.Timedelta(days=4)).to_pydatetime(), until.to_pydatetime())
+                return ReplayBars(frame, inst) if len(frame) else None
+            except Exception:                           # a market the broker doesn't carry: shown empty
+                return None
+        return bars_of
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -189,7 +208,8 @@ def serve(config: Path, port: int = 8765, browser: bool = True, instrument: str 
 
     research = load_research_config()
     snapshot = SNAPSHOTS_DIR / research.snapshot
-    watch = watch_mod.WatchApp(Path(config), snapshot, research.slices.explore, picks=picks)
+    watch = watch_mod.WatchApp(Path(config), snapshot, research.slices.explore, picks=picks,
+                               live=watch_mod.live_feed(Path(config)))
     charts = ChartsApp(snapshot, journal_root or JOURNAL_DIR, research.slices.explore, watch, default=instrument,
                        order=research.instruments)
     server = make_charts_server(charts, port=port)
