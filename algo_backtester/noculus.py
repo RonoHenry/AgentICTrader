@@ -79,20 +79,21 @@ __all__ = ["FAMILY", "MARK_TOOLS", "NOCULUS_DIR", "NoculusJournal", "average_ran
 NOCULUS_DIR = REPO_ROOT / "data" / "journal" / "noculus"
 #: The tools the trader marks with (Requirement 18.1).
 MARK_TOOLS = ("FVG", "IFVG", "OB", "BRK")
-_KEYS = ("session", "marks", "trades", "reveal", "comparison")
+_KEYS = ("session", "marks", "trades", "reveal", "comparison", "trend_calls")
 
 
 class NoculusJournal:
-    """One blind session's journal: its marks, trades, reveal and comparison."""
+    """One session's journal: its marks, trades, reveal and comparison, and the trader's trend calls."""
 
     def __init__(self, path: Path, session: Optional[dict] = None) -> None:
         self.path = Path(path)
         if self.path.is_file():
             self.data = json.loads(self.path.read_text(encoding="utf-8"))
         else:
-            self.data = {"session": dict(session or {}), "marks": [], "trades": [], "reveal": None, "comparison": None}
+            self.data = {"session": dict(session or {}), "marks": [], "trades": [], "reveal": None, "comparison": None,
+                         "trend_calls": []}
         for key in _KEYS:
-            self.data.setdefault(key, [] if key in ("marks", "trades") else None)
+            self.data.setdefault(key, [] if key in ("marks", "trades", "trend_calls") else None)
 
     def save(self) -> None:
         """Write the whole journal through a temporary file, so a crash never leaves half of it."""
@@ -131,6 +132,14 @@ class NoculusJournal:
             if row["id"] == trade_id:
                 return row
         raise KeyError(f"no trade {trade_id} in this session")
+
+    # ── the trader's trend calls (context-engine Requirement 23) ───────────
+    def add_trend_call(self, call: dict) -> dict:
+        """Keep a trend call, numbered in the order it was made."""
+        row = {"id": f"c{len(self.data['trend_calls']) + 1}", **call}
+        self.data["trend_calls"].append(row)
+        self.save()
+        return row
 
 
 def _closed_bars(bars: pd.DataFrame, tf: str, clock: int) -> tuple[np.ndarray, tuple[np.ndarray, ...], int]:

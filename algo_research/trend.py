@@ -28,7 +28,11 @@ the one it labels (Property 2).
 
     signals = trend_signals(frame.bars[Timeframe.H1], arrays_of_h1)      # one row per closed candle
 
-Validates: Requirement 20 (.kiro/specs/context-engine/requirements.md)
+A trend call (the trader's, on Noculus, Requirement 23) is scored by ``call_outcome`` from the minutes before the
+replay clock only, the way task 356 scored the reader: the next move, one average range each way, and continuation,
+the call's side's last swing taken first, beside the chance a driftless walk has of the same.
+
+Validates: Requirements 20, 23 (.kiro/specs/context-engine/requirements.md)
 """
 from __future__ import annotations
 
@@ -37,7 +41,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-__all__ = ["ARRAY_WINDOW", "COLUMNS", "PO3_CLOSE", "PO3_WICK", "TREND_AT", "trend_signals"]
+__all__ = ["ARRAY_WINDOW", "COLUMNS", "PO3_CLOSE", "PO3_WICK", "SIGNALS", "TREND_AT", "call_outcome", "swing_highs",
+           "swing_lows", "trend_signals"]
 
 ARRAY_WINDOW = 20
 PO3_WICK, PO3_CLOSE = 0.2, 0.3
@@ -189,3 +194,71 @@ def trend_signals(bars: pd.DataFrame, arrays: Optional[pd.DataFrame] = None) -> 
     out["score"] = out[list(SIGNALS)].sum(axis=1)
     out["trend"] = np.where(out["score"] <= -TREND_AT, -1, np.where(out["score"] >= TREND_AT, 1, 0))
     return out[list(COLUMNS)]
+
+
+swing_highs, swing_lows = _swing_highs, _swing_lows
+NEXT_CANDLES, ATR_CANDLES = 3, 14
+
+
+def _first_beyond(values: np.ndarray, level: float, above: bool) -> int:
+    hit = np.flatnonzero(values >= level if above else values <= level)
+    return int(hit[0]) if len(hit) else -1
+
+
+def _first_strictly(values: np.ndarray, level: float, above: bool) -> int:
+    hit = np.flatnonzero(values > level if above else values < level)
+    return int(hit[0]) if len(hit) else -1
+
+
+def _race(up: int, down: int, side: int) -> Optional[str]:
+    """RIGHT when the call's side came first, WRONG when the other did or both came in one minute; None if neither."""
+    if up < 0 and down < 0:
+        return None
+    if up >= 0 and down >= 0 and up == down:
+        return "WRONG"
+    first_up = down < 0 or (up >= 0 and up < down)
+    return "RIGHT" if first_up == (side > 0) else "WRONG"
+
+
+def call_outcome(side: int, t: int, size: int, bars: pd.DataFrame, m1: dict, clock: int) -> dict:
+    """How a trend call made at ``t`` (wall seconds) on a frame of ``size`` seconds stood at ``clock``.
+
+    ``side`` is -1 bearish or +1 bullish. ``bars`` holds the frame's candles (``time`` their open in wall seconds;
+    open, high, low, close), ``m1`` the minutes (``time`` each minute's open in wall seconds; open, high, low).
+    Only the candles closed by ``t`` and the minutes opening before ``clock`` are read.
+
+    - ``next``: one average range (the last ``ATR_CANDLES`` closed candles) each way from the first open at or after
+      ``t``, within ``NEXT_CANDLES`` candles: RIGHT, WRONG, PENDING while the window is still open, or UNRESOLVED.
+    - ``cont``: price beyond the last three-candle swing on the call's side before the one on the other side: RIGHT,
+      WRONG or PENDING; None when the price is not between them. ``geometry`` is a driftless walk's chance of the
+      same from the first open.
+    """
+    times = np.asarray(bars["time"], dtype=np.int64)
+    closed = int(np.count_nonzero(times + size <= t))
+    h, l = (np.asarray(bars[k], dtype=float)[:closed] for k in ("high", "low"))
+    mt = np.asarray(m1["time"], dtype=np.int64)
+    a, b = int(np.searchsorted(mt, t, "left")), int(np.searchsorted(mt, clock, "left"))
+    out = {"next": None, "cont": None, "geometry": None, "atr": None, "ref": None}
+    if closed < ATR_CANDLES:
+        return out
+    if a >= b:                                                              # no minute since the call, yet
+        out["next"] = "PENDING"
+        return out
+    mo, mh, ml = (np.asarray(m1[k], dtype=float) for k in ("open", "high", "low"))
+    ref = float(mo[a])
+    atr = float(np.mean(h[-ATR_CANDLES:] - l[-ATR_CANDLES:]))
+    out.update(atr=atr, ref=ref)
+    window_end = t + NEXT_CANDLES * size
+    stop = min(b, int(np.searchsorted(mt, window_end, "left")))
+    race = _race(_first_beyond(mh[a:stop], ref + atr, True), _first_beyond(ml[a:stop], ref - atr, False), side)
+    out["next"] = race or ("PENDING" if clock < window_end else "UNRESOLVED")
+    highs = swing_highs(h)
+    lows = swing_lows(l)
+    highs, lows = highs[highs + 1 < closed], lows[lows + 1 < closed]       # known: their third candle closed by t
+    if len(highs) and len(lows):
+        top, bottom = float(h[highs[-1]]), float(l[lows[-1]])
+        if bottom < ref < top:
+            race = _race(_first_strictly(mh[a:b], top, True), _first_strictly(ml[a:b], bottom, False), side)
+            out["cont"] = race or "PENDING"
+            out["geometry"] = (top - ref) / (top - bottom) if side < 0 else (ref - bottom) / (top - bottom)
+    return out

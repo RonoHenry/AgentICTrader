@@ -310,8 +310,21 @@ Model A replaces the old selection (284) and orders (285) in the Model A modes. 
       their own calls carry what these counts don't.
   - **Validates: Requirements 21.1–21.3**
 
-- [ ] 357. The trend on the chart (Requirement 23)
+- [x] 357. The trend on the chart (Requirement 23)
   - A Noculus layer: a chosen frame's trend and five signals per closed candle, up to the replay clock.
+  - Added 2026-10-23 at the trader's request ("please do, this could be an additional filter"): their own trend
+    calls, blind, scored the way 356 scored the reader.
+  - **Done 2026-10-23.**
+    - **The layer:** `WatchSession.trend` reads H1, H4 or D1 from the snapshot with its warm-up (10, 30 or 90 days),
+      FVGs and order blocks from `algo_research.atlas.arrays`. Each closed candle up to the clock is served, and
+      nothing while the session is blind. The page draws a strip along the chart's foot (Trend, with `trend: H1/H4/D1`)
+      and spells out the last candle's five signals.
+    - **The calls:** `trend_call` keeps a call (frame, bearish, bullish or unclear, a note) in the session's journal,
+      with `engine_seen`. `trend_calls` scores each one from the minutes before the clock (`call_outcome`): the next
+      move, and continuation beside geometry. The reader's call at the same candle is set beside it once in sight, and
+      the blind calls are totalled. The Noculus panel gains "Your trend call".
+    - 9 tests in `test_research_trend.py` (2 new) and 2 in `test_backtest_noculus.py`; the journal key test updated.
+      Checked end to end on GBPUSD, 27 January 2025.
   - **Validates: Requirement 23.1**
 
 - [ ] 358. The continuation setup (Requirement 22) — after 356 and the trader's answers to 22.3

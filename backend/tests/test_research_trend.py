@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import pandas as pd
 
 from algo_research.trend import trend_signals
@@ -96,3 +97,51 @@ def test_no_candle_after_the_one_labelled_changes_its_label():
     for k in (40, 120, 250):
         cut = trend_signals(bars(rows[:k]))
         pd.testing.assert_frame_equal(cut, full.iloc[:k].reset_index(drop=True), check_dtype=False)
+
+
+# ── a trend call, scored (Requirement 23, task 357) ─────────────────────────
+from algo_research.trend import call_outcome  # noqa: E402
+
+H, T = 3600, 100 * 3600                     # hourly candles; the call at the 100th hour's open
+
+
+def _calls_bars(rows):
+    """Hourly candles closing by T, the last one ending at T."""
+    n = len(rows)
+    o, h, l, c = (np.array(x, dtype=float) for x in zip(*rows))
+    return pd.DataFrame({"time": T - (n - np.arange(n)) * H, "open": o, "high": h, "low": l, "close": c})
+
+
+def _minutes(path):
+    """Minutes from T, each (open, high, low)."""
+    o, h, l = (np.array(x, dtype=float) for x in zip(*path))
+    return {"time": T + 60 * np.arange(len(path)), "open": o, "high": h, "low": l}
+
+
+QUIET = [(100, 100.5, 99.5, 100)] * 20                  # an average range of 1.0
+FALL = [(100, 100.2, 99.8)] * 10 + [(99.8, 99.9, 98.9)] + [(99, 99.2, 98.5)] * 200      # one range down at minute 10
+
+
+def test_a_call_s_next_move_is_one_average_range_either_way_within_three_candles():
+    bars, m1 = _calls_bars(QUIET), _minutes(FALL)
+    assert call_outcome(-1, T, H, bars, m1, T + 3 * H)["next"] == "RIGHT"
+    assert call_outcome(1, T, H, bars, m1, T + 3 * H)["next"] == "WRONG"
+    assert call_outcome(-1, T, H, bars, m1, T + 5 * 60)["next"] == "PENDING"        # the clock is before the move
+    assert call_outcome(-1, T, H, bars, m1, T)["next"] == "PENDING"                  # made at the clock itself
+    flat = _minutes([(100, 100.2, 99.8)] * 240)
+    assert call_outcome(-1, T, H, bars, flat, T + 4 * H)["next"] == "UNRESOLVED"     # three candles, no range
+    both = _minutes([(100, 101.2, 98.8)] + [(100, 100.2, 99.8)] * 10)               # one minute reaches both
+    assert call_outcome(-1, T, H, bars, both, T + H)["next"] == "WRONG"
+    assert call_outcome(1, T, H, bars, both, T + H)["next"] == "WRONG"
+
+
+def test_a_call_s_continuation_is_its_side_s_last_swing_taken_first_beside_geometry():
+    swings = QUIET[:15] + [(100, 101, 99.6, 100.5), (100.5, 102, 100, 101), (101, 101.5, 99, 99.5),
+                           (99.5, 99.8, 98, 98.5), (98.5, 100, 98.4, 99.8)]       # swing high 102, swing low 98
+    bars = _calls_bars(swings)
+    down = _minutes([(100, 100.2, 99.8)] * 5 + [(99, 99.1, 97.9)] + [(98, 98.2, 97.8)] * 5)
+    out = call_outcome(-1, T, H, bars, down, T + H)
+    assert out["cont"] == "RIGHT" and out["geometry"] == pytest.approx(0.5)        # (102 - 100) / (102 - 98)
+    up = call_outcome(1, T, H, bars, down, T + H)
+    assert up["cont"] == "WRONG" and up["geometry"] == pytest.approx(0.5)
+    assert call_outcome(-1, T, H, bars, down, T + 3 * 60)["cont"] == "PENDING"     # read only before the clock

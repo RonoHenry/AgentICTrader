@@ -26,11 +26,15 @@ const TOOLS = [
   { type: "short", icon: "▼", title: "Short position: entry, stop, target (Alt+S)", key: "s" },
 ];
 const LAYERS = [["fractal", "Fractal + POI"], ["modelA", "Model A"], ["arrays", "Arrays"], ["pools", "Pools"],
-                ["profile", "Day bias & draw"], ["sequence", "Setup"], ["candidates", "Candidates"], ["orders", "Orders & trades"]];
+                ["profile", "Day bias & draw"], ["trend", "Trend"], ["sequence", "Setup"], ["candidates", "Candidates"],
+                ["orders", "Orders & trades"]];
+// The trader's trend (context-engine Requirement 23): the frames it is read on.
+const TREND_TFS = ["H1", "H4", "D1"];
 // Model A (context-engine Requirement 17): the trader's frame sets.
 const MA_SETS = [["model_d1", "Model A: D1 / H1 / M5"], ["model_h4", "Model A: H4 / M15 / M1"]];
 const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, journal: [], ideas: [], playing: false, busy: false, picks: {}, hl: null,
             ma: [], maSet: Prefs.get("watch.maSet", "model_d1"), maAt: null,
+            trendTf: Prefs.get("watch.trendTf", "H1"), trend: { rows: [], withheld: false, at: null },
             speed: 1, digits: 5, layers: Prefs.get("watch.layers", { arrays: true, pools: true, profile: true, sequence: true, orders: true }),
             arrayMode: Prefs.get("watch.arrayMode", "interval"), arrayVis: Prefs.get("watch.arrayVis", {}) };
 // The chart timeframes each array timeframe shows on by default (Requirement 14.3); the trader can change them.
@@ -300,7 +304,27 @@ function paintEngine(ctx, size) {
       }
     }
   }
+  if (S.layers.trend) paintTrend(ctx, size, pal, text);
   ctx.restore();
+}
+// The trader's trend (context-engine Requirement 23): a strip along the chart's foot, one cell per closed candle of
+// the trend's frame (red bearish, green bullish, grey neither), and the last one's five signals spelled out.
+function paintTrend(ctx, size, pal, text) {
+  const H = size.height, W = size.width, sec = SECONDS[S.trendTf] || 3600, y = H - 9;
+  const arrow = (v) => (v < 0 ? "▼" : v > 0 ? "▲" : "·");
+  if (S.trend.withheld) { text(`Trend ${S.trendTf}: hidden until you reveal`, 6, y - 3, pal.muted); return; }
+  for (const r of S.trend.rows) {
+    const x0 = X(r.time), x1 = X(r.time + sec);
+    if (!isFinite(x0) || !isFinite(x1) || x1 < 0 || x0 > W) continue;
+    ctx.fillStyle = r.trend < 0 ? rgba(hexOf(pal.bad), 0.85) : r.trend > 0 ? rgba(hexOf(pal.good), 0.85) : rgba(hexOf(pal.muted), 0.25);
+    ctx.fillRect(Math.max(x0, 0) + 0.5, y, Math.max(1, Math.min(x1, W) - Math.max(x0, 0) - 1), 6);
+  }
+  const last = S.trend.rows[S.trend.rows.length - 1];
+  if (!last) return;
+  const parts = [["structure", "structure"], ["closes", "closes"], ["liquidity", "sweeps"], ["arrays", "arrays"], ["po3", "PO3"]]
+    .map(([k, name]) => `${name} ${arrow(last[k])}`).join("  ");
+  text(`Trend ${S.trendTf} ${arrow(last.trend)} ${last.score > 0 ? "+" : ""}${last.score}   ${parts}`, 6, y - 3,
+       last.trend < 0 ? pal.bad : last.trend > 0 ? pal.good : pal.muted);
 }
 function paintModelA(ctx, size, pal, text, line) {
   const W = size.width;
@@ -348,6 +372,13 @@ function paintModelA(ctx, size, pal, text, line) {
     text(badge, Math.max(x0, 0) + 3, (short ? Math.min(p1, p2) : Math.max(p1, p2)) + (short ? -14 : 25), col);
     ctx.font = "10px system-ui, sans-serif";
   }
+}
+async function loadTrend() {
+  if (!S.status || !S.layers.trend) { S.trend = { rows: [], withheld: false, at: null }; return; }
+  const key = `${S.trendTf}@${S.t}`;
+  if (S.trend.at === key) return;
+  const got = await api(`/api/watch/trend?tf=${S.trendTf}&t=${S.t}`);
+  S.trend = { rows: got.rows || [], withheld: !!got.withheld, at: key };
 }
 async function loadModelA() {
   if (!S.status || !S.layers.modelA) { S.ma = []; return; }
@@ -551,7 +582,7 @@ async function loadBars(fit) {
 }
 async function loadState() {
   S.state = (await api(`/api/watch/state?t=${S.t}`)).state;
-  await loadModelA();
+  await loadModelA(); await loadTrend();
   await fractal.tick();
   renderFractal();
   Shell.refresh("t=" + S.t);
@@ -577,7 +608,7 @@ async function advance(dt) {
     const got = (await api(`/api/watch/bars?tf=${S.tf}&until=${S.t}&since=${last ? last.time : S.t - 86400}`)).bars;
     try { for (const b of got) put(b); } catch (e) { await loadBars(false); }
     if (Math.floor(S.t / 900) !== Math.floor(before / 900)) await loadState();
-    else { await loadModelA(); await fractal.tick(); renderFractal(); renderEngine(); renderLog(); refresh(); }
+    else { await loadModelA(); await loadTrend(); await fractal.tick(); renderFractal(); renderEngine(); renderLog(); refresh(); }
     await noculus.tick();                               // the trader's own trades settle to the clock too
     renderHeader();
   } finally { S.busy = false; }
@@ -658,7 +689,7 @@ function buildLayers() {
     c.type = "checkbox"; c.checked = !!S.layers[key];
     c.onchange = () => act(async () => { S.layers[key] = c.checked; Prefs.set("watch.layers", S.layers); S.maAt = null;
                                          fractal.setOn(S.layers.fractal); await fractal.tick(); renderFractal();
-                                         await loadModelA(); renderEngine(); renderLog(); refresh(); });
+                                         await loadModelA(); await loadTrend(); renderEngine(); renderLog(); refresh(); });
     l.append(c, " " + name); box.append(l);
     if (key === "fractal") {
       const gear = document.createElement("button");
@@ -670,8 +701,14 @@ function buildLayers() {
   const ma = document.createElement("select");
   ma.id = "maSet"; ma.title = "Which of your frame sets Model A reads";
   ma.innerHTML = MA_SETS.map(([v, t]) => `<option value="${v}" ${S.maSet === v ? "selected" : ""}>${t}</option>`).join("");
-  ma.onchange = () => act(async () => { S.maSet = ma.value; Prefs.set("watch.maSet", ma.value); S.maAt = null; await loadModelA(); renderEngine(); renderLog(); refresh(); });
+  ma.onchange = () => act(async () => { S.maSet = ma.value; Prefs.set("watch.maSet", ma.value); S.maAt = null; await loadModelA(); await loadTrend(); renderEngine(); renderLog(); refresh(); });
   box.append(ma);
+  const tr = document.createElement("select");
+  tr.id = "trendTf"; tr.title = "The frame your trend is read on (the Trend layer)";
+  tr.innerHTML = TREND_TFS.map((v) => `<option value="${v}" ${S.trendTf === v ? "selected" : ""}>trend: ${v}</option>`).join("");
+  tr.onchange = () => act(async () => { S.trendTf = tr.value; Prefs.set("watch.trendTf", tr.value); S.trend.at = null;
+                                        await loadTrend(); refresh(); });
+  box.append(tr);
   const sel = document.createElement("select");
   sel.title = "Which of the engine's arrays to draw";
   sel.innerHTML = [["interval", "arrays: by visibility interval"], ["all", "arrays: every one"], ["M15", "arrays: M15 and up"],

@@ -83,7 +83,7 @@ def test_the_journal_round_trips_and_is_written_whole(tmp_path):
     journal.save()
     again = NoculusJournal(path)
     assert again.data["marks"] == [{"id": "m1", "tool": "FVG"}] and again.data["session"]["instrument"] == "EURUSD"
-    assert set(again.data) == {"session", "marks", "trades", "reveal", "comparison"}
+    assert set(again.data) == {"session", "marks", "trades", "reveal", "comparison", "trend_calls"}
     assert not list(path.parent.glob("*.tmp"))                           # written through a temporary file
     assert json.loads(path.read_text(encoding="utf-8"))["session"]["days"] == 1
 
@@ -1000,3 +1000,42 @@ def test_the_report_adds_the_positions(tmp_path):
     text = write_report(tmp_path)
     assert "Your positions against the engine's trade" in text and "other side" in text
     assert "1.9" in text and "13.6" in text and "+3.56R" in text and "-1.02R" in text
+
+
+# ── the trader's trend (context-engine Requirement 23, task 357) ─────────────
+TREND_KEYS = {"structure", "closes", "liquidity", "arrays", "po3"}
+
+
+def test_the_trend_layer_is_withheld_while_blind_and_served_in_an_open_session(blind, session):  # noqa: F811
+    clock = wall(session.start) + 6 * 3600
+    shown = session.trend({"tf": "H1", "t": clock})
+    assert not shown["withheld"] and shown["rows"] and set(shown["signals"]) == TREND_KEYS
+    assert all(r["time"] + 3600 <= clock for r in shown["rows"])                    # closed candles only
+    assert TREND_KEYS | {"score", "trend", "time"} <= set(shown["rows"][-1])
+    assert blind.trend({"tf": "H1", "t": clock}) == {"tf": "H1", "withheld": True, "rows": []}
+    with pytest.raises(ValueError, match="H1"):
+        session.trend({"tf": "M5", "t": clock})
+    later = session.trend({"tf": "H1", "t": clock + 4 * 3600})["rows"]
+    assert later[: len(shown["rows"])] == shown["rows"]                             # a later clock only adds
+
+
+def test_trend_calls_are_kept_scored_from_the_past_and_set_beside_the_reader_once_seen(blind, tmp_path):  # noqa: F811
+    blind.noculus = NoculusJournal(tmp_path / "EURUSD" / "s1.json", {"instrument": "EURUSD"})
+    clock = wall(blind.start) + 6 * 3600
+    call = blind.trend_call({"t": clock, "tf": "H1", "side": "bearish", "note": "LH LL"})
+    assert (call["id"], call["side"], call["engine_seen"], call["t"]) == ("c1", "BEARISH", False, clock)
+    blind.trend_call({"t": clock, "tf": "H4", "side": "UNCLEAR"})
+    with pytest.raises(ValueError, match="BEARISH"):
+        blind.trend_call({"t": clock, "tf": "H1", "side": "maybe"})
+    first = blind.trend_calls({"t": clock})["calls"][0]
+    assert first["reader"] is None and first["next"] == "PENDING"                 # nothing after the clock is read
+    later = blind.trend_calls({"t": clock + 4 * 3600})
+    assert later["calls"][0]["next"] in ("RIGHT", "WRONG", "UNRESOLVED")
+    assert later["calls"][0]["reader"] is None                                    # still blind
+    assert later["summary"]["blind_calls"] == 1                                   # the unclear one isn't scored
+    assert NoculusJournal(blind.noculus.path).data["trend_calls"][0]["id"] == "c1"
+    blind.revealed_at = clock + 4 * 3600                                          # once seen, the reader's call shows
+    seen = blind.trend_calls({"t": clock + 4 * 3600})["calls"][0]
+    assert seen["reader"] in (-1, 0, 1) and set(seen["reader_signals"]) == TREND_KEYS
+    after = blind.trend_call({"t": clock + 4 * 3600, "tf": "H1", "side": "BULLISH"})
+    assert after["engine_seen"] is True                                           # made after the reveal: not blind

@@ -18,6 +18,11 @@ The trader's own indicator, Fractal + POI (Requirements 21-23), is served at the
 ``algo_research.fractal_poi`` reads the snapshot's candles closed by then. It is the trader's tool, not the
 engine's, so a blind session serves it too (D33).
 
+The trader's trend (context-engine Requirement 23) is served too: the five signals of ``algo_research.trend``
+for each closed H1, H4 or D1 candle up to the clock, read from the snapshot with the warm-up each frame needs, and
+withheld while a session is blind. The trader's own trend calls are kept in the session's journal and scored, from
+the minutes before the clock only, the way task 356 scored the reader.
+
 A session may also be **live** (update 2026-10-22, Requirement 27): its candles come from the broker's MT5 terminal
 (``live.py``), its window runs from the first day's open to the last closed minute, and while the page watches it
 moves on with each new minute, reading the engine only at the new closes.
@@ -66,6 +71,8 @@ from algo_research.replay.bars import ReplayBars
 from algo_research.replay.server import static_file
 from algo_research.replay.timeframes import TIMEFRAMES, seconds_of, wall_seconds
 from algo_research.snapshot import SNAPSHOTS_DIR
+from algo_research.atlas.arrays import fvgs, order_blocks
+from algo_research.trend import SIGNALS as TREND_SIGNALS, call_outcome, trend_signals
 from liquidity_engine import LiquidityMappingEngine
 from liquidity_engine.grader.sequence import SetupSequenceDetector, _EntryWindow
 from liquidity_engine.grader.setup_grader import _ENTRY_ELIGIBLE_TIMEFRAMES
@@ -105,6 +112,13 @@ def wall(t) -> int:
 
 def from_wall(w: int) -> pd.Timestamp:
     return pd.Timestamp(int(w), unit="s").tz_localize(NY).tz_convert("UTC")
+
+
+#: The trader's trend (context-engine Requirement 23): the frames it is read on, each with the days of warm-up its
+#: swings and 20-candle array window need, and how many candles before the session's first are shown.
+TREND_WARMUP_DAYS = {"H1": 10, "H4": 30, "D1": 90}
+TREND_SHOWN_BEFORE = 24
+TREND_CALLS = {"BEARISH": -1, "BULLISH": 1, "UNCLEAR": 0}
 
 
 class SnapshotSource:
@@ -222,6 +236,8 @@ class WatchSession:
         self._fractal: "OrderedDict[tuple, FractalPOI]" = OrderedDict()
         self._fractal_lock = threading.Lock()
         self._snapshot_m1: dict[str, pd.DataFrame] = {}
+        self._trend: dict[tuple, tuple[pd.DataFrame, pd.DataFrame]] = {}   # (tf, end) -> (bars, signals)
+        self._trend_lock = threading.Lock()
 
     # ── preparing ───────────────────────────────────────────────────────────
     def prepare(self) -> None:
@@ -725,6 +741,87 @@ class WatchSession:
         return out
 
     # ── the trader's indicator (Requirements 21-23) ─────────────────────────
+    # ── the trader's trend (context-engine Requirement 23) ─────────────────────
+    def _trend_frame(self, tf: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Every ``tf`` candle closed by the session's end, from the warm-up it needs on, and the reader's signals
+        for each (``algo_research.trend``). Kept per frame and end; a row reads only the candles before it."""
+        if tf not in TREND_WARMUP_DAYS:
+            raise ValueError(f"the trend is read on {', '.join(TREND_WARMUP_DAYS)}, not {tf!r}")
+        end = wall(self.end)
+        with self._trend_lock:
+            if (tf, end) not in self._trend:
+                bars = ReplayBars(self._m1(self.instrument, TREND_WARMUP_DAYS[tf]), self.instrument,
+                                  PriceBasis(instruments=()))
+                size = seconds_of(tf)
+                rows = bars.as_of(tf, from_wall(end), since=None)
+                rows = rows[np.asarray(rows["time"], dtype=np.int64) + size <= end].reset_index(drop=True)
+                frame = pd.DataFrame({"time": [from_wall(int(t)) for t in rows["time"]],
+                                      "close_time": [from_wall(int(t) + size) for t in rows["time"]],
+                                      **{k: rows[k].to_numpy(dtype=float) for k in ("open", "high", "low", "close")}})
+                arrays = pd.concat([fvgs(frame, Timeframe(tf)), order_blocks(frame, Timeframe(tf))], ignore_index=True)
+                signals = trend_signals(frame, arrays.sort_values("formed_at", kind="stable").reset_index(drop=True))
+                signals.insert(0, "time", np.asarray(rows["time"], dtype=np.int64))
+                self._trend[(tf, end)] = (rows, signals)
+            return self._trend[(tf, end)]
+
+    def trend(self, q: dict) -> dict:
+        """The reader's trend and its five signals for each closed ``tf`` candle of the session up to the clock ``t``;
+        nothing while the session is blind, so the trader's calls stay their own (Requirement 23.1)."""
+        tf, clock = str(q.get("tf") or "H1"), min(int(q["t"]), wall(self.end))
+        if self.withheld:
+            return {"tf": tf, "withheld": True, "rows": []}
+        _, signals = self._trend_frame(tf)
+        size = seconds_of(tf)
+        since = wall(self.start) - TREND_SHOWN_BEFORE * size
+        shown = signals[(signals["time"] + size <= clock) & (signals["time"] >= since)]
+        return {"tf": tf, "withheld": False, "signals": list(TREND_SIGNALS),
+                "rows": [{k: int(v) for k, v in row.items()} for row in shown.to_dict("records")]}
+
+    def trend_call(self, body: dict) -> dict:
+        """The trader's call of the trend on a frame, at the clock: bearish, bullish or unclear. It records whether the
+        reader was in sight, so a call made after seeing it never passes for a blind one."""
+        journal = self.own_journal()
+        tf, side = str(body.get("tf") or "H1"), str(body.get("side") or "").upper()
+        if tf not in TREND_WARMUP_DAYS:
+            raise ValueError(f"a trend call is made on {', '.join(TREND_WARMUP_DAYS)}, not {tf!r}")
+        if side not in TREND_CALLS:
+            raise ValueError(f"a trend call is {', '.join(TREND_CALLS)}, not {side!r}")
+        clock = min(int(body["t"]), wall(self.end))
+        return journal.add_trend_call({"t": clock, "tf": tf, "side": side, "note": str(body.get("note") or ""),
+                                       "engine_seen": not self.withheld,
+                                       "made_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+
+    def trend_calls(self, q: dict) -> dict:
+        """Every trend call, scored to the clock (``call_outcome``), beside the reader's call at the same candle once
+        it is in sight; and the blind calls' score, to read against a coin and against geometry."""
+        journal = self.own_journal()
+        clock = min(int(q.get("t") or wall(self.end)), wall(self.end))
+        rows = []
+        for call in journal.data.get("trend_calls") or []:
+            bars, signals = self._trend_frame(call["tf"])
+            size, side = seconds_of(call["tf"]), TREND_CALLS[call["side"]]
+            row = dict(call)
+            known = signals[signals["time"] + size <= call["t"]].tail(1)
+            hidden = self.withheld or known.empty
+            row["reader"] = None if hidden else int(known["trend"].iloc[0])
+            row["reader_signals"] = None if hidden else {k: int(known[k].iloc[0]) for k in TREND_SIGNALS}
+            if side:
+                row.update(call_outcome(side, int(call["t"]), size, bars, self.path, clock))
+            else:
+                row.update({"next": None, "cont": None, "geometry": None})
+            rows.append(row)
+        scored = [r for r in rows if not r["engine_seen"] and r["side"] != "UNCLEAR"]
+
+        def rate(key: str) -> Optional[float]:
+            done = [r[key] for r in scored if r[key] in ("RIGHT", "WRONG")]
+            return sum(v == "RIGHT" for v in done) / len(done) if done else None
+
+        cont = [r for r in scored if r["cont"] in ("RIGHT", "WRONG")]
+        summary = {"blind_calls": len(scored), "next_right": rate("next"), "cont_right": rate("cont"),
+                   "cont_geometry": (sum(r["geometry"] for r in cont) / len(cont)) if cont else None,
+                   "resolved_next": sum(r["next"] in ("RIGHT", "WRONG") for r in scored), "resolved_cont": len(cont)}
+        return {"calls": rows, "summary": summary}
+
     def _m1(self, instrument: str, days: int) -> pd.DataFrame:
         """The session's M1 (the snapshot's or the terminal's) for ``instrument`` from ``days`` before the session to
         its end."""
@@ -961,6 +1058,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.app.need().positions(q))
         elif url.path == "/api/watch/noculus/comparison":
             self._answer(self.app.need().comparison)
+        elif url.path == "/api/watch/trend":
+            self._answer(lambda: self.app.need().trend(q))
+        elif url.path == "/api/watch/noculus/trend_calls":
+            self._answer(lambda: self.app.need().trend_calls(q))
         elif url.path == "/api/watch/fractal-defaults":
             self._answer(fractal_defaults)
         elif url.path == "/api/watch/fractal":
@@ -977,7 +1078,7 @@ class _Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path not in ("/api/watch/start", "/api/watch/pick", "/api/watch/reveal", "/api/watch/noculus/mark",
                         "/api/watch/noculus/unmark", "/api/watch/noculus/place", "/api/watch/noculus/close",
-                        "/api/watch/noculus/position"):
+                        "/api/watch/noculus/position", "/api/watch/noculus/trend_call"):
             self._send(404, {"error": f"no such path {self.path}"})
             return
         try:
@@ -999,6 +1100,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.app.need().close_trade(body))
         elif path == "/api/watch/noculus/position":
             self._answer(lambda: self.app.need().place_position(body))
+        elif path == "/api/watch/noculus/trend_call":
+            self._answer(lambda: self.app.need().trend_call(body))
         else:
             self._answer(lambda: self.app.start(body))
 
