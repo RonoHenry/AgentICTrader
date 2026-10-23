@@ -142,13 +142,14 @@ def test_focus_config_loads_every_variant():
         assert load_run_config(focus, variant=name).run == base.run, name
 
 
-def test_confirmation_config_is_the_explored_version_on_the_next_period():
-    # The pre-registered confirmation (docs/backtests/CONFIRMATION_TRADER_EXECUTION.md): the same version, markets,
-    # account, costs and report as focus.toml's m5_fresh_near_gap; only the period differs, and it stops before
-    # the study's hold-out.
+@pytest.mark.parametrize("variant", ["m5_fresh_near_gap", "fresh_near_gap", "fresh_near_gap_box"])
+def test_confirmation_config_is_the_explored_version_on_the_next_period(variant):
+    # The pre-registered confirmations (docs/backtests/CONFIRMATION_TRADER_EXECUTION.md, CONFIRMATION_D1_BOX.md):
+    # the same version, markets, account, costs and report as focus.toml's; only the period differs, and it stops
+    # before the study's hold-out.
     root = Path(__file__).resolve().parents[2] / "config" / "backtests"
-    explored = load_run_config(root / "focus.toml", variant="m5_fresh_near_gap")
-    confirm = load_run_config(root / "confirm.toml", variant="m5_fresh_near_gap")
+    explored = load_run_config(root / "focus.toml", variant=variant)
+    confirm = load_run_config(root / "confirm.toml", variant=variant)
     assert confirm.strategy == explored.strategy
     assert (confirm.account, confirm.data, confirm.report) == (explored.account, explored.data, explored.report)
     assert confirm.run.model_copy(update={"start": explored.run.start, "end": explored.run.end}) == explored.run

@@ -7,6 +7,9 @@
 > **2026-10-22:** the phase logic added no gate (`docs/research/PRICE_DELIVERY_PHASES.md`), and the M5 exploration of
 > the version below lost (−0.01R a trade before costs, −0.23R after; `ENGINE_SCALE_FIX.md`). It has not been run on
 > this period. What is confirmed here, and when, is the trader's decision.
+>
+> **2026-10-23:** the trader chose to confirm `fresh_near_gap_box` (M15, with the expansion day's box) on this period
+> instead: `CONFIRMATION_D1_BOX.md`. The version below stays unrun.
 
 **Pre-registered 2026-10-22.** The commit that adds this file is the pre-registration. It comes before the M5 exploration result was seen, and before any run of the version below on the confirmation period. Nothing in this section changes after that commit. The result is appended below it.
 

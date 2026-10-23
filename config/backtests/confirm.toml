@@ -1,7 +1,8 @@
-# The pre-registered confirmation run (docs/backtests/CONFIRMATION_TRADER_EXECUTION.md, 2026-10-22): the trader's
-# execution, m5_fresh_near_gap, once, on the period after the exploration slice and before the hold-out.
+# The pre-registered confirmation runs, on the period after the exploration slice and before the hold-out:
+# - docs/backtests/CONFIRMATION_TRADER_EXECUTION.md (2026-10-22): m5_fresh_near_gap, on hold, not run;
+# - docs/backtests/CONFIRMATION_D1_BOX.md (2026-10-23): fresh_near_gap_box, judged; fresh_near_gap, reported.
 #   python -m algo_backtester run config/backtests/confirm.toml --snapshot focus-2025-2026h1 \
-#       --variant base --variant m5_fresh_near_gap --workers 8
+#       --variant fresh_near_gap --variant fresh_near_gap_box --workers 4
 # Everything but the period is focus.toml's. Nothing here changes after the commit that pre-registers it.
 
 [run]
@@ -40,3 +41,19 @@ strategy.fvg_zone = "gap"
 strategy.raid_window = "H1"
 strategy.max_stop_atr = 1.0
 strategy.target_mode = "NEAREST"
+
+# The trader's execution on M15 (liquidity-engine Req 26.6, 27): the reference for the box, reported, not judged.
+[variants.fresh_near_gap]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+
+# The version under test (CONFIRMATION_D1_BOX.md): fresh_near_gap, standing aside while every D1 close since the
+# last D1 candle of at least 1.2 times the 20-day mean range is inside that candle's range (Req 29).
+[variants.fresh_near_gap_box]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.d1_box_expansion = 1.2
