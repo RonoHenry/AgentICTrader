@@ -55,4 +55,22 @@ No new run. The trades of the registered confirmation run (`config/backtests/con
 
 ## Result
 
-*(appended after the run)*
+**Split 2026-10-23, once, as registered:** `python scripts/ote_split.py c0be82a2972a` (and `3037e247bfb9`). The script is as committed in 43d1db9.
+
+**FAIL. All five criteria fail.** The OTE trades of `fresh_near_gap`: 66 trades, −0.18R a trade [−0.79, +0.58], −11.6R in total, profit factor 0.81, drawdown 31.5R. Gross R is negative, so the cost share fails too.
+
+**Reported, not judged:**
+- **The rest of `fresh_near_gap`:** 109 trades, −0.64R [−0.91, −0.32], −69.8R. The OTE trades did better, by +0.46R a trade [−0.24, +1.27]. That is the same direction as on the exploration slice (+1.22R), but smaller, and its interval includes zero.
+- **By market (in the OTE / the rest):**
+
+  | Market | In the OTE | The rest |
+  |---|---|---|
+  | EURUSD | −0.99 (13) | −0.47 (12) |
+  | GBPUSD | −0.10 (16) | −1.08 (11) |
+  | US100 | +0.51 (9) | −1.00 (29) |
+  | US30 | +0.73 (12) | −1.02 (14) |
+  | US500 | −0.99 (8) | −0.22 (23) |
+  | XAUUSD | −0.30 (8) | −0.20 (20) |
+- **The box run's split:** 32 OTE trades at −0.29R against 66 at −0.61R.
+
+As registered, no band, definition or criterion is changed and rerun on this period. The leg position is not built as a rule. Whether it is studied further is decided afresh, on other data.

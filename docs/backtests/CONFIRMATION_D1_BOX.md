@@ -86,4 +86,30 @@ From 2026-10-23, a second paper runner trades `fresh_near_gap_box` on live Exnes
 
 ## Result
 
-*(appended after the run)*
+**Run 2026-10-23, once, as registered.** Runs `c0be82a2972a` (`fresh_near_gap`) and `3037e247bfb9` (`fresh_near_gap_box`). The code is 43d1db9, dirty with the registered swap-cost work only. Engine 395c889e4c1d.
+
+**FAIL. All five criteria fail.**
+
+| Criterion | Pass | fresh_near_gap_box |
+|---|---|---|
+| Filled trades | ≥ 100 | 98 ✗ |
+| Expectancy and its interval | lower bound > 0 | −0.51R [−0.88, −0.05] ✗ |
+| Profit factor after costs | ≥ 1.3 | 0.48 ✗ |
+| Max drawdown | ≤ 15R | 55.6R ✗ |
+| Cost share | ≤ 40% of gross R | gross R is negative (−0.27R a trade) ✗ |
+
+**Reported, not judged:**
+- **The reference** (`fresh_near_gap`): 175 trades, win rate 7%, −0.47R a trade [−0.76, −0.11], −0.25R before costs, profit factor 0.51, drawdown 84.9R, longest losing streak 26.
+  - Every quarter lost: −5.4R, −23.4R, −27.4R, −25.1R.
+  - 162 stops and 13 targets, with targets a median 8.6R away.
+  - In January to June 2025 the same version made +0.27R a trade (+0.46R before costs).
+- **What the box changed:**
+  - it removed 89 of the reference's trades, worth −44.1R (−0.50R a trade);
+  - it kept 86, worth −37.3R (−0.43R);
+  - it added 12 that the freed slots allowed, worth −12.5R.
+
+  So on this period it did not separate bad trades from good: the trades it refused were as bad as the ones it kept.
+- **By market, with the box:** EURUSD −0.59, GBPUSD +0.08, US100 −0.99, US30 −0.35, US500 −0.28, XAUUSD −0.57 (R a trade; every market under 30 trades).
+- **Refusals:** `IN_D1_BOX` 6,921, `STALE_RAID` 42,137, `STOP_TOO_WIDE` 4,422, `RR_BELOW_MIN` 65 decisions.
+
+As registered, nothing is changed and rerun on this period. The box is not adopted, and the default engine is unchanged. What follows is decided afresh, on other data.

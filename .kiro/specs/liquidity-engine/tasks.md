@@ -1026,6 +1026,11 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     (−2R); 5 of 6 markets improve. Against the pass mark it passes three of five (fails the trade count and the
     interval). The rule was found on these trades, so the confirmation slice, run once, is the test; the next step
     is the trader's.
+  - **Confirmation 2026-10-23** (pre-registered, `CONFIRMATION_D1_BOX.md`; runs `c0be82a2972a`, `3037e247bfb9`):
+    **fail on all five criteria.** The box: 98 trades, −0.51R [−0.88, −0.05], drawdown 55.6R. The reference itself
+    lost (175 trades, −0.47R [−0.76, −0.11], −0.25R before costs, every quarter negative). The box's refused trades
+    were as bad as its kept ones (−0.50 against −0.43R). Not adopted; the default is unchanged. The OTE split
+    registered on the same trades (`CONFIRMATION_OTE.md`) failed too (66 trades, −0.18R).
   - **Validates: Requirement 29.4**
 
 ---
