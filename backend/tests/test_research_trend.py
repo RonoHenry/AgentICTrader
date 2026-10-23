@@ -145,3 +145,52 @@ def test_a_call_s_continuation_is_its_side_s_last_swing_taken_first_beside_geome
     up = call_outcome(1, T, H, bars, down, T + H)
     assert up["cont"] == "WRONG" and up["geometry"] == pytest.approx(0.5)
     assert call_outcome(-1, T, H, bars, down, T + 3 * 60)["cont"] == "PENDING"     # read only before the clock
+
+
+# ── ranked swings and breaks (Requirement 24, task 359) ─────────────────────
+from algo_research.trend import break_state, compare_state, ranked_highs  # noqa: E402
+
+
+def _zigzag(peaks):
+    """Highs that rise to each value in ``peaks`` and fall back between them: one STH per peak."""
+    h = []
+    for p in peaks:
+        h += [90.0, p]
+    return np.array(h + [90.0])
+
+
+def test_an_ith_is_an_sth_higher_than_its_neighbours_known_once_the_next_sth_is():
+    h = _zigzag([100, 105, 102, 108, 104, 103])
+    ranks = ranked_highs(h)
+    sth, sth_known = ranks["STH"]
+    assert list(h[sth]) == [100, 105, 102, 108, 104, 103] and list(sth_known) == list(sth + 1)
+    ith, ith_known = ranks["ITH"]
+    assert list(h[ith]) == [105, 108]                        # each higher than the STH on either side
+    assert list(ith_known) == [sth_known[2], sth_known[4]]   # known once the next, lower STH has formed
+    lth, _ = ranks["LTH"]
+    assert len(lth) == 0                                     # needs an ITH on either side
+
+
+def test_a_break_is_a_close_beyond_the_swing_and_a_wick_through_it_is_a_sweep():
+    o = np.array([100, 101, 104, 103, 102, 103, 103.5, 105, 106], dtype=float)
+    h = np.array([101, 103, 105, 104, 103, 105.5, 104.5, 107, 107.5], dtype=float)
+    l = np.array([99, 100, 103, 102, 101, 102.5, 103, 104.8, 105.5], dtype=float)
+    c = np.array([100.5, 102.5, 104, 102.5, 102.8, 103.5, 104, 106.5, 107], dtype=float)
+    # The STH is candle 2 (105), known at candle 3's close. Candle 5 trades to 105.5 and closes back at 103.5: a
+    # sweep. Candle 7 closes at 106.5, above it: the bullish break.
+    s = break_state(o, h, l, c, "STH")
+    assert list(s[:7]) == [0] * 7 and s[7] == 1 and s[8] == 1
+    # With the FVG rule the breaking candle must leave a gap: candle 8's low 105.5 is above candle 6's high 104.5,
+    # so the break holds, known at candle 8's close.
+    f = break_state(o, h, l, c, "STH", fvg=True)
+    assert list(f[:8]) == [0] * 8 and f[8] == 1
+
+
+def test_compare_state_on_sth_is_task_355_s_structure():
+    rng = np.random.default_rng(5)
+    walk = rng.normal(0, 1, 400).cumsum() + 100
+    h, l = walk + rng.uniform(0.1, 1, 400), walk - rng.uniform(0.1, 1, 400)
+    o, c = walk, walk + rng.normal(0, 0.3, 400)
+    rows = [(a, max(a, b, x), min(a, b, y), b) for a, b, x, y in zip(o, c, h, l)]
+    hh, ll = np.array([r[1] for r in rows]), np.array([r[2] for r in rows])
+    assert list(compare_state(hh, ll, "STH")) == list(trend_signals(bars(rows))["structure"])

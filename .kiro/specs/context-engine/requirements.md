@@ -596,3 +596,26 @@ The bullish trend is the mirror. ICT's Market Maker Models are to come later.
 | MA-D20 | The state | The sum of the five signals; three in agreement name the trend. |
 | MA-D21 | The race | One frame average range each way (the mean range of the 14 candles before), from the next M1 open; a bar reaching both is a loss for the trend; unresolved after three candles of the frame is counted apart. |
 | MA-D22 | Setup defaults | Buy-side liquidity: the setup frame's untaken three-candle swing highs, equal highs and the previous day's high. Frames: the trend on H1 (and H4 above it); raid, displacement, OTE and array on M15, the entry on M5. Standard deviations: −1, −2, −2.5 and −4 of the leg; confluence within 10% of the leg. |
+
+## Update 2026-10-23b: Ranked Swings and Breaks
+
+Task 356 found that the trader's trend, counted from every three-candle swing, calls the next move no better than a coin. A reading plan the trader shared the same day proposed reading structure as ICT ranks it, instead of counting every swing:
+1. **Rank the swings.** Short-term highs (three-candle swings), intermediate-term highs (an STH higher than the STH on either side) and long-term highs (the same one rank up). Structure changes only when an ITH or ITL breaks. An ITH is known only once the next, lower STH has formed, and that lag is kept.
+2. **A break is not a sweep.** A break (MSS or BOS) is a candle closing beyond the swing, with a displacement that leaves an FVG. A wick through the swing that closes back inside is a sweep: liquidity taken, structure unchanged.
+3. **Output levels, not only a sign.** In an uptrend these are the protected low (the swing that launched the break: the stop, the invalidation) and the weak high (the high not yet exceeded: the draw).
+4. **Read top-down, one job per frame.** The higher frame's weak swing is the draw, and the lower frame times the entry. A lower-frame break against the higher-frame trend at a higher-frame level is a Smart Money Reversal candidate (MMXM, later). Elsewhere it is a retracement.
+5. **A market-structure shift at a higher-frame level is the main event.** It is the one place the turn atlas found structure carrying information: D1 swings that took the previous week's extreme, +15 points over geometry.
+
+The plan's own test: whether intermediate-term swings, or breaks read from closes, make structure (or the trend score) call the next day better than the earlier mechanical reads' 45-49%. If none does, structure is mostly for levels, not direction.
+
+### Requirement 24: Ranked Swings and Breaks
+
+**User Story:** As the trader, I want structure read from ranked swings and from breaks rather than sweeps, and measured before the engine uses it, so that a better definition earns its place.
+
+#### Acceptance Criteria
+
+1. THE reader SHALL rank a frame's swings into STH/STL, ITH/ITL and LTH/LTL, each known only from its own candles and the next lower-rank swing's closed candles (`ranked_highs`, `ranked_lows`).
+2. A structure state SHALL be readable:
+   - by comparing the last two swings of a rank (`compare_state`);
+   - from breaks (`break_state`): a close beyond the latest unbroken swing of a rank, held until the other side breaks. A wick beyond that closes back inside changes nothing. Optionally the breaking candle must be C2 of an FVG in the break's direction, known at C3's close.
+3. THE research SHALL measure five versions on both slices and the focus markets: STH compare (task 355), ITH compare, STH break, ITH break, ITH break with FVG. Each is read on D1 and on the H4 candle closing at 17:00 New York, alone and swapped into the trend score. Each calls the next D1 candle against 50% and drift, with intervals. A version that clears 56-61% on both slices goes to the trader before any engine use. If none does, structure is kept for levels (points 3-5), not direction.

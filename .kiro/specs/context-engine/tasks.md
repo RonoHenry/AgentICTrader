@@ -330,6 +330,25 @@ Model A replaces the old selection (284) and orders (285) in the Model A modes. 
 - [ ] 358. The continuation setup (Requirement 22) — after 356 and the trader's answers to 22.3
   - **Validates: Requirements 22.1–22.3**
 
+### Update 2026-10-23b: ranked swings and breaks
+
+- [x] 359. Ranked swings and breaks, measured (Requirement 24) **(user review)**
+  - **RED** — on hand-made candles:
+    - an ITH is an STH higher than the STH on either side, known once the next STH is;
+    - a wick through a swing that closes back inside is a sweep, and a close beyond it is the break;
+    - with the FVG rule, the break waits for C3;
+    - STH compare equals task 355's structure.
+  - **GREEN** — `algo_research/trend.py`: `ranked_highs`, `ranked_lows`, `compare_state`, `break_state`.
+  - **The study:** `python -m algo_research.structure_study` → `docs/research/TREND_STRUCTURE.md`.
+  - **Done 2026-10-23.** 3 tests (12 in `test_research_trend.py`).
+    - **Every version calls the next D1 candle 48-52% on both slices,** within ±3 points of drift: STH and ITH
+      compare, STH and ITH breaks, the ITH break with an FVG, read on D1 or on the H4 at 17:00. The confirmation slice
+      has 1,700-2,725 calls a version.
+    - **Swapped into the trend score,** 44-50%.
+    - None beats the earlier 45-49% by more than noise, or comes near 56-61%. As the plan's own test says, structure is
+      for levels (the protected and the weak swing, and a break at a higher-frame level), not for the day's direction.
+  - **Validates: Requirements 24.1–24.3**
+
 ---
 
 ## Task Dependency Graph

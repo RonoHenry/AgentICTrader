@@ -262,3 +262,81 @@ def call_outcome(side: int, t: int, size: int, bars: pd.DataFrame, m1: dict, clo
             out["cont"] = race or "PENDING"
             out["geometry"] = (top - ref) / (top - bottom) if side < 0 else (ref - bottom) / (top - bottom)
     return out
+
+
+# ── ranked swings and breaks (context-engine Requirement 24) ─────────────────
+RANKS = ("STH", "ITH", "LTH")
+
+
+def _rank_up(level: np.ndarray, idx: np.ndarray, known: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The swings of ``idx`` higher than the one on either side: the next rank up. Each is known when the swing after
+    it, of the rank below, is known."""
+    j = np.arange(1, len(idx) - 1)
+    keep = j[(level[idx[j]] > level[idx[j - 1]]) & (level[idx[j]] > level[idx[j + 1]])]
+    return idx[keep], known[keep + 1]
+
+
+def ranked_highs(h: np.ndarray) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """ICT's short-, intermediate- and long-term highs of one frame: {rank: (candle index, index of the candle whose
+    close makes it known)}. An STH is a three-candle swing high, known at its third candle's close; an ITH is an STH
+    higher than the STH on either side, known once the next STH is; an LTH is the same one rank up."""
+    sth = _swing_highs(h)
+    out = {"STH": (sth, sth + 1)}
+    out["ITH"] = _rank_up(h, *out["STH"])
+    out["LTH"] = _rank_up(h, *out["ITH"])
+    return out
+
+
+def ranked_lows(l: np.ndarray) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """The mirror of ``ranked_highs``: STL, ITL and LTL, under the same rank names."""
+    return ranked_highs(-np.asarray(l, dtype=float))
+
+
+def compare_state(h: np.ndarray, l: np.ndarray, rank: str) -> np.ndarray:
+    """Each candle's structure from the last two known swings of ``rank``: lower high and lower low -1, higher high
+    and higher low +1, otherwise 0 (task 355's structure is ``compare_state(h, l, "STH")``)."""
+    n = len(h)
+    (hi, hk), (lo, lk) = ranked_highs(h)[rank], ranked_lows(l)[rank]
+    out = np.zeros(n, dtype=np.int64)
+    for i in range(n):
+        kh, kl = hi[hk <= i], lo[lk <= i]
+        if len(kh) < 2 or len(kl) < 2:
+            continue
+        if h[kh[-1]] < h[kh[-2]] and l[kl[-1]] < l[kl[-2]]:
+            out[i] = -1
+        elif h[kh[-1]] > h[kh[-2]] and l[kl[-1]] > l[kl[-2]]:
+            out[i] = 1
+    return out
+
+
+def break_state(o: np.ndarray, h: np.ndarray, l: np.ndarray, c: np.ndarray, rank: str, fvg: bool = False) -> np.ndarray:
+    """Each candle's structure from breaks, not sweeps: +1 after a candle closes above the latest unbroken known swing
+    high of ``rank``, -1 after one closes below the latest unbroken swing low, held until the other side breaks. A wick
+    beyond a swing that closes back inside is a sweep and changes nothing. With ``fvg`` the breaking candle must leave
+    a gap behind (it is C2 of an FVG in the break's direction), and the break is known at C3's close."""
+    n = len(c)
+    (hi, hk), (lo, lk) = ranked_highs(h)[rank], ranked_lows(l)[rank]
+    broken_h, broken_l = np.zeros(len(hi), bool), np.zeros(len(lo), bool)
+    change = np.zeros(n + 1, dtype=np.int64)              # the state set at each candle's close, 0 for none
+    for i in range(n):
+        ref_h = np.flatnonzero((hk < i) & ~broken_h)       # known before this candle, not yet closed above
+        ref_l = np.flatnonzero((lk < i) & ~broken_l)
+        if len(ref_h) and c[i] > h[hi[ref_h[-1]]]:
+            broken_h[ref_h[-1]] = True
+            if not fvg:
+                change[i] = 1
+            elif 0 < i < n - 1 and l[i + 1] > h[i - 1]:
+                change[i + 1] = 1
+        if len(ref_l) and c[i] < l[lo[ref_l[-1]]]:
+            broken_l[ref_l[-1]] = True
+            if not fvg:
+                change[i] = -1
+            elif 0 < i < n - 1 and h[i + 1] < l[i - 1]:
+                change[i + 1] = -1
+    out = np.zeros(n, dtype=np.int64)
+    state = 0
+    for i in range(n):
+        if change[i]:
+            state = int(change[i])
+        out[i] = state
+    return out
