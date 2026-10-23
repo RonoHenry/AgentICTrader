@@ -993,3 +993,26 @@ The trader chose (2026-10-22) to add this before the confirmation run, and to co
 |---|---|---|
 | LE-D23 | The phase thresholds are the engine's existing CRT ones: 8 candles within 2 average ranges for a consolidation, 1.5 for an expansion. Nothing is tuned on the data. | `ipda/classifier.py` (`_C1_LOOKBACK`, `_C1_TIGHT_RATIO`, `_C3_EXPANSION_RATIO`) |
 | LE-D24 | "Consolidation never goes straight to retracement or reversal" holds by construction: both are measured against an expansion. What can be tested is when the expansion comes and which way it goes. | The definitions above |
+
+## Update 2026-10-23: The Expansion Day's Box
+
+The trader (2026-10-23), on Noculus, GBPUSD 27-29 January 2025 (base engine): "What do you see?" Friday 24 January expanded 155 pips (1.2347 to 1.2501). Monday to Thursday stayed inside that range, on days of 70-97 pips against a 117-pip average. The engine traded both sides from the middle of it (1.2435-1.2497) with expansion targets 140-226 pips away (up to 12R). The trades reached +0.15 to +0.6R and were stopped. On the Monday it wanted a short at 1.24509 and, an hour later, a long at the same price. The trader: filter those trades out.
+
+### Requirement 29: Wait Out the Expansion Day's Box
+
+**User Story:** As the user, I want the engine to stand aside while price is still inside the range of the last expansion day, so that it doesn't trade the middle of a consolidation with targets that only an expansion reaches.
+
+#### Acceptance Criteria
+
+1. UNDER `d1_box_expansion = k` (default 0, off), the box SHALL be the range of the latest closed D1 candle whose range (high minus low) is at least `k` times the mean range of the 20 closed D1 candles before it, while every closed D1 candle since has closed inside its high and low; wicks may trade beyond it. Closed is the strategy calendar's (Req 26.6): the in-progress D1 candle is not read. A D1 close outside the box ends it, and a newer expansion candle starts a new one.
+2. WHILE a box is in force, a setup SHALL be journaled as a `NoTrade` with the reason `IN_D1_BOX`, naming the box's candle, its high and low, and the threshold. It is checked after `STALE_RAID`, before the other candle anticipation rules.
+3. THE rule SHALL be an order rule, so runs with and without it share the engine's analysis. It needs `k`'s 20-candle mean before the box candle; a view with fewer closed D1 candles than that SHALL raise, as the stop cap does, rather than skip the rule silently.
+4. `config/backtests/focus.toml` SHALL carry `fresh_near_gap_box` (`fresh_near_gap` with `d1_box_expansion = 1.2`), run beside `fresh_near_gap` on the exploration slice. The default changes only after the trader's review (LE-D18). Any version adopted is confirmed once, pre-registered.
+
+### Decisions (2026-10-23)
+
+| Id | Decision | Source |
+|---|---|---|
+| LE-D25 | The box is the expansion day's range read from D1 closes, not the phase reader's 8-candle box. The reader labelled 27-29 January a retracement (D1) and mostly retracement (H4), and the engine's trades it labelled consolidation did better, not worse (`fresh_near_gap`, H1: +0.80R against -0.44R a trade). | The engine's filled trades, exploration slice (scratch `phase_gate.py`) |
+| LE-D26 | The threshold is 1.2, the one measured first, not a tuned one. On the engine's filled trades, `fresh_near_gap` lost -0.44R a trade inside the box (46 trades) and made +0.74R outside it (68), a difference of +1.18R [+0.12, +2.27], better outside in 5 of 6 markets. At 1.0 and 1.5 the difference points the same way (+0.86, +0.95) but its interval includes zero; for the base engine it is +0.31 [-0.17, +0.81]. Those trades were filtered after the fact, and skipping some frees the 3-trade limit for others, so the run is the measure. | Scratch `d1_box_gate.py` |
+| LE-D27 | The trader's other proposal, entries only from the box's edges with the target capped at its far edge, isn't built. Skipping the middle half removed losers from the base engine (-19R) but winners from `fresh_near_gap` (+3.2R). | The same trades |

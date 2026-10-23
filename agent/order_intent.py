@@ -18,14 +18,15 @@ setup leg.
 
 The candle anticipation policy (update 2026-10b) runs after the grade gates
 and before the stop checks; the first rule a setup fails names its NoTrade:
-a fresh raid (raid_window, update 2026-10-21), the anticipated direction (bias_mode), the false move (require_false_move),
+a fresh raid (raid_window, update 2026-10-21), the expansion day's box (d1_box_expansion, update 2026-10-23),
+the anticipated direction (bias_mode), the false move (require_false_move),
 the manipulation window (time_window), the higher-timeframe POI
 (require_htf_poi). Then the stop must be beyond the entry and at least
 min_stop_spreads typical spreads away, and TP1 may be the profile's draw
 when it is nearer (target_mode).
 
 Validates: Requirements 1.2, 1.3 (.kiro/specs/algo-backtester/requirements.md);
-Requirements 19, 23, 25.2, 27 (.kiro/specs/liquidity-engine/requirements.md)
+Requirements 19, 23, 25.2, 27, 29 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
 
@@ -51,20 +52,22 @@ Direction = Literal["LONG", "SHORT"]
 NoTradeReason = Literal[
     "NO_GRADE", "NO_TRADE", "RR_BELOW_MIN", "INVALID_STOP",
     "NO_ANTICIPATION", "AGAINST_PROFILE", "NO_FALSE_MOVE", "OUTSIDE_WINDOW", "NO_POI", "STOP_TOO_TIGHT",
-    "STALE_RAID", "STOP_TOO_WIDE", "AGAINST_THESIS", "NO_THESIS",
+    "STALE_RAID", "STOP_TOO_WIDE", "AGAINST_THESIS", "NO_THESIS", "IN_D1_BOX",
 ]
 #: Reasons the backtest journal records as their own decision rather than NO_TRADE
 #: (liquidity-engine Req 23.6): a graded setup refused by a rule, not by the grader.
 OWN_DECISION_REASONS = (
     "RR_BELOW_MIN", "INVALID_STOP",
     "NO_ANTICIPATION", "AGAINST_PROFILE", "NO_FALSE_MOVE", "OUTSIDE_WINDOW", "NO_POI", "STOP_TOO_TIGHT",
-    "STALE_RAID", "STOP_TOO_WIDE", "AGAINST_THESIS", "NO_THESIS",
+    "STALE_RAID", "STOP_TOO_WIDE", "AGAINST_THESIS", "NO_THESIS", "IN_D1_BOX",
 )
 _POI_TIMEFRAMES = (Timeframe.H4, Timeframe.D1)
 _NEW_YORK = ZoneInfo("America/New_York")
 #: The stop cap's ruler (Req 27.5): the average true range of the last STOP_ATR_BARS closed M15 candles, the
 #: frame the trader's stops were measured on, whatever the entry timeframe.
 STOP_ATR_TF, STOP_ATR_BARS = Timeframe.M15, 14
+#: The expansion day's box (Req 29.1): a D1 candle's range against the mean of the D1_BOX_BARS closed ones before it.
+D1_BOX_BARS = 20
 
 
 @dataclass(frozen=True)
@@ -260,6 +263,13 @@ def _candle_policy(
             return "STALE_RAID", (f"raid at {sequence.raid.raided_at:%Y-%m-%d %H:%M} UTC is before "
                                   f"{start:%Y-%m-%d %H:%M} UTC, the open of the last {cfg.raid_window_candles} "
                                   f"{cfg.raid_window.value} candles")
+    if cfg.d1_box_expansion > 0:
+        box = d1_box(closed_candles({Timeframe.D1: view.get(Timeframe.D1, [])}, as_of)[Timeframe.D1],
+                     cfg.d1_box_expansion)
+        if box is not None:
+            return "IN_D1_BOX", (f"every D1 close since the {trading_date(box.timestamp)} expansion candle "
+                                 f"(at least {cfg.d1_box_expansion} x the {D1_BOX_BARS}-day mean range) is inside "
+                                 f"its range {box.low:.6g}-{box.high:.6g}")
     if cfg.bias_mode == BiasMode.THESIS:
         day = trading_date(as_of)
         side = theses(cfg.thesis_file).get(liquidity_map.instrument, {}).get(day)
@@ -288,6 +298,23 @@ def _candle_policy(
     ):
         return "NO_POI", f"protected swing {wick} is not inside an unfilled H4 or D1 {sequence.direction.value} PD array"
     return None
+
+
+def d1_box(bars: Sequence[Candle], expansion: float) -> Optional[Candle]:
+    """The D1 candle whose box is in force after ``bars`` (closed D1 candles, oldest first), or None (Req 29.1):
+    the latest one whose range is at least ``expansion`` times the mean range of the D1_BOX_BARS before it, while
+    every close since is inside its high and low. A close outside ends the box; wicks don't."""
+    if len(bars) < D1_BOX_BARS + 1:
+        raise ValueError(f"the D1 box needs {D1_BOX_BARS + 1} closed D1 candles, the view has {len(bars)}")
+    box = None
+    for k, bar in enumerate(bars):
+        if box is not None and not box.low <= bar.close <= box.high:
+            box = None
+        if k >= D1_BOX_BARS:
+            mean = sum(b.high - b.low for b in bars[k - D1_BOX_BARS:k]) / D1_BOX_BARS
+            if mean > 0 and bar.high - bar.low >= expansion * mean:
+                box = bar
+    return box
 
 
 def _average_range(bars: Sequence[Candle], n: int) -> float:

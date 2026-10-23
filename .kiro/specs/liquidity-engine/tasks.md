@@ -1002,6 +1002,26 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
   - Then the combined version is registered in `docs/backtests/CONFIRMATION_TRADER_EXECUTION.md` and confirmed once.
   - **Validates: Requirements 28.3, 28.4**
 
+### Update 2026-10-23: the expansion day's box
+
+- [x] 353. The box rule (Req 29.1–29.3)
+  - **353a. RED**
+    - With 20 ordinary closed D1 candles, then one at 1.2 times their mean range, then closes inside it: `IN_D1_BOX`, naming the candle, its high and low; at 1.0 off by default, an order.
+    - A close outside the box ends it; a wick beyond it doesn't; a newer expansion candle starts a new box.
+    - The in-progress D1 candle is not read: an expansion still forming starts no box.
+    - Checked after `STALE_RAID` and before the profile rules; a view with too few closed D1 candles raises.
+  - **353b. GREEN** — `StrategyConfig.d1_box_expansion`; `d1_box` and the rule in `agent/order_intent.py`; the variant `fresh_near_gap_box` in `config/backtests/focus.toml`.
+  - **Done 2026-10-23.** `StrategyConfig.d1_box_expansion` (0, off); in `agent/order_intent.py`, `d1_box` (the 20
+    closed D1 candles before a candle give its mean range; a close outside ends the box) and `IN_D1_BOX`, second in
+    `_candle_policy`, after `STALE_RAID`. 5 tests in `test_backtest_order_intent.py`, and the fingerprint guard's
+    row. The order logic changed, so the Phase A cache is rebuilt by the next run.
+  - **Validates: Requirements 29.1–29.3**
+
+- [ ] 354. The comparison run (Req 29.4) **(user review)**
+  - `fresh_near_gap` and `fresh_near_gap_box` in one command (one engine analysis), the exploration slice, `--snapshot focus-2025-2026h1`. Record trades, R with its interval, win rate, drawdown and the `IN_D1_BOX` refusals, against `fresh_near_gap` and its 2026-10-21 run.
+  - Written to `docs/backtests/D1_BOX.md`. The default changes only after the trader's review; any adopted version is confirmed once.
+  - **Validates: Requirement 29.4**
+
 ---
 
 ## Task Dependency Graph

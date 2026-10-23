@@ -145,6 +145,9 @@ class StrategyConfig(BaseModel):
     # The stop at the sweep's tip (liquidity-engine Req 27.5): at most k average true ranges of the last 14
     # closed M15 candles away, whatever the entry timeframe, as the trader's are (0.3-0.9); 0 is off.
     max_stop_atr: float = Field(default=0.0, ge=0)
+    # The expansion day's box (liquidity-engine Req 29): no order while every D1 close since the latest closed D1
+    # candle at least k times the 20-day mean range has stayed inside its high and low; 0 is off. An order rule.
+    d1_box_expansion: float = Field(default=0.0, ge=0)
     pending_expiry: PendingExpiry = PendingExpiry.KILLZONE_END
     fallback_ttl_minutes: PositiveInt = 180
     # What the engine reads an FVG as (liquidity-engine Req 26). Unlike the rules above this one changes the
