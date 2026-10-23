@@ -296,9 +296,18 @@ Model A replaces the old selection (284) and orders (285) in the Model A modes. 
     over 20 candles. 7 tests in `test_research_trend.py`, including that no later candle changes a label.
   - **Validates: Requirements 20.1–20.3**
 
-- [ ] 356. The trend before anything is built on it (Requirement 21) **(user review)**
+- [x] 356. The trend before anything is built on it (Requirement 21) **(user review)**
   - The exploration slice; the focus markets; H1, H4 and D1. The hit rate of the trend, and of each signal, in the one-range race against 50% and each side's drift rate, with intervals, per frame and market.
   - Written to `docs/research/TRADER_TREND.md`.
+  - **Done 2026-10-23** (`python -m algo_research.trend_study`). It **does not clear the bar.**
+    - **The next move:** H1 50.1% (−0.1 points over drift), H4 49.1%. Each signal is within a point or two of 50%.
+    - **Continuation,** added because a bearish trend often raids buy-side liquidity first (a lower low before a
+      higher high): H1 61.5% against a geometry of 61.6%; H4 −2.5 points. The read fires near the last swing on its
+      side, so it is right as often as a driftless walk from the same price.
+    - **D1 is contrarian:** the trend −11 points, PO3 −13. Mostly the indices in April 2025.
+    - As Requirement 21.3 says, nothing is tuned and the setup (358) is not built on it. The result went back to the
+      trader. They chose (2026-10-23) to see the reader on the chart and call the trend blind (357), to test whether
+      their own calls carry what these counts don't.
   - **Validates: Requirements 21.1–21.3**
 
 - [ ] 357. The trend on the chart (Requirement 23)
