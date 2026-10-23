@@ -1065,12 +1065,19 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     setup and candidate cards. A running server needs a restart for the Python side; the page needs a reload.
   - **Validates: Requirement 30.5**
 
-- [ ] 362. The comparison run (Req 30.6) **(user review)**
+- [x] 362. The comparison run (Req 30.6) **(user review)**
   - `fresh_near_gap`, `fresh_near_gap_run` and `fresh_near_gap_crt` in one command, the exploration slice,
     `--snapshot focus-2025-2026h1`. Record trades, R with its interval, win rate, drawdown, and how far the entries
     and stops sit from the sweep (in M15 ranges), against `fresh_near_gap`'s 2026-10-21 run.
   - Written to `docs/backtests/INDICATOR_CISD.md`. The default changes only after the trader's review; any adopted
     version is confirmed once, pre-registered.
+  - **Run 2026-10-23** (`3f1dac662643`, `90fdbd000381`, `2c4d1dbb9d5b`). The reference reproduces 114 trades and
+    +0.27R. `fresh_near_gap_run`: 147 trades, −0.49R [−0.83, −0.10], −0.20R before costs, win 7%, drawdown 78R.
+    `fresh_near_gap_crt`: 147 trades, −0.14R [−0.54, +0.32], +0.03R before costs (task 338's figure), drawdown
+    51R. Stops (0.8 M15 ranges) and raid ages (2-2.5 h) are unchanged: the variants take different setups, not
+    better-placed ones. `run` lost 81 of the reference's trades worth +0.73R a trade and added 114 at −0.39R:
+    more raids qualify, the newest wins the ranking, and 18,159 picks were refused for a wide stop (5,412).
+    Not adopted; the default stays `"next"`, and the settings stay for Noculus. No confirmation run.
   - **Validates: Requirement 30.6**
 
 ---
