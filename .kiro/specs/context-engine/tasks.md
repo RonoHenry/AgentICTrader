@@ -391,7 +391,11 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
   - **Done 2026-10-24.** 4 tests. Each range comes out as an `Objective` (`IPDA20_HIGH` ... `IPDA60_LOW`), formed at its candle's close. They pass through the frame state's taken check like any other level.
   - **Validates: Requirements 27.1–27.3**
 
-- [ ] 366. The chain's daily calls, measured (Requirement 28) **(user review: the pass rule)**
+- [x] 366. The chain's daily calls, measured (Requirement 28) **(user review: the pass rule)**
+  - **Done 2026-10-24: H-K fails.** Registered at 8901bfe with the trader's pass rule (the daily calls'). On development (2018-07 to 2022), 8,888 calls hit 49.2% against a base of 49.0%: +0.2 points [−1.1, +1.5], positive in 3 of 9 markets.
+    - Every ablation sits within ±1.5 points of drift, as does each frame alone. Without the IPDA ranges it is +0.9 [−0.5, +2.3], 8 of 9 markets: a lead from development data only.
+    - The draw comes first as often as geometry once the bars that reached both levels are split.
+    - Written up in `docs/research/SEARCH_2018_2024.md`. Tries 11, passes 0; 2023-2024 still unread.
   - **RED** (synthetic bars only, nothing read from the snapshot): `test_weeks_and_months_close_on_the_calendar`, `test_forming_week_stretches_the_range`, `test_call_reads_only_the_past` (Property 2), `test_no_call_until_every_frame_has_a_range`, `test_draw_race_against_geometry`.
   - **GREEN:** `algo_research/search_chain.py`; H-K appended to `docs/research/SEARCH_2018_2024.md`.
   - **The trader confirms H-K's pass rule.** The commit is the registration. Then one development run; the log records it, pass or fail.
