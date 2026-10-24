@@ -1,9 +1,10 @@
 """Export the MT5 terminal's bar history for the trader's focus markets into a research snapshot (read-only).
 
-The terminal (Exness, server time UTC+0) holds D1, H4, H1 and M15 back to 2018 for the focus markets: about five
-times the M1 snapshot's span, and years that no research has read yet. Each market and timeframe becomes one parquet
-of UTC bar opens with open, high, low, close, tick volume and the spread in price units; a manifest records the
-symbols, spans and row counts.
+The terminal (Exness, server time UTC+0) holds D1 back to 2018 for the focus markets, years that no research has
+read yet. Its intraday history starts on 16 July 2021: before that the server answers H4, H1 and M15 requests with
+the D1 bars, one per day, which are dropped here. Each market and timeframe becomes one parquet of UTC bar opens with
+open, high, low, close, tick volume and the spread in price units; a manifest records the symbols, spans, row counts
+and each market's first intraday date.
 
     python scripts/export_mt5_history.py [--name mt5-2018-2026] [--start 2018-01-01]
 
@@ -52,6 +53,12 @@ def main() -> None:
                                  **{k: frame[k].astype(float) for k in ("open", "high", "low", "close")},
                                  "tick_volume": frame["tick_volume"].astype("int64"),
                                  "spread": frame["spread"].astype(float) * point})
+            if tf != "D1":
+                # Stand-in D1 bars come one per day; the intraday history starts on the first day with more.
+                per_day = bars.groupby(bars["time"].dt.normalize()).size()
+                first = per_day[per_day > 1].index[0]
+                bars = bars[bars["time"] >= first].reset_index(drop=True)
+                manifest["markets"][instrument]["intraday_from"] = first.date().isoformat()
             bars.to_parquet(out / f"{instrument}_{tf}.parquet", index=False)
             manifest["markets"][instrument]["timeframes"][tf] = {
                 "first": bars["time"].iloc[0].isoformat(), "last": bars["time"].iloc[-1].isoformat(), "rows": len(bars)}
