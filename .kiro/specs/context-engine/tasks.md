@@ -385,9 +385,10 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
 - The research doesn't need the engine's modes.
 - The quarantine needs M1 bars, which the 2018-2021 history doesn't have. The 17:00 New York rollover falls inside the broker's server-day bars, so its dips can still set an FX day's low. The search's other D1 hypotheses read the same raw bars, so H-K is judged on the same footing. Its pass rule reads opens and closes only.
 
-- [ ] 365. The IPDA data ranges (Requirement 27)
+- [x] 365. The IPDA data ranges (Requirement 27)
   - **RED:** `test_ranges_are_the_20_40_60_day_extremes`, `test_a_candle_leading_two_ranges_is_listed_once`, `test_no_range_without_its_candles`, `test_ranges_feed_the_chain_as_objectives`.
   - **GREEN:** `context/ipda.py`: `ipda_ranges(d1)`.
+  - **Done 2026-10-24.** 4 tests. Each range comes out as an `Objective` (`IPDA20_HIGH` ... `IPDA60_LOW`), formed at its candle's close. They pass through the frame state's taken check like any other level.
   - **Validates: Requirements 27.1–27.3**
 
 - [ ] 366. The chain's daily calls, measured (Requirement 28) **(user review: the pass rule)**
