@@ -36,7 +36,8 @@ from liquidity_engine.context.frame_state import Candles, FrameState, frame_stat
 from liquidity_engine.context.ipda import ipda_ranges
 from liquidity_engine.models import BiasDirection
 
-__all__ = ["ARMS", "Ladder", "chain_rows", "draw_race", "judge_race", "periods"]
+__all__ = ["ARMS", "Ladder", "armed_call", "chain_rows", "draw_race", "frame_states", "judge_race", "month_interval",
+           "periods"]
 
 BULL, BEAR, NEUTRAL = BiasDirection.BULLISH, BiasDirection.BEARISH, BiasDirection.NEUTRAL
 SIDE = {BULL: 1, BEAR: -1, NEUTRAL: 0}
@@ -124,7 +125,8 @@ def chain_rows(bars: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _states(days, weeks, months, w_forming, m_forming, levels) -> Tuple[FrameState, FrameState, FrameState]:
+def frame_states(days, weeks, months, w_forming, m_forming, levels) -> Tuple[FrameState, FrameState, FrameState]:
+    """The MN1, W1 and D1 states at the last day's close (``Ladder.at``'s pieces), with ``levels`` as objectives."""
     price = float(days.c[-1])
     mn1 = frame_state(months, price, path=days, forming=m_forming, levels=levels)
     w1 = frame_state(weeks, price, parents=[months], path=days, forming=w_forming, levels=levels)
@@ -132,7 +134,8 @@ def _states(days, weeks, months, w_forming, m_forming, levels) -> Tuple[FrameSta
     return mn1, w1, d1
 
 
-def _call(link_chain, states) -> int:
+def armed_call(link_chain, states) -> int:
+    """The chain's call, +1 or -1, while it is armed and every frame in ``states`` has a range; else 0."""
     ranged = all(s.range is not None for s in states)
     return SIDE[link_chain.bias.context] if link_chain.armed and ranged else 0
 
@@ -141,14 +144,14 @@ def _read(days, weeks, months, w_forming, m_forming) -> dict:
     row: dict = {}
     if len(weeks) < 2 or len(months) < 2:
         return {name: 0 for name in ARMS}
-    with_ipda = _states(days, weeks, months, w_forming, m_forming, ipda_ranges(days))
-    plain = _states(days, weeks, months, w_forming, m_forming, ())
+    with_ipda = frame_states(days, weeks, months, w_forming, m_forming, ipda_ranges(days))
+    plain = frame_states(days, weeks, months, w_forming, m_forming, ())
     mn1, w1, d1 = with_ipda
     main = chain(with_ipda)
-    row["H-K"] = _call(main, with_ipda)
-    row["profile"] = _call(chain(with_ipda, ChainRule.PROFILE), with_ipda)
-    row["no-mn1"] = _call(chain((w1, d1)), with_ipda)
-    row["no-ipda"] = _call(chain(plain), plain)
+    row["H-K"] = armed_call(main, with_ipda)
+    row["profile"] = armed_call(chain(with_ipda, ChainRule.PROFILE), with_ipda)
+    row["no-mn1"] = armed_call(chain((w1, d1)), with_ipda)
+    row["no-ipda"] = armed_call(chain(plain), plain)
     ranged = all(s.range is not None for s in with_ipda)               # every arm waits for the same warm-up
     for s in with_ipda:
         row[f"own-{s.tf}"] = SIDE[s.own] if s.own_draw is not None and ranged else 0

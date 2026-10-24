@@ -1039,3 +1039,22 @@ def test_trend_calls_are_kept_scored_from_the_past_and_set_beside_the_reader_onc
     assert seen["reader"] in (-1, 0, 1) and set(seen["reader_signals"]) == TREND_KEYS
     after = blind.trend_call({"t": clock + 4 * 3600, "tf": "H1", "side": "BULLISH"})
     assert after["engine_seen"] is True                                           # made after the reveal: not blind
+
+
+# ── the context chain and the confluence stack (the Chain layer, 2026-10-24) ──
+CHAIN_KEYS = {"i", "open", "close", "frames", "links", "profile", "votes", "score", "ranged", "call", "chain_call",
+              "next"}
+
+
+def test_the_chain_layer_is_withheld_while_blind_and_served_up_to_the_clock(blind, session):  # noqa: F811
+    clock = wall(session.start) + 6 * 3600
+    shown = session.chain({"t": clock})
+    assert not shown["withheld"] and shown["rows"] and "abstains" in shown["smt"]
+    assert all(r["close"] <= clock for r in shown["rows"])                          # closed D1 candles only
+    assert CHAIN_KEYS <= set(shown["rows"][-1]) and len(shown["rows"][-1]["votes"]) == 13
+    assert shown["rows"][-1]["next"] is None                                        # the session's day is still open
+    assert blind.chain({"t": clock}) == {"withheld": True, "rows": []}
+    later = session.chain({"t": wall(session.end)})["rows"]
+    assert [r["i"] for r in later[: len(shown["rows"])]] == [r["i"] for r in shown["rows"]]
+    assert later[len(shown["rows"]) - 1]["next"] in (-1, 0, 1)                      # its next candle has closed
+    json.dumps(later)

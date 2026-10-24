@@ -416,6 +416,15 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
   - **The harness, before any data was read:** `algo_research/search_smt.py` (`market_days`, `smt_legs`, `arm_calls`). 7 tests on synthetic bars, Property 2 included.
   - **Validates: Requirements 29.1–29.2**
 
+- [x] 368. The chain and the stack on the chart (Requirement 30)
+  - **Done 2026-10-24.**
+    - `algo_research/chain_view.py` (`ChainView`, `trading_days`): what H-K and H-M read at a D1 close, ready for the page.
+    - `WatchSession.chain` and `/api/watch/chain`, withheld while blind. The chain is rebuilt once per trading day, from 550 days of warm-up.
+    - The page's "Chain & stack" layer (`engine.js`: `paintChain`, `chainCard`, `loadChain`), on by default.
+  - **Tests:** `test_research_chain_view.py` (4, parity with `stack_votes`); `test_the_chain_layer_is_withheld_while_blind_and_served_up_to_the_clock`; `js/chain_ui.js` (15 checks).
+  - **Limit:** the watch tool's days are the exploration slice (2025-01 to 2025-06), and the snapshot's M1 starts in 2024-05. The MN1 frame is unranged until about May 2025, so the stack makes no calls before then.
+  - **Validates: Requirements 30.1–30.3**
+
 ---
 
 ## Task Dependency Graph

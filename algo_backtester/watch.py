@@ -61,6 +61,7 @@ from algo_backtester.noculus import (NOCULUS_DIR, NoculusJournal, average_ranges
 from algo_backtester.report import journal_csv
 from algo_backtester.run import run_backtest
 from algo_backtester.signals import entry_closes, signals_at
+from algo_research.chain_view import ChainView, trading_days
 from algo_research.config import load_research_config, trading_date_open
 from algo_research.fractal_poi import FractalPOI, FractalSettings, partners_for, warmup_days
 from algo_research.fractal_poi import defaults as fractal_defaults
@@ -119,6 +120,10 @@ def from_wall(w: int) -> pd.Timestamp:
 TREND_WARMUP_DAYS = {"H1": 10, "H4": 30, "D1": 90}
 TREND_SHOWN_BEFORE = 24
 TREND_CALLS = {"BEARISH": -1, "BULLISH": 1, "UNCLEAR": 0}
+#: The context chain and the confluence stack (Noculus's Chain layer, 2026-10-24): the days of warm-up the monthly
+#: frame's dealing range needs, and how many D1 candles before the session's first are shown.
+CHAIN_WARMUP_DAYS = 550
+CHAIN_SHOWN_BEFORE = 10
 
 
 class SnapshotSource:
@@ -239,6 +244,8 @@ class WatchSession:
         self._snapshot_m1: dict[str, pd.DataFrame] = {}
         self._trend: dict[tuple, tuple[pd.DataFrame, pd.DataFrame]] = {}   # (tf, end) -> (bars, signals)
         self._trend_lock = threading.Lock()
+        self._chain: Optional[tuple] = None                     # (trading day, days, reader, reads by day)
+        self._chain_lock = threading.Lock()
 
     # ── preparing ───────────────────────────────────────────────────────────
     def prepare(self) -> None:
@@ -825,6 +832,43 @@ class WatchSession:
                    "resolved_next": sum(r["next"] in ("RIGHT", "WRONG") for r in scored), "resolved_cont": len(cont)}
         return {"calls": rows, "summary": summary}
 
+    # ── the context chain and the confluence stack (2026-10-24) ─────────────────
+    def _chain_view(self) -> tuple[pd.DataFrame, ChainView, dict]:
+        """Every D1 candle closed by the session's end, from the warm-up the monthly frame needs on, and the reader
+        of the chain and the stack over them. Rebuilt when a new trading day starts (a live session moves each
+        minute, but its closed D1 candles change once a day); a day reads only the days before it."""
+        end, size = wall(self.end), seconds_of("D1")
+        day = (end + 7 * 3600) // size
+        with self._chain_lock:
+            if self._chain is None or self._chain[0] != day:
+                bars = ReplayBars(self._m1(self.instrument, CHAIN_WARMUP_DAYS), self.instrument,
+                                  PriceBasis(instruments=()))
+                rows = bars.as_of("D1", from_wall(end), since=None)
+                rows = rows[np.asarray(rows["time"], dtype=np.int64) + size <= end].reset_index(drop=True)
+                days = trading_days(rows)
+                self._chain = (day, days, ChainView(days, self.instrument), {})
+            return self._chain[1:]
+
+    def chain(self, q: dict) -> dict:
+        """The chain (MN1 -> W1 -> D1) and the thirteen-vote stack at each D1 close of the session up to the clock
+        ``t``, as H-K and H-M read them (``algo_research.chain_view``); nothing while the session is blind. A close's
+        next candle is shown once it has closed by the clock."""
+        clock = min(int(q["t"]), wall(self.end))
+        if self.withheld:
+            return {"withheld": True, "rows": []}
+        days, view, done = self._chain_view()
+        size = seconds_of("D1")
+        opens = days["open_wall"].to_numpy(np.int64)
+        rows = []
+        for i in np.flatnonzero((opens + size <= clock) & (opens >= wall(self.start) - CHAIN_SHOWN_BEFORE * size)):
+            if i not in done:
+                done[i] = view.at(int(i))
+            row = dict(done[i], close=int(opens[i]) + size)
+            known = i + 1 < len(days) and opens[i + 1] + size <= clock
+            row["next"] = int(np.sign(days["close"].iloc[i + 1] - days["open"].iloc[i + 1])) if known else None
+            rows.append(row)
+        return {"withheld": False, "smt": "abstains: one market on this chart", "rows": rows}
+
     def _m1(self, instrument: str, days: int) -> pd.DataFrame:
         """The session's M1 (the snapshot's or the terminal's) for ``instrument`` from ``days`` before the session to
         its end."""
@@ -1063,6 +1107,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(self.app.need().comparison)
         elif url.path == "/api/watch/trend":
             self._answer(lambda: self.app.need().trend(q))
+        elif url.path == "/api/watch/chain":
+            self._answer(lambda: self.app.need().chain(q))
         elif url.path == "/api/watch/noculus/trend_calls":
             self._answer(lambda: self.app.need().trend_calls(q))
         elif url.path == "/api/watch/fractal-defaults":

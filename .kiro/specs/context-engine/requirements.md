@@ -727,3 +727,25 @@ Whatever its result, the chain is the first top-down reading the engine can expl
 | CE-D16 | Reached | A POI is spent if traded into between its forming and the close of the dealing range's later anchor candle. After that, the first bar trading into it reaches it. POIs are timed on the path, the finest bars given, or on the frame's own candles. A stretch past an anchor doesn't reset it. |
 | CE-D17 | IPDA ranges | The last 20, 40 and 60 closed D1 candles, as ICT's lookback ranges. The forward-looking ranges and the quarterly shifts are left out. |
 | CE-D18 | Weeks and months on D1 bars | A week closes with its Friday candle, and a month with its last weekday's. A week or month whose last trading day falls earlier closes when the next one opens. This is calendar only, never a later bar's price. |
+
+## Update 2026-10-24b: The Chain on the Chart
+
+H-K, H-L and H-M failed on 2018-2022. The trader asked to see the chain's reads on the candles, to judge whether its definitions read price the way they do before anything else is built on them.
+
+### Requirement 30: The Chain and the Stack on the Chart
+
+**User Story:** As the trader, I want the chain's frames, links and the stack's votes drawn on Noculus at each D1 close, so that I can see where its reading of price differs from mine.
+
+#### Acceptance Criteria
+
+1. NOCULUS SHALL serve, for each D1 candle closed by the replay clock (and ten before the session), exactly what H-K and H-M read at its close:
+   - each frame's dealing range, zone, trend, own direction, draw and POIs, with their reasons;
+   - the chain's links and the candle profile's;
+   - the thirteen votes, the score and the stack's call. SMT abstains, because a session loads one market.
+2. THE layer SHALL draw:
+   - a strip of the D1 calls with their scores, and a tick or a cross once the next candle has closed;
+   - the latest close's W1 and D1 ranges with their 50%, and the MN1 range faint;
+   - the POIs (dashed once reached) and the chain's draw.
+
+   A panel card SHALL spell out the frames, the links and the votes.
+3. NOTHING SHALL be served while a session is blind, and nothing after the clock.
