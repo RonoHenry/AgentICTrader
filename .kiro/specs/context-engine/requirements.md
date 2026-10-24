@@ -639,3 +639,19 @@ Model A (H4/M15/M1) framed the same short at 03:15 (premium; POI the previous da
 
    Each is held to the day's close, paying the spread, at a fixed 3R and at Model A's TP1.
 2. AN entry that beats A, and beats the same entry on random POIs, SHALL go to the trader before Model A's orders (Requirement 14) are built on it.
+
+## Update 2026-10-24: C1 Once C2 Has Run It
+
+The trader (2026-10-24), on Noculus: "the engine keeps firing C1 all over while the fractals indicator actually shows the right logic for C1 C2 and C3." The C1s on the engine's side are Model A's (Requirement 17). The reader frames a candidate C1 at every C close where price is in F's premium with a POI above (discount with one below for longs), on both sides, and the chart drew the live candidate at every moment. Most end `NO_MANIPULATION` one candle later. The indicator marks a C1 only after the next candle, C2, has traded beyond it.
+
+The trading logic already matches: only an instance whose C2 runs C1's high into the POI goes on (MANIPULATED, then REJECTED, DISPLACED and the entry). So the difference was the drawing.
+
+### Requirement 26: C1 Once C2 Has Run It
+
+**User Story:** As the trader, I want the engine's C1s drawn the way my indicator draws them, so that I see only the C1s price actually ran.
+
+#### Acceptance Criteria
+
+1. THE Model A layer SHALL draw an instance, list it and log its events only once it is MANIPULATED (C2 has run C1), as the indicator draws a C1.
+2. A separate layer, "Model A: unswept C1s", off by default, SHALL show the framed candidates too. The card SHALL say how many are framed and unswept when none is shown.
+3. THE reader is unchanged: when the premium is read (at C1's close, not at the sweep) and what happens when C3 takes C2's high before the order (RETRACE_INVALID, where the indicator makes C2 the next C1) are the remaining differences, left to the trader's choice. Task 363's re-anchored retest lost (−0.06 to −0.29R).

@@ -48,6 +48,17 @@
   const again = calls.find(([u]) => u === "/api/watch/start");
   check("after a restart the same session starts live again", !!again && again[1].live === true, again && JSON.stringify(again[1]));
   check("and only one follower runs", typeof S.follow === "string");
+
+  // Model A's C1s (2026-10-24): shown once C2 has run them, as the indicator draws them; unswept ones on request.
+  const framed = { side: "SHORT", events: [["FRAMED", 1, ""], ["ARMED", 1, ""]] };
+  const swept = { side: "SHORT", events: [["FRAMED", 1, ""], ["MANIPULATED", 2, ""]] };
+  const keep = S.ma, layer = S.layers.modelAFramed;
+  S.ma = [framed, swept]; S.layers.modelAFramed = false;
+  check("an unswept C1 isn't shown", maShown().length === 1 && maShown()[0] === swept, maShown().length);
+  S.layers.modelAFramed = true;
+  check("the unswept C1s layer shows every candidate", maShown().length === 2, maShown().length);
+  check("the layer is offered", LAYERS.some(([k]) => k === "modelAFramed"));
+  S.ma = keep; S.layers.modelAFramed = layer;
   console.log(ok.map((s) => "  ok   " + s).join("\n"));
   if (bad.length) console.log(bad.map((s) => "  FAIL " + s).join("\n"));
   console.log("\n" + ok.length + " ok, " + bad.length + " failed");

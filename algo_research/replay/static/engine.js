@@ -25,13 +25,17 @@ const TOOLS = [
   { type: "long", icon: "▲", title: "Long position: entry, stop, target (Alt+L)", key: "l" },
   { type: "short", icon: "▼", title: "Short position: entry, stop, target (Alt+S)", key: "s" },
 ];
-const LAYERS = [["fractal", "Fractal + POI"], ["modelA", "Model A"], ["arrays", "Arrays"], ["pools", "Pools"],
+const LAYERS = [["fractal", "Fractal + POI"], ["modelA", "Model A"], ["modelAFramed", "Model A: unswept C1s"], ["arrays", "Arrays"], ["pools", "Pools"],
                 ["profile", "Day bias & draw"], ["trend", "Trend"], ["sequence", "Setup"], ["candidates", "Candidates"],
                 ["orders", "Orders & trades"]];
 // The trader's trend (context-engine Requirement 23): the frames it is read on.
 const TREND_TFS = ["H1", "H4", "D1"];
 // Model A (context-engine Requirement 17): the trader's frame sets.
 const MA_SETS = [["model_d1", "Model A: D1 / H1 / M5"], ["model_h4", "Model A: H4 / M15 / M1"]];
+// A C1 is shown once C2 has run it, as the trader's indicator draws one (2026-10-24). Model A frames a candidate C1
+// at every C close in premium (or discount) with a POI; most die unswept a candle later, behind "unswept C1s".
+const maSwept = (y) => y.events.some((e) => e[0] === "MANIPULATED");
+const maShown = () => S.ma.filter((y) => S.layers.modelAFramed || maSwept(y));
 const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, journal: [], ideas: [], playing: false, busy: false, picks: {}, hl: null,
             ma: [], maSet: Prefs.get("watch.maSet", "model_d1"), maAt: null,
             trendTf: Prefs.get("watch.trendTf", "H1"), trend: { rows: [], withheld: false, at: null },
@@ -337,7 +341,7 @@ function paintTrend(ctx, size, pal, text) {
 }
 function paintModelA(ctx, size, pal, text, line) {
   const W = size.width;
-  for (const y of S.ma) {
+  for (const y of maShown()) {
     const short = y.side === "SHORT", col = short ? pal.bad : pal.up, hex = col.startsWith("#") ? col : "#888888";
     const alpha = y.ended ? 0.35 : 1, c = (a) => rgba(hex, a * alpha);
     const x0 = Math.max(X(y.c1_open), -10), xr = y.end_at ? X(y.end_at) : W, cSec = SECONDS[y.c] || 900;
@@ -809,9 +813,11 @@ function renderEngine() {
   if (S.layers.modelA) {
     const label = (MA_SETS.find(([v]) => v === S.maSet) || ["", S.maSet])[1];
     const lv = (y) => y.entry != null ? `<div class="muted">0.705 entry ${fmt(y.entry)} · stop ${fmt(y.stop)} · TP1 ${fmt(y.tp1)} · -1 SD ${fmt(y.sd1)} · -2 SD ${fmt(y.sd2)}</div>` : "";
-    html += `<div class="card"><b>${esc(label)}</b>` + (S.ma.length ? S.ma.map((y) => `<div class="ma ${y.ended ? "muted" : ""}">
+    const shown = maShown(), unswept = S.ma.length - shown.length;
+    html += `<div class="card"><b>${esc(label)}</b>` + (shown.length ? shown.map((y) => `<div class="ma ${y.ended ? "muted" : ""}">
         <b>${esc(y.side)} · ${esc(y.ended || y.state)}</b> <span class="muted">POI ${esc(y.poi_label)} ${fmt(y.poi_near)}–${fmt(y.poi_far)}</span>
         <div>${esc(y.reason)}</div><div class="muted">C2's phase: ${esc(y.phase || "—")}${y.time_sync != null ? `; ${y.time_sync ? "in" : "outside"} your time window` : ""}${y.inducement ? `; inducement: ${esc(y.inducement)}` : ""}</div>${y.adr_used != null ? `<div class="muted">At C2's close: ${Math.round(100 * y.adr_used)}% of the ADR used; the setup ${y.size_adr.toFixed(2)} ADR; TP1 ${y.target_reach.toFixed(2)} ADR from the day's extreme</div>` : ""}${lv(y)}</div>`).join("")
+      : unswept ? `<div class="muted">${unswept} C1 candidate(s) framed, none run by C2 yet ("Model A: unswept C1s" shows them).</div>`
       : `<div class="muted">Nothing framed: price isn't in premium with a POI above (or discount with one below) on ${esc(label.split(": ")[1] || "")}, or C2 would open outside the early phases (20:00-07:00 New York).</div>`) + `</div>`;
   }
   const open = S.journal.find((r) => r.filled_at != null && r.filled_at <= S.t && (r.closed_at == null || r.closed_at > S.t));
@@ -865,7 +871,7 @@ function renderLog() {
     for (const e of fractal.events()) items.push({ t: e.t, text: `Fractal + POI: ${e.text}`, cls: e.dir === "bull" ? "good" : "bad" });
   }
   if (S.layers.modelA) {
-    for (const y of S.ma) for (const [state, t, why] of y.events) {
+    for (const y of maShown()) for (const [state, t, why] of y.events) {
       if (state === "FRAMED" || state === "ARMED") continue;
       items.push({ t, text: `Model A ${y.side.toLowerCase()} ${state}: ${why}`, cls: /STOPPED|MISSED|INVALID|FAILED|NO_/.test(state) ? "bad" : /TP1|SD_/.test(state) ? "good" : "" });
     }

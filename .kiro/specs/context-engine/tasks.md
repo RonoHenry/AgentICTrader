@@ -363,6 +363,13 @@ Model A replaces the old selection (284) and orders (285) in the Model A modes. 
     - So fixing the entry would stop the misses, but it adds trades that lose on average. On 29 January the three entries won because the day fell (the FOMC drop), not because of the entry. As 25.2 says, nothing goes to Model A's orders.
   - **Validates: Requirements 25.1–25.2**
 
+### Update 2026-10-24: C1 once C2 has run it
+
+- [x] 364. The Model A layer draws a C1 once C2 has run it (Requirement 26)
+  - `engine.js`: `maSwept` / `maShown`; the chart, the card and the log show MANIPULATED instances; the layer "Model A: unswept C1s" (off by default) shows the rest.
+  - **Done 2026-10-24.** Three checks in `js/live_probe.txt` (live_ui.js: 22 ok). The page only: the reader and the engine are unchanged, so no cache is touched; a reload shows it.
+  - **Validates: Requirements 26.1–26.2**
+
 ---
 
 ## Task Dependency Graph
