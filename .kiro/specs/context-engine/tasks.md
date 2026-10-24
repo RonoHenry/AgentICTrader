@@ -57,7 +57,10 @@ Tasks marked **(user action)** need Docker, the MT5 terminal, data or a decision
 
 ### B. The context model
 
-- [ ] 277. Frame state
+- [x] 277. Frame state
+  - **Done 2026-10-24** (update 2026-10-24, CE-D14 to CE-D16). `frame_state(frame, price, parents, lower, path,
+    forming, levels, asia)` in `context/frame_state.py`, beside Model A's functions, which are unchanged. 16 tests,
+    Property 1 included. `lower` lets the candle profile's H4 pools count, for Property 6 (task 278).
   - **277a. RED** (`backend/tests/test_context_frame_state.py`)
     - `test_dealing_range_from_last_confirmed_swings`
     - `test_range_stretches_past_a_broken_swing_until_a_new_one_confirms`
@@ -369,6 +372,26 @@ Model A replaces the old selection (284) and orders (285) in the Model A modes. 
   - `engine.js`: `maSwept` / `maShown`; the chart, the card and the log show MANIPULATED instances; the layer "Model A: unswept C1s" (off by default) shows the rest.
   - **Done 2026-10-24.** Three checks in `js/live_probe.txt` (live_ui.js: 22 ok). The page only: the reader and the engine are unchanged, so no cache is touched; a reload shows it.
   - **Validates: Requirements 26.1–26.2**
+
+### Update 2026-10-24: the chain, tested whole
+
+The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before it runs) → 367. Tasks 275 and 276 stay open:
+- The research doesn't need the engine's modes.
+- The quarantine needs M1 bars, which the 2018-2021 history doesn't have. The 17:00 New York rollover falls inside the broker's server-day bars, so its dips can still set an FX day's low. The search's other D1 hypotheses read the same raw bars, so H-K is judged on the same footing. Its pass rule reads opens and closes only.
+
+- [ ] 365. The IPDA data ranges (Requirement 27)
+  - **RED:** `test_ranges_are_the_20_40_60_day_extremes`, `test_a_candle_leading_two_ranges_is_listed_once`, `test_no_range_without_its_candles`, `test_ranges_feed_the_chain_as_objectives`.
+  - **GREEN:** `context/ipda.py`: `ipda_ranges(d1)`.
+  - **Validates: Requirements 27.1–27.3**
+
+- [ ] 366. The chain's daily calls, measured (Requirement 28) **(user review: the pass rule)**
+  - **RED** (synthetic bars only, nothing read from the snapshot): `test_weeks_and_months_close_on_the_calendar`, `test_forming_week_stretches_the_range`, `test_call_reads_only_the_past` (Property 2), `test_no_call_until_every_frame_has_a_range`, `test_draw_race_against_geometry`.
+  - **GREEN:** `algo_research/search_chain.py`; H-K appended to `docs/research/SEARCH_2018_2024.md`.
+  - **The trader confirms H-K's pass rule.** The commit is the registration. Then one development run; the log records it, pass or fail.
+  - **Validates: Requirements 28.1–28.4**
+
+- [ ] 367. SMT and the dollar index (Requirement 29) — after 366 has reported
+  - **Validates: Requirements 29.1–29.2**
 
 ---
 

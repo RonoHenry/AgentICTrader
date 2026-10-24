@@ -655,3 +655,75 @@ The trading logic already matches: only an instance whose C2 runs C1's high into
 1. THE Model A layer SHALL draw an instance, list it and log its events only once it is MANIPULATED (C2 has run C1), as the indicator draws a C1.
 2. A separate layer, "Model A: unswept C1s", off by default, SHALL show the framed candidates too. The card SHALL say how many are framed and unswept when none is shown.
 3. THE reader is unchanged: when the premium is read (at C1's close, not at the sweep) and what happens when C3 takes C2's high before the order (RETRACE_INVALID, where the indicator makes C2 the next C1) are the remaining differences, left to the trader's choice. Task 363's re-anchored retest lost (−0.06 to −0.29R).
+
+## Update 2026-10-24: The Chain, Tested Whole
+
+Every layer of ICT's bias hierarchy has now been measured on its own, and each came out at chance:
+- the draw on liquidity (the nearest pool is taken first as often as a random walk predicts);
+- premium and discount on W1-H1;
+- the previous candle's close (the 3-candle CRT);
+- structure, ranked swings and breaks, and the trader's five-signal trend;
+- delivery phases, time windows and macros;
+- COT and news sentiment.
+
+What was never tested is the hierarchy itself: each frame read in the light of the frame above it, from the monthly down to the day. The engine's grader reads bottom-up, so its filters can't choose. The trader's weekly calls (H011) and the LLM thesis are combined reads, but they are judgment, not a rule you can inspect, and their samples are small. Requirement 4's chain was specified on 2026-10-10 and never built.
+
+The trader chose (2026-10-24), in this order:
+1. build the frame state and the chain (tasks 277 and 278);
+2. add ICT's IPDA data ranges as objectives;
+3. pre-register the chain's daily calls as one hypothesis, with the pass rule confirmed before it runs;
+4. score them before anything trades on them;
+5. then SMT and the dollar index, as a separate hypothesis, so their own contribution shows.
+
+Whatever its result, the chain is the first top-down reading the engine can explain frame by frame.
+
+### Requirement 27: The IPDA Data Ranges
+
+**User Story:** As the trader, I want the 20, 40 and 60-day highs and lows as objectives, so that the chain reads the reference points ICT says the algorithm reads.
+
+#### Acceptance Criteria
+
+1. FROM a market's closed D1 candles, the highest high and the lowest low of the last 20, 40 and 60 SHALL be objectives (CE-D17):
+   - a high lies above price and a low below it;
+   - each one formed at the close of the candle that made it;
+   - a candle that leads more than one range is listed once, under its longest range.
+2. A range SHALL be read only when that many closed D1 candles exist.
+3. THEY SHALL be passed to every frame of the chain as objectives (Requirement 3's `levels`).
+
+### Requirement 28: The Chain's Daily Calls, Measured
+
+**User Story:** As the trader, I want the chain's daily calls tested on data nobody has read, so that a combined hierarchy is judged as strictly as each of its layers was.
+
+#### Acceptance Criteria
+
+1. ON the 2018-2024 search's broker D1 bars (`docs/research/SEARCH_2018_2024.md`, Amendment 1), the research SHALL build MN1 and W1 candles from the D1 candles and read the ladder MN1 → W1 → D1 at every D1 close (CE-D18):
+   - the D1 frame's closed candles end with the candle just closed, and price is its close;
+   - the W1 and MN1 frames' closed candles are the weeks and months already complete. The current ones are forming, and their extremes stretch the range;
+   - the path is the D1 candles to t;
+   - the IPDA ranges are objectives in every frame.
+2. THE call SHALL be the D1 link's context direction under `PD_POI`, made only while the chain is armed and every frame has a dealing range. It is judged against the next D1 candle exactly as the search's daily calls are: the hit rate against the market's drift, with a trading-date interval, per market.
+3. THE hypothesis (H-K) SHALL be written into the search's log, with its pass rule, and confirmed by the trader before it runs on the development window. The test window is read only if it passes.
+4. Reported beside the pass rule, not part of it:
+   - the absolute hit rate, against the 56-61% the executions need;
+   - the draw reached before the opposite objective, against a driftless walk's chance;
+   - the chain's cases apart;
+   - the ablations: `PROFILE`, W1 → D1, the ladder without the IPDA ranges, and each frame's own direction alone.
+
+### Requirement 29: SMT and the Dollar Index
+
+**User Story:** As the trader, I want SMT divergence and the dollar index tested as their own layer, after the chain, so that what they add is measured apart.
+
+#### Acceptance Criteria
+
+1. AFTER Requirement 28 has reported, an SMT and dollar-index hypothesis (H-L) SHALL be registered in the search's log before it runs, with its own pass rule. The pairs: EURUSD-GBPUSD, US100-US500-US30, and DXY against EURUSD, GBPUSD and gold.
+2. IT SHALL be judged alone and on top of the chain's calls, so the report shows whether it adds to the chain.
+
+### Decisions (2026-10-24)
+
+| Id | Topic | Decision |
+|---|---|---|
+| CE-D14 | The frame state's form | NumPy arrays and frozen dataclasses (`Candles`, `Objective`, `ArrayPOI`, `FrameState` in `context/frame_state.py`), like Model A's reader, not the design's Pydantic models: the research reads it at every D1 close of nine markets. |
+| CE-D15 | POIs | The frame's and its parents' order blocks, breakers and gaps (Model A's arrays, gaps as the gap only). Liquidity is an objective, not a POI. |
+| CE-D16 | Reached | A POI is spent if traded into between its forming and the close of the dealing range's later anchor candle. After that, the first bar trading into it reaches it. POIs are timed on the path, the finest bars given, or on the frame's own candles. A stretch past an anchor doesn't reset it. |
+| CE-D17 | IPDA ranges | The last 20, 40 and 60 closed D1 candles, as ICT's lookback ranges. The forward-looking ranges and the quarterly shifts are left out. |
+| CE-D18 | Weeks and months on D1 bars | A week closes with its Friday candle, and a month with its last weekday's. A week or month whose last trading day falls earlier closes when the next one opens. This is calendar only, never a later bar's price. |
