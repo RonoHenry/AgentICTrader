@@ -403,6 +403,12 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
   - **Validates: Requirements 28.1–28.4**
 
 - [ ] 367. SMT and the dollar index (Requirement 29) — after 366 has reported
+  - **The trader's definition (2026-10-24):**
+    - SMT on the previous day's high and low.
+    - It is confluence only: a leg of the divergence is called only when its own day is at a major array. That means an unfilled D1 order block or breaker, a major pool taken (the previous week's extreme, an untaken D1 swing, the 20-day extreme), or the outer 25% of the W1 dealing range.
+    - D1 arrays only: the broker has no H4 before July 2021.
+    - The pass rule is the daily calls', over the 7 paired markets (need 5).
+  - **The harness, before any data was read:** `algo_research/search_smt.py` (`market_days`, `smt_legs`, `arm_calls`). 7 tests on synthetic bars, Property 2 included.
   - **Validates: Requirements 29.1–29.2**
 
 ---
