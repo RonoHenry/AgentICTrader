@@ -76,7 +76,13 @@ Tasks marked **(user action)** need Docker, the MT5 terminal, data or a decision
   - **277c. REFACTOR**
   - **Validates: Requirements 3.1–3.3**
 
-- [ ] 278. The context chain
+- [x] 278. The context chain
+  - **Done 2026-10-24.** `chain(states, rule)` in `context/chain.py`: `Link` per frame (own and context direction,
+    case, draw, the parent's POI, a reason), `Chain.armed` and `unarmed_reason` (`CONTEXT_NEUTRAL`, `NO_DRAW`).
+    14 tests. Property 3: 300 random ladders, as well as the `PROFILE` draws. Property 6: `PROFILE` on W1 → D1
+    equals `CandleProfileAnalyzer` on 40 random H4 walks and on the profile's own trending week, trend, both
+    nearest objectives, direction and draw. A W1 draw, the trend's fallback to a D1 or H4 objective, and the nearer
+    side are all exercised.
   - **278a. RED** (`backend/tests/test_context_chain.py`)
     - `test_top_frame_takes_its_own_direction`
     - `test_with_parent_in_the_right_zone`
