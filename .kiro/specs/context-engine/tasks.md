@@ -395,6 +395,7 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
   - **RED** (synthetic bars only, nothing read from the snapshot): `test_weeks_and_months_close_on_the_calendar`, `test_forming_week_stretches_the_range`, `test_call_reads_only_the_past` (Property 2), `test_no_call_until_every_frame_has_a_range`, `test_draw_race_against_geometry`.
   - **GREEN:** `algo_research/search_chain.py`; H-K appended to `docs/research/SEARCH_2018_2024.md`.
   - **The trader confirms H-K's pass rule.** The commit is the registration. Then one development run; the log records it, pass or fail.
+  - *Status 2026-10-24:* the harness is built and committed before any data was read. `Ladder` builds the frames from D1 bars; `chain_rows` reads every arm at every close; `draw_race` and `judge_race` handle the companion; `run` judges with `search_calls.judge_calls`. 6 tests on synthetic bars, Property 2 included. About 47 s per market for the development window. The registration is next.
   - **Validates: Requirements 28.1–28.4**
 
 - [ ] 367. SMT and the dollar index (Requirement 29) — after 366 has reported
