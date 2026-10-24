@@ -402,7 +402,12 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
   - *Status 2026-10-24:* the harness is built and committed before any data was read. `Ladder` builds the frames from D1 bars; `chain_rows` reads every arm at every close; `draw_race` and `judge_race` handle the companion; `run` judges with `search_calls.judge_calls`. 6 tests on synthetic bars, Property 2 included. About 47 s per market for the development window. The registration is next.
   - **Validates: Requirements 28.1–28.4**
 
-- [ ] 367. SMT and the dollar index (Requirement 29) — after 366 has reported
+- [x] 367. SMT and the dollar index (Requirement 29) — after 366 has reported
+  - **Done 2026-10-24: H-L fails.** Registered at e791bef. On development, 1,957 calls hit 48.1% against a base of 49.0%: −0.9 points [−3.8, +1.9], 2 of 7 markets.
+    - SMT with no gate is +0.4, and the gate lowers it: it passes 82% of SMT legs, so it selects little.
+    - Where SMT agrees with H-K: −1.8.
+    - The leg that took its level is −1.2; the leg that held is −0.2.
+    - Tries 12, passes 0; 2023-2024 still unread.
   - **The trader's definition (2026-10-24):**
     - SMT on the previous day's high and low.
     - It is confluence only: a leg of the divergence is called only when its own day is at a major array. That means an unfilled D1 order block or breaker, a major pool taken (the previous week's extreme, an untaken D1 swing, the 20-day extreme), or the outer 25% of the W1 dealing range.
