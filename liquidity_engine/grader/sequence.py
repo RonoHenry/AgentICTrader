@@ -26,6 +26,18 @@ Per entry timeframe, for every unfilled entry-eligible PD array:
 4. Among arrays: the most recent raid, then the heavier pool, the stronger
    array, the later array, the array id.
 
+What a CISD is depends on ``cisd`` (Requirement 30, update 2026-10-23b):
+
+- ``"next"`` (the default): the first CISD after the raid, a bar closing
+  beyond the first open of the run right before it (CISDDetector).
+- ``"run"``: the trader's indicator's (LE-D28). From the protected swing's
+  bar back, the nearest run of bars closing toward it (down closes into a
+  low), dojis skipped; the open of its first bar is the level, and the first
+  bar from the swing on that closes beyond it is the CISD.
+- ``"crt"``: as ``"run"``, and the only pools are the indicator's C1s: the
+  high and low of each closed candle of the entry timeframe's CRT frame
+  (CRT_FRAME), raidable only until the next candle, C2, closes (LE-D29).
+
 Pure and stateless: it reads only the candles and arrays passed in, and
 nothing about a bar is used before that bar has closed.
 """
@@ -54,10 +66,26 @@ from liquidity_engine.models import (
 from liquidity_engine.utils.candle_utils import find_swing_highs, find_swing_lows
 from liquidity_engine.utils.time_utils import ny_time_in_day, trading_day_open
 
-__all__ = ["ASIA_SESSION", "SWING_LOOKBACK", "SetupSequenceDetector", "asian_pools"]
+__all__ = ["ASIA_SESSION", "CISD_MODES", "CRT_FRAME", "SWING_LOOKBACK", "SetupSequenceDetector", "asian_pools",
+           "c1_pools"]
 
 #: Bars on each side that confirm a swing point (the equal-highs/lows detector's default).
 SWING_LOOKBACK = 2
+
+#: What a CISD is (Requirement 30): the engine's own reading, the indicator's, the indicator's with its C1 pools.
+CISD_MODES = ("next", "run", "crt")
+
+#: The CRT frame of each entry timeframe: the trader's indicator's Automatic higher timeframe (LE-D29,
+#: ``algo_research.fractal_poi.frames``, getHigherTF).
+CRT_FRAME: Dict[Timeframe, Timeframe] = {
+    Timeframe.M1: Timeframe.M15,
+    Timeframe.M3: Timeframe.M30,
+    Timeframe.M5: Timeframe.H1,
+    Timeframe.M15: Timeframe.H4,
+}
+
+#: How far back from the extreme the indicator looks for the run that made it (FindCISDLevel).
+_RUN_LOOKBACK = 500
 
 #: The Asian session in New York wall time, [start, end): the H1 bars from 20:00 to 23:00.
 ASIA_SESSION = (time(20, 0), time(0, 0))
@@ -74,11 +102,19 @@ _Raid = Tuple[LiquidityPool, int, int]          # the pool, the raid bar, the re
 class SetupSequenceDetector:
     """Finds the setup sequence the grader trades (Requirement 18)."""
 
+    def __init__(self, cisd: str = "next") -> None:
+        if cisd not in CISD_MODES:
+            raise ValueError(f"cisd: one of {', '.join(CISD_MODES)}, not {cisd!r}")
+        self.cisd = cisd
+
     def pools(
         self, candles_by_tf: Dict[Timeframe, List[Candle]], as_of: Optional[datetime] = None
     ) -> List[LiquidityPool]:
         """Every raidable pool in the window, each with the moment it became known (18.1, 18.2).
-        The Asian range needs the time of the analysis, ``as_of`` (20.2): without it there is none."""
+        The Asian range needs the time of the analysis, ``as_of`` (20.2): without it there is none.
+        Under ``"crt"`` the pools are the C1s alone (30.3)."""
+        if self.cisd == "crt":
+            return c1_pools(candles_by_tf)
         pools: List[LiquidityPool] = []
         known = SWING_LOOKBACK + 1                  # the bar after the one that confirms a swing
         for tf, candles in candles_by_tf.items():
@@ -114,7 +150,7 @@ class SetupSequenceDetector:
         pools = self.pools(candles_by_tf, as_of)
         best: Optional[Tuple[tuple, SetupSequence]] = None
         for tf, arrays in arrays_by_tf.items():
-            window = _EntryWindow(tf, candles_by_tf, pools)
+            window = _EntryWindow(tf, candles_by_tf, pools, self.cisd)
             for array in arrays:
                 found = window.sequence_for(array)
                 if found is None:
@@ -130,7 +166,11 @@ class _EntryWindow:
     """One entry timeframe's bars with what its arrays need: every pool's
     raid, the CISD violations, and suffix extremes for the intact checks."""
 
-    def __init__(self, tf: Timeframe, candles_by_tf: Dict[Timeframe, List[Candle]], pools: List[LiquidityPool]):
+    def __init__(self, tf: Timeframe, candles_by_tf: Dict[Timeframe, List[Candle]], pools: List[LiquidityPool],
+                 cisd: str = "next"):
+        self.mode = cisd
+        if cisd == "crt":                                   # this window's C1s: its own CRT frame's (30.3)
+            pools = [p for p in pools if p.timeframe == CRT_FRAME.get(tf)]
         self.candles = candles = candles_by_tf[tf]
         self.opens = [c.timestamp for c in candles]
         n = len(candles)
@@ -140,14 +180,19 @@ class _EntryWindow:
             self.suffix_low[i] = min(candles[i].low, self.suffix_low[i + 1])
             self.suffix_high[i] = max(candles[i].high, self.suffix_high[i + 1])
 
-        # Bars whose close completes a confirmed CISD, per direction. CISDDetector judges the
-        # last bar of what it is given, so each prefix is offered in turn.
-        detector = CISDDetector()
+        # Under "next", the bars whose close completes a confirmed CISD, per direction, with each one's level and
+        # run start. CISDDetector judges the last bar of what it is given, so each prefix is offered in turn.
         self.cisd: Dict[BiasDirection, List[int]] = {BiasDirection.BULLISH: [], BiasDirection.BEARISH: []}
-        for k in range(1, n):
-            result = detector.detect(candles[: k + 1])
-            if result is not None and result.confirmed:
-                self.cisd[result.direction].append(k)
+        self.cisd_run: Dict[BiasDirection, List[Tuple[float, datetime]]] = {BiasDirection.BULLISH: [],
+                                                                             BiasDirection.BEARISH: []}
+        if cisd == "next":
+            detector = CISDDetector()
+            for k in range(1, n):
+                result = detector.detect(candles[: k + 1])
+                if result is not None and result.confirmed:
+                    self.cisd[result.direction].append(k)
+                    self.cisd_run[result.direction].append((result.level, result.sequence_start_time))
+        self.anchored: Dict[Tuple[int, bool], Optional[Tuple[int, float, int]]] = {}   # "run" / "crt", by swing
 
         self.others = {other: (bars, [c.timestamp for c in bars])
                        for other, bars in candles_by_tf.items() if other != tf and bars}
@@ -168,6 +213,8 @@ class _EntryWindow:
         if untouched:
             return None
         raid = next(i for i in range(start, len(self.candles)) if _beyond(self.candles[i], pool, sell_side))
+        if pool.raidable_until is not None and self.opens[raid] >= pool.raidable_until:
+            return None                                     # C2 closed before anything took C1 (30.3)
         if self._taken_earlier(pool, sell_side, self.opens[raid]):
             return None
         price = pool.price
@@ -196,9 +243,10 @@ class _EntryWindow:
         cisd = self.cisd[array.direction]
 
         for pool, raid, reclaim in (r for r in self.raids[side] if r[1] <= formed):
-            after = bisect_right(cisd, raid)                             # the first CISD after the raid bar
-            if after == len(cisd):
-                continue
+            if self.mode == "next":
+                after = bisect_right(cisd, raid)                         # the first CISD after the raid bar
+                if after == len(cisd):
+                    continue
             bars = range(raid, formed + 1)
             p = (min(bars, key=lambda i: self.candles[i].low) if bullish
                  else max(bars, key=lambda i: self.candles[i].high))     # earliest extreme
@@ -206,6 +254,15 @@ class _EntryWindow:
             intact = self.suffix_low[p + 1] >= bar.low if bullish else self.suffix_high[p + 1] <= bar.high
             if not intact:
                 continue
+            if self.mode == "next":
+                cisd_bar = cisd[after]
+                cisd_level, cisd_from = self.cisd_run[array.direction][after]
+            else:
+                found = self._anchored_cisd(p, bullish)
+                if found is None:
+                    continue
+                cisd_bar, cisd_level, run_start = found
+                cisd_from = self.opens[run_start]
             swing = ProtectedSwing(
                 candle_at=bar.timestamp,
                 wick=bar.low if bullish else bar.high,
@@ -216,12 +273,41 @@ class _EntryWindow:
                 entry_array_id=array.array_id,
                 direction=array.direction,
                 raid=LiquidityRaid(pool=pool, raided_at=self.opens[raid], reclaimed_at=self.opens[reclaim]),
-                cisd_at=self.opens[cisd[after]],
+                cisd_at=self.opens[cisd_bar],
                 protected_swing=swing,
                 leg_extreme=self.suffix_high[raid] if bullish else self.suffix_low[raid],
+                cisd_level=cisd_level,
+                cisd_from=cisd_from,
             )
             return sequence, _weight(pool)
         return None
+
+    def _anchored_cisd(self, p: int, bullish: bool) -> Optional[Tuple[int, float, int]]:
+        """The indicator's CISD for the swing at bar ``p`` (Requirement 30.2, FindCISDLevel): from ``p`` back, the
+        nearest run of bars closing toward the swing (down closes into a low), dojis skipped, within
+        _RUN_LOOKBACK bars; the open of its first bar is the level. The CISD is the first bar from ``p`` on to close
+        beyond it. Returns (the CISD bar, the level, the run's first bar), or None while there is none."""
+        key = (p, bullish)
+        if key not in self.anchored:
+            c = self.candles
+            toward = -1 if bullish else 1
+            start: Optional[int] = None
+            for j in range(p, max(p - _RUN_LOOKBACK, 0) - 1, -1):
+                close_side = (c[j].close > c[j].open) - (c[j].close < c[j].open)
+                if close_side == 0:
+                    continue
+                if close_side == toward:
+                    start = j
+                elif start is not None:
+                    break
+            found = None
+            if start is not None:
+                level = c[start].open
+                k = next((k for k in range(p, len(c)) if (c[k].close > level if bullish else c[k].close < level)),
+                         None)
+                found = None if k is None else (k, level, start)
+            self.anchored[key] = found
+        return self.anchored[key]
 
 
 def asian_pools(h1: List[Candle], as_of: datetime) -> List[LiquidityPool]:
@@ -242,6 +328,35 @@ def asian_pools(h1: List[Candle], as_of: datetime) -> List[LiquidityPool]:
         LiquidityPool(side=LiquidityType.SSL, source=LiquiditySource.ASIA_LOW, timeframe=Timeframe.H1,
                       price=low.low, formed_at=low.timestamp, known_at=midnight),
     ]
+
+
+def c1_pools(candles_by_tf: Dict[Timeframe, List[Candle]]) -> List[LiquidityPool]:
+    """The indicator's C1s (Requirement 30.3): for each entry timeframe in the view, the high and low of every
+    candle of its CRT frame whose next candle, C2, is in the view too (so C1 has closed). Each is known from
+    C1's close and raidable until C2's close, on the strategy calendar the views follow. C1s whose C2 closed
+    before the entry timeframe's first bar are left out: nothing in the window could raid them."""
+    from services.market_data.strategy_calendar import StrategyCalendar   # the one calendar the views follow
+
+    calendar = StrategyCalendar()
+    since: Dict[Timeframe, datetime] = {}
+    for tf, candles in candles_by_tf.items():
+        if tf in CRT_FRAME and candles:
+            frame = CRT_FRAME[tf]
+            since[frame] = min(since.get(frame, candles[0].timestamp), candles[0].timestamp)
+    pools: List[LiquidityPool] = []
+    for frame, first in since.items():
+        htf = candles_by_tf.get(frame) or []
+        for j in range(len(htf) - 2, -1, -1):
+            c1, c2 = htf[j], htf[j + 1]
+            until = calendar.period_end(c2.timestamp, frame)
+            if until <= first:
+                break
+            known = calendar.period_end(c1.timestamp, frame)
+            for side, source, price in ((LiquidityType.BSL, LiquiditySource.C1_HIGH, c1.high),
+                                        (LiquidityType.SSL, LiquiditySource.C1_LOW, c1.low)):
+                pools.append(LiquidityPool(side=side, source=source, timeframe=frame, price=price,
+                                           formed_at=c1.timestamp, known_at=known, raidable_until=until))
+    return pools
 
 
 def _open_time(candle: Candle) -> datetime:

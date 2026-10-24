@@ -57,7 +57,10 @@ Tasks marked **(user action)** need Docker, the MT5 terminal, data or a decision
 
 ### B. The context model
 
-- [ ] 277. Frame state
+- [x] 277. Frame state
+  - **Done 2026-10-24** (update 2026-10-24, CE-D14 to CE-D16). `frame_state(frame, price, parents, lower, path,
+    forming, levels, asia)` in `context/frame_state.py`, beside Model A's functions, which are unchanged. 16 tests,
+    Property 1 included. `lower` lets the candle profile's H4 pools count, for Property 6 (task 278).
   - **277a. RED** (`backend/tests/test_context_frame_state.py`)
     - `test_dealing_range_from_last_confirmed_swings`
     - `test_range_stretches_past_a_broken_swing_until_a_new_one_confirms`
@@ -73,7 +76,13 @@ Tasks marked **(user action)** need Docker, the MT5 terminal, data or a decision
   - **277c. REFACTOR**
   - **Validates: Requirements 3.1–3.3**
 
-- [ ] 278. The context chain
+- [x] 278. The context chain
+  - **Done 2026-10-24.** `chain(states, rule)` in `context/chain.py`: `Link` per frame (own and context direction,
+    case, draw, the parent's POI, a reason), `Chain.armed` and `unarmed_reason` (`CONTEXT_NEUTRAL`, `NO_DRAW`).
+    14 tests. Property 3: 300 random ladders, as well as the `PROFILE` draws. Property 6: `PROFILE` on W1 → D1
+    equals `CandleProfileAnalyzer` on 40 random H4 walks and on the profile's own trending week, trend, both
+    nearest objectives, direction and draw. A W1 draw, the trend's fallback to a D1 or H4 objective, and the nearer
+    side are all exercised.
   - **278a. RED** (`backend/tests/test_context_chain.py`)
     - `test_top_frame_takes_its_own_direction`
     - `test_with_parent_in_the_right_zone`
@@ -296,17 +305,100 @@ Model A replaces the old selection (284) and orders (285) in the Model A modes. 
     over 20 candles. 7 tests in `test_research_trend.py`, including that no later candle changes a label.
   - **Validates: Requirements 20.1–20.3**
 
-- [ ] 356. The trend before anything is built on it (Requirement 21) **(user review)**
+- [x] 356. The trend before anything is built on it (Requirement 21) **(user review)**
   - The exploration slice; the focus markets; H1, H4 and D1. The hit rate of the trend, and of each signal, in the one-range race against 50% and each side's drift rate, with intervals, per frame and market.
   - Written to `docs/research/TRADER_TREND.md`.
+  - **Done 2026-10-23** (`python -m algo_research.trend_study`). It **does not clear the bar.**
+    - **The next move:** H1 50.1% (−0.1 points over drift), H4 49.1%. Each signal is within a point or two of 50%.
+    - **Continuation,** added because a bearish trend often raids buy-side liquidity first (a lower low before a
+      higher high): H1 61.5% against a geometry of 61.6%; H4 −2.5 points. The read fires near the last swing on its
+      side, so it is right as often as a driftless walk from the same price.
+    - **D1 is contrarian:** the trend −11 points, PO3 −13. Mostly the indices in April 2025.
+    - As Requirement 21.3 says, nothing is tuned and the setup (358) is not built on it. The result went back to the
+      trader. They chose (2026-10-23) to see the reader on the chart and call the trend blind (357), to test whether
+      their own calls carry what these counts don't.
   - **Validates: Requirements 21.1–21.3**
 
-- [ ] 357. The trend on the chart (Requirement 23)
+- [x] 357. The trend on the chart (Requirement 23)
   - A Noculus layer: a chosen frame's trend and five signals per closed candle, up to the replay clock.
+  - Added 2026-10-23 at the trader's request ("please do, this could be an additional filter"): their own trend
+    calls, blind, scored the way 356 scored the reader.
+  - **Done 2026-10-23.**
+    - **The layer:** `WatchSession.trend` reads H1, H4 or D1 from the snapshot with its warm-up (10, 30 or 90 days),
+      FVGs and order blocks from `algo_research.atlas.arrays`. Each closed candle up to the clock is served, and
+      nothing while the session is blind. The page draws a strip along the chart's foot (Trend, with `trend: H1/H4/D1`)
+      and spells out the last candle's five signals.
+    - **The calls:** `trend_call` keeps a call (frame, bearish, bullish or unclear, a note) in the session's journal,
+      with `engine_seen`. `trend_calls` scores each one from the minutes before the clock (`call_outcome`): the next
+      move, and continuation beside geometry. The reader's call at the same candle is set beside it once in sight, and
+      the blind calls are totalled. The Noculus panel gains "Your trend call".
+    - 9 tests in `test_research_trend.py` (2 new) and 2 in `test_backtest_noculus.py`; the journal key test updated.
+      Checked end to end on GBPUSD, 27 January 2025.
   - **Validates: Requirement 23.1**
 
 - [ ] 358. The continuation setup (Requirement 22) — after 356 and the trader's answers to 22.3
   - **Validates: Requirements 22.1–22.3**
+
+### Update 2026-10-23b: ranked swings and breaks
+
+- [x] 359. Ranked swings and breaks, measured (Requirement 24) **(user review)**
+  - **RED** — on hand-made candles:
+    - an ITH is an STH higher than the STH on either side, known once the next STH is;
+    - a wick through a swing that closes back inside is a sweep, and a close beyond it is the break;
+    - with the FVG rule, the break waits for C3;
+    - STH compare equals task 355's structure.
+  - **GREEN** — `algo_research/trend.py`: `ranked_highs`, `ranked_lows`, `compare_state`, `break_state`.
+  - **The study:** `python -m algo_research.structure_study` → `docs/research/TREND_STRUCTURE.md`.
+  - **Done 2026-10-23.** 3 tests (12 in `test_research_trend.py`).
+    - **Every version calls the next D1 candle 48-52% on both slices,** within ±3 points of drift: STH and ITH
+      compare, STH and ITH breaks, the ITH break with an FVG, read on D1 or on the H4 at 17:00. The confirmation slice
+      has 1,700-2,725 calls a version.
+    - **Swapped into the trend score,** 44-50%.
+    - None beats the earlier 45-49% by more than noise, or comes near 56-61%. As the plan's own test says, structure is
+      for levels (the protected and the weak swing, and a break at a higher-frame level), not for the day's direction.
+  - **Validates: Requirements 24.1–24.3**
+
+### Update 2026-10-23c: the entry
+
+- [x] 363. Model A's entry against the trader's two (Requirement 25) **(user review)**
+  - `algo_research/entry_study.py` → `docs/research/MODEL_A_ENTRIES.md`. It reproduces the gold case: on 29 January B1, B2 and C each make 3R, and A has no fill.
+  - **Done 2026-10-23** (the record: 446,720 setups, the exploration slice, 4 markets).
+    - **The trader's entries fill far more often:**
+      - at the level 1,825-8,677 times a cell;
+      - the retest 46-978;
+      - Model A's OTE 29-155 on the model arms.
+    - **They lose like the rest:** at the level −0.11 to −0.20R a trade (3R target); at the midpoint −0.18 to −0.32R; the retest −0.06 to −0.29R; the OTE −0.02 to −0.22R (few fills, wide intervals).
+    - **The POI adds nothing:** the same entries on random POIs did as well or better (at the level −0.07 to −0.10R), as did CRT with no context (the retest −0.07 to −0.13R). The time and volatility gates don't help either.
+    - So fixing the entry would stop the misses, but it adds trades that lose on average. On 29 January the three entries won because the day fell (the FOMC drop), not because of the entry. As 25.2 says, nothing goes to Model A's orders.
+  - **Validates: Requirements 25.1–25.2**
+
+### Update 2026-10-24: C1 once C2 has run it
+
+- [x] 364. The Model A layer draws a C1 once C2 has run it (Requirement 26)
+  - `engine.js`: `maSwept` / `maShown`; the chart, the card and the log show MANIPULATED instances; the layer "Model A: unswept C1s" (off by default) shows the rest.
+  - **Done 2026-10-24.** Three checks in `js/live_probe.txt` (live_ui.js: 22 ok). The page only: the reader and the engine are unchanged, so no cache is touched; a reload shows it.
+  - **Validates: Requirements 26.1–26.2**
+
+### Update 2026-10-24: the chain, tested whole
+
+The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before it runs) → 367. Tasks 275 and 276 stay open:
+- The research doesn't need the engine's modes.
+- The quarantine needs M1 bars, which the 2018-2021 history doesn't have. The 17:00 New York rollover falls inside the broker's server-day bars, so its dips can still set an FX day's low. The search's other D1 hypotheses read the same raw bars, so H-K is judged on the same footing. Its pass rule reads opens and closes only.
+
+- [x] 365. The IPDA data ranges (Requirement 27)
+  - **RED:** `test_ranges_are_the_20_40_60_day_extremes`, `test_a_candle_leading_two_ranges_is_listed_once`, `test_no_range_without_its_candles`, `test_ranges_feed_the_chain_as_objectives`.
+  - **GREEN:** `context/ipda.py`: `ipda_ranges(d1)`.
+  - **Done 2026-10-24.** 4 tests. Each range comes out as an `Objective` (`IPDA20_HIGH` ... `IPDA60_LOW`), formed at its candle's close. They pass through the frame state's taken check like any other level.
+  - **Validates: Requirements 27.1–27.3**
+
+- [ ] 366. The chain's daily calls, measured (Requirement 28) **(user review: the pass rule)**
+  - **RED** (synthetic bars only, nothing read from the snapshot): `test_weeks_and_months_close_on_the_calendar`, `test_forming_week_stretches_the_range`, `test_call_reads_only_the_past` (Property 2), `test_no_call_until_every_frame_has_a_range`, `test_draw_race_against_geometry`.
+  - **GREEN:** `algo_research/search_chain.py`; H-K appended to `docs/research/SEARCH_2018_2024.md`.
+  - **The trader confirms H-K's pass rule.** The commit is the registration. Then one development run; the log records it, pass or fail.
+  - **Validates: Requirements 28.1–28.4**
+
+- [ ] 367. SMT and the dollar index (Requirement 29) — after 366 has reported
+  - **Validates: Requirements 29.1–29.2**
 
 ---
 

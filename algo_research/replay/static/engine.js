@@ -25,12 +25,20 @@ const TOOLS = [
   { type: "long", icon: "▲", title: "Long position: entry, stop, target (Alt+L)", key: "l" },
   { type: "short", icon: "▼", title: "Short position: entry, stop, target (Alt+S)", key: "s" },
 ];
-const LAYERS = [["fractal", "Fractal + POI"], ["modelA", "Model A"], ["arrays", "Arrays"], ["pools", "Pools"],
-                ["profile", "Day bias & draw"], ["sequence", "Setup"], ["candidates", "Candidates"], ["orders", "Orders & trades"]];
+const LAYERS = [["fractal", "Fractal + POI"], ["modelA", "Model A"], ["modelAFramed", "Model A: unswept C1s"], ["arrays", "Arrays"], ["pools", "Pools"],
+                ["profile", "Day bias & draw"], ["trend", "Trend"], ["sequence", "Setup"], ["candidates", "Candidates"],
+                ["orders", "Orders & trades"]];
+// The trader's trend (context-engine Requirement 23): the frames it is read on.
+const TREND_TFS = ["H1", "H4", "D1"];
 // Model A (context-engine Requirement 17): the trader's frame sets.
 const MA_SETS = [["model_d1", "Model A: D1 / H1 / M5"], ["model_h4", "Model A: H4 / M15 / M1"]];
+// A C1 is shown once C2 has run it, as the trader's indicator draws one (2026-10-24). Model A frames a candidate C1
+// at every C close in premium (or discount) with a POI; most die unswept a candle later, behind "unswept C1s".
+const maSwept = (y) => y.events.some((e) => e[0] === "MANIPULATED");
+const maShown = () => S.ma.filter((y) => S.layers.modelAFramed || maSwept(y));
 const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, journal: [], ideas: [], playing: false, busy: false, picks: {}, hl: null,
             ma: [], maSet: Prefs.get("watch.maSet", "model_d1"), maAt: null,
+            trendTf: Prefs.get("watch.trendTf", "H1"), trend: { rows: [], withheld: false, at: null },
             speed: 1, digits: 5, layers: Prefs.get("watch.layers", { arrays: true, pools: true, profile: true, sequence: true, orders: true }),
             arrayMode: Prefs.get("watch.arrayMode", "interval"), arrayVis: Prefs.get("watch.arrayVis", {}) };
 // The chart timeframes each array timeframe shows on by default (Requirement 14.3); the trader can change them.
@@ -155,6 +163,13 @@ function paintEngine(ctx, size) {
   ctx.font = "10px system-ui, sans-serif"; ctx.textBaseline = "bottom";
   const text = (s, x, y, color, align) => { ctx.fillStyle = color; ctx.textAlign = align || "left"; ctx.fillText(s, x, y); };
   const line = (x1, y1, x2, y2, color, dash, width) => { ctx.strokeStyle = color; ctx.lineWidth = width || 1; ctx.setLineDash(dash || []); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.setLineDash([]); };
+  // The CISD's level, from its run's first candle to the close through it, as the indicator draws it (Req 30.5).
+  const cisdLevel = (s, cx, color) => {
+    if (s.cisd_level == null || s.cisd_from == null) return;
+    const lx = X(s.cisd_from), ly = Y(s.cisd_level);
+    if (!isFinite(lx) || !isFinite(ly)) return;
+    line(lx, ly, Math.max(cx, lx + 20), ly, color, [], 2); text(`CISD ${fmt(s.cisd_level)}`, lx + 3, ly - 3, color);
+  };
   if (st && !st.error && !st.withheld) {
     if (S.layers.arrays) {
       for (const a of st.arrays.filter(showArray)) {
@@ -195,6 +210,7 @@ function paintEngine(ctx, size) {
       text(`raid of ${sq.pool.source.replace("_", " ")} ${sq.pool.tf}`, rx + 8, ry - 4, c);
       const cx = X(sq.cisd);
       line(cx, 0, cx, size.height, rgba(c.startsWith("#") ? c : "#888888", 0.6), [3, 3]); text("CISD", cx + 3, 24, c);
+      cisdLevel(sq, cx, c);
       const px = X(sq.protected.at), py = Y(sq.protected.wick);
       ctx.fillStyle = c; ctx.beginPath();
       if (sq.direction === "BULLISH") { ctx.moveTo(px, py + 2); ctx.lineTo(px - 6, py + 12); ctx.lineTo(px + 6, py + 12); }
@@ -218,6 +234,7 @@ function paintEngine(ctx, size) {
         ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(rx, ry, 6, 0, 2 * Math.PI); ctx.stroke();
         text(`raid ${c.raid.source.replace("_", " ")} ${c.raid.tf}, ${c.raid.age_h} h before`, rx + 8, ry - 4, col);
         line(cx, 0, cx, size.height, rgba(hex, 0.6), [3, 3]); text("CISD", cx + 3, 36, col);
+        cisdLevel(c, cx, col);
       }
     }
   }
@@ -300,11 +317,31 @@ function paintEngine(ctx, size) {
       }
     }
   }
+  if (S.layers.trend) paintTrend(ctx, size, pal, text);
   ctx.restore();
+}
+// The trader's trend (context-engine Requirement 23): a strip along the chart's foot, one cell per closed candle of
+// the trend's frame (red bearish, green bullish, grey neither), and the last one's five signals spelled out.
+function paintTrend(ctx, size, pal, text) {
+  const H = size.height, W = size.width, sec = SECONDS[S.trendTf] || 3600, y = H - 9;
+  const arrow = (v) => (v < 0 ? "▼" : v > 0 ? "▲" : "·");
+  if (S.trend.withheld) { text(`Trend ${S.trendTf}: hidden until you reveal`, 6, y - 3, pal.muted); return; }
+  for (const r of S.trend.rows) {
+    const x0 = X(r.time), x1 = X(r.time + sec);
+    if (!isFinite(x0) || !isFinite(x1) || x1 < 0 || x0 > W) continue;
+    ctx.fillStyle = r.trend < 0 ? rgba(hexOf(pal.bad), 0.85) : r.trend > 0 ? rgba(hexOf(pal.good), 0.85) : rgba(hexOf(pal.muted), 0.25);
+    ctx.fillRect(Math.max(x0, 0) + 0.5, y, Math.max(1, Math.min(x1, W) - Math.max(x0, 0) - 1), 6);
+  }
+  const last = S.trend.rows[S.trend.rows.length - 1];
+  if (!last) return;
+  const parts = [["structure", "structure"], ["closes", "closes"], ["liquidity", "sweeps"], ["arrays", "arrays"], ["po3", "PO3"]]
+    .map(([k, name]) => `${name} ${arrow(last[k])}`).join("  ");
+  text(`Trend ${S.trendTf} ${arrow(last.trend)} ${last.score > 0 ? "+" : ""}${last.score}   ${parts}`, 6, y - 3,
+       last.trend < 0 ? pal.bad : last.trend > 0 ? pal.good : pal.muted);
 }
 function paintModelA(ctx, size, pal, text, line) {
   const W = size.width;
-  for (const y of S.ma) {
+  for (const y of maShown()) {
     const short = y.side === "SHORT", col = short ? pal.bad : pal.up, hex = col.startsWith("#") ? col : "#888888";
     const alpha = y.ended ? 0.35 : 1, c = (a) => rgba(hex, a * alpha);
     const x0 = Math.max(X(y.c1_open), -10), xr = y.end_at ? X(y.end_at) : W, cSec = SECONDS[y.c] || 900;
@@ -348,6 +385,13 @@ function paintModelA(ctx, size, pal, text, line) {
     text(badge, Math.max(x0, 0) + 3, (short ? Math.min(p1, p2) : Math.max(p1, p2)) + (short ? -14 : 25), col);
     ctx.font = "10px system-ui, sans-serif";
   }
+}
+async function loadTrend() {
+  if (!S.status || !S.layers.trend) { S.trend = { rows: [], withheld: false, at: null }; return; }
+  const key = `${S.trendTf}@${S.t}`;
+  if (S.trend.at === key) return;
+  const got = await api(`/api/watch/trend?tf=${S.trendTf}&t=${S.t}`);
+  S.trend = { rows: got.rows || [], withheld: !!got.withheld, at: key };
 }
 async function loadModelA() {
   if (!S.status || !S.layers.modelA) { S.ma = []; return; }
@@ -551,7 +595,7 @@ async function loadBars(fit) {
 }
 async function loadState() {
   S.state = (await api(`/api/watch/state?t=${S.t}`)).state;
-  await loadModelA();
+  await loadModelA(); await loadTrend();
   await fractal.tick();
   renderFractal();
   Shell.refresh("t=" + S.t);
@@ -577,7 +621,7 @@ async function advance(dt) {
     const got = (await api(`/api/watch/bars?tf=${S.tf}&until=${S.t}&since=${last ? last.time : S.t - 86400}`)).bars;
     try { for (const b of got) put(b); } catch (e) { await loadBars(false); }
     if (Math.floor(S.t / 900) !== Math.floor(before / 900)) await loadState();
-    else { await loadModelA(); await fractal.tick(); renderFractal(); renderEngine(); renderLog(); refresh(); }
+    else { await loadModelA(); await loadTrend(); await fractal.tick(); renderFractal(); renderEngine(); renderLog(); refresh(); }
     await noculus.tick();                               // the trader's own trades settle to the clock too
     renderHeader();
   } finally { S.busy = false; }
@@ -658,7 +702,7 @@ function buildLayers() {
     c.type = "checkbox"; c.checked = !!S.layers[key];
     c.onchange = () => act(async () => { S.layers[key] = c.checked; Prefs.set("watch.layers", S.layers); S.maAt = null;
                                          fractal.setOn(S.layers.fractal); await fractal.tick(); renderFractal();
-                                         await loadModelA(); renderEngine(); renderLog(); refresh(); });
+                                         await loadModelA(); await loadTrend(); renderEngine(); renderLog(); refresh(); });
     l.append(c, " " + name); box.append(l);
     if (key === "fractal") {
       const gear = document.createElement("button");
@@ -670,8 +714,14 @@ function buildLayers() {
   const ma = document.createElement("select");
   ma.id = "maSet"; ma.title = "Which of your frame sets Model A reads";
   ma.innerHTML = MA_SETS.map(([v, t]) => `<option value="${v}" ${S.maSet === v ? "selected" : ""}>${t}</option>`).join("");
-  ma.onchange = () => act(async () => { S.maSet = ma.value; Prefs.set("watch.maSet", ma.value); S.maAt = null; await loadModelA(); renderEngine(); renderLog(); refresh(); });
+  ma.onchange = () => act(async () => { S.maSet = ma.value; Prefs.set("watch.maSet", ma.value); S.maAt = null; await loadModelA(); await loadTrend(); renderEngine(); renderLog(); refresh(); });
   box.append(ma);
+  const tr = document.createElement("select");
+  tr.id = "trendTf"; tr.title = "The frame your trend is read on (the Trend layer)";
+  tr.innerHTML = TREND_TFS.map((v) => `<option value="${v}" ${S.trendTf === v ? "selected" : ""}>trend: ${v}</option>`).join("");
+  tr.onchange = () => act(async () => { S.trendTf = tr.value; Prefs.set("watch.trendTf", tr.value); S.trend.at = null;
+                                        await loadTrend(); refresh(); });
+  box.append(tr);
   const sel = document.createElement("select");
   sel.title = "Which of the engine's arrays to draw";
   sel.innerHTML = [["interval", "arrays: by visibility interval"], ["all", "arrays: every one"], ["M15", "arrays: M15 and up"],
@@ -758,14 +808,16 @@ function renderEngine() {
   }
   if (sq) {
     html += `<div class="card"><b>Setup</b>: ${esc(sq.direction)} after a raid of ${esc(sq.pool.source)} ${esc(sq.pool.tf)} ${fmt(sq.pool.price)} at ${fmtTime(sq.raided)}<br>
-      CISD at ${fmtTime(sq.cisd)} · protected swing ${fmt(sq.protected.wick)} (${fmtTime(sq.protected.at)})</div>`;
+      CISD at ${fmtTime(sq.cisd)}${sq.cisd_level != null ? ` through ${fmt(sq.cisd_level)}` : ""} · protected swing ${fmt(sq.protected.wick)} (${fmtTime(sq.protected.at)})</div>`;
   }
   if (S.layers.modelA) {
     const label = (MA_SETS.find(([v]) => v === S.maSet) || ["", S.maSet])[1];
     const lv = (y) => y.entry != null ? `<div class="muted">0.705 entry ${fmt(y.entry)} · stop ${fmt(y.stop)} · TP1 ${fmt(y.tp1)} · -1 SD ${fmt(y.sd1)} · -2 SD ${fmt(y.sd2)}</div>` : "";
-    html += `<div class="card"><b>${esc(label)}</b>` + (S.ma.length ? S.ma.map((y) => `<div class="ma ${y.ended ? "muted" : ""}">
+    const shown = maShown(), unswept = S.ma.length - shown.length;
+    html += `<div class="card"><b>${esc(label)}</b>` + (shown.length ? shown.map((y) => `<div class="ma ${y.ended ? "muted" : ""}">
         <b>${esc(y.side)} · ${esc(y.ended || y.state)}</b> <span class="muted">POI ${esc(y.poi_label)} ${fmt(y.poi_near)}–${fmt(y.poi_far)}</span>
         <div>${esc(y.reason)}</div><div class="muted">C2's phase: ${esc(y.phase || "—")}${y.time_sync != null ? `; ${y.time_sync ? "in" : "outside"} your time window` : ""}${y.inducement ? `; inducement: ${esc(y.inducement)}` : ""}</div>${y.adr_used != null ? `<div class="muted">At C2's close: ${Math.round(100 * y.adr_used)}% of the ADR used; the setup ${y.size_adr.toFixed(2)} ADR; TP1 ${y.target_reach.toFixed(2)} ADR from the day's extreme</div>` : ""}${lv(y)}</div>`).join("")
+      : unswept ? `<div class="muted">${unswept} C1 candidate(s) framed, none run by C2 yet ("Model A: unswept C1s" shows them).</div>`
       : `<div class="muted">Nothing framed: price isn't in premium with a POI above (or discount with one below) on ${esc(label.split(": ")[1] || "")}, or C2 would open outside the early phases (20:00-07:00 New York).</div>`) + `</div>`;
   }
   const open = S.journal.find((r) => r.filled_at != null && r.filled_at <= S.t && (r.closed_at == null || r.closed_at > S.t));
@@ -783,7 +835,7 @@ function renderEngine() {
       <div class="hint">Ranked as the engine ranks them: the latest raid first, then the raided pool's timeframe, then the array's type. Hover to see one; mark the one you would take.</div>
       ${cd.ranked.map((c) => `<div class="cand${c.chosen ? " chosen" : ""}${mine && mine.pick === c.id ? " mine" : ""}" data-id="${esc(c.id)}">
         <span class="rk">#${c.rank}</span> ${esc(c.tf)} ${esc(c.type)} ${c.dir === "BULLISH" ? "▲" : "▼"} ${fmt(c.low)}–${fmt(c.high)}${c.chosen ? " · <b>the engine's choice</b>" : ""}
-        <div class="muted">raid of ${esc(c.raid.source.replace("_", " "))} ${esc(c.raid.tf)} ${fmt(c.raid.price)}, ${c.raid.age_h} h before · CISD ${fmtTime(c.cisd)}</div>
+        <div class="muted">raid of ${esc(c.raid.source.replace("_", " "))} ${esc(c.raid.tf)} ${fmt(c.raid.price)}, ${c.raid.age_h} h before · CISD ${fmtTime(c.cisd)}${c.cisd_level != null ? ` through ${fmt(c.cisd_level)}` : ""}</div>
         <button class="boxed pick" data-pick="${esc(c.id)}">${tag(c.id)}Mine</button></div>`).join("")}
       <div class="row"><button class="boxed pick" data-pick="none">${tag("none")}None: no trade here</button>
         <button class="boxed pick" data-pick="other">${tag("other")}Another array</button></div>
@@ -819,7 +871,7 @@ function renderLog() {
     for (const e of fractal.events()) items.push({ t: e.t, text: `Fractal + POI: ${e.text}`, cls: e.dir === "bull" ? "good" : "bad" });
   }
   if (S.layers.modelA) {
-    for (const y of S.ma) for (const [state, t, why] of y.events) {
+    for (const y of maShown()) for (const [state, t, why] of y.events) {
       if (state === "FRAMED" || state === "ARMED") continue;
       items.push({ t, text: `Model A ${y.side.toLowerCase()} ${state}: ${why}`, cls: /STOPPED|MISSED|INVALID|FAILED|NO_/.test(state) ? "bad" : /TP1|SD_/.test(state) ? "good" : "" });
     }

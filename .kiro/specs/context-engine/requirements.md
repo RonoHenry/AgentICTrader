@@ -596,3 +596,134 @@ The bullish trend is the mirror. ICT's Market Maker Models are to come later.
 | MA-D20 | The state | The sum of the five signals; three in agreement name the trend. |
 | MA-D21 | The race | One frame average range each way (the mean range of the 14 candles before), from the next M1 open; a bar reaching both is a loss for the trend; unresolved after three candles of the frame is counted apart. |
 | MA-D22 | Setup defaults | Buy-side liquidity: the setup frame's untaken three-candle swing highs, equal highs and the previous day's high. Frames: the trend on H1 (and H4 above it); raid, displacement, OTE and array on M15, the entry on M5. Standard deviations: −1, −2, −2.5 and −4 of the leg; confluence within 10% of the leg. |
+
+## Update 2026-10-23b: Ranked Swings and Breaks
+
+Task 356 found that the trader's trend, counted from every three-candle swing, calls the next move no better than a coin. A reading plan the trader shared the same day proposed reading structure as ICT ranks it, instead of counting every swing:
+1. **Rank the swings.** Short-term highs (three-candle swings), intermediate-term highs (an STH higher than the STH on either side) and long-term highs (the same one rank up). Structure changes only when an ITH or ITL breaks. An ITH is known only once the next, lower STH has formed, and that lag is kept.
+2. **A break is not a sweep.** A break (MSS or BOS) is a candle closing beyond the swing, with a displacement that leaves an FVG. A wick through the swing that closes back inside is a sweep: liquidity taken, structure unchanged.
+3. **Output levels, not only a sign.** In an uptrend these are the protected low (the swing that launched the break: the stop, the invalidation) and the weak high (the high not yet exceeded: the draw).
+4. **Read top-down, one job per frame.** The higher frame's weak swing is the draw, and the lower frame times the entry. A lower-frame break against the higher-frame trend at a higher-frame level is a Smart Money Reversal candidate (MMXM, later). Elsewhere it is a retracement.
+5. **A market-structure shift at a higher-frame level is the main event.** It is the one place the turn atlas found structure carrying information: D1 swings that took the previous week's extreme, +15 points over geometry.
+
+The plan's own test: whether intermediate-term swings, or breaks read from closes, make structure (or the trend score) call the next day better than the earlier mechanical reads' 45-49%. If none does, structure is mostly for levels, not direction.
+
+### Requirement 24: Ranked Swings and Breaks
+
+**User Story:** As the trader, I want structure read from ranked swings and from breaks rather than sweeps, and measured before the engine uses it, so that a better definition earns its place.
+
+#### Acceptance Criteria
+
+1. THE reader SHALL rank a frame's swings into STH/STL, ITH/ITL and LTH/LTL, each known only from its own candles and the next lower-rank swing's closed candles (`ranked_highs`, `ranked_lows`).
+2. A structure state SHALL be readable:
+   - by comparing the last two swings of a rank (`compare_state`);
+   - from breaks (`break_state`): a close beyond the latest unbroken swing of a rank, held until the other side breaks. A wick beyond that closes back inside changes nothing. Optionally the breaking candle must be C2 of an FVG in the break's direction, known at C3's close.
+3. THE research SHALL measure five versions on both slices and the focus markets: STH compare (task 355), ITH compare, STH break, ITH break, ITH break with FVG. Each is read on D1 and on the H4 candle closing at 17:00 New York, alone and swapped into the trend score. Each calls the next D1 candle against 50% and drift, with intervals. A version that clears 56-61% on both slices goes to the trader before any engine use. If none does, structure is kept for levels (points 3-5), not direction.
+
+## Update 2026-10-23c: The Entry
+
+Gold, Wednesday 29 January 2025, the trader on Noculus: "notice the contrast in the trades the engine takes and the ones we anticipate it should be taking". The trader shorted the previous day's high twice. The first was a limit filled at 03:34 while C2 ran into the level (+5.4R). The second came on the 05:00 retest after the leg extended (+12.4R). Both stops were about a point away.
+
+Model A (H4/M15/M1) framed the same short at 03:15 (premium; POI the previous day's high). It saw the manipulation and the displacement, with its stop above C2's high and its targets at the same standard deviations. Then it **missed**: its entry waits for the OTE after the displacement, and price broke the new range's low first. On that day the gap between the trader and the model was the entry, not the scale.
+
+### Requirement 25: The Entry
+
+**User Story:** As the trader, I want Model A's entry measured against mine (at the level as price runs into it, or on the retest after the leg extends), so that the engine stops missing setups it has already read, if that pays.
+
+#### Acceptance Criteria
+
+1. ON the Model A record and its arms (the model's, CRT with no context, and random POIs as controls), the research SHALL replay:
+   - **A:** Model A's own OTE fills;
+   - **B1, B2:** a limit at the POI's near edge or midpoint once armed, until C3 closes, with the stop beyond the POI's far edge;
+   - **C:** after a MISSED, a limit at the midpoint of the leg from C2's extreme to the running low until C2's extreme is taken or the day ends, with the stop beyond C2's extreme.
+
+   Each is held to the day's close, paying the spread, at a fixed 3R and at Model A's TP1.
+2. AN entry that beats A, and beats the same entry on random POIs, SHALL go to the trader before Model A's orders (Requirement 14) are built on it.
+
+## Update 2026-10-24: C1 Once C2 Has Run It
+
+The trader (2026-10-24), on Noculus: "the engine keeps firing C1 all over while the fractals indicator actually shows the right logic for C1 C2 and C3." The C1s on the engine's side are Model A's (Requirement 17). The reader frames a candidate C1 at every C close where price is in F's premium with a POI above (discount with one below for longs), on both sides, and the chart drew the live candidate at every moment. Most end `NO_MANIPULATION` one candle later. The indicator marks a C1 only after the next candle, C2, has traded beyond it.
+
+The trading logic already matches: only an instance whose C2 runs C1's high into the POI goes on (MANIPULATED, then REJECTED, DISPLACED and the entry). So the difference was the drawing.
+
+### Requirement 26: C1 Once C2 Has Run It
+
+**User Story:** As the trader, I want the engine's C1s drawn the way my indicator draws them, so that I see only the C1s price actually ran.
+
+#### Acceptance Criteria
+
+1. THE Model A layer SHALL draw an instance, list it and log its events only once it is MANIPULATED (C2 has run C1), as the indicator draws a C1.
+2. A separate layer, "Model A: unswept C1s", off by default, SHALL show the framed candidates too. The card SHALL say how many are framed and unswept when none is shown.
+3. THE reader is unchanged: when the premium is read (at C1's close, not at the sweep) and what happens when C3 takes C2's high before the order (RETRACE_INVALID, where the indicator makes C2 the next C1) are the remaining differences, left to the trader's choice. Task 363's re-anchored retest lost (−0.06 to −0.29R).
+
+## Update 2026-10-24: The Chain, Tested Whole
+
+Every layer of ICT's bias hierarchy has now been measured on its own, and each came out at chance:
+- the draw on liquidity (the nearest pool is taken first as often as a random walk predicts);
+- premium and discount on W1-H1;
+- the previous candle's close (the 3-candle CRT);
+- structure, ranked swings and breaks, and the trader's five-signal trend;
+- delivery phases, time windows and macros;
+- COT and news sentiment.
+
+What was never tested is the hierarchy itself: each frame read in the light of the frame above it, from the monthly down to the day. The engine's grader reads bottom-up, so its filters can't choose. The trader's weekly calls (H011) and the LLM thesis are combined reads, but they are judgment, not a rule you can inspect, and their samples are small. Requirement 4's chain was specified on 2026-10-10 and never built.
+
+The trader chose (2026-10-24), in this order:
+1. build the frame state and the chain (tasks 277 and 278);
+2. add ICT's IPDA data ranges as objectives;
+3. pre-register the chain's daily calls as one hypothesis, with the pass rule confirmed before it runs;
+4. score them before anything trades on them;
+5. then SMT and the dollar index, as a separate hypothesis, so their own contribution shows.
+
+Whatever its result, the chain is the first top-down reading the engine can explain frame by frame.
+
+### Requirement 27: The IPDA Data Ranges
+
+**User Story:** As the trader, I want the 20, 40 and 60-day highs and lows as objectives, so that the chain reads the reference points ICT says the algorithm reads.
+
+#### Acceptance Criteria
+
+1. FROM a market's closed D1 candles, the highest high and the lowest low of the last 20, 40 and 60 SHALL be objectives (CE-D17):
+   - a high lies above price and a low below it;
+   - each one formed at the close of the candle that made it;
+   - a candle that leads more than one range is listed once, under its longest range.
+2. A range SHALL be read only when that many closed D1 candles exist.
+3. THEY SHALL be passed to every frame of the chain as objectives (Requirement 3's `levels`).
+
+### Requirement 28: The Chain's Daily Calls, Measured
+
+**User Story:** As the trader, I want the chain's daily calls tested on data nobody has read, so that a combined hierarchy is judged as strictly as each of its layers was.
+
+#### Acceptance Criteria
+
+1. ON the 2018-2024 search's broker D1 bars (`docs/research/SEARCH_2018_2024.md`, Amendment 1), the research SHALL build MN1 and W1 candles from the D1 candles and read the ladder MN1 → W1 → D1 at every D1 close (CE-D18):
+   - the D1 frame's closed candles end with the candle just closed, and price is its close;
+   - the W1 and MN1 frames' closed candles are the weeks and months already complete. The current ones are forming, and their extremes stretch the range;
+   - the path is the D1 candles to t;
+   - the IPDA ranges are objectives in every frame.
+2. THE call SHALL be the D1 link's context direction under `PD_POI`, made only while the chain is armed and every frame has a dealing range. It is judged against the next D1 candle exactly as the search's daily calls are: the hit rate against the market's drift, with a trading-date interval, per market.
+3. THE hypothesis (H-K) SHALL be written into the search's log, with its pass rule, and confirmed by the trader before it runs on the development window. The test window is read only if it passes.
+4. Reported beside the pass rule, not part of it:
+   - the absolute hit rate, against the 56-61% the executions need;
+   - the draw reached before the opposite objective, against a driftless walk's chance;
+   - the chain's cases apart;
+   - the ablations: `PROFILE`, W1 → D1, the ladder without the IPDA ranges, and each frame's own direction alone.
+
+### Requirement 29: SMT and the Dollar Index
+
+**User Story:** As the trader, I want SMT divergence and the dollar index tested as their own layer, after the chain, so that what they add is measured apart.
+
+#### Acceptance Criteria
+
+1. AFTER Requirement 28 has reported, an SMT and dollar-index hypothesis (H-L) SHALL be registered in the search's log before it runs, with its own pass rule. The pairs: EURUSD-GBPUSD, US100-US500-US30, and DXY against EURUSD, GBPUSD and gold.
+2. IT SHALL be judged alone and on top of the chain's calls, so the report shows whether it adds to the chain.
+
+### Decisions (2026-10-24)
+
+| Id | Topic | Decision |
+|---|---|---|
+| CE-D14 | The frame state's form | NumPy arrays and frozen dataclasses (`Candles`, `Objective`, `ArrayPOI`, `FrameState` in `context/frame_state.py`), like Model A's reader, not the design's Pydantic models: the research reads it at every D1 close of nine markets. |
+| CE-D15 | POIs | The frame's and its parents' order blocks, breakers and gaps (Model A's arrays, gaps as the gap only). Liquidity is an objective, not a POI. |
+| CE-D16 | Reached | A POI is spent if traded into between its forming and the close of the dealing range's later anchor candle. After that, the first bar trading into it reaches it. POIs are timed on the path, the finest bars given, or on the frame's own candles. A stretch past an anchor doesn't reset it. |
+| CE-D17 | IPDA ranges | The last 20, 40 and 60 closed D1 candles, as ICT's lookback ranges. The forward-looking ranges and the quarterly shifts are left out. |
+| CE-D18 | Weeks and months on D1 bars | A week closes with its Friday candle, and a month with its last weekday's. A week or month whose last trading day falls earlier closes when the next one opens. This is calendar only, never a later bar's price. |

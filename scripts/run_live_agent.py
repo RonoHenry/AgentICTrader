@@ -459,7 +459,7 @@ def _process_instrument(
     if evaluated is not None and evaluated.get(instrument) == t:
         return {"instrument": instrument, "grade": "-", "decision": "NO NEW BAR", "trade_id": None}
 
-    liquidity_map = LiquidityMappingEngine(cfg.fvg_zone).analyze(candles_by_tf, instrument, t)
+    liquidity_map = LiquidityMappingEngine(cfg.fvg_zone, cfg.cisd).analyze(candles_by_tf, instrument, t)
     if evaluated is not None:
         evaluated[instrument] = t  # before acting: a failed order isn't re-sent on the same bar
     if verbose:

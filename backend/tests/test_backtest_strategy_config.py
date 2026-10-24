@@ -14,7 +14,7 @@ from datetime import timedelta
 import pytest
 from pydantic import ValidationError
 
-from agent.strategy_config import (BiasMode, FvgZone, PendingExpiry, StopMode, StrategyConfig, TargetMode,
+from agent.strategy_config import (BiasMode, CisdMode, FvgZone, PendingExpiry, StopMode, StrategyConfig, TargetMode,
                                    TimeWindow)
 from liquidity_engine.models import SetupGrade, Timeframe as TF
 
@@ -118,6 +118,7 @@ _CHANGED = {
     "pending_expiry": PendingExpiry.FIXED_TTL,
     "fallback_ttl_minutes": 181,
     "fvg_zone": FvgZone.GAP,
+    "cisd": CisdMode.RUN,
 }
 
 

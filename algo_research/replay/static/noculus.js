@@ -41,6 +41,7 @@
       this.data = null;                                  // the session's journal, as the server keeps it
       this.trades = []; this.diff = null;                // the comparison, once the engine is revealed
       this.pairs = null; this.position = null;           // the positions beside the engine's; the selected drawing
+      this.trendCalls = null;                            // the trader's trend calls, scored to the clock
       this.tool = null; this.field = null; this.tf = null; this.dir = 0; this.side = "LONG"; this.builtKey = null;
       this.update = () => {};
       series.attachPrimitive({
@@ -66,6 +67,7 @@
           this.trades = this.data.trades || [];
           if (this.blind && this.revealed != null) this.diff = await this.opts.api("/api/watch/noculus/comparison");
           await this.loadPairs();
+          await this.loadTrendCalls();
         } catch (e) { this.data = null; this.opts.say(e.message); }
       }
       this.tool = this.field = null;
@@ -79,7 +81,8 @@
       try {
         this.trades = (await this.opts.api(`/api/watch/noculus/trades?t=${this.opts.clock()}`)).trades;
         await this.loadPairs();
-        this.fillTrades(); this.fillPosition(); this.fillPairs(); this.link();
+        await this.loadTrendCalls();
+        this.fillTrades(); this.fillPosition(); this.fillPairs(); this.fillTrendCalls(); this.link();
       } catch (e) { /* the session may be between states; the next tick will catch up */ }
     }
 
@@ -244,6 +247,7 @@
       if (this.builtKey !== key) { this.build(); this.builtKey = key; }
       if (!this.data) return;
       this.fillTools(); this.fillMarks(); this.fillTrades(); this.fillDiff(); this.fillPosition(); this.fillPairs();
+      this.fillTrendCalls();
     }
 
     build() {
@@ -253,7 +257,8 @@
         box.innerHTML = `<h2>Your positions</h2>
           <div class="hint">Draw a Long or Short position (▲ ▼ or Alt+L, Alt+S), select it and place it at the clock.
             Each is set beside the engine's trade at that moment.</div>
-          <div id="nPosition"></div><div class="ntrades" id="nTrades"></div><div id="nPairs"></div>`;
+          <div id="nPosition"></div><div class="ntrades" id="nTrades"></div><div id="nPairs"></div>${this.trendHtml()}`;
+        this.bindTrend(box);
         return;
       }
       const tools = this.marking ? `
@@ -285,8 +290,10 @@
         ${ticket}
         <div class="ntrades" id="nTrades"></div>
         <div id="nPairs"></div>
+        ${this.trendHtml()}
         ${this.marking ? `<div class="row"><button class="boxed" id="nReveal">Reveal the engine</button></div>`
                        : `<div id="nDiff"></div>`}`;
+      this.bindTrend(box);
       const tf = box.querySelector("#nTf"), dir = box.querySelector("#nDir"), rev = box.querySelector("#nReveal");
       if (tf) tf.onchange = () => { this.tf = tf.value; this.fillTools(); };
       if (dir) dir.onchange = () => { this.dir = Number(dir.value); };
@@ -299,6 +306,63 @@
       const kind = box.querySelector("#nKind");
       if (kind) kind.onchange = () => { box.querySelector("#nPrice").disabled = kind.value !== "LIMIT"; };
       if (kind) box.querySelector("#nPrice").disabled = true;
+    }
+
+    // ── the trader's trend calls (context-engine Requirement 23) ──────────
+    trendHtml() {
+      return `<h2>Your trend call</h2>
+        <div class="hint">Call the trend at the clock: on which frame, and which way. ${this.marking
+          ? "The reader's call stays hidden until you reveal." : "The reader is in sight, so these don't count as blind."}</div>
+        <div class="row"><label>Frame</label><select id="nTrendTf">${["H1", "H4", "D1"].map((tf) =>
+          `<option ${tf === (this.trendTf || "H1") ? "selected" : ""}>${tf}</option>`).join("")}</select>
+          <button class="boxed" data-trend="BEARISH" title="Bearish at the clock">▼ Bearish</button>
+          <button class="boxed" data-trend="BULLISH" title="Bullish at the clock">▲ Bullish</button>
+          <button class="boxed" data-trend="UNCLEAR" title="No clear trend">· Unclear</button></div>
+        <div class="row"><input type="text" id="nTrendNote" placeholder="what you see (optional)"></div>
+        <div id="nTrendCalls"></div>`;
+    }
+
+    bindTrend(box) {
+      const tf = box.querySelector("#nTrendTf");
+      if (tf) tf.onchange = () => { this.trendTf = tf.value; };
+      for (const b of box.querySelectorAll("[data-trend]")) b.onclick = () => this.trendCall(b.dataset.trend);
+    }
+
+    async trendCall(side) {
+      const box = this.opts.box, note = box.querySelector("#nTrendNote");
+      try {
+        await this.opts.api("/api/watch/noculus/trend_call",
+          { t: this.opts.clock(), tf: box.querySelector("#nTrendTf").value, side, note: note ? note.value : "" });
+        if (note) note.value = "";
+        await this.loadTrendCalls();
+        this.fillTrendCalls();
+      } catch (e) { this.opts.say(e.message); }
+    }
+
+    async loadTrendCalls() {
+      this.trendCalls = this.data ? await this.opts.api(`/api/watch/noculus/trend_calls?t=${this.opts.clock()}`) : null;
+    }
+
+    /** Each call with what it became by the clock: the next move, and continuation beside a driftless walk's chance. */
+    fillTrendCalls() {
+      const el = this.opts.box.querySelector("#nTrendCalls");
+      if (!el) return;
+      const c = this.trendCalls;
+      if (!c || !c.calls.length) { el.innerHTML = `<div class="muted">No trend calls yet.</div>`; return; }
+      const arrow = (v) => (v == null ? "hidden" : v < 0 ? "▼" : v > 0 ? "▲" : "·");
+      const mark = { BEARISH: "▼", BULLISH: "▲", UNCLEAR: "·" };
+      const word = (v) => (v == null ? "—" : { RIGHT: "right", WRONG: "wrong", PENDING: "waiting", UNRESOLVED: "neither" }[v] || v);
+      const tone = (v) => (v === "RIGHT" ? "good" : v === "WRONG" ? "bad" : "muted");
+      const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+      const rows = c.calls.slice().reverse().map((r) => `<div class="nmark">
+        <b>${mark[r.side] || ""} ${esc(r.tf)}</b> <span class="muted">${esc(this.opts.timeLabel(r.t))} · reader ${arrow(r.reader)}</span>
+        ${r.side === "UNCLEAR" ? "" : `<span>next <b class="${tone(r.next)}">${word(r.next)}</b> · continuation
+          <b class="${tone(r.cont)}">${word(r.cont)}</b>${r.geometry == null ? "" : ` <span class="muted">(walk ${pct(r.geometry)})</span>`}</span>`}
+        ${r.engine_seen ? `<span class="muted">· seen</span>` : ""}</div>`).join("");
+      const s = c.summary;
+      el.innerHTML = rows + `<div class="hint">${s.blind_calls} blind call${s.blind_calls === 1 ? "" : "s"}: next move right
+        ${pct(s.next_right)} of ${s.resolved_next} · continuation ${pct(s.cont_right)} of ${s.resolved_cont},
+        where a walk from the same price gets ${pct(s.cont_geometry)}.</div>`;
     }
 
     fillTools() {

@@ -28,7 +28,11 @@ the one it labels (Property 2).
 
     signals = trend_signals(frame.bars[Timeframe.H1], arrays_of_h1)      # one row per closed candle
 
-Validates: Requirement 20 (.kiro/specs/context-engine/requirements.md)
+A trend call (the trader's, on Noculus, Requirement 23) is scored by ``call_outcome`` from the minutes before the
+replay clock only, the way task 356 scored the reader: the next move, one average range each way, and continuation,
+the call's side's last swing taken first, beside the chance a driftless walk has of the same.
+
+Validates: Requirements 20, 23 (.kiro/specs/context-engine/requirements.md)
 """
 from __future__ import annotations
 
@@ -37,7 +41,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-__all__ = ["ARRAY_WINDOW", "COLUMNS", "PO3_CLOSE", "PO3_WICK", "TREND_AT", "trend_signals"]
+__all__ = ["ARRAY_WINDOW", "COLUMNS", "PO3_CLOSE", "PO3_WICK", "SIGNALS", "TREND_AT", "call_outcome", "swing_highs",
+           "swing_lows", "trend_signals"]
 
 ARRAY_WINDOW = 20
 PO3_WICK, PO3_CLOSE = 0.2, 0.3
@@ -189,3 +194,149 @@ def trend_signals(bars: pd.DataFrame, arrays: Optional[pd.DataFrame] = None) -> 
     out["score"] = out[list(SIGNALS)].sum(axis=1)
     out["trend"] = np.where(out["score"] <= -TREND_AT, -1, np.where(out["score"] >= TREND_AT, 1, 0))
     return out[list(COLUMNS)]
+
+
+swing_highs, swing_lows = _swing_highs, _swing_lows
+NEXT_CANDLES, ATR_CANDLES = 3, 14
+
+
+def _first_beyond(values: np.ndarray, level: float, above: bool) -> int:
+    hit = np.flatnonzero(values >= level if above else values <= level)
+    return int(hit[0]) if len(hit) else -1
+
+
+def _first_strictly(values: np.ndarray, level: float, above: bool) -> int:
+    hit = np.flatnonzero(values > level if above else values < level)
+    return int(hit[0]) if len(hit) else -1
+
+
+def _race(up: int, down: int, side: int) -> Optional[str]:
+    """RIGHT when the call's side came first, WRONG when the other did or both came in one minute; None if neither."""
+    if up < 0 and down < 0:
+        return None
+    if up >= 0 and down >= 0 and up == down:
+        return "WRONG"
+    first_up = down < 0 or (up >= 0 and up < down)
+    return "RIGHT" if first_up == (side > 0) else "WRONG"
+
+
+def call_outcome(side: int, t: int, size: int, bars: pd.DataFrame, m1: dict, clock: int) -> dict:
+    """How a trend call made at ``t`` (wall seconds) on a frame of ``size`` seconds stood at ``clock``.
+
+    ``side`` is -1 bearish or +1 bullish. ``bars`` holds the frame's candles (``time`` their open in wall seconds;
+    open, high, low, close), ``m1`` the minutes (``time`` each minute's open in wall seconds; open, high, low).
+    Only the candles closed by ``t`` and the minutes opening before ``clock`` are read.
+
+    - ``next``: one average range (the last ``ATR_CANDLES`` closed candles) each way from the first open at or after
+      ``t``, within ``NEXT_CANDLES`` candles: RIGHT, WRONG, PENDING while the window is still open, or UNRESOLVED.
+    - ``cont``: price beyond the last three-candle swing on the call's side before the one on the other side: RIGHT,
+      WRONG or PENDING; None when the price is not between them. ``geometry`` is a driftless walk's chance of the
+      same from the first open.
+    """
+    times = np.asarray(bars["time"], dtype=np.int64)
+    closed = int(np.count_nonzero(times + size <= t))
+    h, l = (np.asarray(bars[k], dtype=float)[:closed] for k in ("high", "low"))
+    mt = np.asarray(m1["time"], dtype=np.int64)
+    a, b = int(np.searchsorted(mt, t, "left")), int(np.searchsorted(mt, clock, "left"))
+    out = {"next": None, "cont": None, "geometry": None, "atr": None, "ref": None}
+    if closed < ATR_CANDLES:
+        return out
+    if a >= b:                                                              # no minute since the call, yet
+        out["next"] = "PENDING"
+        return out
+    mo, mh, ml = (np.asarray(m1[k], dtype=float) for k in ("open", "high", "low"))
+    ref = float(mo[a])
+    atr = float(np.mean(h[-ATR_CANDLES:] - l[-ATR_CANDLES:]))
+    out.update(atr=atr, ref=ref)
+    window_end = t + NEXT_CANDLES * size
+    stop = min(b, int(np.searchsorted(mt, window_end, "left")))
+    race = _race(_first_beyond(mh[a:stop], ref + atr, True), _first_beyond(ml[a:stop], ref - atr, False), side)
+    out["next"] = race or ("PENDING" if clock < window_end else "UNRESOLVED")
+    highs = swing_highs(h)
+    lows = swing_lows(l)
+    highs, lows = highs[highs + 1 < closed], lows[lows + 1 < closed]       # known: their third candle closed by t
+    if len(highs) and len(lows):
+        top, bottom = float(h[highs[-1]]), float(l[lows[-1]])
+        if bottom < ref < top:
+            race = _race(_first_strictly(mh[a:b], top, True), _first_strictly(ml[a:b], bottom, False), side)
+            out["cont"] = race or "PENDING"
+            out["geometry"] = (top - ref) / (top - bottom) if side < 0 else (ref - bottom) / (top - bottom)
+    return out
+
+
+# ── ranked swings and breaks (context-engine Requirement 24) ─────────────────
+RANKS = ("STH", "ITH", "LTH")
+
+
+def _rank_up(level: np.ndarray, idx: np.ndarray, known: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The swings of ``idx`` higher than the one on either side: the next rank up. Each is known when the swing after
+    it, of the rank below, is known."""
+    j = np.arange(1, len(idx) - 1)
+    keep = j[(level[idx[j]] > level[idx[j - 1]]) & (level[idx[j]] > level[idx[j + 1]])]
+    return idx[keep], known[keep + 1]
+
+
+def ranked_highs(h: np.ndarray) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """ICT's short-, intermediate- and long-term highs of one frame: {rank: (candle index, index of the candle whose
+    close makes it known)}. An STH is a three-candle swing high, known at its third candle's close; an ITH is an STH
+    higher than the STH on either side, known once the next STH is; an LTH is the same one rank up."""
+    sth = _swing_highs(h)
+    out = {"STH": (sth, sth + 1)}
+    out["ITH"] = _rank_up(h, *out["STH"])
+    out["LTH"] = _rank_up(h, *out["ITH"])
+    return out
+
+
+def ranked_lows(l: np.ndarray) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """The mirror of ``ranked_highs``: STL, ITL and LTL, under the same rank names."""
+    return ranked_highs(-np.asarray(l, dtype=float))
+
+
+def compare_state(h: np.ndarray, l: np.ndarray, rank: str) -> np.ndarray:
+    """Each candle's structure from the last two known swings of ``rank``: lower high and lower low -1, higher high
+    and higher low +1, otherwise 0 (task 355's structure is ``compare_state(h, l, "STH")``)."""
+    n = len(h)
+    (hi, hk), (lo, lk) = ranked_highs(h)[rank], ranked_lows(l)[rank]
+    out = np.zeros(n, dtype=np.int64)
+    for i in range(n):
+        kh, kl = hi[hk <= i], lo[lk <= i]
+        if len(kh) < 2 or len(kl) < 2:
+            continue
+        if h[kh[-1]] < h[kh[-2]] and l[kl[-1]] < l[kl[-2]]:
+            out[i] = -1
+        elif h[kh[-1]] > h[kh[-2]] and l[kl[-1]] > l[kl[-2]]:
+            out[i] = 1
+    return out
+
+
+def break_state(o: np.ndarray, h: np.ndarray, l: np.ndarray, c: np.ndarray, rank: str, fvg: bool = False) -> np.ndarray:
+    """Each candle's structure from breaks, not sweeps: +1 after a candle closes above the latest unbroken known swing
+    high of ``rank``, -1 after one closes below the latest unbroken swing low, held until the other side breaks. A wick
+    beyond a swing that closes back inside is a sweep and changes nothing. With ``fvg`` the breaking candle must leave
+    a gap behind (it is C2 of an FVG in the break's direction), and the break is known at C3's close."""
+    n = len(c)
+    (hi, hk), (lo, lk) = ranked_highs(h)[rank], ranked_lows(l)[rank]
+    broken_h, broken_l = np.zeros(len(hi), bool), np.zeros(len(lo), bool)
+    change = np.zeros(n + 1, dtype=np.int64)              # the state set at each candle's close, 0 for none
+    for i in range(n):
+        ref_h = np.flatnonzero((hk < i) & ~broken_h)       # known before this candle, not yet closed above
+        ref_l = np.flatnonzero((lk < i) & ~broken_l)
+        if len(ref_h) and c[i] > h[hi[ref_h[-1]]]:
+            broken_h[ref_h[-1]] = True
+            if not fvg:
+                change[i] = 1
+            elif 0 < i < n - 1 and l[i + 1] > h[i - 1]:
+                change[i + 1] = 1
+        if len(ref_l) and c[i] < l[lo[ref_l[-1]]]:
+            broken_l[ref_l[-1]] = True
+            if not fvg:
+                change[i] = -1
+            elif 0 < i < n - 1 and h[i + 1] < l[i - 1]:
+                change[i + 1] = -1
+    out = np.zeros(n, dtype=np.int64)
+    state = 0
+    for i in range(n):
+        if change[i]:
+            state = int(change[i])
+        out[i] = state
+    return out
