@@ -206,6 +206,22 @@ def judge_race(races: Dict[str, pd.DataFrame]) -> dict:
             "lo": lo, "hi": hi, "positive": sum(v > 0 for v in per.values()), "markets": len(per)}
 
 
+def month_interval(frames: Dict[str, pd.DataFrame], call) -> Tuple[float, float]:
+    """The 95% interval of the hit rate's excess over each market's base rate, resampling calendar months (a
+    companion: a slow chain's calls run in streaks, so neighbouring dates are not independent)."""
+    parts = []
+    for d in frames.values():
+        side = call(d).astype(int)
+        valid = d["next_dir"].ne(0).to_numpy() & np.isfinite(d["next_body"].to_numpy())
+        up = float((d.loc[valid, "next_dir"] > 0).mean())
+        picked = (side != 0) & valid
+        s, nd = side[picked], d.loc[picked, "next_dir"].to_numpy()
+        parts.append(pd.DataFrame({"month": d.loc[picked, "next_time"].dt.strftime("%Y-%m").to_numpy(),
+                                   "x": (nd == s).astype(float) - np.where(s > 0, up, 1 - up)}))
+    t = pd.concat(parts, ignore_index=True)
+    return _interval(t["month"].to_numpy(), t["x"].to_numpy()) if len(t) else (np.nan, np.nan)
+
+
 # ── the run ────────────────────────────────────────────────────────────────
 
 def _market(args: Tuple[str, str]) -> Tuple[str, pd.DataFrame, pd.DataFrame]:
@@ -224,7 +240,8 @@ def _pts(x: float) -> str:
     return "–" if not np.isfinite(x) else f"{100 * x:+.1f}"
 
 
-def render(window: str, calls: Dict[str, dict], race: dict, cases: Dict[str, dict]) -> str:
+def render(window: str, calls: Dict[str, dict], race: dict, cases: Dict[str, dict],
+           months: Tuple[float, float]) -> str:
     since, until = WINDOWS[window]
     lines = [f"Window `{window}`: calls for D1 candles opening {since} to {until}.", "",
              "| | Calls | Hit | Base | Excess (pts) | 95% | Markets > 0 | Body (ranges) | Passes |",
@@ -234,7 +251,8 @@ def render(window: str, calls: Dict[str, dict], race: dict, cases: Dict[str, dic
         lines.append(f"| {name}: {ARMS[name]} | {r['calls']} | {r['hit']:.1%} | {r['base']:.1%} | "
                      f"{_pts(r['excess'])} | [{_pts(r['lo'])}, {_pts(r['hi'])}] | "
                      f"{r['positive']}/{len(r['per_market'])} (need {r['need']}) | {r['body']:+.3f} | {passes} |")
-    lines += ["", "H-K by the chain's case at the bias frame:", "",
+    lines += ["", f"H-K's excess, 95% over resampled months: [{_pts(months[0])}, {_pts(months[1])}].",
+              "", "H-K by the chain's case at the bias frame:", "",
               "| Case | Calls | Hit | Base | Excess (pts) | 95% |", "|---|---|---|---|---|---|"]
     for case, r in cases.items():
         lines.append(f"| {case} | {r['calls']} | {r['hit']:.1%} | {r['base']:.1%} | {_pts(r['excess'])} | "
@@ -264,7 +282,8 @@ def run(window: str, workers: int = 3) -> str:
         r = judge_calls(frames, MARKETS, lambda d, k=case: np.where(d["case"].eq(k), d["H-K"].fillna(0), 0))
         cases[case] = r
     race = judge_race({m: r for m, _, r in done})
-    return render(window, calls, race, cases)
+    months = month_interval(frames, lambda d: d["H-K"].fillna(0).to_numpy())
+    return render(window, calls, race, cases, months)
 
 
 def main() -> None:

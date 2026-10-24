@@ -13,7 +13,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from algo_research.search_chain import ARMS, Ladder, chain_rows, draw_race, judge_race, periods
+from algo_research.search_calls import daily_signals
+from algo_research.search_chain import ARMS, Ladder, chain_rows, draw_race, judge_race, month_interval, periods
 
 
 def bars_on(days, seed=0, wave=True):
@@ -110,3 +111,14 @@ def test_draw_race_against_geometry():
     r = judge_race({"X": race})
     assert (r["resolved"], r["open"], r["both"]) == (3, 1, 1)
     assert r["held"] == pytest.approx(1 / 3) and r["excess"] == pytest.approx(np.mean([1 - 1 / 3, -0.5, -5 / 14]))
+
+
+def test_month_interval_brackets_the_excess(wave):
+    b, rows = wave
+    frame = daily_signals(b).join(rows.drop(columns="time"))
+    lo, hi = month_interval({"X": frame, "Y": frame}, lambda d: d["H-K"].fillna(0).to_numpy())
+    called = frame[(frame["H-K"] != 0) & frame["next_dir"].ne(0) & frame["next_body"].notna()]
+    up = float((frame.loc[frame["next_dir"].ne(0) & frame["next_body"].notna(), "next_dir"] > 0).mean())
+    excess = ((called["next_dir"] == called["H-K"]).astype(float)
+              - np.where(called["H-K"] > 0, up, 1 - up)).mean()
+    assert lo <= excess <= hi and hi - lo > 0
