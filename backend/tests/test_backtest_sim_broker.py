@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import fakeredis
@@ -20,7 +21,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from agent.brokers.fill_model import Bar
-from agent.instruments import CommissionSpec, InstrumentSpec, InstrumentSpecs, money_per_price_unit
+from agent.instruments import CommissionSpec, InstrumentSpec, InstrumentSpecs, SwapSpec, money_per_price_unit
 from agent.nodes.execute_node import execute_node
 from agent.state import AgentMode, AgentState, DecisionAction, Direction, TradePlan
 from agent.strategy_config import PendingExpiry
@@ -273,6 +274,39 @@ def test_spread_wider_than_stop_still_measured_in_sized_risk():
     assert trade.net_r == pytest.approx((1.09994 - 0.00002 - 1.10000) / 0.00006 - trade.cost_r_commission)
     assert trade.pnl == pytest.approx(trade.net_r * trade.lots * 0.00006 * 100_000)
     assert trade.cost_flag
+
+
+def _swapped(long=-10.0, short=2.0) -> InstrumentSpecs:
+    return InstrumentSpecs("mt5", "USD", {"EURUSD": replace(SPECS["EURUSD"], swap=SwapSpec("POINTS", long, short, 3))})
+
+
+def test_swap_charged_per_rollover_held_through():
+    # liquidity-engine Req 25.1: filled Wednesday 09:00 New York, stopped out Thursday morning: held
+    # through Wednesday's 17:00 rollover, the triple one. 3 x -10 points x 1 lot = -$30, 0.30R.
+    b = priced(broker(_swapped()), "EURUSD", close=1.1010)
+    b.place_order(order("LONG", 1.1000, 1.0990, 1.1040, risk_amount=100.0))
+    b.advance("EURUSD", bar(T0, 1.1005, 1.1006, 1.0998, 1.1000))
+    [trade] = b.advance("EURUSD", bar(T0 + timedelta(hours=20), 1.0995, 1.0996, 1.0985, 1.0986))
+    assert trade.cost_r_swap == pytest.approx(0.30)
+    assert trade.net_r == pytest.approx(-1.09 - 0.30)
+    assert trade.cost_r == pytest.approx(trade.gross_r - trade.net_r)
+    assert trade.pnl == pytest.approx(-139.0)
+
+
+def test_swap_credit_and_no_rollover():
+    # A SHORT earning +2 points a night is credited: a negative cost.
+    b = priced(broker(_swapped()), "EURUSD", close=1.1010)
+    b.place_order(order("SHORT", 1.1020, 1.1030, 1.0980, risk_amount=100.0))
+    b.advance("EURUSD", bar(T0, 1.1015, 1.1022, 1.1014, 1.1018))
+    [short] = b.advance("EURUSD", bar(T0 + timedelta(hours=20), 1.1025, 1.1035, 1.1024, 1.1034))
+    assert short.cost_r_swap == pytest.approx(-0.06)
+    # Out before the rollover: no swap.
+    b = priced(broker(_swapped()), "EURUSD", close=1.1010)
+    b.place_order(order("LONG", 1.1000, 1.0990, 1.1040, risk_amount=100.0))
+    b.advance("EURUSD", bar(T0, 1.1005, 1.1006, 1.0998, 1.1000))
+    [same_day] = b.advance("EURUSD", bar(T0 + timedelta(hours=2), 1.0995, 1.0996, 1.0985, 1.0986))
+    assert same_day.cost_r_swap == 0.0 and same_day.net_r == pytest.approx(-1.09)
+    assert math.copysign(1.0, same_day.cost_r_swap) == 1.0      # not -0.0, which the journal prints as -0.0000
 
 
 # ── the rest of the BrokerClient interface ─────────────────────────────────

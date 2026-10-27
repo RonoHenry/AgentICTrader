@@ -24,18 +24,22 @@ name, so a pasted login or password fails loudly instead of being committed.
 A profile without spec_file is data-only: a source of candles (e.g. the
 New York-close reference server for the aggregation-parity test) that is
 never priced or traded.
+
+A profile is one account. ``swap_free = true`` marks a swap-free account:
+its specs carry no swap, whatever the spec file says, so a swap and a
+swap-free account at one broker share a spec file (liquidity-engine LE-D16).
 """
 from __future__ import annotations
 
 import os
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
-from agent.instruments import VENUES, InstrumentSpecs, load_specs
+from agent.instruments import NO_SWAP, VENUES, InstrumentSpecs, load_specs
 from services.market_data.mt5_clock import MT5ClockMismatchError, MT5ServerClock
 
 __all__ = ["BrokerProfile", "connect_mt5", "load_profile"]
@@ -44,7 +48,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PROFILES_DIR = Path("config") / "brokers"
 
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
-_TOP_LEVEL = {"venue", "spec_file", "server_clock", "credentials", "symbols"}
+_TOP_LEVEL = {"venue", "spec_file", "server_clock", "credentials", "symbols", "swap_free"}
 _MT5_REQUIRED_CREDENTIALS = ("login", "password", "server")
 _MT5_OPTIONAL_CREDENTIALS = ("path",)
 
@@ -59,6 +63,7 @@ class BrokerProfile:
     server_clock: Optional[str]
     credential_vars: Mapping[str, str]
     symbols: Mapping[str, str]
+    swap_free: bool = False      # a swap-free account: no swap is charged
 
     def symbol(self, instrument: str) -> str:
         """The broker's symbol for ``instrument`` (e.g. EURUSD -> EURUSDm)."""
@@ -77,6 +82,9 @@ class BrokerProfile:
             raise ValueError(
                 f"Profile {self.name!r} is venue {self.venue!r} but {self.spec_file} is venue {specs.venue!r}"
             )
+        if self.swap_free:
+            specs = InstrumentSpecs(specs.venue, specs.account_ccy,
+                                    {name: replace(spec, swap=NO_SWAP) for name, spec in specs.items()})
         return specs
 
     def credentials(self, getenv: Optional[GetEnv] = None) -> dict[str, str]:
@@ -133,6 +141,10 @@ def load_profile(name_or_path: str | Path, root: Path = REPO_ROOT) -> BrokerProf
         if not isinstance(symbol, str) or not symbol:
             raise ValueError(f"{path}: symbols.{instrument} must be a non-empty string")
 
+    swap_free = data.get("swap_free", False)
+    if not isinstance(swap_free, bool):
+        raise ValueError(f"{path}: swap_free must be true or false, got {swap_free!r}")
+
     spec_file = Path(data["spec_file"]) if "spec_file" in data else None
     if spec_file is not None and not spec_file.is_absolute():
         spec_file = root / spec_file
@@ -143,6 +155,7 @@ def load_profile(name_or_path: str | Path, root: Path = REPO_ROOT) -> BrokerProf
         server_clock=server_clock,
         credential_vars=credential_vars,
         symbols=symbols,
+        swap_free=swap_free,
     )
 
 

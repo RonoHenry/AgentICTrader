@@ -151,6 +151,7 @@ def test_journal_columns_order_and_fixed_precision():
     text = journal_csv(result.journal, result.open_orders)
     header = text.split("\n", 1)[0]
     assert header.split(",") == list(JOURNAL_COLUMNS)
+    assert "cost_r_swap" in JOURNAL_COLUMNS                     # swap (liquidity-engine Req 25.1)
     assert list(JOURNAL_COLUMNS[:8]) == ["t", "instrument", "setup_id", "grade", "decision", "reason", "killzone",
                                          "time_window"]
     stopped = next(r for r in _rows(text) if r["setup_id"] == "EURUSD-1")
@@ -195,3 +196,13 @@ def test_write_run_directory_and_byte_identical_rewrite(tmp_path):
     again = {p.name: p.read_bytes() for p in second.iterdir()}
     assert {k: v for k, v in again.items() if k != "manifest.json"} == {
         k: v for k, v in saved.items() if k != "manifest.json"}
+
+
+def test_stats_from_json_reads_summaries_written_before_swap():
+    """Task 240: runs written before swap was charged have no avg_cost_r_swap; their reports still regenerate."""
+    from algo_backtester.report import stats_from_json
+    from dataclasses import asdict
+    s = summarize(scripted().journal, 10_000.0, min_trades=30, resamples=200, seed=1)
+    values = json.loads(json.dumps(asdict(s.overall)))
+    del values["avg_cost_r_swap"]
+    assert stats_from_json(values).avg_cost_r_swap is None

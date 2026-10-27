@@ -39,19 +39,25 @@ Rules (Req 4):
   counts only its adverse extreme (the favourable one may predate the fill);
   an exit caps the excursion at the exit's market price.
 
-Validates: Requirements 4.1-4.12 (.kiro/specs/algo-backtester/requirements.md)
+Swap: ``swap_nights`` counts the nights a filled position pays, one per
+17:00 New York rollover it is held through from Monday to Friday, three on
+the instrument's triple day; the weekend has no rollover of its own.
+
+Validates: Requirements 4.1-4.12 (.kiro/specs/algo-backtester/requirements.md);
+Requirement 25.1 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta, timezone
 from typing import Literal, Optional
+from zoneinfo import ZoneInfo
 
 from agent.strategy_config import PendingExpiry
 from liquidity_engine.models import KillzoneWindow
 from liquidity_engine.utils.time_utils import KILLZONE_WINDOWS, get_killzone, to_est, to_utc
 
-__all__ = ["Bar", "FillEvent", "FillModel", "SimOrder", "pending_expiry"]
+__all__ = ["Bar", "FillEvent", "FillModel", "SimOrder", "pending_expiry", "swap_nights"]
 
 Direction = Literal["LONG", "SHORT"]
 OrderKind = Literal["MARKET", "LIMIT"]
@@ -217,3 +223,22 @@ def pending_expiry(placed_at: datetime, rule: PendingExpiry, fallback_ttl: timed
             end = KILLZONE_WINDOWS[window][1]
             return to_utc(ny.replace(hour=end.hour, minute=end.minute, second=0, microsecond=0))
     return placed_at + fallback_ttl
+
+
+_NEW_YORK = ZoneInfo("America/New_York")
+_ROLLOVER = time(17, 0)          # New York: the trading day's end, where MT5 brokers book swap
+
+
+def swap_nights(filled_at: datetime, closed_at: datetime, triple_day: int) -> int:
+    """Nights of swap for a position filled at ``filled_at`` and closed at
+    ``closed_at``: one per 17:00 New York rollover in (filled_at, closed_at]
+    from Monday to Friday, three on ``triple_day`` (MT5 numbering, 0 = Sunday).
+    A position filled at a rollover is opened after it; one still open at it pays."""
+    nights = 0
+    day, last = filled_at.astimezone(_NEW_YORK).date(), closed_at.astimezone(_NEW_YORK).date()
+    while day <= last:
+        rollover = datetime.combine(day, _ROLLOVER, tzinfo=_NEW_YORK).astimezone(timezone.utc)
+        if day.weekday() < 5 and filled_at < rollover <= closed_at:
+            nights += 3 if (day.weekday() + 1) % 7 == triple_day else 1
+        day += timedelta(days=1)
+    return nights

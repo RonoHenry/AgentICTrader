@@ -26,7 +26,7 @@ const TOOLS = [
   { type: "short", icon: "▼", title: "Short position: entry, stop, target (Alt+S)", key: "s" },
 ];
 const LAYERS = [["fractal", "Fractal + POI"], ["modelA", "Model A"], ["modelAFramed", "Model A: unswept C1s"], ["arrays", "Arrays"], ["pools", "Pools"],
-                ["profile", "Day bias & draw"], ["trend", "Trend"], ["sequence", "Setup"], ["candidates", "Candidates"],
+                ["profile", "Day bias & draw"], ["trend", "Trend"], ["chain", "Chain & stack"], ["sequence", "Setup"], ["candidates", "Candidates"],
                 ["orders", "Orders & trades"]];
 // The trader's trend (context-engine Requirement 23): the frames it is read on.
 const TREND_TFS = ["H1", "H4", "D1"];
@@ -39,6 +39,7 @@ const maShown = () => S.ma.filter((y) => S.layers.modelAFramed || maSwept(y));
 const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, journal: [], ideas: [], playing: false, busy: false, picks: {}, hl: null,
             ma: [], maSet: Prefs.get("watch.maSet", "model_d1"), maAt: null,
             trendTf: Prefs.get("watch.trendTf", "H1"), trend: { rows: [], withheld: false, at: null },
+            chain: { rows: [], withheld: false, at: null, smt: "" },
             speed: 1, digits: 5, layers: Prefs.get("watch.layers", { arrays: true, pools: true, profile: true, sequence: true, orders: true }),
             arrayMode: Prefs.get("watch.arrayMode", "interval"), arrayVis: Prefs.get("watch.arrayVis", {}) };
 // The chart timeframes each array timeframe shows on by default (Requirement 14.3); the trader can change them.
@@ -48,6 +49,7 @@ const ARRAY_SHOWS = { M1: ["M1", "M5"], M3: ["M1", "M10"], M5: ["M1", "M15"], M1
 const arrayInterval = (tf) => S.arrayVis[tf] || ARRAY_SHOWS[tf] || null;
 if (S.layers.modelA === undefined) S.layers.modelA = true;      // new in 2026-10-15: on until switched off
 if (S.layers.fractal === undefined) S.layers.fractal = true;    // new in 2026-10-19: the trader's indicator
+if (S.layers.chain === undefined) S.layers.chain = true;        // new in 2026-10-24: the chain and the stack
 
 // ── the chart ─────────────────────────────────────────────────────────────
 const chart = LightweightCharts.createChart($("chart"), {
@@ -318,6 +320,7 @@ function paintEngine(ctx, size) {
     }
   }
   if (S.layers.trend) paintTrend(ctx, size, pal, text);
+  if (S.layers.chain) paintChain(ctx, size, pal, text, line);
   ctx.restore();
 }
 // The trader's trend (context-engine Requirement 23): a strip along the chart's foot, one cell per closed candle of
@@ -338,6 +341,87 @@ function paintTrend(ctx, size, pal, text) {
     .map(([k, name]) => `${name} ${arrow(last[k])}`).join("  ");
   text(`Trend ${S.trendTf} ${arrow(last.trend)} ${last.score > 0 ? "+" : ""}${last.score}   ${parts}`, 6, y - 3,
        last.trend < 0 ? pal.bad : last.trend > 0 ? pal.good : pal.muted);
+}
+// The context chain and the confluence stack (2026-10-24): what H-K and H-M read at each D1 close, on the candles.
+// A strip along the chart's top, one cell per closed D1 candle: the stack's call (green up, red down, grey none)
+// with its score and, once the next candle has closed, a tick or a cross; under it a thin bar for the chain alone.
+// The latest close's frames are drawn to the right of it: the W1 and D1 dealing ranges with their 50% (the MN1
+// range faint), each frame's POIs (dashed once reached), and the chain's draw.
+function paintChain(ctx, size, pal, text, line) {
+  const W = size.width;
+  if (S.chain.withheld) { text("Chain & stack: hidden until you reveal", 6, 14, pal.muted); return; }
+  const rows = S.chain.rows;
+  if (!rows.length) return;
+  for (const r of rows) {
+    const x1 = X(r.open), x2 = X(r.close);
+    if (!isFinite(x1) || !isFinite(x2) || x2 < 0 || x1 > W) continue;
+    const c = r.call > 0 ? pal.good : r.call < 0 ? pal.bad : pal.muted;
+    ctx.fillStyle = rgba(hexOf(c), r.call ? 0.85 : 0.25); ctx.fillRect(x1 + 1, 2, Math.max(x2 - x1 - 2, 2), 8);
+    const k = r.chain_call > 0 ? pal.good : r.chain_call < 0 ? pal.bad : pal.muted;
+    ctx.fillStyle = rgba(hexOf(k), r.chain_call ? 0.6 : 0.15); ctx.fillRect(x1 + 1, 11, Math.max(x2 - x1 - 2, 2), 3);
+    let s = `${r.score > 0 ? "+" : ""}${r.score}`;
+    if (r.next != null && r.call) s += r.next === r.call ? " ✓" : " ✗";
+    text(s, (x1 + x2) / 2, 26, c, "center");
+  }
+  const last = rows[rows.length - 1], x0 = Math.max(X(last.close), -10);
+  const frames = Object.fromEntries((last.frames || []).map((f) => [f.tf, f]));
+  const range = (f, color, dash, alpha) => {
+    if (!f || !f.range) return;
+    const [lo, hi] = f.range, mid = (lo + hi) / 2, col = rgba(hexOf(color), alpha);
+    line(x0, Y(hi), W, Y(hi), col, dash, 1); line(x0, Y(lo), W, Y(lo), col, dash, 1); line(x0, Y(mid), W, Y(mid), col, [8, 4], 1);
+    text(`${f.tf} high ${fmt(hi)}`, W - 4, Y(hi) - 2, col, "right"); text(`${f.tf} low ${fmt(lo)}`, W - 4, Y(lo) + 11, col, "right");
+    text(`${f.tf} 50% · ${f.zone || "unranged"}${f.position != null ? " " + Math.round(100 * f.position) + "%" : ""}`, W - 4, Y(mid) - 2, col, "right");
+  };
+  range(frames.MN1, pal.muted, [1, 3], 0.6); range(frames.W1, pal.accent, [], 0.9); range(frames.D1, pal.ink, [4, 3], 0.6);
+  for (const f of last.frames || []) {
+    for (const [key, color] of [["poi_bull", pal.up], ["poi_bear", pal.bad]]) {
+      const p = f[key];
+      if (!p) continue;
+      const px = Math.max(X(p.formed), -10), a = Y(p.high), b = Y(p.low);
+      if (!isFinite(a) || !isFinite(b)) continue;
+      ctx.fillStyle = rgba(hexOf(color), p.reached != null ? 0.06 : 0.14); ctx.fillRect(px, Math.min(a, b), W - px, Math.abs(b - a));
+      ctx.strokeStyle = rgba(hexOf(color), 0.7); ctx.lineWidth = 1; ctx.setLineDash(p.reached != null ? [3, 3] : []);
+      ctx.strokeRect(px, Math.min(a, b), W - px, Math.abs(b - a)); ctx.setLineDash([]);
+      text(`${f.tf} POI · ${p.kind} ${p.reached != null ? "reached" : "unreached"}`, Math.max(px, 0) + 3, Math.min(a, b) - 2, color);
+    }
+  }
+  const links = last.links || [], bias = links[links.length - 1];
+  if (bias && bias.draw) {
+    const c = bias.context === "BULLISH" ? pal.good : pal.bad, y = Y(bias.draw.price);
+    line(x0, y, W, y, c, [6, 3], 2);
+    text(`draw → ${bias.draw.tf} ${bias.draw.source} ${fmt(bias.draw.price)}`, Math.max(x0, 0) + 3, y - 3, c);
+  }
+  const read = bias ? `${bias.context} (${bias.case.replace(/_/g, " ").toLowerCase()})` : "no chain yet";
+  text(`Chain: D1 ${read} · stack ${last.score > 0 ? "+" : ""}${last.score} of 13 · ${last.call ? (last.call > 0 ? "call up" : "call down") : "no call (needs ±7)"}`,
+       6, 40, last.call > 0 ? pal.good : last.call < 0 ? pal.bad : pal.muted);
+}
+async function loadChain() {
+  if (!S.status || !S.layers.chain) { S.chain = { rows: [], withheld: false, at: null, smt: "" }; return; }
+  const key = `${Math.floor((S.t + 7 * 3600) / 86400)}|${!!(S.state && S.state.withheld)}`;   // D1 closes at 17:00 New York
+  if (S.chain.at === key) return;
+  const got = await api(`/api/watch/chain?t=${S.t}`);
+  S.chain = { rows: got.rows || [], withheld: !!got.withheld, at: key, smt: got.smt || "" };
+}
+// The chain and the stack at the latest D1 close, in words: each frame's read, the links and the thirteen votes.
+const VOTE_NAMES = { "own-MN1": "MN1 own", "own-W1": "W1 own", "own-D1": "D1 own", "H-K": "chain", profile: "candle profile",
+                     "zone-W1": "W1 P/D", "zone-D1": "D1 P/D", structure: "structure", closes: "closes", liquidity: "failed sweep",
+                     arrays: "arrays", po3: "PO3", smt: "SMT" };
+function chainCard() {
+  if (S.chain.withheld) return `<div class="card"><b>Chain & stack</b><div class="muted">Hidden: this session is blind.</div></div>`;
+  const rows = S.chain.rows, last = rows[rows.length - 1];
+  if (!last) return `<div class="card"><b>Chain & stack</b><div class="muted">No D1 candle has closed in view yet.</div></div>`;
+  const arrow = (v) => (v > 0 ? "▲" : v < 0 ? "▼" : "–");
+  const frames = (last.frames || []).map((f) => `<div><b>${esc(f.tf)}</b> own ${esc(f.own)} · ${esc(f.zone || "unranged")}${f.position != null ? ` (${Math.round(100 * f.position)}%)` : ""} · trend ${esc(f.trend)}
+      <div class="muted">${esc(f.reasons.range)}; ${esc(f.reasons.own)}; POI ▲ ${esc(f.reasons.poi_bullish)}; POI ▼ ${esc(f.reasons.poi_bearish)}</div></div>`).join("");
+  const links = (last.links || []).map((x) => `<div>${esc(x.reason)}</div>`).join("");
+  const votes = Object.entries(last.votes).map(([k, v]) => `<span class="${v > 0 ? "good" : v < 0 ? "bad" : "muted"}">${esc(VOTE_NAMES[k] || k)} ${arrow(v)}</span>`).join(" · ");
+  const res = last.next == null ? "the next candle hasn't closed" : `next candle ${arrow(last.next)}${last.call ? (last.next === last.call ? ": right" : ": wrong") : ""}`;
+  const called = rows.filter((r) => r.call && r.next != null), right = called.filter((r) => r.next === r.call).length;
+  return `<div class="card"><b>Chain & stack</b> at the D1 close ${fmtTime(last.close)}
+    <div>Stack <b>${last.score > 0 ? "+" : ""}${last.score}</b> of 13: ${last.call ? `<b>${last.call > 0 ? "up" : "down"}</b>` : "no call (needs ±7)"} · the chain alone ${arrow(last.chain_call)} · ${esc(res)}</div>
+    <div class="muted">${votes}</div>${frames ? `<div class="hint">Frames</div>${frames}<div class="hint">Links (PD_POI)</div>${links}`
+      : `<div class="muted">The monthly frame has no range yet: the chain needs more closed months of history.</div>`}
+    <div class="hint">SMT ${esc(S.chain.smt)}. In view: ${called.length} stack call(s) resolved, ${right} right.</div></div>`;
 }
 function paintModelA(ctx, size, pal, text, line) {
   const W = size.width;
@@ -595,7 +679,7 @@ async function loadBars(fit) {
 }
 async function loadState() {
   S.state = (await api(`/api/watch/state?t=${S.t}`)).state;
-  await loadModelA(); await loadTrend();
+  await loadModelA(); await loadTrend(); await loadChain();
   await fractal.tick();
   renderFractal();
   Shell.refresh("t=" + S.t);
@@ -621,7 +705,7 @@ async function advance(dt) {
     const got = (await api(`/api/watch/bars?tf=${S.tf}&until=${S.t}&since=${last ? last.time : S.t - 86400}`)).bars;
     try { for (const b of got) put(b); } catch (e) { await loadBars(false); }
     if (Math.floor(S.t / 900) !== Math.floor(before / 900)) await loadState();
-    else { await loadModelA(); await loadTrend(); await fractal.tick(); renderFractal(); renderEngine(); renderLog(); refresh(); }
+    else { await loadModelA(); await loadTrend(); await loadChain(); await fractal.tick(); renderFractal(); renderEngine(); renderLog(); refresh(); }
     await noculus.tick();                               // the trader's own trades settle to the clock too
     renderHeader();
   } finally { S.busy = false; }
@@ -702,7 +786,7 @@ function buildLayers() {
     c.type = "checkbox"; c.checked = !!S.layers[key];
     c.onchange = () => act(async () => { S.layers[key] = c.checked; Prefs.set("watch.layers", S.layers); S.maAt = null;
                                          fractal.setOn(S.layers.fractal); await fractal.tick(); renderFractal();
-                                         await loadModelA(); await loadTrend(); renderEngine(); renderLog(); refresh(); });
+                                         await loadModelA(); await loadTrend(); await loadChain(); renderEngine(); renderLog(); refresh(); });
     l.append(c, " " + name); box.append(l);
     if (key === "fractal") {
       const gear = document.createElement("button");
@@ -714,13 +798,13 @@ function buildLayers() {
   const ma = document.createElement("select");
   ma.id = "maSet"; ma.title = "Which of your frame sets Model A reads";
   ma.innerHTML = MA_SETS.map(([v, t]) => `<option value="${v}" ${S.maSet === v ? "selected" : ""}>${t}</option>`).join("");
-  ma.onchange = () => act(async () => { S.maSet = ma.value; Prefs.set("watch.maSet", ma.value); S.maAt = null; await loadModelA(); await loadTrend(); renderEngine(); renderLog(); refresh(); });
+  ma.onchange = () => act(async () => { S.maSet = ma.value; Prefs.set("watch.maSet", ma.value); S.maAt = null; await loadModelA(); await loadTrend(); await loadChain(); renderEngine(); renderLog(); refresh(); });
   box.append(ma);
   const tr = document.createElement("select");
   tr.id = "trendTf"; tr.title = "The frame your trend is read on (the Trend layer)";
   tr.innerHTML = TREND_TFS.map((v) => `<option value="${v}" ${S.trendTf === v ? "selected" : ""}>trend: ${v}</option>`).join("");
   tr.onchange = () => act(async () => { S.trendTf = tr.value; Prefs.set("watch.trendTf", tr.value); S.trend.at = null;
-                                        await loadTrend(); refresh(); });
+                                        await loadTrend(); await loadChain(); refresh(); });
   box.append(tr);
   const sel = document.createElement("select");
   sel.title = "Which of the engine's arrays to draw";
@@ -820,6 +904,7 @@ function renderEngine() {
       : unswept ? `<div class="muted">${unswept} C1 candidate(s) framed, none run by C2 yet ("Model A: unswept C1s" shows them).</div>`
       : `<div class="muted">Nothing framed: price isn't in premium with a POI above (or discount with one below) on ${esc(label.split(": ")[1] || "")}, or C2 would open outside the early phases (20:00-07:00 New York).</div>`) + `</div>`;
   }
+  if (S.layers.chain) html += chainCard();
   const open = S.journal.find((r) => r.filled_at != null && r.filled_at <= S.t && (r.closed_at == null || r.closed_at > S.t));
   if (open) {
     html += `<div class="card"><b>Open trade</b>: ${esc(open.direction)} from ${fmt(open.fill)}, stop ${fmt(open.stop)}, target ${fmt(open.target)}.

@@ -17,7 +17,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from agent.brokers.fill_model import Bar, FillModel, SimOrder, pending_expiry
+from agent.brokers.fill_model import Bar, FillModel, SimOrder, pending_expiry, swap_nights
 from agent.strategy_config import PendingExpiry
 
 UTC = timezone.utc
@@ -331,3 +331,31 @@ def test_property_7_loss_bounded_by_stop_unless_gapped(case):
     risk = abs(o.ideal_fill - o.stop)
     gross_r = sign * (o.ideal_exit - o.ideal_fill) / risk
     assert gross_r >= -1 - 1e-9
+
+
+# ── swap rollovers (liquidity-engine Req 25.1, task 240) ───────────────────
+
+_NY = ZoneInfo("America/New_York")
+
+
+def ny_at(y, m, d, h, mi=0) -> datetime:
+    return datetime(y, m, d, h, mi, tzinfo=_NY).astimezone(timezone.utc)
+
+
+@pytest.mark.parametrize("filled, closed, nights", [
+    (ny_at(2026, 1, 13, 10), ny_at(2026, 1, 13, 16, 59), 0),     # Tuesday, inside the day
+    (ny_at(2026, 1, 13, 10), ny_at(2026, 1, 13, 17), 1),         # still open at Tuesday's 17:00 rollover
+    (ny_at(2026, 1, 13, 17), ny_at(2026, 1, 14, 9), 0),          # filled at the rollover: after it
+    (ny_at(2026, 1, 14, 10), ny_at(2026, 1, 15, 9), 3),          # Wednesday's rollover is the triple one
+    (ny_at(2026, 1, 16, 10), ny_at(2026, 1, 19, 9), 1),          # Friday's; none over the weekend
+    (ny_at(2026, 1, 12, 10), ny_at(2026, 1, 19, 9), 7),          # a week: 1 + 1 + 3 + 1 + 1
+    (ny_at(2026, 7, 14, 10), ny_at(2026, 7, 16, 9), 4),          # EDT: Tuesday, then Wednesday's triple
+])
+def test_swap_nights_count_the_17_00_new_york_rollovers(filled, closed, nights):
+    assert swap_nights(filled, closed, triple_day=3) == nights
+
+
+def test_triple_day_is_the_specs():
+    # MT5 numbers days from Sunday = 0: 5 is a Friday triple, as some metals use.
+    assert swap_nights(ny_at(2026, 1, 16, 10), ny_at(2026, 1, 19, 9), triple_day=5) == 3
+    assert swap_nights(ny_at(2026, 1, 14, 10), ny_at(2026, 1, 15, 9), triple_day=5) == 1

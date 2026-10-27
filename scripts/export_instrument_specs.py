@@ -22,6 +22,11 @@ MT5 (reads only, places nothing):
 - Cross-check: our money-per-tick must match the broker's trade_tick_value
   for pairs quoted or based in the account currency. A mismatch means the
   currency conversion would be wrong, so the file is not written.
+- Swap (liquidity-engine Req 25.1): swap_long, swap_short, swap_mode and
+  swap_rollover3days. Modes other than points, base-currency or deposit-
+  currency money are a problem. --swap-only reads just these and merges
+  them into the existing file, leaving the measured spreads and the rest
+  as they were, so swap is the only change between two runs.
 
 Binance (public endpoints, no key): tick and lot sizes from exchangeInfo.
 Fee is 0.001 per side, default spread is one tick, and stop slippage is
@@ -33,7 +38,7 @@ from: a demo server's pricing (e.g. MetaQuotes-Demo) is not a live broker's.
 
 Usage (a broker profile supplies venue, credentials, clock, symbols and output file):
     python scripts/export_instrument_specs.py --profile exness-standard \\
-        [--instruments EURUSD,GBPUSD] [--commission XAUUSD=0] [--spread EURUSD=8]
+        [--instruments EURUSD,GBPUSD] [--commission XAUUSD=0] [--spread EURUSD=8] [--swap-only]
     python scripts/export_instrument_specs.py --profile binance
 or without a profile (legacy .env MT5_* settings):
     python scripts/export_instrument_specs.py --venue mt5 \\
@@ -47,6 +52,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -60,10 +66,13 @@ if str(REPO_ROOT) not in sys.path:
 
 from agent import broker_profiles  # noqa: E402
 from agent.instruments import (  # noqa: E402
+    NO_SWAP,
     CommissionSpec,
     InstrumentSpec,
     InstrumentSpecs,
+    SwapSpec,
     dumps_specs,
+    load_specs,
     money_per_price_unit,
 )
 
@@ -78,6 +87,8 @@ TICK_VALUE_TOLERANCE = 0.02       # 2% — tick values move with price between s
 BINANCE_ACCOUNT_CCY = "USDT"
 BINANCE_FEE_RATE = 0.001          # spot taker/maker, per side
 BINANCE_STOP_SLIPPAGE_RATE = 0.0005
+# SYMBOL_SWAP_MODE_* the cost model prices; 3 (margin currency) and 5-8 (interest, reopen) are not.
+MT5_SWAP_MODES = {0: "DISABLED", 1: "POINTS", 2: "CURRENCY_SYMBOL", 4: "CURRENCY_DEPOSIT"}
 
 
 # ── MT5 ────────────────────────────────────────────────────────────────────
@@ -118,6 +129,10 @@ def mt5_specs(
         info = mt5.symbol_info(symbol) if mt5.symbol_select(symbol, True) else None
         if info is None:
             problems.append(f"{instrument}: symbol {symbol!r} not found on this MT5 server")
+            continue
+        swap, problem = _swap(instrument, info)
+        if problem:
+            problems.append(problem)
             continue
 
         if instrument in overrides:
@@ -165,6 +180,7 @@ def mt5_specs(
                 max(STOP_SLIPPAGE_MIN_POINTS, STOP_SLIPPAGE_SPREAD_SHARE * spread_points), point
             ),
             commission=CommissionSpec(kind="PER_LOT_PER_SIDE", value=float(commission)),
+            swap=swap,
         )
         mismatch = _tick_value_mismatch(spec, info, mt5.symbol_info_tick(symbol), account_ccy)
         if mismatch:
@@ -172,6 +188,36 @@ def mt5_specs(
             continue
         specs[instrument] = spec
     return InstrumentSpecs(venue="mt5", account_ccy=account_ccy, specs=specs), problems
+
+
+def mt5_swaps(mt5: Any, instruments: Iterable[str], symbol_suffix: str = "",
+              symbols: Optional[Mapping[str, str]] = None) -> tuple[dict[str, SwapSpec], list[str]]:
+    """Each instrument's swap only, for --swap-only."""
+    swaps: dict[str, SwapSpec] = {}
+    problems: list[str] = []
+    for instrument in instruments:
+        symbol = symbols[instrument] if symbols and instrument in symbols else f"{instrument}{symbol_suffix}"
+        info = mt5.symbol_info(symbol) if mt5.symbol_select(symbol, True) else None
+        if info is None:
+            problems.append(f"{instrument}: symbol {symbol!r} not found on this MT5 server")
+            continue
+        swap, problem = _swap(instrument, info)
+        if problem:
+            problems.append(problem)
+        else:
+            swaps[instrument] = swap
+    return swaps, problems
+
+
+def _swap(instrument: str, info: Any) -> tuple[Optional[SwapSpec], Optional[str]]:
+    mode = MT5_SWAP_MODES.get(int(info.swap_mode))
+    if mode is None:
+        return None, (f"{instrument}: swap mode {info.swap_mode} (SYMBOL_SWAP_MODE_*) isn't supported; "
+                      f"the cost model prices points, base-currency and deposit-currency swaps")
+    if mode == "DISABLED":
+        return NO_SWAP, None
+    return SwapSpec(mode=mode, long=float(info.swap_long), short=float(info.swap_short),
+                    triple_day=int(info.swap_rollover3days)), None
 
 
 def _price_units(points: float, point: float) -> float:
@@ -280,6 +326,30 @@ def _parse_overrides(text: str) -> dict[str, float]:
     return overrides
 
 
+def _merge_swaps(out: Path, swaps: Mapping[str, SwapSpec], problems: list[str], source: str) -> int:
+    """Write ``swaps`` into the existing spec file at ``out``, every other field unchanged."""
+    if not out.is_file():
+        problems.append(f"{out} doesn't exist yet: export the full specs first")
+    else:
+        existing = load_specs(out)
+        problems += [f"{i}: not in {out}" for i in swaps if i not in existing]
+    if problems:
+        print(f"Not writing {out} — fix these first:", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+    merged = InstrumentSpecs(existing.venue, existing.account_ccy,
+                             {name: replace(spec, swap=swaps.get(name, spec.swap)) for name, spec in existing.items()})
+    old_source = next((line[len("# Source: "):] for line in out.read_text(encoding="utf-8").splitlines()
+                       if line.startswith("# Source: ")), "unknown")
+    stamp = f"{old_source}; swap only from {source}, exported {datetime.now(timezone.utc):%Y-%m-%d}"
+    out.write_text(dumps_specs(merged, source=stamp), encoding="utf-8")
+    print(f"Updated the swap of {len(swaps)} instrument(s) in {out}:")
+    for name, swap in swaps.items():
+        print(f"  {name:<9} {swap.mode} long {swap.long:g} short {swap.short:g} triple day {swap.triple_day}")
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     target = parser.add_mutually_exclusive_group(required=True)
@@ -290,6 +360,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--commission", default="", help="MT5 overrides, e.g. XAUUSD=3.5 (per lot per side)")
     parser.add_argument("--spread", default="", help="MT5 overrides in points, e.g. EURUSD=8,GBPUSD=10")
     parser.add_argument("--deals-days", type=int, default=180, help="MT5 deal history window for commission")
+    parser.add_argument("--swap-only", action="store_true",
+                        help="MT5: update only the swap fields of the existing output file")
     args = parser.parse_args(argv)
 
     profile = broker_profiles.load_profile(args.profile) if args.profile else None
@@ -320,6 +392,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         try:
             account = mt5.account_info()
             source = f"{account.company} / {account.server}"
+            if args.swap_only:
+                swaps, problems = mt5_swaps(mt5, instruments, symbol_suffix=suffix, symbols=symbols)
+                return _merge_swaps(out, swaps, problems, source)
             specs, problems = mt5_specs(
                 mt5, instruments, symbol_suffix=suffix,
                 commission_overrides=_parse_overrides(args.commission),

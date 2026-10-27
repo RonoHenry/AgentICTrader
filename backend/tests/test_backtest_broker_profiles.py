@@ -15,7 +15,7 @@ from typing import Optional
 import pytest
 
 from agent.broker_profiles import BrokerProfile, connect_mt5, load_profile
-from agent.instruments import CommissionSpec, InstrumentSpec, InstrumentSpecs, dumps_specs
+from agent.instruments import NO_SWAP, CommissionSpec, InstrumentSpec, InstrumentSpecs, SwapSpec, dumps_specs
 from services.market_data.mt5_clock import MT5ClockMismatchError
 
 ENV = {"MT5_LOGIN": "12345", "MT5_PASSWORD": "pw", "MT5_SERVER": "Broker-Demo"}
@@ -27,6 +27,7 @@ def _spec_file(tmp_path, venue="mt5"):
         volume_min=0.01, volume_step=0.01, volume_max=100.0, base_ccy="EUR", quote_ccy="USD",
         default_spread=0.00008, stop_slippage=0.00002,
         commission=CommissionSpec(kind="PER_LOT_PER_SIDE", value=0.0),
+        swap=SwapSpec(mode="POINTS", long=-7.0, short=1.0, triple_day=3),
     )
     path = tmp_path / "specs.toml"
     path.write_text(dumps_specs(InstrumentSpecs(venue=venue, account_ccy="USD", specs={"EURUSD": spec})),
@@ -257,3 +258,29 @@ def test_history_loader_accepts_profile(tmp_path, monkeypatch):
     asyncio.run(loader.load_all_data(["EURUSD"], ["M1"], 0.01, resume=False, dry_run=True, profile=profile))
 
     assert fetched == [("EURUSDm", "EURUSD", "+0")]
+
+
+# ── swap-free accounts (liquidity-engine LE-D16, task 240) ────────────────
+
+def test_swap_free_profile_charges_no_swap(tmp_path):
+    swap_account = load_profile(_profile_file(tmp_path))
+    assert not swap_account.swap_free and swap_account.specs()["EURUSD"].swap.long == -7.0
+    body = _profile_file(tmp_path).read_text(encoding="utf-8").replace('server_clock = "+0"',
+                                                                       'server_clock = "+0"\nswap_free = true')
+    swap_free = load_profile(_profile_file(tmp_path, body, name="swap-free"))
+    assert swap_free.swap_free and swap_free.specs()["EURUSD"].swap == NO_SWAP
+    assert swap_free.specs()["EURUSD"].default_spread == swap_account.specs()["EURUSD"].default_spread
+
+
+def test_swap_free_must_be_true_or_false(tmp_path):
+    body = _profile_file(tmp_path).read_text(encoding="utf-8").replace('server_clock = "+0"',
+                                                                       'server_clock = "+0"\nswap_free = "yes"')
+    with pytest.raises(ValueError, match="swap_free"):
+        load_profile(_profile_file(tmp_path, body, name="bad"))
+
+
+def test_exness_swap_free_profile_is_the_same_account_type_without_swap():
+    swap, free = load_profile("exness-standard"), load_profile("exness-standard-swapfree")
+    assert free.swap_free and not swap.swap_free
+    assert (free.venue, free.spec_file, free.symbols, free.server_clock) == (
+        swap.venue, swap.spec_file, swap.symbols, swap.server_clock)

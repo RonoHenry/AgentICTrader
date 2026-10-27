@@ -7,12 +7,13 @@ Validates: Requirements 5.1, 5.2
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from agent.instruments import load_specs
+from agent.instruments import NO_SWAP, SwapSpec, load_specs
 from scripts.export_instrument_specs import (
     binance_specs,
     commission_per_lot_per_side,
@@ -39,6 +40,10 @@ def _symbol_info(**overrides):
         currency_base="EUR",
         currency_profit="USD",
         bid=1.0850,
+        swap_mode=0,                   # SYMBOL_SWAP_MODE_DISABLED
+        swap_long=0.0,
+        swap_short=0.0,
+        swap_rollover3days=3,          # Wednesday
     )
     info.update(overrides)
     return SimpleNamespace(**info)
@@ -262,6 +267,37 @@ def test_binance_specs_from_exchange_info():
 def test_binance_unknown_symbol_is_a_problem():
     _, problems = binance_specs(_BINANCE_EXCHANGE_INFO, ["BTCUSDT", "NOPEUSDT"], prices={"BTCUSDT": 60_000.0})
     assert any("NOPEUSDT" in p for p in problems)
+
+
+# ── swap (liquidity-engine Req 25.1, task 240) ─────────────────────────────
+
+def test_reads_swap_fields():
+    specs, problems = mt5_specs(_fake_eurusd(swap_mode=1, swap_long=-7.2, swap_short=1.1, swap_rollover3days=5),
+                                ["EURUSD"])
+    assert problems == []
+    assert specs["EURUSD"].swap == SwapSpec(mode="POINTS", long=-7.2, short=1.1, triple_day=5)
+    assert mt5_specs(_fake_eurusd(), ["EURUSD"])[0]["EURUSD"].swap == NO_SWAP      # swaps disabled
+
+
+def test_unsupported_swap_mode_is_a_problem():
+    specs, problems = mt5_specs(_fake_eurusd(swap_mode=5, swap_long=-1.0), ["EURUSD"])   # INTEREST_CURRENT
+    assert "EURUSD" not in specs and "swap mode" in problems[0]
+
+
+def test_swap_only_keeps_every_other_field(tmp_path, monkeypatch):
+    # The measured spreads stay put, so swap is the only change between runs.
+    out = tmp_path / "mt5.toml"
+    monkeypatch.setattr("scripts.export_instrument_specs._connect_mt5", lambda: (_fake_eurusd(), ""))
+    assert main(["--venue", "mt5", "--instruments", "EURUSD", "--out", str(out)]) == 0
+    before = load_specs(out)["EURUSD"]
+    swapped = _fake_eurusd(swap_mode=1, swap_long=-7.2, swap_short=1.1)
+    swapped._spreads = {"EURUSD": [30, 30, 30]}                          # today's spread differs
+    monkeypatch.setattr("scripts.export_instrument_specs._connect_mt5", lambda: (swapped, ""))
+    assert main(["--venue", "mt5", "--instruments", "EURUSD", "--out", str(out), "--swap-only"]) == 0
+    after = load_specs(out)["EURUSD"]
+    assert after.swap == SwapSpec(mode="POINTS", long=-7.2, short=1.1, triple_day=3)
+    assert replace(after, swap=before.swap) == before
+    assert "swap only" in out.read_text(encoding="utf-8")                 # provenance
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────

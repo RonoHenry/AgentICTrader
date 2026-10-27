@@ -391,14 +391,39 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
   - **Done 2026-10-24.** 4 tests. Each range comes out as an `Objective` (`IPDA20_HIGH` ... `IPDA60_LOW`), formed at its candle's close. They pass through the frame state's taken check like any other level.
   - **Validates: Requirements 27.1–27.3**
 
-- [ ] 366. The chain's daily calls, measured (Requirement 28) **(user review: the pass rule)**
+- [x] 366. The chain's daily calls, measured (Requirement 28) **(user review: the pass rule)**
+  - **Done 2026-10-24: H-K fails.** Registered at 8901bfe with the trader's pass rule (the daily calls'). On development (2018-07 to 2022), 8,888 calls hit 49.2% against a base of 49.0%: +0.2 points [−1.1, +1.5], positive in 3 of 9 markets.
+    - Every ablation sits within ±1.5 points of drift, as does each frame alone. Without the IPDA ranges it is +0.9 [−0.5, +2.3], 8 of 9 markets: a lead from development data only.
+    - The draw comes first as often as geometry once the bars that reached both levels are split.
+    - Written up in `docs/research/SEARCH_2018_2024.md`. Tries 11, passes 0; 2023-2024 still unread.
   - **RED** (synthetic bars only, nothing read from the snapshot): `test_weeks_and_months_close_on_the_calendar`, `test_forming_week_stretches_the_range`, `test_call_reads_only_the_past` (Property 2), `test_no_call_until_every_frame_has_a_range`, `test_draw_race_against_geometry`.
   - **GREEN:** `algo_research/search_chain.py`; H-K appended to `docs/research/SEARCH_2018_2024.md`.
   - **The trader confirms H-K's pass rule.** The commit is the registration. Then one development run; the log records it, pass or fail.
+  - *Status 2026-10-24:* the harness is built and committed before any data was read. `Ladder` builds the frames from D1 bars; `chain_rows` reads every arm at every close; `draw_race` and `judge_race` handle the companion; `run` judges with `search_calls.judge_calls`. 6 tests on synthetic bars, Property 2 included. About 47 s per market for the development window. The registration is next.
   - **Validates: Requirements 28.1–28.4**
 
-- [ ] 367. SMT and the dollar index (Requirement 29) — after 366 has reported
+- [x] 367. SMT and the dollar index (Requirement 29) — after 366 has reported
+  - **Done 2026-10-24: H-L fails.** Registered at e791bef. On development, 1,957 calls hit 48.1% against a base of 49.0%: −0.9 points [−3.8, +1.9], 2 of 7 markets.
+    - SMT with no gate is +0.4, and the gate lowers it: it passes 82% of SMT legs, so it selects little.
+    - Where SMT agrees with H-K: −1.8.
+    - The leg that took its level is −1.2; the leg that held is −0.2.
+    - Tries 12, passes 0; 2023-2024 still unread.
+  - **The trader's definition (2026-10-24):**
+    - SMT on the previous day's high and low.
+    - It is confluence only: a leg of the divergence is called only when its own day is at a major array. That means an unfilled D1 order block or breaker, a major pool taken (the previous week's extreme, an untaken D1 swing, the 20-day extreme), or the outer 25% of the W1 dealing range.
+    - D1 arrays only: the broker has no H4 before July 2021.
+    - The pass rule is the daily calls', over the 7 paired markets (need 5).
+  - **The harness, before any data was read:** `algo_research/search_smt.py` (`market_days`, `smt_legs`, `arm_calls`). 7 tests on synthetic bars, Property 2 included.
   - **Validates: Requirements 29.1–29.2**
+
+- [x] 368. The chain and the stack on the chart (Requirement 30)
+  - **Done 2026-10-24.**
+    - `algo_research/chain_view.py` (`ChainView`, `trading_days`): what H-K and H-M read at a D1 close, ready for the page.
+    - `WatchSession.chain` and `/api/watch/chain`, withheld while blind. The chain is rebuilt once per trading day, from 550 days of warm-up.
+    - The page's "Chain & stack" layer (`engine.js`: `paintChain`, `chainCard`, `loadChain`), on by default.
+  - **Tests:** `test_research_chain_view.py` (4, parity with `stack_votes`); `test_the_chain_layer_is_withheld_while_blind_and_served_up_to_the_clock`; `js/chain_ui.js` (15 checks).
+  - **Limit:** the watch tool's days are the exploration slice (2025-01 to 2025-06), and the snapshot's M1 starts in 2024-05. The MN1 frame is unranged until about May 2025, so the stack makes no calls before then.
+  - **Validates: Requirements 30.1–30.3**
 
 ---
 

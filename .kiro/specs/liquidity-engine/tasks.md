@@ -869,6 +869,9 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     - Re-export `config/instruments/exness-standard.toml` from the MT5 terminal, logged in to the swap account (MT5 must be open).
     - Add `config/brokers/exness-standard-swapfree.toml`.
   - **240c. REFACTOR** — re-price `ec4876ba87a1` and `475491a89d91` with swap from the Phase A cache, and note the difference.
+  - **Code and tests done 2026-10-08/09, committed 2026-10-27** (left uncommitted until then; every run since has used it).
+    - Done: the swap fields and modes in `InstrumentSpec` and the exporter; `swap_nights`; `cost_r_swap` in the trade, the journal, the stats and the report; `swap_free` profiles; `config/brokers/exness-standard-swapfree.toml`.
+    - **Still open:** 240b's re-export from the swap account. `config/instruments/exness-standard.toml` has no swap fields yet, so every run so far charged zero swap. Also 240c.
 
 - [ ] 241. Checkpoint
   - **Suite:** the full suite is green apart from the task-39 RED tests.

@@ -80,7 +80,7 @@ JOURNAL_COLUMNS = (
     "order_id", "order_kind", "placed_at", "expires_at", "filled_at", "fill", "ideal_fill",
     "closed_at", "exit", "ideal_exit", "exit_reason", "lots",
     # results
-    "gross_r", "net_r", "cost_r_spread", "cost_r_slippage", "cost_r_commission", "mae_r", "mfe_r",
+    "gross_r", "net_r", "cost_r_spread", "cost_r_slippage", "cost_r_commission", "cost_r_swap", "mae_r", "mfe_r",
     "holding_minutes", "cost_flag",
 )
 
@@ -187,7 +187,8 @@ def _journal_values(row: JournalRow, open_order: Optional[SimTrade]) -> dict:
         "holding_minutes": round(trade.holding_time.total_seconds() / 60) if filled else None,
         "cost_flag": ("true" if trade.cost_flag else "false") if filled else None,
     }
-    for name in ("gross_r", "net_r", "cost_r_spread", "cost_r_slippage", "cost_r_commission", "mae_r", "mfe_r"):
+    for name in ("gross_r", "net_r", "cost_r_spread", "cost_r_slippage", "cost_r_commission", "cost_r_swap",
+                 "mae_r", "mfe_r"):
         values[name] = _num(getattr(trade, name) if filled else None, 4)
     return values
 
@@ -292,9 +293,10 @@ def stats_cells(s: Stats) -> dict[str, str]:
 
 
 def stats_from_json(values: Mapping[str, Any]) -> Stats:
-    """A Stats back from summary.json."""
+    """A Stats back from summary.json. Summaries written before swap was charged
+    (task 240) have no avg_cost_r_swap."""
     ci = values["expectancy_ci"]
-    return Stats(**{**values, "expectancy_ci": tuple(ci) if ci is not None else None})
+    return Stats(**{"avg_cost_r_swap": None, **values, "expectancy_ci": tuple(ci) if ci is not None else None})
 
 
 def _stats_table(rows: Sequence[tuple[str, Stats]], first: str, wide: bool = False) -> list[str]:
