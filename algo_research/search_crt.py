@@ -54,7 +54,8 @@ def crt_signals(m15: pd.DataFrame) -> pd.DataFrame:
     picked = m15[short | long_]
     return pd.DataFrame({"c3": picked["time"] + _M15, "side": np.where(long_[short | long_], 1, -1),
                          "c2_high": picked["high"].to_numpy(float), "c2_low": picked["low"].to_numpy(float),
-                         "c1_high": h1[short | long_].to_numpy(float), "c1_low": l1[short | long_].to_numpy(float)})
+                         "c1_high": h1[short | long_].to_numpy(float), "c1_low": l1[short | long_].to_numpy(float),
+                         "c2_close": picked["close"].to_numpy(float)})
 
 
 def m15_from_m1(m1: pd.DataFrame) -> pd.DataFrame:
