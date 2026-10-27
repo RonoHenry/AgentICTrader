@@ -62,6 +62,7 @@ from algo_backtester.report import journal_csv
 from algo_backtester.run import run_backtest
 from algo_backtester.signals import entry_closes, signals_at
 from algo_research.chain_view import ChainView, trading_days
+from algo_research.search_crt import session_trades
 from algo_research.config import load_research_config, trading_date_open
 from algo_research.fractal_poi import FractalPOI, FractalSettings, partners_for, warmup_days
 from algo_research.fractal_poi import defaults as fractal_defaults
@@ -247,6 +248,8 @@ class WatchSession:
         self._trend_lock = threading.Lock()
         self._chain: Optional[tuple] = None                     # (trading day, days, reader, reads by day)
         self._chain_lock = threading.Lock()
+        self._crt: Optional[tuple[int, list[dict]]] = None      # (M1 bars read, H-N's trades on them)
+        self._crt_lock = threading.Lock()
 
     # ── preparing ───────────────────────────────────────────────────────────
     def prepare(self) -> None:
@@ -874,6 +877,53 @@ class WatchSession:
             rows.append(row)
         return {"withheld": False, "smt": "abstains: one market on this chart", "rows": rows}
 
+    # ── H-N, the trader's M15 CRT at market on M1 (2026-10-27) ─────────────────
+    def crt(self, q: dict) -> dict:
+        """H-N's trades (``algo_research.search_crt.session_trades``) on the session's own M1 and spreads, those whose
+        C3 has opened by the clock ``t``: the sweep, the fill, the stop and, per target, the exits taken by the clock.
+        A trade's result shows once all its exits are in the past; one still open at the end of a live session's bars
+        has none. Nothing while the session is blind."""
+        clock = min(int(q["t"]), wall(self.end))
+        if self.withheld:
+            return {"withheld": True, "rows": []}
+        with self._crt_lock:
+            n = len(self.frame.m1)
+            if self._crt is None or self._crt[0] != n:
+                m1 = pd.DataFrame({"time": self.frame.m1["time"].reset_index(drop=True),
+                                   **{k: self.frame.arrays[k] for k in ("open", "high", "low", "close", "spread")}})
+                found = session_trades(m1)
+                for tr in found:                              # in the chart's wall seconds, once
+                    for key in ("c2", "c3", "day_end"):
+                        tr[key] = wall(tr[key])
+                    for x in tr["targets"].values():
+                        x["legs"] = [dict(leg, at=wall(leg["at"])) for leg in x["legs"]]
+                self._crt = (n, found)
+            found = self._crt[1]
+        since, until = wall(self.start), wall(self.end)
+        data_end = int(self.path["time"][-1]) + 60 if len(self.path["time"]) else since
+        rows = []
+        for tr in found:
+            c3 = tr["c3"]
+            if not since <= c3 < until or c3 > clock:
+                continue
+            row = {"c2": tr["c2"], "c3": c3, "side": tr["side"], "swept": tr["swept"], "extreme": tr["extreme"],
+                   "fill": tr["fill"], "stop": tr["stop"], "risk": tr["risk"], "targets": {}}
+            day_end = tr["day_end"]
+            for k, x in tr["targets"].items():
+                legs = x["legs"]
+                cut = legs[-1]["kind"] == "close" and data_end < day_end       # the bars stop before the day closes
+                done = not cut and legs[-1]["at"] <= clock
+                row["targets"][k] = {"legs": [leg for leg in legs if leg["at"] <= clock and not (cut and leg["kind"] == "close")],
+                                     "net": x["net"] if done else None}
+            rows.append(row)
+        summary = {}
+        for k in ("3", "4", "5"):
+            nets = [r["targets"][k]["net"] for r in rows if r["targets"][k]["net"] is not None]
+            summary[k] = {"closed": len(nets), "total": round(sum(nets), 2), "wins": sum(v > 0 for v in nets)}
+        reached = [any(leg["kind"] in ("partial", "target") for leg in r["targets"]["5"]["legs"]) for r in rows]
+        return {"withheld": False, "rows": rows, "summary": summary, "reached_3r": sum(reached),
+                "develop": "2021-07 to 2022, nine markets: -0.21R a trade at 3R, 4R and 5R (H-N, 0 of 9 markets > 0)"}
+
     def _m1(self, instrument: str, days: int) -> pd.DataFrame:
         """The session's M1 (the snapshot's or the terminal's) for ``instrument`` from ``days`` before the session to
         its end."""
@@ -1114,6 +1164,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.app.need().trend(q))
         elif url.path == "/api/watch/chain":
             self._answer(lambda: self.app.need().chain(q))
+        elif url.path == "/api/watch/crt":
+            self._answer(lambda: self.app.need().crt(q))
         elif url.path == "/api/watch/noculus/trend_calls":
             self._answer(lambda: self.app.need().trend_calls(q))
         elif url.path == "/api/watch/fractal-defaults":

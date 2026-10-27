@@ -15,6 +15,9 @@
 - **Pass:** for a target, the mean R net is above zero, its trading-date interval at the Holm level for three
   targets (98.3%) is above zero, and it is positive in at least 6 of the 9 markets. H-N passes if one target does.
 
+``session_trades`` gives Noculus the same trades on a session's own M1, each with its legs (context-engine
+Requirement 31).
+
     python -m algo_research.search_crt --window develop
 """
 from __future__ import annotations
@@ -27,7 +30,7 @@ import pandas as pd
 
 from algo_research.search_d1 import MARKETS, MIN_MARKETS, OUT, RESAMPLES, SEED, SNAPSHOT
 
-__all__ = ["TARGETS", "crt_signals", "race", "trades", "judge"]
+__all__ = ["TARGETS", "crt_signals", "judge", "m15_from_m1", "race", "session_trades", "trades"]
 
 M1_SNAPSHOTS = {"develop": SNAPSHOT.parent / "mt5-m1-develop"}
 WINDOWS = {"develop": ("2021-07-16", "2023-01-01"), "test": ("2023-01-01", "2025-01-01")}
@@ -50,7 +53,17 @@ def crt_signals(m15: pd.DataFrame) -> pd.DataFrame:
     long_ = consecutive & (l < l1) & (h <= h1) & (c > l1)
     picked = m15[short | long_]
     return pd.DataFrame({"c3": picked["time"] + _M15, "side": np.where(long_[short | long_], 1, -1),
-                         "c2_high": picked["high"].to_numpy(float), "c2_low": picked["low"].to_numpy(float)})
+                         "c2_high": picked["high"].to_numpy(float), "c2_low": picked["low"].to_numpy(float),
+                         "c1_high": h1[short | long_].to_numpy(float), "c1_low": l1[short | long_].to_numpy(float)})
+
+
+def m15_from_m1(m1: pd.DataFrame) -> pd.DataFrame:
+    """M15 bars from M1 (UTC quarter hours), only those whose fifteen minutes are all in the past of the last bar."""
+    if m1.empty:
+        return pd.DataFrame(columns=["time", "open", "high", "low", "close"])
+    bars = m1.groupby(m1["time"].dt.floor("15min"), sort=True).agg(
+        open=("open", "first"), high=("high", "max"), low=("low", "min"), close=("close", "last")).reset_index()
+    return bars[bars["time"] + _M15 <= m1["time"].iloc[-1] + pd.Timedelta(minutes=1)].reset_index(drop=True)
 
 
 class _Path:
@@ -69,9 +82,10 @@ def _first(mask: np.ndarray) -> Optional[int]:
     return int(np.argmax(mask)) if mask.any() else None
 
 
-def race(p: _Path, side: int, e: int, trigger: float) -> Optional[dict]:
+def race(p: _Path, side: int, e: int, trigger: float, legs: bool = False) -> Optional[dict]:
     """A market entry at bar ``e``'s open with its stop triggering at the bid level ``trigger``: R net and gross for
-    each target, and whether 3R was reached. None when the risk is under two spreads."""
+    each target, and whether 3R was reached. None when the risk is under two spreads. With ``legs``, each target's
+    exits too: (share, price, bar index, kind), kind one of stop, partial, be, target, close."""
     end, s0 = int(p.day_end[e]), p.cost[e]
     o, h, l, c, cost = (a[e:end + 1] for a in (p.o, p.h, p.l, p.c, p.cost))
     if side > 0:
@@ -101,43 +115,43 @@ def race(p: _Path, side: int, e: int, trigger: float) -> Optional[dict]:
         i_tgt = _first(reach(favourable, target))
         if k <= PARTIAL_R:                                         # no partial at or beyond the target
             if i_stop is not None and (i_tgt is None or i_stop <= i_tgt):
-                legs = [(1.0, stop_price(i_stop, stop_exit), i_stop)]
+                exits = [(1.0, stop_price(i_stop, stop_exit), i_stop, "stop")]
             elif i_tgt is not None:
-                legs = [(1.0, target, i_tgt)]
+                exits = [(1.0, target, i_tgt, "target")]
             else:
-                legs = [(1.0, close[-1], len(close) - 1)]
+                exits = [(1.0, close[-1], len(close) - 1, "close")]
         elif i_stop is not None and (i_part is None or i_stop <= i_part):
-            legs = [(1.0, stop_price(i_stop, stop_exit), i_stop)]
+            exits = [(1.0, stop_price(i_stop, stop_exit), i_stop, "stop")]
         elif i_part is None:
-            legs = [(1.0, close[-1], len(close) - 1)]
+            exits = [(1.0, close[-1], len(close) - 1, "close")]
         else:
-            part = (PARTIAL_SHARE, fill + sign * PARTIAL_R * risk, i_part)
+            part = (PARTIAL_SHARE, fill + sign * PARTIAL_R * risk, i_part, "partial")
             if i_tgt == i_part:
-                rest = (1 - PARTIAL_SHARE, target, i_part)
+                rest = (1 - PARTIAL_SHARE, target, i_part, "target")
             else:
                 j = i_part + 1
                 i_be = _first(beyond(adverse[j:], fill))
                 i_t2 = _first(reach(favourable[j:], target))
                 if i_be is not None and (i_t2 is None or i_be <= i_t2):
-                    rest = (1 - PARTIAL_SHARE, stop_price(j + i_be, fill), j + i_be)
+                    rest = (1 - PARTIAL_SHARE, stop_price(j + i_be, fill), j + i_be, "be")
                 elif i_t2 is not None:
-                    rest = (1 - PARTIAL_SHARE, target, j + i_t2)
+                    rest = (1 - PARTIAL_SHARE, target, j + i_t2, "target")
                 else:
-                    rest = (1 - PARTIAL_SHARE, close[-1], len(close) - 1)
-            legs = [part, rest]
-        net = sum(share * sign * (price - fill) for share, price, _ in legs) / risk
+                    rest = (1 - PARTIAL_SHARE, close[-1], len(close) - 1, "close")
+            exits = [part, rest]
+        net = sum(share * sign * (price - fill) for share, price, _, _ in exits) / risk
         # Gross: the same exits on bid prices, against the bid entry and the stop's bid level.
-        ideal = [(share, price - (0.0 if side > 0 else cost[i]), i) for share, price, i in legs]
         ideal_risk = abs(o[0] - trigger)
-        gross = sum(share * sign * (price - o[0]) for share, price, _ in ideal) / ideal_risk if ideal_risk else np.nan
+        gross = (sum(share * sign * (price - (0.0 if side > 0 else cost[i]) - o[0]) for share, price, i, _ in exits)
+                 / ideal_risk if ideal_risk else np.nan)
         out[f"net_{k:g}"], out[f"gross_{k:g}"] = float(net), float(gross)
+        if legs:
+            out[f"legs_{k:g}"] = [(share, float(price), e + i, kind) for share, price, i, kind in exits]
     return out
 
 
-def trades(m15: pd.DataFrame, m1: pd.DataFrame, market: str) -> pd.DataFrame:
-    """H-N's trades in one market, each with its mirror: the same moment and risk, the other side."""
-    p = _Path(m1)
-    rows = []
+def _entries(m15: pd.DataFrame, p: _Path):
+    """Each CRT that can be entered, with its New York clock and the index of C3's first M1 bar."""
     for s in crt_signals(m15).itertuples(index=False):
         clock = s.c3.tz_convert(NY).strftime("%H:%M")
         if NO_ENTRY[0] <= clock < NO_ENTRY[1]:
@@ -145,6 +159,14 @@ def trades(m15: pd.DataFrame, m1: pd.DataFrame, market: str) -> pd.DataFrame:
         e = int(np.searchsorted(p.t, s.c3.to_datetime64(), side="left"))
         if e >= len(p.t) or p.t[e] >= (s.c3 + _M15).to_datetime64():
             continue                                               # no M1 bar inside C3
+        yield s, clock, e
+
+
+def trades(m15: pd.DataFrame, m1: pd.DataFrame, market: str) -> pd.DataFrame:
+    """H-N's trades in one market, each with its mirror: the same moment and risk, the other side."""
+    p = _Path(m1)
+    rows = []
+    for s, clock, e in _entries(m15, p):
         trade = race(p, s.side, e, s.c2_low if s.side > 0 else s.c2_high)
         if trade is None:
             continue
@@ -157,6 +179,34 @@ def trades(m15: pd.DataFrame, m1: pd.DataFrame, market: str) -> pd.DataFrame:
                      "clock": clock, "side": s.side, "killzone": any(a <= clock < b for a, b in KILLZONES), **trade,
                      **({f"mirror_{k}": v for k, v in mirror.items() if k.startswith("net_")} if mirror else {})})
     return pd.DataFrame(rows)
+
+
+def session_trades(m1: pd.DataFrame) -> list[dict]:
+    """H-N's trades on a stretch of M1 (time, open, high, low, close, spread), its M15 built from it: what Noculus
+    draws. Each has C2's sweep, the fill, the stop, 1R, and per target its R net and exits (UTC times). An exit at
+    the trading day's close is at the end of its bar; ``day_end`` is when that bar closes."""
+    p = _Path(m1)
+    minute = pd.Timedelta(minutes=1)
+    times = pd.DatetimeIndex(m1["time"])
+    out = []
+    for s, _, e in _entries(m15_from_m1(m1), p):
+        trade = race(p, s.side, e, s.c2_low if s.side > 0 else s.c2_high, legs=True)
+        if trade is None:
+            continue
+        long_ = s.side > 0
+        fill = p.o[e] + p.cost[e] if long_ else p.o[e]
+        targets = {}
+        for k in TARGETS:
+            targets[f"{k:g}"] = {"net": trade[f"net_{k:g}"], "legs": [
+                {"share": share, "price": price, "kind": kind,
+                 "at": times[i] + (minute if kind == "close" else pd.Timedelta(0))}
+                for share, price, i, kind in trade[f"legs_{k:g}"]]}
+        out.append({"c2": s.c3 - _M15, "c3": s.c3, "side": int(s.side), "swept": s.c1_low if long_ else s.c1_high,
+                    "extreme": s.c2_low if long_ else s.c2_high, "fill": float(fill),
+                    "stop": float(fill - trade["risk"] if long_ else fill + trade["risk"]), "risk": float(trade["risk"]),
+                    "reached_3r": bool(trade["reached_3r"]), "day_end": times[int(p.day_end[e])] + minute,
+                    "targets": targets})
+    return out
 
 
 def _interval(keys: np.ndarray, values: np.ndarray, level: float) -> tuple[float, float]:

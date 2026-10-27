@@ -1058,3 +1058,23 @@ def test_the_chain_layer_is_withheld_while_blind_and_served_up_to_the_clock(blin
     assert [r["i"] for r in later[: len(shown["rows"])]] == [r["i"] for r in shown["rows"]]
     assert later[len(shown["rows"]) - 1]["next"] in (-1, 0, 1)                      # its next candle has closed
     json.dumps(later)
+
+
+# ── H-N, the trader's M15 CRT at market on M1 (the CRT layer, 2026-10-27) ──
+def test_the_crt_layer_is_withheld_while_blind_and_shows_only_what_the_clock_has_seen(blind, session):  # noqa: F811
+    clock = wall(session.start) + 8 * 3600
+    shown = session.crt({"t": clock})
+    assert not shown["withheld"] and shown["rows"] and set(shown["summary"]) == {"3", "4", "5"}
+    assert all(r["c3"] <= clock and r["c2"] < r["c3"] for r in shown["rows"])
+    for r in shown["rows"]:
+        long = r["side"] > 0
+        assert (r["stop"] < r["fill"]) if long else (r["stop"] > r["fill"])
+        assert (r["extreme"] < r["swept"]) if long else (r["extreme"] > r["swept"])   # C2's wick beyond C1
+        for x in r["targets"].values():
+            assert all(leg["at"] <= clock for leg in x["legs"])
+            assert x["net"] is None or (x["legs"] and x["legs"][-1]["at"] <= clock)
+    assert blind.crt({"t": clock}) == {"withheld": True, "rows": []}
+    later = session.crt({"t": wall(session.end)})
+    assert len(later["rows"]) >= len(shown["rows"])
+    assert sum(x["closed"] for x in later["summary"].values()) >= sum(x["closed"] for x in shown["summary"].values())
+    json.dumps(later)

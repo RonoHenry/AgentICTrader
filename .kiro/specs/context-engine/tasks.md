@@ -425,6 +425,14 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
   - **Limit:** the watch tool's days are the exploration slice (2025-01 to 2025-06), and the snapshot's M1 starts in 2024-05. The MN1 frame is unranged until about May 2025, so the stack makes no calls before then.
   - **Validates: Requirements 30.1–30.3**
 
+- [x] 371. H-N on the chart (Requirement 31)
+  - **Done 2026-10-27.**
+    - `search_crt.session_trades` (M15 built from the session's M1) and `race(legs=True)`; `WatchSession.crt` and `/api/watch/crt`. The trades are cached per M1 length, in wall seconds.
+    - The page's "CRT (H-N)" layer (`engine.js`: `paintCrt`, `crtCard`, `loadCrt`), with a target menu (3R, 4R + partial, 5R + partial), on by default.
+  - **Parity:** the refactored search gives EURUSD's 9,413 development trades unchanged. On a week of M1 (7-11 March 2022), `session_trades` gives the same 109 trades and results as `trades`.
+  - **Tests:** `test_the_crt_layer_is_withheld_while_blind_and_shows_only_what_the_clock_has_seen`; the 7 tests of `test_research_search_crt.py`. `noculus_ui.js` still fails, as it has since task 357.
+  - **Validates: Requirements 31.1–31.3**
+
 ---
 
 ## Task Dependency Graph
