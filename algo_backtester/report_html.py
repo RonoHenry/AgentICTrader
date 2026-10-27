@@ -216,6 +216,8 @@ def build_forward_test(trades: Sequence[Mapping[str, Any]], candles: Mapping[str
 def _journal_row(n: int, r: Mapping[str, str], context: Optional[dict], charts: "_Charts") -> dict:
     t = datetime.fromisoformat(r["t"])
     costs = [_f(r[k]) for k in ("cost_r_spread", "cost_r_slippage", "cost_r_commission")]
+    if "cost_r_swap" in r:                                   # journals from before swap was charged have none
+        costs.append(_f(r["cost_r_swap"]))
     return _row(
         n, t=t, instrument=r["instrument"], setup_id=r["setup_id"] or None, grade=r["grade"] or None,
         decision=r["decision"], reason=r["reason"], killzone=r["killzone"] or None,

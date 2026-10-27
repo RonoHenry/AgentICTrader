@@ -32,9 +32,10 @@ R accounting (Req 4.12, 5.3). 1R is the price distance the order was sized on,
 is therefore money in units of the risk budget, the same for a LONG and its
 mirror-image SHORT, and stays meaningful when the spread is as wide as the stop.
 - gross R: on ideal prices, the bid at the fill and at the exit;
-- net R: on executed prices, less commission;
-- costs: the spread (paid once, on the buy), slippage (stop exits) and
-  commission, each >= 0 and summing to gross R - net R;
+- net R: on executed prices, less commission and swap;
+- costs: the spread (paid once, on the buy), slippage (stop exits),
+  commission and swap, summing to gross R - net R. Each is >= 0 except
+  swap, which is a credit (negative) when the instrument pays it;
 - MAE / MFE: the closing-side excursions from the fill, in R.
 
 Validates: Requirements 4.12, 5.1, 5.3, 5.5, 6.1, 6.2 (.kiro/specs/algo-backtester/requirements.md)
@@ -48,9 +49,11 @@ from decimal import Decimal
 from typing import Any, Callable, Optional
 
 from agent.brokers.base import BrokerClient
-from agent.brokers.fill_model import Bar, FillModel, SimOrder, pending_expiry
+from agent.brokers.fill_model import Bar, FillModel, SimOrder, pending_expiry, swap_nights
 from agent.clock import Clock
-from agent.instruments import InstrumentSpec, InstrumentSpecs, commission_per_side, money_per_price_unit
+from agent.instruments import (
+    InstrumentSpec, InstrumentSpecs, commission_per_side, money_per_price_unit, swap_per_lot_per_night,
+)
 from agent.strategy_config import PendingExpiry
 
 __all__ = ["ClosedTrade", "SimBroker", "SimBrokerError", "SimTrade"]
@@ -111,6 +114,8 @@ class ClosedTrade:
     mfe_r: Optional[float]
     pnl: float                        # account currency, net of costs
     cost_flag: bool                   # costs above the configured share of 1R (Req 5.5)
+    # Overnight swap held through (liquidity-engine Req 25.1); negative is a credit.
+    cost_r_swap: Optional[float] = 0.0
 
     @property
     def filled(self) -> bool:
@@ -120,7 +125,7 @@ class ClosedTrade:
     def cost_r(self) -> Optional[float]:
         if not self.filled:
             return None
-        return self.cost_r_spread + self.cost_r_slippage + self.cost_r_commission
+        return self.cost_r_spread + self.cost_r_slippage + self.cost_r_commission + self.cost_r_swap
 
     @property
     def holding_time(self) -> Optional[timedelta]:
@@ -334,7 +339,7 @@ def _closed_trade(trade: SimTrade, spec: InstrumentSpec, account_ccy: str, cost_
     if trade.fill is None:
         return ClosedTrade(**common, initial_risk=None, gross_r=None, net_r=None, cost_r_spread=None,
                            cost_r_slippage=None, cost_r_commission=None, mae_r=None, mfe_r=None, pnl=0.0,
-                           cost_flag=False)
+                           cost_flag=False, cost_r_swap=None)
 
     sign = 1 if trade.direction == "LONG" else -1
     risk = trade.planned_risk
@@ -344,7 +349,11 @@ def _closed_trade(trade: SimTrade, spec: InstrumentSpec, account_ccy: str, cost_
     cost_r_spread = (trade.entry_spread if sign > 0 else trade.exit_spread) / risk
     cost_r_slippage = (spec.stop_slippage if trade.exit_reason == "SL" else 0.0) / risk
     cost_r_commission = commission / risk_money
-    net_r = sign * (trade.exit - trade.fill) / risk - cost_r_commission
+    nights = swap_nights(trade.filled_at, trade.closed_at, spec.swap.triple_day)
+    swap = trade.lots * nights * swap_per_lot_per_night(spec, trade.direction, trade.fill, trade.conversion,
+                                                        account_ccy) if nights else 0.0
+    cost_r_swap = -swap / risk_money if swap else 0.0       # never -0.0, which the journal prints as -0.0000
+    net_r = sign * (trade.exit - trade.fill) / risk - cost_r_commission - cost_r_swap
     return ClosedTrade(
         **common,
         initial_risk=risk,
@@ -356,5 +365,6 @@ def _closed_trade(trade: SimTrade, spec: InstrumentSpec, account_ccy: str, cost_
         mae_r=sign * (trade.mae_price - trade.fill) / risk,
         mfe_r=sign * (trade.mfe_price - trade.fill) / risk,
         pnl=net_r * risk_money,
-        cost_flag=cost_r_spread + cost_r_slippage + cost_r_commission > cost_flag_fraction,
+        cost_flag=cost_r_spread + cost_r_slippage + cost_r_commission + cost_r_swap > cost_flag_fraction,
+        cost_r_swap=cost_r_swap,
     )

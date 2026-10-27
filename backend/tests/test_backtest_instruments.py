@@ -6,9 +6,15 @@ Validates: Requirements 5.2, 6.1 (.kiro/specs/algo-backtester/requirements.md)
 """
 from __future__ import annotations
 
+from dataclasses import replace
+from pathlib import Path
+
 import pytest
 
 from agent.instruments import (
+    NO_SWAP,
+    SwapSpec,
+    swap_per_lot_per_night,
     CommissionSpec,
     InstrumentSpec,
     InstrumentSpecs,
@@ -165,3 +171,49 @@ def test_dumps_specs_records_source_as_comment(tmp_path):
     path = tmp_path / "mt5.toml"
     path.write_text(text, encoding="utf-8")
     assert load_specs(path) == specs  # a comment, so loading is unaffected
+
+
+# ── swap (liquidity-engine Req 25.1, task 240) ─────────────────────────────
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+def test_spec_files_without_swap_load_with_none(tmp_path):
+    # Files written before swap was recorded, and venues without it (Binance spot), mean no swap.
+    old = tmp_path / "old.toml"
+    old.write_text(dumps_specs(InstrumentSpecs(venue="mt5", account_ccy="USD", specs={"EURUSD": EURUSD})),
+                   encoding="utf-8")
+    assert "swap" not in old.read_text(encoding="utf-8") and load_specs(old)["EURUSD"].swap == NO_SWAP
+    assert all(spec.swap == NO_SWAP for spec in load_specs(REPO / "config" / "instruments" / "binance.toml").values())
+
+
+def test_swap_round_trips_through_the_spec_file(tmp_path):
+    swapped = replace(EURUSD, swap=SwapSpec(mode="POINTS", long=-7.25, short=1.5, triple_day=3))
+    original = InstrumentSpecs(venue="mt5", account_ccy="USD", specs={"EURUSD": swapped, "USDJPY": USDJPY})
+    path = tmp_path / "mt5.toml"
+    path.write_text(dumps_specs(original), encoding="utf-8")
+    assert load_specs(path) == original
+    assert "swap" not in path.read_text(encoding="utf-8").split('["USDJPY"]')[1]   # no swap, no line
+
+
+@pytest.mark.parametrize("mode", ["INTEREST_CURRENT", "CURRENCY_MARGIN", "points"])
+def test_unsupported_swap_mode_rejected(mode):
+    with pytest.raises(ValueError, match="swap mode"):
+        SwapSpec(mode=mode, long=-1.0, short=-1.0, triple_day=3)
+
+
+def test_swap_triple_day_is_an_mt5_weekday():
+    with pytest.raises(ValueError, match="triple_day"):
+        SwapSpec(mode="POINTS", long=-1.0, short=-1.0, triple_day=7)
+
+
+@pytest.mark.parametrize("spec, direction, price, expected", [
+    (replace(EURUSD, swap=SwapSpec("POINTS", -7.0, 2.0, 3)), "LONG", 1.10, -7.0),       # 7 points x 1e-5 x 100k USD
+    (replace(EURUSD, swap=SwapSpec("POINTS", -7.0, 2.0, 3)), "SHORT", 1.10, 2.0),
+    (replace(USDJPY, swap=SwapSpec("POINTS", -1.0, 3.0, 3)), "SHORT", 150.0, 2.0),     # 3 x 0.001 x 100k JPY / 150
+    (replace(EURUSD, swap=SwapSpec("CURRENCY_SYMBOL", -5.0, 1.0, 3)), "LONG", 1.10, -5.5),   # EUR 5 at 1.10
+    (replace(EURUSD, swap=SwapSpec("CURRENCY_DEPOSIT", -4.0, 1.0, 3)), "LONG", 1.10, -4.0),
+    (EURUSD, "LONG", 1.10, 0.0),
+])
+def test_swap_per_lot_per_night_in_account_currency(spec, direction, price, expected):
+    assert swap_per_lot_per_night(spec, direction, price) == pytest.approx(expected)

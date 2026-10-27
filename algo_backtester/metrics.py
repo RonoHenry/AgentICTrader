@@ -62,6 +62,7 @@ class Stats:
     avg_cost_r_spread: Optional[float]
     avg_cost_r_slippage: Optional[float]
     avg_cost_r_commission: Optional[float]
+    avg_cost_r_swap: Optional[float]
     cost_share: Optional[float]
     evidence: str
 
@@ -141,6 +142,7 @@ def stats(trades: Sequence[ClosedTrade], initial_equity: float, min_trades: int,
         avg_cost_r_spread=mean(t.cost_r_spread for t in done),
         avg_cost_r_slippage=mean(t.cost_r_slippage for t in done),
         avg_cost_r_commission=mean(t.cost_r_commission for t in done),
+        avg_cost_r_swap=mean(t.cost_r_swap for t in done),
         cost_share=cost_total / gross_total if gross_total > 0 else None,
         evidence="sufficient" if n >= min_trades else "insufficient",
     )

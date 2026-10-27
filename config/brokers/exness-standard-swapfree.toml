@@ -1,0 +1,26 @@
+# Broker profile: an Exness Standard swap-free account (liquidity-engine LE-D16).
+# The same account type, symbols and specs as exness-standard; no swap is charged.
+# Credentials are environment-variable NAMES; the values live in the git-ignored .env.
+venue = "mt5"
+spec_file = "config/instruments/exness-standard.toml"
+server_clock = "+0"   # UTC; verified against live ticks on every connect
+swap_free = true
+
+[credentials]
+login = "MT5_SWAPFREE_LOGIN"
+password = "MT5_SWAPFREE_PASSWORD"
+server = "MT5_SWAPFREE_SERVER"
+path = "MT5_SWAPFREE_PATH"
+
+[symbols]
+EURUSD = "EURUSDm"
+GBPUSD = "GBPUSDm"
+USDJPY = "USDJPYm"
+XAUUSD = "XAUUSDm"
+# The user's markets (algo-research update 2026-10f). GER40 is the German 40 index under Exness's old name.
+DXY = "DXYm"
+US100 = "USTECm"
+US500 = "US500m"
+US30 = "US30m"
+GER40 = "DE30m"
+UK100 = "UK100m"

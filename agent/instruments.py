@@ -19,11 +19,14 @@ task 182). Specs live one file per venue in config/instruments/<venue>.toml:
     default_spread = 0.00012
     stop_slippage = 2e-05
     commission = { kind = "PER_LOT_PER_SIDE", value = 3.5 }
+    swap = { mode = "POINTS", long = -7.25, short = 1.5, triple_day = 3 }   # optional
 
 Prices, spreads and slippage are in price units. Commission is account
 currency per lot per side (MT5) or a rate on notional per side (Binance).
+Swap is per lot per night as MT5 quotes it; a spec without one has none.
 
-Validates: Requirements 5.2, 6.1 (.kiro/specs/algo-backtester/requirements.md)
+Validates: Requirements 5.2, 6.1 (.kiro/specs/algo-backtester/requirements.md);
+Requirement 25.1 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
 
@@ -37,19 +40,26 @@ from typing import Iterator, Optional
 
 __all__ = [
     "COMMISSION_KINDS",
+    "NO_SWAP",
+    "SWAP_MODES",
     "VENUES",
     "CommissionSpec",
     "InstrumentSpec",
     "InstrumentSpecs",
+    "SwapSpec",
     "UnknownInstrumentError",
     "commission_per_side",
     "dumps_specs",
     "load_specs",
     "money_per_price_unit",
     "quote_to_account_rate",
+    "swap_per_lot_per_night",
 ]
 
 COMMISSION_KINDS = ("PER_LOT_PER_SIDE", "RATE_PER_SIDE")
+# MT5's SYMBOL_SWAP_MODE_* that the cost model prices: in points of price, in money of the
+# symbol's base currency, or in money of the account (deposit) currency.
+SWAP_MODES = ("DISABLED", "POINTS", "CURRENCY_SYMBOL", "CURRENCY_DEPOSIT")
 VENUES = ("mt5", "binance")
 
 # Spec-file field order, also the order dumps_specs() writes them in.
@@ -84,6 +94,28 @@ class CommissionSpec:
 
 
 @dataclass(frozen=True)
+class SwapSpec:
+    """Overnight swap per lot per night, as MT5 quotes it; negative is a charge.
+    ``triple_day`` is the weekday that pays three nights, in MT5's numbering
+    (0 = Sunday, 3 = Wednesday)."""
+    mode: str = "DISABLED"
+    long: float = 0.0
+    short: float = 0.0
+    triple_day: int = 3
+
+    def __post_init__(self) -> None:
+        if self.mode not in SWAP_MODES:
+            raise ValueError(f"Unsupported swap mode {self.mode!r}; expected one of {SWAP_MODES}")
+        if not (math.isfinite(self.long) and math.isfinite(self.short)):
+            raise ValueError(f"Swap values must be finite, got long {self.long}, short {self.short}")
+        if not 0 <= self.triple_day <= 6:
+            raise ValueError(f"Swap triple_day must be an MT5 weekday 0-6 (0 = Sunday), got {self.triple_day}")
+
+
+NO_SWAP = SwapSpec()
+
+
+@dataclass(frozen=True)
 class InstrumentSpec:
     symbol: str
     venue: str
@@ -98,6 +130,7 @@ class InstrumentSpec:
     default_spread: float
     stop_slippage: float
     commission: CommissionSpec
+    swap: SwapSpec = NO_SWAP
 
     def __post_init__(self) -> None:
         if self.venue not in VENUES:
@@ -197,6 +230,21 @@ def commission_per_side(
     return commission.value * notional
 
 
+def swap_per_lot_per_night(
+    spec: InstrumentSpec, direction: str, price: float, conversion: Optional[float] = None, account_ccy: str = "USD",
+) -> float:
+    """One night's swap on 1 lot in account currency (negative is a charge), at ``price``."""
+    swap = spec.swap
+    value = swap.long if direction == "LONG" else swap.short
+    if swap.mode == "DISABLED" or value == 0:
+        return 0.0
+    if swap.mode == "POINTS":
+        return value * spec.point * money_per_price_unit(spec, price, conversion, account_ccy)
+    if swap.mode == "CURRENCY_SYMBOL":   # base currency: one unit of base is `price` units of quote
+        return value * price * quote_to_account_rate(spec, price, conversion, account_ccy)
+    return value                         # CURRENCY_DEPOSIT
+
+
 # ── spec files ─────────────────────────────────────────────────────────────
 
 def load_specs(path: str | Path) -> InstrumentSpecs:
@@ -211,7 +259,7 @@ def load_specs(path: str | Path) -> InstrumentSpecs:
     for symbol, table in data.items():
         if not isinstance(table, dict):
             raise ValueError(f"{path}: unexpected top-level key {symbol!r}")
-        unknown = sorted(set(table) - set(_FIELDS))
+        unknown = sorted(set(table) - set(_FIELDS) - {"swap"})
         if unknown:
             raise ValueError(f"{path}: {symbol}: unknown field(s) {unknown}")
         missing = [name for name in _FIELDS if name not in table]
@@ -221,10 +269,18 @@ def load_specs(path: str | Path) -> InstrumentSpecs:
         for name in (*_NUMERIC_FIELDS, "default_spread", "stop_slippage"):
             fields[name] = float(fields[name])
         commission = fields.pop("commission")
+        swap = fields.pop("swap", None)
+        if swap is not None:
+            unknown_swap = sorted(set(swap) - {"mode", "long", "short", "triple_day"})
+            if unknown_swap:
+                raise ValueError(f"{path}: {symbol}: unknown swap field(s) {unknown_swap}")
+            swap = SwapSpec(mode=swap["mode"], long=float(swap["long"]), short=float(swap["short"]),
+                            triple_day=int(swap["triple_day"]))
         specs[symbol] = InstrumentSpec(
             symbol=symbol,
             venue=venue,
             commission=CommissionSpec(kind=commission["kind"], value=float(commission["value"])),
+            swap=swap or NO_SWAP,
             **fields,
         )
     return InstrumentSpecs(venue=venue, account_ccy=account_ccy, specs=specs)
@@ -256,6 +312,10 @@ def dumps_specs(specs: InstrumentSpecs, source: Optional[str] = None) -> str:
                 lines.append(f"{name} = {_toml_str(value)}")
             else:
                 lines.append(f"{name} = {_toml_float(value)}")
+        if spec.swap != NO_SWAP:
+            swap = spec.swap
+            lines.append(f"swap = {{ mode = {_toml_str(swap.mode)}, long = {_toml_float(swap.long)}, "
+                         f"short = {_toml_float(swap.short)}, triple_day = {swap.triple_day} }}")
     return "\n".join(lines) + "\n"
 
 
