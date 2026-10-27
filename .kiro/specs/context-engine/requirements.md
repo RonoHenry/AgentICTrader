@@ -769,3 +769,9 @@ H-K, H-L and H-M failed on 2018-2022. The trader asked to see the chain's reads 
 
    A panel card SHALL give the session's totals at the three targets, and the development result.
 3. NOTHING SHALL be served while a session is blind, and nothing after the clock.
+4. Added 2026-10-27 (H-O): each trade SHALL carry H-O's context:
+   - the pools C2 took and the gaps it reached into, labelled at C2's wick;
+   - the H4 trend;
+   - whether H-O keeps it.
+
+   This SHALL come through the search's own `algo_research.search_crt_context`, read on a month of the session's M1. A menu SHALL show every trade, only those at a gap, or only H-O's, with the card's totals for what is shown.

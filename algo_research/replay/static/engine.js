@@ -40,7 +40,7 @@ const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, jo
             ma: [], maSet: Prefs.get("watch.maSet", "model_d1"), maAt: null,
             trendTf: Prefs.get("watch.trendTf", "H1"), trend: { rows: [], withheld: false, at: null },
             chain: { rows: [], withheld: false, at: null, smt: "" },
-            crt: { rows: [], withheld: false, at: null, summary: null, reached: 0, develop: "" }, crtTarget: Prefs.get("watch.crtTarget", "5"),
+            crt: { rows: [], withheld: false, at: null, summary: null, reached: 0, develop: "" }, crtTarget: Prefs.get("watch.crtTarget", "5"), crtFilter: Prefs.get("watch.crtFilter", "all"),
             speed: 1, digits: 5, layers: Prefs.get("watch.layers", { arrays: true, pools: true, profile: true, sequence: true, orders: true }),
             arrayMode: Prefs.get("watch.arrayMode", "interval"), arrayVis: Prefs.get("watch.arrayVis", {}) };
 // The chart timeframes each array timeframe shows on by default (Requirement 14.3); the trader can change them.
@@ -414,11 +414,15 @@ async function loadChain() {
 // H-N, the trader's M15 CRT at market on M1 (context-engine Requirement 31): every trade the rule takes, from C3's
 // open to its last exit (or the clock). C1's swept level runs dashed to the entry and a dot marks C2's wick; red is the
 // risk, green the target chosen in the menu, dotted the 3R partial; dots mark the exits and the result follows the last.
+// The menu's filter (H-O, 2026-10-27): every CRT, those whose C2 reached into a gap of their side, or H-O's keep
+// (a pool taken or a gap reached, and with the H4 trend).
+const CRT_FILTERS = [["all", "CRT trades: every one"], ["array", "CRT trades: at a gap (FVG)"], ["kept", "CRT trades: H-O filter"]];
+const crtRows = () => S.crt.rows.filter((r) => S.crtFilter === "array" ? r.arrays.length > 0 : S.crtFilter === "kept" ? r.kept : true);
 function paintCrt(ctx, size, pal, text, line) {
   if (S.crt.withheld) { text("CRT (H-N): hidden until you reveal", 6, 28, pal.muted); return; }
   const W = size.width, k = Number(S.crtTarget);
   const kinds = { partial: pal.good, target: pal.good, stop: pal.bad, be: pal.muted, close: pal.muted };
-  for (const r of S.crt.rows) {
+  for (const r of crtRows()) {
     const t = r.targets[S.crtTarget];
     if (!t) continue;
     const long = r.side > 0, sign = long ? 1 : -1, legs = t.legs, end = t.net != null && legs.length ? legs[legs.length - 1].at : S.t;
@@ -433,6 +437,8 @@ function paintCrt(ctx, size, pal, text, line) {
     if (isFinite(xc)) {
       line(xc, Y(r.swept), x0, Y(r.swept), pal.muted, [3, 3], 1);
       ctx.fillStyle = long ? pal.up : pal.bad; ctx.beginPath(); ctx.arc(xc, Y(r.extreme), 3, 0, 2 * Math.PI); ctx.fill();
+      const why = [...r.pools, ...r.arrays].join(", ");
+      if (why) text(why, xc + 5, Y(r.extreme) + (long ? 12 : -6), pal.muted);
     }
     for (const leg of legs) {
       ctx.fillStyle = kinds[leg.kind] || pal.muted; ctx.beginPath(); ctx.arc(X(leg.at), Y(leg.price), 3, 0, 2 * Math.PI); ctx.fill();
@@ -453,12 +459,13 @@ async function loadCrt() {
 }
 function crtCard() {
   if (S.crt.withheld) return `<div class="card"><b>CRT (H-N)</b><div class="muted">Hidden: this session is blind.</div></div>`;
-  const s = S.crt.summary || {}, rows = S.crt.rows;
+  const rows = crtRows(), label = (CRT_FILTERS.find(([v]) => v === S.crtFilter) || ["", ""])[1].replace("CRT trades: ", "");
   const part = (k) => {
-    const x = s[k] || { closed: 0, total: 0, wins: 0 };
-    return `${k}R${k === "3" ? "" : " + partial"} <b>${x.total >= 0 ? "+" : ""}${x.total.toFixed(2)}R</b> (${x.closed} closed, ${x.wins} won)`;
+    const nets = rows.map((r) => r.targets[k].net).filter((v) => v != null), total = nets.reduce((a, b) => a + b, 0);
+    return `${k}R${k === "3" ? "" : " + partial"} <b>${total >= 0 ? "+" : ""}${total.toFixed(2)}R</b> (${nets.length} closed, ${nets.filter((v) => v > 0).length} won)`;
   };
-  return `<div class="card"><b>CRT (H-N)</b>: ${rows.length} trade(s) taken so far in this session; ${S.crt.reached} reached 3R.
+  const reached = rows.filter((r) => r.targets["5"].legs.some((l) => l.kind === "partial" || l.kind === "target")).length;
+  return `<div class="card"><b>CRT (H-N)</b>, ${esc(label)}: ${rows.length} of ${S.crt.rows.length} trade(s) so far in this session; ${reached} reached 3R.
     <div>${["3", "4", "5"].map(part).join(" · ")}</div>
     <div class="muted">C2 sweeps C1's M15 high or low and closes back inside; market at C3's first M1 bar; the stop beyond C2's wick;
       a third off at 3R and the rest to the fill on the 4R and 5R targets; out by 17:00 New York. Drawn at the menu's target.</div>
@@ -873,7 +880,11 @@ function buildLayers() {
   ct.innerHTML = [["3", "CRT: 3R"], ["4", "CRT: 4R + partial"], ["5", "CRT: 5R + partial"]]
     .map(([v, t]) => `<option value="${v}" ${S.crtTarget === v ? "selected" : ""}>${t}</option>`).join("");
   ct.onchange = () => { S.crtTarget = ct.value; Prefs.set("watch.crtTarget", ct.value); renderEngine(); refresh(); };
-  box.append(ct);
+  const cf = document.createElement("select");
+  cf.id = "crtFilter"; cf.title = "Which CRT trades the layer draws: every one, at a gap, or H-O's filter";
+  cf.innerHTML = CRT_FILTERS.map(([v, t]) => `<option value="${v}" ${S.crtFilter === v ? "selected" : ""}>${t}</option>`).join("");
+  cf.onchange = () => { S.crtFilter = cf.value; Prefs.set("watch.crtFilter", cf.value); renderEngine(); refresh(); };
+  box.append(ct, cf);
   const sel = document.createElement("select");
   sel.title = "Which of the engine's arrays to draw";
   sel.innerHTML = [["interval", "arrays: by visibility interval"], ["all", "arrays: every one"], ["M15", "arrays: M15 and up"],

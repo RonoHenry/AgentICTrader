@@ -433,6 +433,17 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
   - **Tests:** `test_the_crt_layer_is_withheld_while_blind_and_shows_only_what_the_clock_has_seen`; the 7 tests of `test_research_search_crt.py`. `noculus_ui.js` still fails, as it has since task 357.
   - **Validates: Requirements 31.1–31.3**
 
+- [x] 372. H-O's filter on the chart (Requirement 31.4)
+  - **Done 2026-10-27.** `WatchSession.crt` tags each trade through `search_crt_context.Context` (a month of the session's M1): its pools, gaps, H4 trend and H-O's keep. The page has a second menu ("CRT trades: every one / at a gap (FVG) / H-O filter"), labels each C2 with its pools and gaps, and the card totals what is shown.
+  - **US100, 21-25 April 2025, at 5R + partial:**
+    - every CRT: 118 trades, −19.4R;
+    - at a gap: 35 trades, +10.1R;
+    - H-O: 22 trades, +12.1R.
+
+    Up to Monday 09:00, the 18 CRTs (11 of them longs into the fall) keep 3, all shorts at H1 gaps with the H4 trend down. One week only: on development H-O is −0.17R a trade.
+  - **Tests:** the session test checks the tags and the keep rule; `test_research_search_crt_context.py` (3).
+  - **Validates: Requirement 31.4**
+
 ---
 
 ## Task Dependency Graph

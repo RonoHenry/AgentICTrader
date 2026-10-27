@@ -1070,6 +1070,8 @@ def test_the_crt_layer_is_withheld_while_blind_and_shows_only_what_the_clock_has
         long = r["side"] > 0
         assert (r["stop"] < r["fill"]) if long else (r["stop"] > r["fill"])
         assert (r["extreme"] < r["swept"]) if long else (r["extreme"] > r["swept"])   # C2's wick beyond C1
+        assert r["trend"] in (-1, 0, 1) and isinstance(r["pools"], list) and isinstance(r["arrays"], list)
+        assert r["kept"] == bool((r["pools"] or r["arrays"]) and r["trend"] == r["side"])   # H-O's filter
         for x in r["targets"].values():
             assert all(leg["at"] <= clock for leg in x["legs"])
             assert x["net"] is None or (x["legs"] and x["legs"][-1]["at"] <= clock)

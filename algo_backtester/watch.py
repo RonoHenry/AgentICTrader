@@ -62,7 +62,9 @@ from algo_backtester.report import journal_csv
 from algo_backtester.run import run_backtest
 from algo_backtester.signals import entry_closes, signals_at
 from algo_research.chain_view import ChainView, trading_days
-from algo_research.search_crt import session_trades
+from algo_research.search_crt import m15_from_m1, session_trades
+from algo_research.search_crt_context import WARMUP as CRT_WARMUP
+from algo_research.search_crt_context import Context as CrtContext
 from algo_research.config import load_research_config, trading_date_open
 from algo_research.fractal_poi import FractalPOI, FractalSettings, partners_for, warmup_days
 from algo_research.fractal_poi import defaults as fractal_defaults
@@ -892,6 +894,10 @@ class WatchSession:
                 m1 = pd.DataFrame({"time": self.frame.m1["time"].reset_index(drop=True),
                                    **{k: self.frame.arrays[k] for k in ("open", "high", "low", "close", "spread")}})
                 found = session_trades(m1)
+                # H-O's context (the pools, gaps and H4 trend of each CRT), from a month of the session's M1
+                ctx = CrtContext(m15_from_m1(self._m1(self.instrument, CRT_WARMUP.days).reset_index(drop=True)))
+                for tr in found:
+                    tr.update(ctx.tag(int(tr["c3"].value), tr["side"], tr["c2_high"], tr["c2_low"], tr["c2_close"]))
                 for tr in found:                              # in the chart's wall seconds, once
                     for key in ("c2", "c3", "day_end"):
                         tr[key] = wall(tr[key])
@@ -907,7 +913,8 @@ class WatchSession:
             if not since <= c3 < until or c3 > clock:
                 continue
             row = {"c2": tr["c2"], "c3": c3, "side": tr["side"], "swept": tr["swept"], "extreme": tr["extreme"],
-                   "fill": tr["fill"], "stop": tr["stop"], "risk": tr["risk"], "targets": {}}
+                   "fill": tr["fill"], "stop": tr["stop"], "risk": tr["risk"], "pools": tr["pools"],
+                   "arrays": tr["arrays"], "trend": tr["trend"], "kept": tr["kept"], "targets": {}}
             day_end = tr["day_end"]
             for k, x in tr["targets"].items():
                 legs = x["legs"]
@@ -922,7 +929,8 @@ class WatchSession:
             summary[k] = {"closed": len(nets), "total": round(sum(nets), 2), "wins": sum(v > 0 for v in nets)}
         reached = [any(leg["kind"] in ("partial", "target") for leg in r["targets"]["5"]["legs"]) for r in rows]
         return {"withheld": False, "rows": rows, "summary": summary, "reached_3r": sum(reached),
-                "develop": "2021-07 to 2022, nine markets: -0.21R a trade at 3R, 4R and 5R (H-N, 0 of 9 markets > 0)"}
+                "develop": "2021-07 to 2022, nine markets: every CRT -0.21R a trade at 3R, 4R and 5R (H-N); "
+                           "H-O's filter -0.17R; at a gap -0.16R net, +0.10R better than the other side"}
 
     def _m1(self, instrument: str, days: int) -> pd.DataFrame:
         """The session's M1 (the snapshot's or the terminal's) for ``instrument`` from ``days`` before the session to

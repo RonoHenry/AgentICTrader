@@ -203,6 +203,7 @@ def session_trades(m1: pd.DataFrame) -> list[dict]:
                  "at": times[i] + (minute if kind == "close" else pd.Timedelta(0))}
                 for share, price, i, kind in trade[f"legs_{k:g}"]]}
         out.append({"c2": s.c3 - _M15, "c3": s.c3, "side": int(s.side), "swept": s.c1_low if long_ else s.c1_high,
+                    "c2_high": float(s.c2_high), "c2_low": float(s.c2_low), "c2_close": float(s.c2_close),
                     "extreme": s.c2_low if long_ else s.c2_high, "fill": float(fill),
                     "stop": float(fill - trade["risk"] if long_ else fill + trade["risk"]), "risk": float(trade["risk"]),
                     "reached_3r": bool(trade["reached_3r"]), "day_end": times[int(p.day_end[e])] + minute,
