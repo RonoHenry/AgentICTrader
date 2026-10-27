@@ -977,8 +977,26 @@ The trader's TradingView indicator, ported from Pine and shown on Noculus at the
       - Ten more orders filled, freed by break-even exits: −2.3R.
       - Partials were taken on 30 trades.
     - **Still to do:** the trader's look on Noculus.
-    - **Not covered:** the paper trader and the live MT5 path don't manage trades yet. Their parity is a separate task.
+    - **Not covered:** the live MT5 path doesn't manage trades yet. Paper does from task 370.
   - **Validates: Requirements 28.1–28.5**
+
+- [ ] 370. The paper agents trade the variant as backtested: its management and its costs
+  - **370a. RED**
+    - `test_paper_broker.py::TestManagement`:
+      - a third off at 3R, then the rest stopped at the fill;
+      - the rest reaching the target;
+      - off unless set;
+      - a SHORT on the ask, with its spread and slippage;
+      - a restart keeps the partial and the break-even stop;
+      - the report counts the partials.
+    - `test_backtest_runner_view.py`: the runner reads the variant's `[management]` and prices paper with its profile's specs.
+  - **370b. GREEN**
+    - `fill_model.partial_level`, shared by `_fill` and the paper broker.
+    - `PaperBrokerAdapter(partial_r, partial_fraction)`: `_to_order` and `_from_order` carry the partial; `_r_multiples` books its bid.
+    - `run_live_agent._run_config` and `_paper_specs`; a PARTIAL line in the log.
+  - **370c.** Run `fresh_near_gap_partial` on paper across the 8 Exness markets, with plain `fresh_near_gap` beside it as the unmanaged control on the same signals.
+  - **Done 2026-10-27 (370a, 370b).** 7 tests. Before this, the MT5 paper test ran at zero cost (task 219's profile was never wired), so the 23 Oct forward test's R is gross.
+  - **Validates: Requirements 28.6, 28.7**
 
 ---
 

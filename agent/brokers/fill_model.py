@@ -63,7 +63,7 @@ from agent.strategy_config import PendingExpiry
 from liquidity_engine.models import KillzoneWindow
 from liquidity_engine.utils.time_utils import KILLZONE_WINDOWS, get_killzone, to_est, to_utc
 
-__all__ = ["Bar", "FillEvent", "FillModel", "SimOrder", "pending_expiry", "swap_nights"]
+__all__ = ["Bar", "FillEvent", "FillModel", "SimOrder", "partial_level", "pending_expiry", "swap_nights"]
 
 Direction = Literal["LONG", "SHORT"]
 OrderKind = Literal["MARKET", "LIMIT"]
@@ -176,10 +176,7 @@ class FillModel:
         # Excursions start from the price the position would close at right now.
         order.mae_price = order.mfe_price = price - bar.spread if order.direction == "LONG" else price + bar.spread
         if order.partial_r:
-            sign = 1 if order.direction == "LONG" else -1
-            level = price + sign * order.partial_r * abs(price - order.stop)
-            short_of_target = order.target is None or (level < order.target if sign > 0 else level > order.target)
-            order.partial_price = level if short_of_target else None
+            order.partial_price = partial_level(order.direction, price, order.stop, order.target, order.partial_r)
 
     # ── an open position ───────────────────────────────────────────────────
 
@@ -230,6 +227,16 @@ class FillModel:
     def _close(order: SimOrder, bar: Bar, reason: str, ideal_exit: Optional[float], exit_price: Optional[float]) -> None:
         order.status, order.closed_at, order.exit_reason = "CLOSED", bar.timestamp, reason
         order.ideal_exit, order.exit = ideal_exit, exit_price
+
+
+def partial_level(direction: Direction, fill: float, stop: float, target: Optional[float],
+                  partial_r: float) -> Optional[float]:
+    """Where a position filled at ``fill`` takes its partial: ``partial_r`` times the
+    fill-to-stop distance beyond the fill, or None when that is at or beyond the target."""
+    sign = 1 if direction == "LONG" else -1
+    level = fill + sign * partial_r * abs(fill - stop)
+    short_of_target = target is None or (level < target if sign > 0 else level > target)
+    return level if short_of_target else None
 
 
 def pending_expiry(placed_at: datetime, rule: PendingExpiry, fallback_ttl: timedelta) -> datetime:

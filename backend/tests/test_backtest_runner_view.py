@@ -214,6 +214,20 @@ def test_the_runner_can_take_a_backtested_version_and_its_broker_symbols():
         runner._strategy(SimpleNamespace(config=None, variant="fresh_near_gap", timeframe="M15", min_rr=3.0))
 
 
+def test_the_runner_takes_the_variants_management_and_its_profiles_costs():
+    # algo-backtester Req 28.6-28.7: paper trades a configuration the way it was backtested.
+    focus = Path(__file__).resolve().parents[2] / "config" / "backtests" / "focus.toml"
+    managed = runner._run_config(SimpleNamespace(config=str(focus), variant="fresh_near_gap_partial"))
+    assert (managed.management.partial_r, managed.management.partial_fraction) == (3.0, pytest.approx(1 / 3))
+    assert runner._run_config(SimpleNamespace(config=str(focus), variant="fresh_near_gap")).management.partial_r == 0
+    assert runner._run_config(SimpleNamespace(config=None, variant=None)) is None
+
+    specs = runner._paper_specs("mt5", managed)  # the profile's: exness-standard
+    assert specs["US100"].default_spread > 0 and specs["GER40"].stop_slippage > 0
+    assert runner._paper_specs("mt5", None) is None
+    assert runner._paper_specs("binance", None).venue == "binance"
+
+
 def test_every_timeframe_the_engine_reads_has_an_mt5_code():
     # 2026-10-22: the live path died on M30, which the engine reads since the liquidity-engine update (LE-D13).
     if not runner._MT5_TIMEFRAME:

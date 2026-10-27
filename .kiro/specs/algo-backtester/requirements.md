@@ -594,9 +594,15 @@ The trader chose it: "We move to BE as we take partials". It is an exit rule, no
 
    The journal SHALL carry `partial_at`, `partial_exit` and `partial_fraction` (the actual share, after rounding).
 5. Engine mode SHALL draw the partial: where and when it was taken, with its share. A rest stopped at the fill reads "BE". Requirement 16.1's note becomes conditional: when the run manages no trade, the page says the backtest never moves a stop or takes a partial.
+6. WHEN the live runner trades a configuration on paper (`scripts/run_live_agent.py --config … --broker paper`), THE paper broker SHALL manage its trades by that configuration's `[management]`, through the same fill model (added 2026-10-27: "run a paper agent session across all assets … see how our implementation works").
+   - The trade keeps its planned stop, which R is measured on, and records the partial (share, price, bid, time).
+   - The partial's level is recomputed from the fill after a restart. A trade whose partial was taken keeps its stop at the fill.
+   - Paper has no lots: the share is exact and every trade splits (D46).
+7. WHEN the live runner trades a configuration on the MT5 feed, THE paper broker SHALL take its spreads and stop slippage from that configuration's broker profile. Until now the MT5 paper test ran without costs. Swap is still not charged on paper.
 
 | Id | Decision | Source |
 |---|---|---|
 | D43 | Management lives in the run configuration, not the StrategyConfig | `agent/strategy_config.py` is one of `ENGINE_SOURCES`: any edit to it changes the engine fingerprint and invalidates every Phase A cache entry (about 540 MB, hours to rebuild). Exits are read by the broker only, after Phase A, so they belong beside the account. Runs that differ only in management share Phase A's entries. |
 | D44 | A position too small to split runs unmanaged | Sizing never rounds up past the risk budget (Requirement 6.2). Rounding a partial up would close more than the share, and rounding the rest up is impossible. At $10,000 and 1% risk, no `fresh_near_gap` trade of 2025-26 was under two minimum lots. A small live account would be, and its trades would run unmanaged. |
 | D45 | Break-even is the fill, from the next bar | The stop moves to the price the position was opened at, as a trader moves it in MT5. M1 bars can't order the partial and a dip on the same minute, so the move waits for the next bar: that is the replay's rule, and it never improves a result. Once its partial is taken, a trade can lose only the rest's spread, slippage and commission. |
+| D46 | Paper always splits | The paper broker sizes in risk units, not lots, and scores trades in R. D44 is a lot-rounding rule: on paper it would only skip trades the backtest manages at $10,000. A live MT5 account at the runner's $200 seed equity would be under two minimum lots on most trades, so live management needs its own rule. |
