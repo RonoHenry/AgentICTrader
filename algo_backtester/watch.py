@@ -238,6 +238,7 @@ class WatchSession:
         self.states: dict[int, dict] = {}
         self._keys: list[int] = []
         self.summary: dict = {}
+        self.management: dict = {}             # the run's partial and break-even (Requirement 28)
         self.model_a: dict[str, list[dict]] = {}
         self._fractal: "OrderedDict[tuple, FractalPOI]" = OrderedDict()
         self._fractal_lock = threading.Lock()
@@ -288,6 +289,7 @@ class WatchSession:
 
     def _prepare(self) -> None:
         cfg = load_run_config(self.config, self.variant)
+        self.management = cfg.management.model_dump()
         end = self.end                 # a live session's new end is shown with the states that reach it, not before
         if self.live:
             self.source.refresh(self.instrument)
@@ -377,8 +379,8 @@ class WatchSession:
 
     def _paths(self, m1, journal: list[dict], end: pd.Timestamp) -> None:
         """Each filled trade's best and worst point from the fill to the exit (or the session's end), in R and at
-        their times (Requirement 16.1). The backtest never moves a stop or takes a partial, so this is all the
-        managing there was to see. Within the fill's minute the extremes may precede the fill."""
+        their times (Requirement 16.1). Unless the run manages its trades (Requirement 28), the backtest never moves a
+        stop or takes a partial, so this is all the managing there was to see. Within the fill's minute the extremes may precede the fill."""
         times = np.array(wall_seconds([b.timestamp for b in m1])) if m1 else np.array([], dtype=np.int64)
         highs = np.array([b.high for b in m1]); lows = np.array([b.low for b in m1])
         end_of_session = wall(end)
@@ -593,7 +595,9 @@ class WatchSession:
                 "placed_at": _iso_wall(r.get("placed_at")), "expires_at": _iso_wall(r.get("expires_at")),
                 "filled_at": _iso_wall(r.get("filled_at")), "fill": _num(r.get("fill")), "closed_at": _iso_wall(r.get("closed_at")),
                 "exit": _num(r.get("exit")), "exit_reason": r.get("exit_reason") if isinstance(r.get("exit_reason"), str) else None,
-                "net_r": _num(r.get("net_r")), "mfe_r": _num(r.get("mfe_r"))}
+                "net_r": _num(r.get("net_r")), "mfe_r": _num(r.get("mfe_r")),
+                "partial_at": _iso_wall(r.get("partial_at")), "partial_exit": _num(r.get("partial_exit")),
+                "partial_fraction": _num(r.get("partial_fraction"))}
 
     def _state(self, lm, view, seen, t: datetime, entry_tf: Timeframe, cisd: str = "next") -> dict:
         price = view[entry_tf][-1].close if view.get(entry_tf) else None
@@ -694,7 +698,8 @@ class WatchSession:
                 "variant": self.variant or "base", "first_day": self.first_day.isoformat(), "days": self.days,
                 "start": wall(self.start), "end": wall(self.end), "digits": self.bars.digits if self.bars else 5,
                 "summary": {} if self.withheld else self.summary, "closes": len(self._keys),
-                "blind": self.blind, "revealed_at": self.revealed_at, "live": self.live, "version": self.version}
+                "blind": self.blind, "revealed_at": self.revealed_at, "live": self.live, "version": self.version,
+                "management": self.management}
 
     def _read_model_a(self) -> dict[str, list[dict]]:
         """Model A's instances over the session, both of the trader's frame sets, both sides (Requirement 17), with

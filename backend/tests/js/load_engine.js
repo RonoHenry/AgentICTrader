@@ -89,3 +89,15 @@ for (const name of order) {
 }
 console.log("\nwindow.Noculus:", typeof global.Noculus, " window.Drawings:", typeof global.Drawings,
             " window.Motion:", typeof global.Motion);
+
+// Requirement 28.5: a rest stopped at its fill after a partial reads BE; any other exit keeps its reason.
+// engine.js is strict, so its functions stay inside the eval: read this one from the source.
+const labelSrc = (fs.readFileSync(path.join(STATIC, "engine.js"), "utf8").match(/function exitLabel\(r\) \{.*\}/) || [])[0];
+const exitLabel = labelSrc ? (0, eval)(`(${labelSrc})`) : null;
+const labels = [
+  [{ partial_at: 1, exit_reason: "SL" }, "BE"], [{ partial_at: 1, exit_reason: "TP" }, "TP"],
+  [{ partial_at: null, exit_reason: "SL" }, "SL"], [{ exit_reason: null }, "exit"],
+];
+const wrong = labels.filter(([row, want]) => !exitLabel || exitLabel(row) !== want);
+for (const [row, want] of wrong) console.log(`  FAIL exitLabel(${JSON.stringify(row)}) = ${exitLabel ? exitLabel(row) : "(missing)"}, want ${want}`);
+if (wrong.length) process.exitCode = 1; else console.log("  ok   exit labels");

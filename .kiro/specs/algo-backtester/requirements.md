@@ -357,7 +357,7 @@ The trader can't judge the engine from tables: "something is still broken, but I
 
 Added 2026-10-15. After watching, the trader placed the engine's flaw "between the logical steps of my model execution and the right array, the high-probability point of interest". The sequence detector takes any untouched M1-M15 array with a raid, CISD and intact swing behind it, and ranks them by how recent the raid is. The grade then counts conditions; it is not an ordered chain.
 
-1. THE watch SHALL draw each trade's life: placement, fill, the exit with its R, and the path between them (the best and worst point it reached, in R, at their times). The backtest never moves a stop or takes a partial: the page SHALL say so, since that is the management a trader would have done. Until the trade closes, only the best so far is shown.
+1. THE watch SHALL draw each trade's life: placement, fill, the exit with its R, and the path between them (the best and worst point it reached, in R, at their times). Unless the run manages its trades (Requirement 28), the backtest never moves a stop or takes a partial: the page SHALL say so, since that is the management a trader would have done. Until the trade closes, only the best so far is shown.
 2. AT each close where the engine looked for a setup, the page SHALL list every candidate array the sequence detector considered: its timeframe, type, zone, raid (pool and age), CISD, and the key it was ranked by. It SHALL mark the one the engine chose, and draw the candidates on the chart when asked.
 3. THE trader MAY mark the candidate they would have chosen, or "none". The picks are kept in a file under `data/journal/` (local, git-ignored), one line per close, with the engine's choice beside it, so the two can be compared over many sessions.
 
@@ -562,3 +562,41 @@ The trader's first look at a live session (2026-10-22): "its not working. It is 
 | D40 | A live session waives the study hold-out guard | The guard keeps a fixed past unread until the final run (Requirement 7.2). A live session is forward data, the days being traded now, as the paper runner's are; refusing it would make the live chart impossible. The trader's live days do fall after the study's hold-out start (2026-07-07), so a final validation run over them would not be blind to the trader. |
 | D41 | The page drives the refresh | A live session reads the terminal again only while a page asks after it, so a kept session left alone costs nothing. The page asks every second for the market now; the session asks the terminal for a newly closed minute at most every 5 s, and runs the rest only when one has closed. That rest takes about 4 s on a quiet machine (15 s seen while the paper runner and a pilot ran): the backtester's aggregation, the engine at the new closes, and Phase B. |
 | D42 | A cross is watched in its own currency | The backtester can't convert a cross's results to the account's currency yet, so real runs still refuse one. The watch shows R, and R is the same in any currency: risk and result are both in the quote currency. GER40 and UK100 carry no commission on the Exness profile. |
+
+## Update 2026-10-27: Partials and Break-Even
+
+### Requirement 28: A Partial, Then Break-Even
+
+Added 2026-10-27. The trader noticed that "when most trades have run for like 3-4 rr, they tend to come back and take out stops" and asked for management: "Edge is not just in the technicals but also how we manage the trade in the process." An exact replay of `fresh_near_gap`'s 289 filled trades through the fill model (it reproduced every journal result) compared about 30 exit rules:
+- fixed 3R, 4R and 5R targets lost against the engine's own targets in both periods;
+- break-even alone at +1R or +1.5R cost the big winners when the engine was right;
+- a third off at 3R, with the rest moved to break-even at that moment, was the best rule in January–June 2025: +29.0R against +30.4R, return over drawdown 1.38 against 1.14, wins 27% against 15%, the longest run of full losses 11 against 26. From July 2025 it lost at the same rate per unit of drawdown as every other rule (−0.99 against −0.96).
+
+The trader chose it: "We move to BE as we take partials". It is an exit rule, not an edge, and is judged on forward data from here on.
+
+1. A run's configuration SHALL take a `[management]` table:
+   - `partial_r`, a multiple of the trade's risk; 0 (the default) is off;
+   - `partial_fraction`, the share of the position closed there, strictly between 0 and 1 (default ⅓).
+
+   A variant sets them with dotted keys, as it sets the strategy's.
+2. WHEN a filled trade's closing-side price reaches its fill plus `partial_r` times the fill-to-stop distance, THE fill model SHALL close `partial_fraction` of it at that price (a limit exit, without slippage) and move the rest's stop to the fill.
+   - The new stop holds from the next bar: the bar that took the partial was checked against the old stop.
+   - A bar that reaches both the stop and the partial is the stop's, as with a target.
+   - No partial on a limit's fill bar, as no target.
+   - The target may close the rest on the partial's own bar.
+   - A partial at or beyond the target is not taken: the trade runs as an unmanaged one.
+3. THE broker SHALL size the partial in lots, rounded down to the volume step. WHEN the partial or the rest would be under the minimum volume, the trade SHALL run without a partial and without the stop move.
+4. A trade with a partial SHALL be one journal row and one result. R is the lots-weighted sum of the two exits on the risk the order was sized on. The costs split the same way:
+   - spread: a LONG's is paid once on entry; a SHORT's is paid on each part's exit;
+   - slippage: on the rest's stop exit only;
+   - commission: on every lot, both sides;
+   - swap: on each part's own nights.
+
+   The journal SHALL carry `partial_at`, `partial_exit` and `partial_fraction` (the actual share, after rounding).
+5. Engine mode SHALL draw the partial: where and when it was taken, with its share. A rest stopped at the fill reads "BE". Requirement 16.1's note becomes conditional: when the run manages no trade, the page says the backtest never moves a stop or takes a partial.
+
+| Id | Decision | Source |
+|---|---|---|
+| D43 | Management lives in the run configuration, not the StrategyConfig | `agent/strategy_config.py` is one of `ENGINE_SOURCES`: any edit to it changes the engine fingerprint and invalidates every Phase A cache entry (about 540 MB, hours to rebuild). Exits are read by the broker only, after Phase A, so they belong beside the account. Runs that differ only in management share Phase A's entries. |
+| D44 | A position too small to split runs unmanaged | Sizing never rounds up past the risk budget (Requirement 6.2). Rounding a partial up would close more than the share, and rounding the rest up is impossible. At $10,000 and 1% risk, no `fresh_near_gap` trade of 2025-26 was under two minimum lots. A small live account would be, and its trades would run unmanaged. |
+| D45 | Break-even is the fill, from the next bar | The stop moves to the price the position was opened at, as a trader moves it in MT5. M1 bars can't order the partial and a dip on the same minute, so the move waits for the next bar: that is the replay's rule, and it never improves a result. Once its partial is taken, a trade can lose only the rest's spread, slippage and commission. |

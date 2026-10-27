@@ -9,6 +9,8 @@ Validates: Requirements 1.1, 1.4, 1.5, 6.3, 7.5 (.kiro/specs/algo-backtester/req
 """
 from __future__ import annotations
 
+import csv
+import io
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -21,7 +23,8 @@ from agent.brokers.fill_model import Bar
 from agent.instruments import CommissionSpec, InstrumentSpec, InstrumentSpecs
 from agent.order_intent import NoTrade, OrderIntent
 from agent.strategy_config import StrategyConfig
-from algo_backtester.config import AccountSection
+from algo_backtester.config import AccountSection, ManagementSection
+from algo_backtester.report import journal_csv
 from algo_backtester.signals import EngineError, SignalRecord
 from algo_backtester.simulation import simulate
 from liquidity_engine.models import SetupGrade, Timeframe
@@ -244,3 +247,28 @@ def test_property_9_account_state_matches_positions(case):
 
     run(bars, signals, on_step=check)
     assert seen and seen == sorted(seen)
+
+
+# ── a partial, then break-even (Requirement 28) ────────────────────────────
+
+def test_management_reaches_the_broker_and_the_journal():
+    # A LONG at the ask 1.1001, 1R = 10 pips: a third off at 3R (1.1031) on the bar opening at 13:05, then the
+    # rest stopped at break-even on the next bar, which opens under the fill (a gap: out at its open, 1.1000).
+    up = T0 + 5 * MIN
+    bars = {"EURUSD": [replace(b, high=1.1032) if b.timestamp == up else b for b in flat("EURUSD")]}
+    signals = {"EURUSD": [intent("EURUSD", T0, "A")]}
+
+    unmanaged = run(bars, signals)
+    assert unmanaged.journal[0].trade is None                       # still open at the end: nothing moved
+
+    managed = run(bars, signals, management=ManagementSection(partial_r=3.0, partial_fraction=1 / 3))
+    trade = managed.journal[0].trade
+    assert trade.partial_at == up and trade.partial_fraction == pytest.approx(0.33)
+    assert trade.exit_reason == "SL" and trade.closed_at == up + MIN
+    assert trade.net_r == pytest.approx(0.33 * 3 + 0.67 * -0.1)
+
+    [row] = csv.DictReader(io.StringIO(journal_csv(managed.journal, managed.open_orders)))
+    assert row["partial_at"] == up.isoformat() and float(row["partial_exit"]) == pytest.approx(1.1031)
+    assert float(row["partial_fraction"]) == pytest.approx(0.33)
+    [plain] = csv.DictReader(io.StringIO(journal_csv(unmanaged.journal, unmanaged.open_orders)))
+    assert (plain["partial_at"], plain["partial_exit"], plain["partial_fraction"]) == ("", "", "")

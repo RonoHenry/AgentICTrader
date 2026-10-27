@@ -273,10 +273,12 @@ function paintEngine(ctx, size) {
       const x1 = X(r.filled_at), x2 = closed ? Math.max(X(r.closed_at), x1 + 6) : Math.max(X(S.t), x1 + 40);
       const fy = Y(r.fill), sy = Y(r.stop), ty = Y(r.target);
       const shade = (col, a) => rgba(col.startsWith("#") ? col : "#888888", a);
-      ctx.fillStyle = shade(pal.bad, 0.12); ctx.fillRect(x1, Math.min(fy, sy), x2 - x1, Math.abs(sy - fy));     // risk
+      // After a partial (Requirement 28) the stop is the fill: the risk ends where the partial came off.
+      const xs = r.partial_at != null && r.partial_at <= S.t ? Math.min(Math.max(X(r.partial_at), x1), x2) : x2;
+      ctx.fillStyle = shade(pal.bad, 0.12); ctx.fillRect(x1, Math.min(fy, sy), xs - x1, Math.abs(sy - fy));     // risk
       ctx.fillStyle = shade(pal.good, 0.12); ctx.fillRect(x1, Math.min(fy, ty), x2 - x1, Math.abs(ty - fy));    // reward
       line(x1, fy, x2, fy, c, [], 1.5);
-      line(x1, Y(r.stop), x2, Y(r.stop), pal.bad, [], 1.2); line(x1, Y(r.target), x2, Y(r.target), pal.good, [], 1.2);
+      line(x1, Y(r.stop), xs, Y(r.stop), pal.bad, [], 1.2); line(x1, Y(r.target), x2, Y(r.target), pal.good, [], 1.2);
       ctx.fillStyle = c; ctx.beginPath();
       if (long) { ctx.moveTo(x1, fy); ctx.lineTo(x1 - 6, fy + 10); ctx.lineTo(x1 + 6, fy + 10); } else { ctx.moveTo(x1, fy); ctx.lineTo(x1 - 6, fy - 10); ctx.lineTo(x1 + 6, fy - 10); }
       ctx.fill();
@@ -288,6 +290,10 @@ function paintEngine(ctx, size) {
         ctx.fillStyle = color; ctx.beginPath(); ctx.arc(mx, my, 3.5, 0, 2 * Math.PI); ctx.fill();
         text(label, mx + 6, up ? my - 5 : my + 13, color);
       };
+      if (r.partial_at != null && r.partial_at <= S.t) {  // the partial (Requirement 28), once taken
+        const partialR = (long ? r.partial_exit - r.fill : r.fill - r.partial_exit) / Math.abs(r.fill - r.stop);
+        mark(r.partial_at, r.partial_exit, `${Math.round(100 * r.partial_fraction)}% off +${partialR.toFixed(1)}R, rest to BE`, pal.good, long);
+      }
       if (closed && r.path) {                           // the path, once it is all in the past
         mark(r.path.best_at, r.path.best, `best +${r.path.best_r.toFixed(2)}R`, pal.good, long);
         mark(r.path.worst_at, r.path.worst, `worst ${r.path.worst_r.toFixed(2)}R`, pal.bad, !long);
@@ -314,7 +320,7 @@ function paintEngine(ctx, size) {
         ctx.strokeStyle = win ? pal.good : pal.bad; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(x2 - 5, ey - 5); ctx.lineTo(x2 + 5, ey + 5); ctx.moveTo(x2 + 5, ey - 5); ctx.lineTo(x2 - 5, ey + 5); ctx.stroke();
         ctx.font = "11px system-ui, sans-serif";
-        text(`${r.exit_reason || "exit"} ${r.net_r != null ? (r.net_r >= 0 ? "+" : "") + r.net_r.toFixed(2) + "R" : ""}`, x2 + 7, ey - 3, win ? pal.good : pal.bad);
+        text(`${exitLabel(r)} ${r.net_r != null ? (r.net_r >= 0 ? "+" : "") + r.net_r.toFixed(2) + "R" : ""}`, x2 + 7, ey - 3, win ? pal.good : pal.bad);
         ctx.font = "10px system-ui, sans-serif";
       }
     }
@@ -907,9 +913,11 @@ function renderEngine() {
   if (S.layers.chain) html += chainCard();
   const open = S.journal.find((r) => r.filled_at != null && r.filled_at <= S.t && (r.closed_at == null || r.closed_at > S.t));
   if (open) {
-    html += `<div class="card"><b>Open trade</b>: ${esc(open.direction)} from ${fmt(open.fill)}, stop ${fmt(open.stop)}, target ${fmt(open.target)}.
-      <div class="muted">The engine doesn't manage trades: no break-even, trailing or partial close. It waits for the stop or the target;
-      the dotted +1R line is where a break-even would arm.</div></div>`;
+    const m = (S.status && S.status.management) || {}, partialDone = open.partial_at != null && open.partial_at <= S.t;
+    html += `<div class="card"><b>Open trade</b>: ${esc(open.direction)} from ${fmt(open.fill)}, stop ${fmt(partialDone ? open.fill : open.stop)}, target ${fmt(open.target)}.
+      <div class="muted">${m.partial_r ? `Managed: ${Math.round(100 * m.partial_fraction)}% off at ${m.partial_r}R, the rest's stop to the fill (break-even). ${partialDone ? "The partial is taken." : "No partial yet."} No trailing.`
+        : `The engine doesn't manage trades: no break-even, trailing or partial close. It waits for the stop or the target;
+      the dotted +1R line is where a break-even would arm.`}</div></div>`;
   }
   const cd = st.candidates;
   if (cd) {
@@ -941,13 +949,16 @@ function renderEngine() {
     });
   }
 }
+// A rest stopped at its own fill after the partial is a break-even, not a loss (Requirement 28.5).
+function exitLabel(r) { return r.partial_at != null && r.exit_reason === "SL" ? "BE" : (r.exit_reason || "exit"); }
 function renderLog() {
   const items = [];
   for (const r of S.journal) {
     if (r.decision !== "EXECUTE") continue;
     if (r.t <= S.t) items.push({ t: r.t, text: `${r.order_kind || ""} ${r.direction} placed @ ${fmt(r.entry)} (R:R ${r.r_ratio ? r.r_ratio.toFixed(1) : "—"})`, cls: "" });
     if (r.filled_at != null && r.filled_at <= S.t) items.push({ t: r.filled_at, text: `${r.direction} filled @ ${fmt(r.fill)}`, cls: "" });
-    if (r.closed_at != null && r.closed_at <= S.t) items.push({ t: r.closed_at, text: `${r.exit_reason || "closed"} ${r.net_r != null ? (r.net_r >= 0 ? "+" : "") + r.net_r.toFixed(2) + "R" : ""}`
+    if (r.partial_at != null && r.partial_at <= S.t) items.push({ t: r.partial_at, text: `${Math.round(100 * r.partial_fraction)}% closed @ ${fmt(r.partial_exit)}, stop to break-even ${fmt(r.fill)}`, cls: "good" });
+    if (r.closed_at != null && r.closed_at <= S.t) items.push({ t: r.closed_at, text: `${r.exit_reason ? exitLabel(r) : "closed"} ${r.net_r != null ? (r.net_r >= 0 ? "+" : "") + r.net_r.toFixed(2) + "R" : ""}`
                                                                + (r.path ? ` (best +${r.path.best_r.toFixed(2)}R at ${fmtTime(r.path.best_at)})` : ""),
                                                                cls: (r.net_r || 0) > 0 ? "good" : "bad" });
     else if (r.filled_at == null && r.expires_at != null && r.expires_at <= S.t) items.push({ t: r.expires_at, text: "order expired unfilled", cls: "muted" });

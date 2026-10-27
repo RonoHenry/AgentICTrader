@@ -154,6 +154,32 @@ def test_focus_config_carries_the_indicator_cisd_variants():
             update={"cisd": CisdMode(mode)})
 
 
+def test_management_is_off_by_default_and_set_by_a_variant(tmp_path):
+    # Requirement 28.1: a partial and break-even, configured beside the account, not in the strategy (D43).
+    text = BASE + "\n[variants.partial]\nmanagement.partial_r = 3.0\nmanagement.partial_fraction = 0.5\n"
+    base = load_run_config(write(tmp_path, text))
+    partial = load_run_config(write(tmp_path, text), variant="partial")
+    assert base.management.partial_r == 0.0 and base.management.partial_fraction == pytest.approx(1 / 3)
+    assert (partial.management.partial_r, partial.management.partial_fraction) == (3.0, 0.5)
+    assert partial.strategy == base.strategy          # Phase A's cache key reads the strategy only
+
+
+@pytest.mark.parametrize("fraction", [0.0, 1.0, 1.5])
+def test_a_partial_leaves_a_rest(tmp_path, fraction):
+    text = BASE + f"\n[management]\npartial_r = 3.0\npartial_fraction = {fraction}\n"
+    with pytest.raises(ValidationError):
+        load_run_config(write(tmp_path, text))
+
+
+def test_focus_config_carries_the_partial_variant():
+    # The rule the trader chose on 2026-10-27: a third off at 3R, the rest to break-even.
+    focus = Path(__file__).resolve().parents[2] / "config" / "backtests" / "focus.toml"
+    execution = load_run_config(focus, variant="fresh_near_gap")
+    partial = load_run_config(focus, variant="fresh_near_gap_partial")
+    assert partial.strategy == execution.strategy and execution.management.partial_r == 0.0
+    assert (partial.management.partial_r, partial.management.partial_fraction) == (3.0, pytest.approx(1 / 3))
+
+
 @pytest.mark.parametrize("variant", ["m5_fresh_near_gap", "fresh_near_gap", "fresh_near_gap_box"])
 def test_confirmation_config_is_the_explored_version_on_the_next_period(variant):
     # The pre-registered confirmations (docs/backtests/CONFIRMATION_TRADER_EXECUTION.md, CONFIRMATION_D1_BOX.md):

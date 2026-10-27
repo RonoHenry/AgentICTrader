@@ -135,6 +135,19 @@ def test_a_session_keeps_each_trades_path(session):
     assert all(r.get("path") is None for r in session.journal if r["filled_at"] is None)
 
 
+def test_a_journal_row_carries_the_partial():
+    # Requirement 28.5: the page draws the partial from the row, on the session's wall clock like every time.
+    row = WatchSession._journal_row({"t": "2025-01-06T13:00:00+00:00", "decision": "EXECUTE", "direction": "LONG",
+                                     "partial_at": "2025-01-06T13:05:00+00:00", "partial_exit": 1.1031,
+                                     "partial_fraction": 0.33})
+    assert row["partial_at"] == wall(pd.Timestamp("2025-01-06T13:05:00+00:00"))
+    assert (row["partial_exit"], row["partial_fraction"]) == (1.1031, 0.33)
+    plain = WatchSession._journal_row({"t": "2025-01-06T13:00:00+00:00", "decision": "NO_TRADE",
+                                       "partial_at": float("nan"), "partial_exit": float("nan"),
+                                       "partial_fraction": float("nan")})
+    assert (plain["partial_at"], plain["partial_exit"], plain["partial_fraction"]) == (None, None, None)
+
+
 def test_picks_are_appended_with_the_engine_choice(session, tmp_path):
     """Requirement 16.3: the trader's pick at a close, beside the engine's, one line per pick, kept locally."""
     state = next(s for s in session.states.values() if s.get("candidates", {}).get("ranked"))

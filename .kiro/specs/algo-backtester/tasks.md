@@ -934,6 +934,52 @@ The trader's TradingView indicator, ported from Pine and shown on Noculus at the
     3 more tests; the walk-through now has 19 checks. On the real terminal a `live_now` call takes 3–16 ms, and gold's bid moved every second. A live GER40 session opened: grade A, bullish, drawing to 25736.0, refused as STALE_RAID.
   - **Validates: Requirements 27.1–27.7**
 
+### Update 2026-10-27: partials and break-even (task 369)
+
+- [ ] 369. A partial, then break-even
+  - **369a. RED**
+    - Config: `[management]` is off by default; a variant sets `partial_r` and `partial_fraction`; a share of 0 or 1 or more is refused; the strategy is unchanged (D43); `focus.toml` has `fresh_near_gap_partial`.
+    - Fill model:
+      - the partial at 3R from the fill, and the rest at break-even;
+      - break-even from the next bar;
+      - stop and partial on one bar is the stop;
+      - partial and target on one bar;
+      - none on a limit's fill bar;
+      - measured from a market fill;
+      - a SHORT on the ask;
+      - none at or beyond the target.
+    - Broker:
+      - LONG accounting (R, gross, each cost, pnl);
+      - a SHORT paying each exit's spread;
+      - each part's swap nights;
+      - a position too small to split runs unmanaged (D44).
+    - `simulate(management=)` takes the partial, and the journal carries it; the watch's rows carry it.
+  - **369b. GREEN**
+    - `ManagementSection` and `RunConfig.management`.
+    - `SimOrder.partial_*`, `_fill`, `_manage` and the `PARTIAL` event.
+    - `SimBroker(partial_r, partial_fraction)`, `advance`, `_closed_trade`, and the `ClosedTrade` partial fields.
+    - `simulate(management=)` and `run_backtest`.
+    - The journal columns, `WatchSession._journal_row`, and `engine.js` (the partial's mark, "BE").
+    - The `fresh_near_gap_partial` variant.
+  - **369c. REFACTOR**
+    - Run `fresh_near_gap_partial` on the exploration slice and the confirmation period from the Phase A cache, against the replay's ⅓-at-3R numbers (+29.0R, −74.5R). Lot rounding is the only expected difference.
+    - The golden journal regains its columns: no result may change.
+    - The trader watches a managed session on Noculus.
+  - **Done 2026-10-27 (369a, 369b; 369c in part).** 18 tests, plus the page's "BE" label in `load_engine.js`.
+    - **Exploration slice** (`fresh_near_gap_partial`, run `1633a533`): +29.1R over 116 trades, drawdown 20.6R, total over drawdown 1.41, wins 28%. The replay gave +29.0R and 1.38; `fresh_near_gap` itself gives +30.4R and 1.14.
+      - Partials were taken on 32 trades. Their actual share was 0.316–0.333 after lot rounding.
+      - Every trade without a partial is unchanged to 0.0001R.
+      - Two more orders filled, freed by earlier break-even exits; together about 0R.
+    - **Golden journal:** 277 rows, every old value identical, the three new columns empty.
+    - **Confirmation period** (July 2025 – June 2026), run from a scratch copy of `confirm.toml`, which is pre-registered and stays as it is.
+      - The run: −76.9R over 185 trades, drawdown 80.9R, total over drawdown −0.95. `fresh_near_gap` alone gives −81.4R and −0.96.
+      - On the 175 trades both runs share, −74.6R against the replay's −74.5R. Every trade without a partial is unchanged.
+      - Ten more orders filled, freed by break-even exits: −2.3R.
+      - Partials were taken on 30 trades.
+    - **Still to do:** the trader's look on Noculus.
+    - **Not covered:** the paper trader and the live MT5 path don't manage trades yet. Their parity is a separate task.
+  - **Validates: Requirements 28.1–28.5**
+
 ---
 
 ## Task Dependency Graph

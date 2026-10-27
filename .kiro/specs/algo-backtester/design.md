@@ -964,3 +964,30 @@ Decisions D40–D41. The terminal is read in `live.py`; the session, the app and
 | Requirement | Design element |
 |---|---|
 | 27 A live session | `live.py` (`LiveSource`, `forming`, `quote`, `Terminal`), `WatchSession(live=…)`, `refresh`, `live_now`, `live_first_day`, `live_feed`, `ChartsApp._live_bars`, the page's `follow()` (D40–D42) |
+
+## Update 2026-10-27: Partials and Break-Even (Requirement 28)
+
+Decisions D43–D45. The rule is set in `config.py`, sized in `sim_broker.py`, executed in `fill_model.py` and drawn by `engine.js`.
+
+- **`ManagementSection`** (`config.py`): `partial_r` (0 is off) and `partial_fraction` (0 < f < 1, default ⅓). `RunConfig.management` defaults to off. Phase A never reads it, and the cache key is built from the StrategyConfig alone, so the cache is untouched (D43).
+- **`SimOrder`** (`fill_model.py`) gains the settings `partial_r` and `partial_fraction` (None and 0 are off), and the results `partial_price`, `partial_at` and `partial_ideal_exit`.
+  - `_fill` sets `partial_price` to `fill ± partial_r × |fill − stop|`, or None when that is at or beyond the target.
+  - `_manage` checks in this order:
+    1. the stop (unchanged);
+    2. the partial, from the closing-side favourable extreme, not on a limit's fill bar. It records the price, the time and the ideal (bid) price, and moves `order.stop` to `order.fill`. Then it checks the target on the same bar.
+
+    The events are `PARTIAL`, then any `TP`. The paper broker never sets `partial_r`, so it is unaffected.
+- **`SimBroker(partial_r=0.0, partial_fraction=0.0)`.** At placement it rounds `lots × fraction` down to the volume step. When the part and the rest both reach `volume_min`, the trade carries the setting and the actual share. Otherwise it carries neither (D44). `advance` records the partial bar's spread.
+- **`_closed_trade`.** With f the actual share (0 without a partial):
+  - `net_r = sign × [f (partial − fill) + (1 − f)(exit − fill)] / risk − commission − swap`;
+  - gross is the same on ideal prices.
+  - Spread: LONG `entry_spread`; SHORT `f × partial_spread + (1 − f) × exit_spread`. Slippage: `(1 − f)` of a stop exit's. Commission: per side and price, on the part's and the rest's lots. Swap: each part's lots times its own nights.
+
+  With f = 0, every expression reduces to the old one, so unmanaged journals don't change.
+- **`simulate(…, management=)`** passes the section to the broker; `run_backtest` passes `cfg.management`. The watch runs `run_backtest`, so a session of a managed variant is managed.
+- **The journal** adds `partial_at`, `partial_exit` and `partial_fraction` after `lots`. The watch's rows carry them, and `engine.js` marks the partial (a dot and "⅓ off +3.0R") and labels a rest stopped at the fill "BE".
+- **`focus.toml`** gains `fresh_near_gap_partial`: `fresh_near_gap` plus `management.partial_r = 3.0` and `management.partial_fraction = 1/3`.
+
+| Requirement | Design element |
+|---|---|
+| 28 A partial, then break-even | `ManagementSection`, `SimOrder.partial_*`, `FillModel._manage`, `SimBroker(partial_r, partial_fraction)`, `_closed_trade`, `simulate(management=)`, the journal's partial columns, `engine.js` (D43–D45) |

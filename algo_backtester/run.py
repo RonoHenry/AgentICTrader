@@ -131,7 +131,7 @@ def run_backtest(
                           for i, records in signals.items()}
         results.append(WindowResult(window_start, window_end, simulate(
             window_bars, window_signals, specs, cfg.strategy, cfg.account,
-            cost_flag_fraction=cfg.report.cost_flag_fraction)))
+            cost_flag_fraction=cfg.report.cost_flag_fraction, management=cfg.management)))
 
     manifest = {
         "study": study.name,
