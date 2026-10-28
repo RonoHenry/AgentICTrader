@@ -1130,6 +1130,13 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     - win rate and drawdown;
     - how many entries were order blocks or breakers.
   - The default changes only after the trader's review. Any version adopted is confirmed once, pre-registered.
+  - **Run 2026-10-28** (`94c351fb279d`, `0600059372c1`, `5ca677266892`, `422de9bdeb8c`; `docs/backtests/TRADER_ORDER_BLOCKS.md`).
+    - The reference reproduces 114 trades and +0.27R.
+    - `fresh_near_gap_ob`: 100 trades, −0.03R [−0.54, +0.57], +0.12R before costs, drawdown 31.5R.
+    - `fresh_near_gap_partial_ob`: 99 trades, −0.12R [−0.49, +0.28], against `fresh_near_gap_partial`'s +0.25R.
+    - Breakers became 65 of the 100 entries, against 15 of 114, and lost −0.10R. The trader's order blocks are twice as many, each failed one becomes a breaker, nothing ends a breaker, and a breaker outranks an order block (0.8 against 0.7).
+    - Entries on the trader's order blocks themselves: 27 trades, +0.39R, too few to read.
+    - Asked of the trader: when a breaker ends, and whether it should outrank an order block.
   - **Validates: Requirement 31.8**
 
 ---
