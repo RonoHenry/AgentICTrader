@@ -83,6 +83,12 @@ class CisdMode(str, Enum):
     CRT = "crt"          # the same, after a C2 sweep of the CRT frame's previous candle only (LE-D29)
 
 
+class ObRule(str, Enum):
+    """What an order block is (liquidity-engine Req 31). The default keeps every run comparable (LE-D18)."""
+    CANDLE = "candle"    # the last opposite candle before a candle of 1.5 ATR, its whole range: the engine's original
+    CISD = "cisd"        # the trader's: the run closed through its first open, its bodies; a close through inverts it
+
+
 K = TypeVar("K")
 V = TypeVar("V")
 # A read-only mapping, so a config's fingerprint can't drift after it is built.
@@ -162,6 +168,9 @@ class StrategyConfig(BaseModel):
     fvg_zone: FvgZone = FvgZone.CANDLES
     # What the engine reads a setup's CISD as (liquidity-engine Req 30): an engine setting too, like fvg_zone.
     cisd: CisdMode = CisdMode.NEXT
+    # What the engine reads an order block, a breaker and a CISD level as (liquidity-engine Req 31): an engine
+    # setting too.
+    ob_rule: ObRule = ObRule.CANDLE
 
     @property
     def fallback_ttl(self) -> timedelta:

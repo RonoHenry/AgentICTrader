@@ -27,7 +27,7 @@ from typing import Dict, List, Optional
 
 from liquidity_engine.detectors.bias import HTFBiasClassifier
 from liquidity_engine.detectors.external import LiquidityLevelDetector
-from liquidity_engine.detectors.internal import FVG_ZONES, PDArrayDetector
+from liquidity_engine.detectors.internal import FVG_ZONES, OB_RULES, PDArrayDetector
 from liquidity_engine.detectors.structure import SwingStructureClassifier
 from liquidity_engine.fractal.candle_model import FractalModelTracker
 from liquidity_engine.grader.sequence import CISD_MODES, SetupSequenceDetector
@@ -86,23 +86,27 @@ _REQUIRED_TIMEFRAMES: List[Timeframe] = [Timeframe.D1, Timeframe.W1]
 class LiquidityMappingEngine:
     """Main orchestrator class for liquidity analysis. Stateless; safe to reuse across calls.
 
-    ``fvg_zone`` and ``cisd`` are the settings the engine itself reads: whether an FVG is the three candles or
-    the gap alone (Requirement 26), and what a setup's CISD is (Requirement 30). Two engines that differ in
-    either produce different maps from the same candles, so a caller that shares one engine across
-    configurations must share both.
+    ``fvg_zone``, ``cisd`` and ``ob_rule`` are the settings the engine itself reads: whether an FVG is the
+    three candles or the gap alone (Requirement 26), what a setup's CISD is (Requirement 30), and what an order
+    block is (Requirement 31). Two engines that differ in any of them produce different maps from the same
+    candles, so a caller that shares one engine across configurations must share all three.
     """
 
     #: The defaults, also the fallback for a subclass that does not call this constructor.
     fvg_zone: str = "candles"
     cisd: str = "next"
+    ob_rule: str = "candle"
 
-    def __init__(self, fvg_zone: str = "candles", cisd: str = "next") -> None:
+    def __init__(self, fvg_zone: str = "candles", cisd: str = "next", ob_rule: str = "candle") -> None:
         if fvg_zone not in FVG_ZONES:
             raise ValueError(f"fvg_zone: one of {', '.join(FVG_ZONES)}, not {fvg_zone!r}")
         if cisd not in CISD_MODES:
             raise ValueError(f"cisd: one of {', '.join(CISD_MODES)}, not {cisd!r}")
+        if ob_rule not in OB_RULES:
+            raise ValueError(f"ob_rule: one of {', '.join(OB_RULES)}, not {ob_rule!r}")
         self.fvg_zone = fvg_zone
         self.cisd = cisd
+        self.ob_rule = ob_rule
 
     def analyze(
         self,
@@ -124,13 +128,14 @@ class LiquidityMappingEngine:
         draw_on_liquidity = self._find_draw_on_liquidity(htf_bias, liquidity_levels)
 
         swing_structure = SwingStructureClassifier().classify(candles_by_tf)
-        if self.fvg_zone == "gap":
-            # The trader's reading (Requirement 26.6, LE-D20): arrays come from closed candles only, so an
-            # in-progress HTF candle neither completes a gap nor inverts one with its running price.
+        detector = PDArrayDetector(self.fvg_zone, self.ob_rule)
+        if self.fvg_zone == "gap" or self.ob_rule == "cisd":
+            # The trader's reading (Requirements 26.6, 31.5, LE-D20): arrays come from closed candles only, so an
+            # in-progress HTF candle neither completes a gap or a block nor inverts one with its running price.
             closed = closed_candles(candles_by_tf, timestamp)
-            pd_arrays = PDArrayDetector(self.fvg_zone).detect(closed, SwingStructureClassifier().classify(closed))
+            pd_arrays = detector.detect(closed, SwingStructureClassifier().classify(closed))
         else:
-            pd_arrays = PDArrayDetector(self.fvg_zone).detect(candles_by_tf, swing_structure)
+            pd_arrays = detector.detect(candles_by_tf, swing_structure)
 
         key_level = self._fractal_key_level(draw_on_liquidity, htf_bias)
         fractal_model = FractalModelTracker().track(finest_candles, key_level)

@@ -1083,6 +1083,55 @@ Requirements 20–25; design section "Update 2026-10b"; decisions LE-D9 to LE-D1
     Not adopted; the default stays `"next"`, and the settings stay for Noculus. No confirmation run.
   - **Validates: Requirement 30.6**
 
+
+### Update 2026-10-28: the trader's order blocks
+
+- [x] 375. The trader's order blocks in the engine (Req 31.1–31.6)
+  - **375a. RED** — on hand-made candles:
+    - under `"cisd"`, a run of down closes becomes a bullish order block only at the close above its first open, however many candles later;
+    - its zone is the run's bodies, with their midpoint as the CE; the last candle is `ob_candle_*`; `formed_at` is the close through;
+    - one per run;
+    - high probability only with both the sweep of the swing before and a gap of its side after;
+    - the first close below the bodies ends it and makes a bearish breaker of the same zone, with no sweep;
+    - the CISD level is the run's first open, for a run of one;
+    - the default keeps its rule;
+    - an unknown rule raises;
+    - configurations that differ only in `ob_rule` don't share an engine view;
+    - the strategy config carries it.
+  - **375b. GREEN** — `StrategyConfig.ob_rule` (`ObRule`); `PDArrayDetector(fvg_zone, ob_rule)` with `OB_RULES`; `PDArray.ob_series_start` and `high_probability`; `LiquidityMappingEngine(fvg_zone, cisd, ob_rule)`, with closed candles under `"cisd"`. `same_view`, the run grouping, the live runner and Noculus pass it on.
+  - **Done 2026-10-28.**
+    - `ObRule` and `StrategyConfig.ob_rule`, default `"candle"`.
+    - In `detectors/internal.py`: `OB_RULES` and `PDArrayDetector._detect_delivery_changes`, built on `_closed_through_runs`, `_took_swing` and `_left_gap`.
+    - `PDArray.ob_series_start` and `high_probability`.
+    - `LiquidityMappingEngine(fvg_zone, cisd, ob_rule)` reads closed candles under `"gap"` or `"cisd"`.
+    - `same_view`, the run grouping (`cli.py`), the live runner and Noculus pass it on.
+    - `focus.toml` gains `fresh_near_gap_ob` and `fresh_near_gap_partial_ob`.
+    - Tests:
+      - 7 in `test_liquidity_internal_detector.py::TestTheTradersOrderBlocks`;
+      - the focus variants in `test_backtest_config.py`;
+      - the fingerprint guard's row.
+    - Under the default, the engine's output on the four fixture windows is identical apart from the two new null fields. That was checked field by field, then refreshed with `UPDATE_ENGINE_WINDOWS=1`.
+    - The engine changed, so the next run rebuilds the Phase A cache.
+  - **Validates: Requirements 31.1–31.6**
+
+- [x] 376. Order blocks on Noculus (Req 31.7)
+  - The arrays the page gets carry the run's first candle and the grade; the engine layer draws an order block from there, its MT at the zone's midpoint, and names the high-probability ones.
+  - **Done 2026-10-28.**
+    - `watch._ob_marks` gives each array and candidate its `mt`. Under `"cisd"` it also gives `from` (the run's first candle) and `hp`.
+    - `engine.js` draws the block from `from` and labels it "high prob".
+    - Test: `test_the_traders_order_block_is_drawn_from_its_run_with_the_bodies_mean_threshold`.
+    - A running server needs a restart for the Python side; the page needs a reload.
+  - **Validates: Requirement 31.7**
+
+- [ ] 377. The comparison run (Req 31.8) **(user review)**
+  - Run `fresh_near_gap`, `fresh_near_gap_ob`, `fresh_near_gap_partial` and `fresh_near_gap_partial_ob` on the exploration slice. Record:
+    - trades;
+    - R with its interval;
+    - win rate and drawdown;
+    - how many entries were order blocks or breakers.
+  - The default changes only after the trader's review. Any version adopted is confirmed once, pre-registered.
+  - **Validates: Requirement 31.8**
+
 ---
 
 ## Task Dependency Graph

@@ -177,7 +177,7 @@ function paintEngine(ctx, size) {
   if (st && !st.error && !st.withheld) {
     if (S.layers.arrays) {
       for (const a of st.arrays.filter(showArray)) {
-        const x1 = Math.max(X(a.formed), -10), y1 = Y(a.high), y2 = Y(a.low);
+        const x1 = Math.max(X(a.from || a.formed), -10), y1 = Y(a.high), y2 = Y(a.low);   // a block from its run (Req 31.7)
         if (!isFinite(y1) || !isFinite(y2)) continue;
         const c = a.dir === "BULLISH" ? pal.up : a.dir === "BEARISH" ? pal.bad : pal.muted;
         ctx.fillStyle = rgba(c.startsWith("#") ? c : "#888888", a.entry ? 0.22 : 0.06);
@@ -185,7 +185,7 @@ function paintEngine(ctx, size) {
         ctx.strokeStyle = rgba(c.startsWith("#") ? c : "#888888", a.entry ? 0.95 : 0.35); ctx.lineWidth = a.entry ? 2 : 1;
         ctx.strokeRect(x1, Math.min(y1, y2), W - x1, Math.abs(y2 - y1));
         if (a.mt != null) line(x1, Y(a.mt), W, Y(a.mt), rgba(c.startsWith("#") ? c : "#888888", 0.7), [2, 3]);
-        text(`${a.tf} ${a.type}${a.entry ? "  ← entry array" : ""}`, Math.max(x1, 0) + 3, Math.min(y1, y2) - 1, c);
+        text(`${a.tf} ${a.type}${a.hp ? " · high prob" : ""}${a.entry ? "  ← entry array" : ""}`, Math.max(x1, 0) + 3, Math.min(y1, y2) - 1, c);
       }
     }
     if (S.layers.pools) {

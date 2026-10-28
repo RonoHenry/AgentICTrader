@@ -340,7 +340,7 @@ class WatchSession:
         # A live session's earlier closes read the same closed candles, so only the new ones are read.
         closes = entry_closes(data, cfg.strategy.entry_tf, start_dt, end_dt)
         spread = spec.default_spread
-        engine = _Capturing(cfg.strategy.fvg_zone, cfg.strategy.cisd)
+        engine = _Capturing(cfg.strategy.fvg_zone, cfg.strategy.cisd, cfg.strategy.ob_rule)
         states = dict(self.states)
         new = [t for t in closes if t not in self._records]
         for n, t in enumerate(new):
@@ -624,8 +624,7 @@ class WatchSession:
         keep = {seq.entry_array_id} if seq else set()
         shown = [a for a in arrays if a.array_id in keep] + [a for a in arrays if a.array_id not in keep][:_ARRAYS_SHOWN]
         out_arrays = [{"id": a.array_id, "type": a.array_type.value, "dir": a.direction.value, "tf": a.timeframe.value,
-                       "high": a.high, "low": a.low, "formed": wall(a.formed_at),
-                       "mt": None if a.ob_candle_open is None else (a.ob_candle_open + a.ob_candle_close) / 2,
+                       "high": a.high, "low": a.low, "formed": wall(a.formed_at), **_ob_marks(a, wall),
                        "entry": bool(seq and a.array_id == seq.entry_array_id)} for a in shown]
         pools = []
         bars = view.get(entry_tf, [])
@@ -692,7 +691,7 @@ class WatchSession:
             ranked.append({
                 "id": a.array_id, "rank": len(ranked) + 1, "tf": a.timeframe.value, "type": a.array_type.value, "dir": a.direction.value,
                 "low": a.low, "high": a.high, "formed": wall(a.formed_at), "strength": round(a.strength_score, 3),
-                "mt": None if a.ob_candle_open is None else (a.ob_candle_open + a.ob_candle_close) / 2,
+                **_ob_marks(a, wall),
                 "raid": {"side": s.raid.pool.side.value, "source": s.raid.pool.source.value, "tf": s.raid.pool.timeframe.value,
                          "price": s.raid.pool.price, "at": wall(s.raid.raided_at),
                          "age_h": round((pd.Timestamp(t) - pd.Timestamp(s.raid.raided_at)).total_seconds() / 3600, 1)},
@@ -1006,11 +1005,20 @@ class WatchSession:
                 for r in frame.itertuples()]
 
 
+def _ob_marks(a, wall) -> dict:
+    """An order block's mean threshold, and under ob_rule "cisd" its run's first candle and grade (liquidity-engine
+    Req 31.7). The engine's own block is one candle, its MT that body's midpoint; the trader's is the run's bodies,
+    its MT their midpoint."""
+    if a.ob_series_start is not None:
+        return {"mt": (a.high + a.low) / 2, "from": wall(a.ob_series_start), "hp": bool(a.high_probability)}
+    return {"mt": None if a.ob_candle_open is None else (a.ob_candle_open + a.ob_candle_close) / 2}
+
+
 class _Capturing:
     """The engine, keeping the last view and map it produced, for the page."""
 
-    def __init__(self, fvg_zone: str = "candles", cisd: str = "next") -> None:
-        self.engine = LiquidityMappingEngine(fvg_zone, cisd)
+    def __init__(self, fvg_zone: str = "candles", cisd: str = "next", ob_rule: str = "candle") -> None:
+        self.engine = LiquidityMappingEngine(fvg_zone, cisd, ob_rule)
         self.last = None
 
     def analyze(self, view, instrument, t):

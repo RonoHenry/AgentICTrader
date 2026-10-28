@@ -37,6 +37,14 @@ CISD_MIN_SEQUENCE_LENGTH: int = 3
 #   user's own definition, and the one `algo_research.atlas.arrays.fvgs` reads (AR-D27).
 FVG_ZONES: tuple[str, ...] = ("candles", "gap")
 
+# What an order block is (Requirement 31):
+# - "candle": the last opposite candle before a candle of at least 1.5 ATR, its whole range; a close beyond that
+#   range makes a breaker. The engine's original reading.
+# - "cisd": the trader's, a change in the state of delivery. The latest run of opposite closes (dojis skipped), once
+#   a later candle closes through the open of its first candle. Its zone is the run's bodies, and the first close
+#   beyond their far side ends it and inverts it into a breaker. The CISD levels are those first opens (LE-D31-D33).
+OB_RULES: tuple[str, ...] = ("candle", "cisd")
+
 # Baseline significance per array type, used by `_assign_strength_score`.
 _ARRAY_TYPE_WEIGHT: Dict[PDArrayType, float] = {
     PDArrayType.FVG: 0.5,
@@ -53,12 +61,16 @@ class PDArrayDetector:
 
     ``fvg_zone`` says what an FVG is: the three candles or the gap alone (``FVG_ZONES``, Requirement 26). The
     IFVG, the BPR and the unicorn are built from the FVGs' own bounds, so they follow whichever is chosen.
+    ``ob_rule`` says what an order block, a breaker and a CISD level are (``OB_RULES``, Requirement 31).
     """
 
-    def __init__(self, fvg_zone: str = "candles") -> None:
+    def __init__(self, fvg_zone: str = "candles", ob_rule: str = "candle") -> None:
         if fvg_zone not in FVG_ZONES:
             raise ValueError(f"fvg_zone: one of {', '.join(FVG_ZONES)}, not {fvg_zone!r}")
+        if ob_rule not in OB_RULES:
+            raise ValueError(f"ob_rule: one of {', '.join(OB_RULES)}, not {ob_rule!r}")
         self.fvg_zone = fvg_zone
+        self.ob_rule = ob_rule
 
     def detect(
         self,
@@ -71,13 +83,16 @@ class PDArrayDetector:
             for fvg in fvgs:
                 self._mark_fvg_filled(fvg, candles)
 
-            obs = self._detect_order_blocks(candles, tf)
             structure_result = swing_structure.get(tf)
             events = structure_result.events if structure_result else []
-            breakers = self._detect_breaker_blocks(candles, obs, events)
+            if self.ob_rule == "cisd":
+                obs, breakers, cisd_levels = self._detect_delivery_changes(candles, tf, events)
+            else:
+                obs = self._detect_order_blocks(candles, tf)
+                breakers = self._detect_breaker_blocks(candles, obs, events)
+                cisd_levels = self._detect_cisd_levels(candles, tf)
             ifvgs = self._detect_ifvg(candles, fvgs)
             bprs = self._detect_bpr(fvgs)
-            cisd_levels = self._detect_cisd_levels(candles, tf)
 
             arrays += fvgs + obs + breakers + ifvgs + bprs + cisd_levels
         return arrays
@@ -286,6 +301,40 @@ class PDArrayDetector:
             i = j + 1
         return arrays
 
+    def _detect_delivery_changes(
+        self, candles: List[Candle], tf: Timeframe, structure_events: List[StructureEvent]
+    ) -> tuple[List[PDArray], List[PDArray], List[PDArray]]:
+        """The order blocks, breakers and CISD levels under ``ob_rule = "cisd"`` (Requirement 31.1-31.4)."""
+        obs: List[PDArray] = []
+        breakers: List[PDArray] = []
+        levels: List[PDArray] = []
+        for bullish in (True, False):
+            direction = BiasDirection.BULLISH if bullish else BiasDirection.BEARISH
+            flipped = BiasDirection.BEARISH if bullish else BiasDirection.BULLISH
+            for first, last, through in _closed_through_runs(candles, bullish):
+                run = candles[first:last + 1]
+                top = max(max(c.open, c.close) for c in run)
+                bottom = min(min(c.open, c.close) for c in run)
+                formed_at = candles[through].timestamp
+                ob = self._make_pdarray(
+                    PDArrayType.OB, direction, tf, top, bottom, formed_at,
+                    ob_candle_open=candles[last].open, ob_candle_close=candles[last].close,
+                    ob_series_start=candles[first].timestamp,
+                    high_probability=_took_swing(candles, first, last, bullish)
+                    and _left_gap(candles, last, through, bullish),
+                )
+                obs.append(ob)
+                levels.append(self._make_cisd_level(candles[first].open, direction, tf, formed_at))
+                for candle in candles[through + 1:]:              # the close beyond the bodies inverts it
+                    if (candle.close < bottom) if bullish else (candle.close > top):
+                        ob.is_filled, ob.filled_at = True, candle.timestamp
+                        breaker = self._make_pdarray(PDArrayType.BREAKER, flipped, tf, top, bottom,
+                                                     candle.timestamp, source_ob_id=ob.array_id)
+                        breaker.structure_confirmed = self._structure_confirmed(candle, flipped, structure_events)
+                        breakers.append(breaker)
+                        break
+        return obs, breakers, levels
+
     def _make_cisd_level(
         self, open_price: float, direction: BiasDirection, tf: Timeframe, formed_at
     ) -> PDArray:
@@ -330,3 +379,47 @@ class PDArrayDetector:
 
 def _open_time(candle: Candle):
     return candle.timestamp
+
+
+def _closed_through_runs(candles: List[Candle], bullish: bool) -> List[tuple[int, int, int]]:
+    """(first, last, through) for each run of closes against a ``bullish`` block (down closes for a bullish one),
+    dojis skipped, that a later candle closed through: above the run's first open for a bullish block. Only the
+    latest run waits for the close through; a new run replaces one still waiting (Requirement 31.1)."""
+    out: List[tuple[int, int, int]] = []
+    run: Optional[List] = None                       # [first, last, closed through]
+    last_against = False                             # the last candle that wasn't a doji closed against
+    for i, candle in enumerate(candles):
+        if run is not None and not run[2] and i > run[1]:
+            level = candles[run[0]].open
+            if (candle.close > level) if bullish else (candle.close < level):
+                out.append((run[0], run[1], i))
+                run[2] = True
+        against = candle.is_bearish if bullish else candle.is_bullish
+        if against:
+            if run is not None and last_against and not run[2]:
+                run[1] = i
+            else:
+                run = [i, i, False]
+        if candle.is_bullish or candle.is_bearish:
+            last_against = against
+    return out
+
+
+def _took_swing(candles: List[Candle], first: int, last: int, bullish: bool) -> bool:
+    """Whether the run traded beyond the latest three-candle swing confirmed before it (Requirement 31.2)."""
+    for s in range(first - 2, 0, -1):
+        a, b, c = candles[s - 1], candles[s], candles[s + 1]
+        if bullish and b.low < a.low and b.low < c.low:
+            return min(x.low for x in candles[first:last + 1]) < b.low
+        if not bullish and b.high > a.high and b.high > c.high:
+            return max(x.high for x in candles[first:last + 1]) > b.high
+    return False
+
+
+def _left_gap(candles: List[Candle], last: int, through: int, bullish: bool) -> bool:
+    """Whether the move away left a gap of the block's side, from the run's last candle to the candle after the
+    close through (Requirement 31.2)."""
+    for k in range(max(2, last + 1), min(len(candles), through + 2)):
+        if (candles[k].low > candles[k - 2].high) if bullish else (candles[k].high < candles[k - 2].low):
+            return True
+    return False

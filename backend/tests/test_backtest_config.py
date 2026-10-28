@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from agent.strategy_config import CisdMode, PendingExpiry, StopMode, StrategyConfig
+from agent.strategy_config import CisdMode, ObRule, PendingExpiry, StopMode, StrategyConfig
 from algo_backtester.config import (
     HoldoutOverlapError,
     RunConfig,
@@ -153,6 +153,16 @@ def test_focus_config_carries_the_indicator_cisd_variants():
         assert load_run_config(focus, variant=f"fresh_near_gap_{mode}").strategy == execution.model_copy(
             update={"cisd": CisdMode(mode)})
 
+
+
+def test_focus_config_carries_the_order_block_variants():
+    # Liquidity-engine Req 31.8: the trader's execution, unmanaged and managed, each with the trader's order blocks.
+    focus = Path(__file__).resolve().parents[2] / "config" / "backtests" / "focus.toml"
+    for name in ("fresh_near_gap", "fresh_near_gap_partial"):
+        cfg, ob = load_run_config(focus, variant=name), load_run_config(focus, variant=f"{name}_ob")
+        assert cfg.strategy.ob_rule is ObRule.CANDLE
+        assert ob.strategy == cfg.strategy.model_copy(update={"ob_rule": ObRule.CISD})
+        assert ob.management == cfg.management
 
 def test_management_is_off_by_default_and_set_by_a_variant(tmp_path):
     # Requirement 28.1: a partial and break-even, configured beside the account, not in the strategy (D43).

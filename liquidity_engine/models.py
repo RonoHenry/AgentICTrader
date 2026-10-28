@@ -271,6 +271,10 @@ class PDArray(BaseModel):
     # For OB: the specific candle that is the order block
     ob_candle_open: Optional[float] = None
     ob_candle_close: Optional[float] = None
+    # For OB under ob_rule "cisd" (Requirement 31): the run's first candle (ob_candle_* is its last, the sniper
+    # entry), and whether the run took the swing before it and the move away left a gap of its side.
+    ob_series_start: Optional[datetime] = None
+    high_probability: Optional[bool] = None
     # For Breaker: reference to the original OB it was derived from
     source_ob_id: Optional[str] = None
     # For Breaker: True once a same-tier BOS/CHoCH confirms the sweep-then-structural-break
@@ -286,7 +290,8 @@ class PDArray(BaseModel):
     @property
     def ce(self) -> float:
         """The zone's midpoint: an FVG's consequent encroachment, a BPR's middle (liquidity-engine Req 26.1).
-        An order block's own mean threshold is its body's midpoint, from ``ob_candle_open``/``_close``."""
+        An order block's own mean threshold is its body's midpoint, from ``ob_candle_open``/``_close``; under
+        ob_rule "cisd" the zone is the run's bodies, so this is the run's mean threshold (Requirement 31.1)."""
         return (self.high + self.low) / 2
 
     @model_validator(mode="after")

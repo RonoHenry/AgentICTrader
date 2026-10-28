@@ -529,3 +529,88 @@ class TestTheGapIsTheResearchsFVG:
         assert len(wide) == len(theirs)                       # the same gaps are found
         assert [(round(a.low, 5), round(a.high, 5)) for a in wide] != \
                [(round(r.low, 5), round(r.high, 5)) for r in theirs.itertuples()]   # but not the same zones
+
+
+class TestTheTradersOrderBlocks:
+    """Liquidity-engine Requirement 31: under ``ob_rule = "cisd"`` an order block is a change in the state of
+    delivery, read from the run's bodies; the close through its far side inverts it into a breaker."""
+
+    def _series(self, run_low=1.010, gap_low=1.045, last=None):
+        candles = [
+            mk(1.050, 1.060, 1.040, 1.045, 0),
+            mk(1.045, 1.046, 1.020, 1.025, 1),      # the swing low, 1.020
+            mk(1.025, 1.040, 1.022, 1.038, 2),      # confirms it
+            mk(1.038, 1.042, 1.030, 1.032, 3),      # the run of down closes opens at 1.038
+            mk(1.032, 1.034, run_low, 1.015, 4),    # and takes the swing low (1.010 < 1.020)
+            mk(1.015, 1.030, 1.012, 1.028, 5),      # not through 1.038 yet
+            mk(1.028, 1.060, 1.027, 1.055, 6),      # the close through: the order block is known here
+            mk(1.055, 1.070, gap_low, 1.065, 7),    # low 1.045 above candle 5's high 1.030: a bullish gap
+        ]
+        return candles + ([last] if last is not None else [])
+
+    def _arrays(self, candles, rule="cisd"):
+        return PDArrayDetector("gap", rule).detect({Timeframe.M5: candles}, {})
+
+    def _bullish_obs(self, arrays):
+        return [a for a in arrays if a.array_type == PDArrayType.OB and a.direction == BiasDirection.BULLISH]
+
+    def test_a_run_of_down_closes_is_a_bullish_ob_from_the_close_through_its_first_open(self):
+        assert self._bullish_obs(self._arrays(self._series()[:6])) == []      # no close through 1.038 yet
+        (ob,) = self._bullish_obs(self._arrays(self._series()))
+        assert ob.formed_at == ts(6) and ob.ob_series_start == ts(3)
+        assert (ob.low, ob.high) == (1.015, 1.038)                            # the run's bodies
+        assert ob.ce == pytest.approx(1.0265)                                 # the mean threshold
+        assert (ob.ob_candle_open, ob.ob_candle_close) == (1.032, 1.015)      # the last candle: the sniper entry
+        assert not ob.is_filled
+
+    def test_one_order_block_per_run(self):
+        more = self._series() + [mk(1.065, 1.080, 1.060, 1.075, 8), mk(1.075, 1.090, 1.070, 1.085, 9)]
+        assert len(self._bullish_obs(self._arrays(more))) == 1
+
+    def test_it_is_high_probability_with_the_sweep_and_the_gap_after_it(self):
+        assert self._bullish_obs(self._arrays(self._series()))[0].high_probability is True
+        no_sweep = self._series(run_low=1.021)                                # the run holds above 1.020
+        assert self._bullish_obs(self._arrays(no_sweep))[0].high_probability is False
+        no_gap = self._series(gap_low=1.029)                                  # no gap above candle 5's high
+        assert self._bullish_obs(self._arrays(no_gap))[0].high_probability is False
+
+    def test_a_close_below_the_bodies_ends_it_and_inverts_it_into_a_bearish_breaker(self):
+        wick = self._series(last=mk(1.065, 1.066, 1.000, 1.020, 8))          # a wick through, a close inside
+        (ob,) = self._bullish_obs(self._arrays(wick))
+        assert not ob.is_filled
+        arrays = self._arrays(self._series(last=mk(1.065, 1.066, 1.000, 1.005, 8)))
+        (ob,) = self._bullish_obs(arrays)
+        assert ob.is_filled and ob.filled_at == ts(8)
+        (breaker,) = [a for a in arrays if a.array_type == PDArrayType.BREAKER and a.source_ob_id == ob.array_id]
+        assert breaker.direction == BiasDirection.BEARISH and breaker.formed_at == ts(8)
+        assert (breaker.low, breaker.high) == (ob.low, ob.high)
+
+    def test_the_cisd_level_is_the_runs_first_open_whatever_its_length(self):
+        one = [mk(1.000, 1.010, 0.995, 1.008, 0), mk(1.020, 1.021, 1.000, 1.005, 1),
+               mk(1.005, 1.030, 1.004, 1.025, 2)]                             # a run of one, closed through at 2
+        levels = [a for a in self._arrays(one) if a.array_type == PDArrayType.CISD_LEVEL
+                  and a.direction == BiasDirection.BULLISH]
+        assert [(a.cisd_sequence_open, a.formed_at) for a in levels] == [(1.020, ts(2))]
+        assert PDArrayDetector()._detect_cisd_levels(one, Timeframe.M5) == []  # the engine's needs a run of three
+
+    def test_the_default_keeps_the_engines_rule(self):
+        assert PDArrayDetector().ob_rule == "candle"
+        candles = [mk(1.00, 1.01, 0.99, 1.00, n) for n in range(5)] + [
+            mk(1.00, 1.00, 0.97, 0.97, 5), mk(0.97, 1.15, 0.97, 1.14, 6)]
+        (ob,) = self._bullish_obs(self._arrays(candles, rule="candle"))
+        assert (ob.low, ob.high, ob.formed_at, ob.ob_series_start, ob.high_probability) == (0.97, 1.00, ts(5), None, None)
+        with pytest.raises(ValueError, match="ob_rule"):
+            PDArrayDetector(ob_rule="the last candle")
+
+    def test_the_rule_reaches_the_engine_the_config_and_the_view(self):
+        from agent.strategy_config import ObRule, StrategyConfig
+        from algo_backtester.signals import same_view
+        from liquidity_engine import LiquidityMappingEngine
+
+        assert LiquidityMappingEngine().ob_rule == "candle"
+        assert LiquidityMappingEngine(ob_rule="cisd").ob_rule == "cisd"
+        with pytest.raises(ValueError, match="ob_rule"):
+            LiquidityMappingEngine(ob_rule="nonsense")
+        assert StrategyConfig().ob_rule is ObRule.CANDLE and StrategyConfig(ob_rule="cisd").ob_rule is ObRule.CISD
+        assert not same_view([StrategyConfig(), StrategyConfig(ob_rule="cisd")])
+

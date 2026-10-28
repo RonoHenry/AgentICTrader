@@ -1045,3 +1045,53 @@ The trader chose (2026-10-23) to try both the indicator's rule alone and the rul
 | LE-D28 | The anchored CISD is the indicator's `FindCISDLevel` line for line: the run nearest the extreme, at or before it, dojis skipped, the 500-candle cap, any later close through the level, no swing prerequisite. It is also Model A's `RUN` (MA-D4). So the engine's CISD is the one the trader sees drawn. | The trader on Noculus, 2026-10-23; `algo_research/fractal_poi/model.py` |
 | LE-D29 | The CRT frame is the indicator's default, the Automatic mode, for the entry timeframe, read from the engine's own candles, which start where the indicator's do (H4 at 17:00 New York, the strategy calendar). Under `"crt"` the C1 pools replace the others (swings, the previous period's extremes, the Asian range): the indicator only marks a CISD after a C2 sweep. | `algo_research/fractal_poi/frames.py` (`getHigherTF`) |
 | LE-D30 | Both are settings with the default unchanged, measured as variants against `fresh_near_gap`. The indicator's setups traded on their own made about 0R gross (task 338): the change fixes the reading, not the direction, so a better read should show first in where the entries and stops sit, and only then, if at all, in R. | Task 338 (`docs/research/FRACTAL_POI_VS_ENGINE.md`) |
+
+## Update 2026-10-28: The Trader's Order Blocks
+
+On 2026-10-28 the trader shared the definitions their arrays come from. The audit (https://claude.ai/artifact/WTEUrp8ukte5ESEJaqRbeN) ran the engine's detector on closed candles: January to June 2025, gold, EURUSD, GBPUSD and US100, M15 to D1.
+
+**What it found about the engine's order block** (the last opposite candle before a candle of at least 1.5 ATR, its whole range):
+- 22-27% are not a change in the state of delivery;
+- 15-28% repeat one candle;
+- its zone is 1.5-1.8× the trader's;
+- it finds 49-65% of the trader's high-probability order blocks.
+
+**What it found about the rest:**
+- 33-37% of its breakers took no liquidity first.
+- Its CISD levels need a run of three and the very next candle through, so they catch 5-9% of the trader's.
+
+**The trader's five answers:**
+1. The zone is the bodies, and the mean threshold is their 50%.
+2. The whole series is the order block. Its mean threshold is the entry for a large series, and the last candle is the sniper entry, which is more often not filled.
+3. An imbalance formed after a sweep makes an order block high probability, as institutional interest.
+4. A breaker is an inverted order block, one that failed: price has to trade through it to invert it.
+5. A close through carries more weight than a touch.
+
+### Requirement 31: The Trader's Order Blocks
+
+**User Story:** As the user, I want the engine's order blocks, breakers and CISD levels to be the ones I mark, so that its entries sit at my mean thresholds and its breakers are the order blocks that failed.
+
+#### Acceptance Criteria
+
+1. UNDER `ob_rule = "cisd"`, a bullish order block SHALL be the latest run of down-close candles of its timeframe (dojis skipped), once a later candle closes above the open of the run's first candle: a change in the state of delivery. A bearish one is the mirror. One order block per run.
+   - Its zone SHALL be the run's bodies, from the highest body top to the lowest body bottom, so its midpoint is the mean threshold.
+   - `ob_candle_open` and `ob_candle_close` SHALL be the run's last candle (the sniper entry), and `ob_series_start` the run's first candle.
+   - `formed_at` SHALL be the candle whose close went through, so the array is known at that close.
+2. An order block SHALL be marked `high_probability` when the run took the latest three-candle swing before it (the swing low, for a bullish one) and the move away left a fair value gap of its side, from the run's last candle to the candle after the close through: an imbalance after a sweep. The grade doesn't gate detection.
+3. An order block SHALL end (`is_filled`) at the first close of its timeframe beyond its zone's far side (below the bodies, for a bullish one). That close SHALL make it a breaker of the other direction with the same zone: an inverted order block. No sweep is required.
+4. Under the same setting, the CISD levels SHALL be the order blocks' levels: the run's first open, formed at the close through, whatever the run's length.
+5. UNDER `ob_rule = "cisd"`, the arrays SHALL be read from closed candles, as under `fvg_zone = "gap"` (26.6).
+6. `ob_rule` SHALL be a `StrategyConfig` option, default `"candle"` (the engine's rule).
+   - It changes the engine's map, so configurations that differ in it SHALL NOT share an engine view.
+   - The run grouping, the live runner and Noculus SHALL hand it to the engine.
+   - The golden run is unchanged under the default.
+7. Noculus SHALL draw an order block from its run's first candle, with its mean threshold at the zone's midpoint, and SHALL mark the high-probability ones.
+8. `config/backtests/focus.toml` SHALL carry `fresh_near_gap_ob` and `fresh_near_gap_partial_ob`. They are run beside `fresh_near_gap` and `fresh_near_gap_partial` on the exploration slice. The default changes only after the trader's review (LE-D18).
+
+### Decisions (2026-10-28)
+
+| Id | Decision | Source |
+|---|---|---|
+| LE-D31 | An order block is a change in the state of delivery: the whole run, read from its bodies, with its mean threshold at their midpoint. The engine's entry, the array's midpoint unless the OTE overlaps it, is then the trader's mean threshold. The last candle is kept on the array for the sniper entry. | The trader 2026-10-28, answers 1 and 2; the "+OB (Body)" and CISD images |
+| LE-D32 | The sweep and the imbalance after it grade an order block. They don't define it. | The trader 2026-10-28, answer 3; the "High probability POI" image |
+| LE-D33 | A breaker is an order block that failed. A close through its far side inverts it, with no sweep required, and the same close ends the order block. The image's "a mitigation block that takes liquidity" is not a condition. | The trader 2026-10-28, answers 4 and 5 |

@@ -1113,3 +1113,21 @@ def test_the_strategy_menu_offers_the_variants_not_the_pre_fix_base(setup, tmp_p
     plain = WatchApp(root / "base.toml", snap, (DAY, DAY + timedelta(days=1)), noculus_root=tmp_path,
                      studies_root=root).meta()
     assert plain["variants"] == ["base"] and plain["default_variant"] == "base"   # a configuration with no variants
+
+
+def test_the_traders_order_block_is_drawn_from_its_run_with_the_bodies_mean_threshold():
+    # Liquidity-engine Req 31.7: the engine's block keeps its one candle's MT; the trader's carries its run and grade.
+    from datetime import datetime, timezone
+
+    from algo_backtester.watch import _ob_marks
+    from liquidity_engine.models import BiasDirection, PDArray, PDArrayType
+
+    t = datetime(2025, 3, 3, 14, tzinfo=timezone.utc)
+    common = dict(array_id="x", array_type=PDArrayType.OB, direction=BiasDirection.BULLISH, timeframe=Timeframe.M15,
+                  formed_at=t, strength_score=0.7)
+    engine = PDArray(high=1.0, low=0.97, ob_candle_open=1.0, ob_candle_close=0.97, **common)
+    assert _ob_marks(engine, wall) == {"mt": pytest.approx(0.985)}
+    trader = PDArray(high=1.038, low=1.015, ob_candle_open=1.032, ob_candle_close=1.015,
+                     ob_series_start=t - timedelta(hours=3), high_probability=True, **common)
+    marks = _ob_marks(trader, wall)
+    assert marks == {"mt": pytest.approx(1.0265), "from": wall(t - timedelta(hours=3)), "hp": True}
