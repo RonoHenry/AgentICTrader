@@ -595,7 +595,7 @@ async function act(fn) { say(""); try { await fn(); } catch (e) { say(e.message)
 async function boot() {
   S.meta = await api("/api/watch/meta");
   $("sInst").innerHTML = S.meta.instruments.map((i) => `<option ${i === "XAUUSD" ? "selected" : ""}>${i}</option>`).join("");
-  $("sVariant").innerHTML = S.meta.variants.map((v) => `<option>${v}</option>`).join("");
+  $("sVariant").innerHTML = S.meta.variants.map((v) => `<option ${v === S.meta.default_variant ? "selected" : ""}>${v}</option>`).join("");
   $("sDays").innerHTML = Array.from({ length: S.meta.max_days }, (_, i) => `<option ${i === 2 ? "selected" : ""}>${i + 1}</option>`).join("");
   const spans = (S.meta.periods || [[S.meta.first, S.meta.last]]).map(([a, b]) => `${a} to ${b}`).join(", ");
   Object.assign($("sDay"), { min: S.meta.first, max: S.meta.last, value: Prefs.get("watch.day", "2025-01-27"),

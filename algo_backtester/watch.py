@@ -93,6 +93,10 @@ FILES = {"engine.html": "text/html; charset=utf-8", "engine.js": "text/javascrip
          "motion.js": "text/javascript; charset=utf-8", "noculus.js": "text/javascript; charset=utf-8",
          "fractal.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8"}
 MAX_DAYS = 5
+#: The strategy a session starts on unless the trader picks another (2026-10-28: "since the base strategy is wrong,
+#: why not do away with it"). A configuration's own [strategy] is the pre-fix engine, with the three-candle FVG zone
+#: and the forming HTF candle read as closed, so Noculus offers only its variants when it has any.
+DEFAULT_VARIANT = "fresh_near_gap_partial"
 KEPT_SESSIONS = 3
 #: The trader's picks against the engine's choice (Requirement 16.3): local, git-ignored.
 PICKS = REPO_ROOT / "data" / "journal" / "watch_picks.jsonl"
@@ -1075,9 +1079,10 @@ class WatchApp:
 
     def meta(self) -> dict:
         import tomllib
-        variants = sorted(tomllib.loads(self.config.read_text(encoding="utf-8")).get("variants", {}))
+        variants = sorted(tomllib.loads(self.config.read_text(encoding="utf-8")).get("variants", {})) or ["base"]
         instruments = sorted(p.name.split("_")[0] for p in self.snapshot.glob("*_M1.parquet"))
-        return {"instruments": instruments, "variants": ["base", *variants], "live": self._live_feed is not None,
+        return {"instruments": instruments, "variants": variants, "live": self._live_feed is not None,
+                "default_variant": DEFAULT_VARIANT if DEFAULT_VARIANT in variants else variants[0],
                 "first": min(a for a, _, _ in self.periods).isoformat(),
                 "last": (max(b for _, b, _ in self.periods) - timedelta(days=1)).isoformat(),
                 "periods": [[a.isoformat(), (b - timedelta(days=1)).isoformat()] for a, b, _ in self.periods],

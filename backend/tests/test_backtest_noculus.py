@@ -1102,3 +1102,14 @@ def test_sessions_start_in_any_open_period_on_its_own_snapshot_and_not_between(s
     pd.DataFrame({"time": [pd.Timestamp("2022-03-01", tz="UTC")], "open": [1.0], "high": [1.0], "low": [1.0],
                   "close": [1.0], "tick_volume": [7], "spread": [0.0001]}).to_parquet(early / "EURUSD_M1.parquet")
     assert "volume" in SnapshotSource(early)._frame("EURUSD")                # the terminal export's column name
+
+
+def test_the_strategy_menu_offers_the_variants_not_the_pre_fix_base(setup, tmp_path):  # noqa: F811
+    from algo_backtester.watch import DEFAULT_VARIANT, REPO_ROOT
+    root, snap = setup
+    focus = WatchApp(REPO_ROOT / "config" / "backtests" / "focus.toml", snap, (DAY, DAY + timedelta(days=1)),
+                     noculus_root=tmp_path, studies_root=root).meta()
+    assert "base" not in focus["variants"] and focus["default_variant"] == DEFAULT_VARIANT == "fresh_near_gap_partial"
+    plain = WatchApp(root / "base.toml", snap, (DAY, DAY + timedelta(days=1)), noculus_root=tmp_path,
+                     studies_root=root).meta()
+    assert plain["variants"] == ["base"] and plain["default_variant"] == "base"   # a configuration with no variants

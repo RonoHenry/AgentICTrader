@@ -1007,6 +1007,12 @@ The trader's TradingView indicator, ported from Pine and shown on Noculus at the
   - **Test:** `test_sessions_start_in_any_open_period_on_its_own_snapshot_and_not_between`.
   - **Validates: Requirement 17.1 (amended)**
 
+- [x] 374. Noculus drops the pre-fix base strategy (Requirement 17.1, D48)
+  - **Done 2026-10-28.** `WatchApp.meta` lists a configuration's variants without "base" (a configuration with none still offers base) and gives `default_variant` (`watch.DEFAULT_VARIANT`, `fresh_near_gap_partial`), which the page preselects. `start` still accepts "base" by name, so old journals and links open.
+  - **Test:** `test_the_strategy_menu_offers_the_variants_not_the_pre_fix_base`.
+  - **Not done:** the engine's own defaults (`StrategyConfig`) are still the pre-fix ones. That is the trader's call (D48).
+  - **Validates: Requirement 17.1 (amended)**
+
 ---
 
 ## Task Dependency Graph
