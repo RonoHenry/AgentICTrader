@@ -341,6 +341,11 @@ The trader can't judge the engine from tables: "something is still broken, but I
 ### Requirement 15: The Engine Watch
 
 1. `python -m algo_backtester watch [config]` SHALL serve a page on 127.0.0.1. There the trader picks an instrument, a first trading day in the research snapshot's exploration slice (AR-D3), up to 5 days, and the configuration or one of its variants.
+   - **Amended 2026-10-28 (D47):** the first day may be in any open period, each read from its own snapshot:
+     - the research snapshot's exploration and confirmation slices, up to the study's hold-out;
+     - the 2018-2024 search's development years (from 2021-08-16, a month into their M1 export).
+
+     The search's test years (2023-2024) stay closed.
 2. THE session SHALL run the backtest over those days as `run` does: the same Phase A and Phase B, the broker profile's costs, M1 from the research snapshot (no Docker). At every entry-timeframe close it SHALL replay the engine and keep:
    - its unfilled PD arrays near price, as the engine draws them (the order block's 50% too);
    - the liquidity pools it could still raid;
@@ -606,3 +611,4 @@ The trader chose it: "We move to BE as we take partials". It is an exit rule, no
 | D44 | A position too small to split runs unmanaged | Sizing never rounds up past the risk budget (Requirement 6.2). Rounding a partial up would close more than the share, and rounding the rest up is impossible. At $10,000 and 1% risk, no `fresh_near_gap` trade of 2025-26 was under two minimum lots. A small live account would be, and its trades would run unmanaged. |
 | D45 | Break-even is the fill, from the next bar | The stop moves to the price the position was opened at, as a trader moves it in MT5. M1 bars can't order the partial and a dip on the same minute, so the move waits for the next bar: that is the replay's rule, and it never improves a result. Once its partial is taken, a trade can lose only the rest's spread, slippage and commission. |
 | D46 | Paper always splits | The paper broker sizes in risk units, not lots, and scores trades in R. D44 is a lot-rounding rule: on paper it would only skip trades the backtest manages at $10,000. A live MT5 account at the runner's $200 seed equity would be under two minimum lots on most trades, so live management needs its own rule. |
+| D47 | Noculus opens the studied years, not the unread ones | The trader found sessions could only start in January-June 2025 and chose, on 2026-10-28, to open July 2025 - July 2026 and July 2021 - December 2022. The confirmation slice's pre-registered tests have run, and the development years are the search's own. What the trader reads there can't be confirmed there any more. 2023-2024 judges the search's leads once, so it stays closed, and the hold-out is reached only by live sessions (D40). |

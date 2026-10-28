@@ -142,6 +142,8 @@ class SnapshotSource:
             frame = pd.read_parquet(path) if path.exists() else pd.DataFrame(
                 columns=["time", "open", "high", "low", "close", "volume", "spread"])
             frame["time"] = pd.to_datetime(frame["time"], utc=True)
+            if "volume" not in frame and "tick_volume" in frame:      # the terminal's export names it so
+                frame = frame.rename(columns={"tick_volume": "volume"})
             self._m1[instrument] = frame.sort_values("time").reset_index(drop=True)
         return self._m1[instrument]
 
@@ -1034,11 +1036,29 @@ def live_feed(config: Path) -> Optional[Callable[[], LiveSource]]:
     return lambda: LiveSource(Terminal(profile), research.instruments)
 
 
+def noculus_periods(research) -> list[tuple[date, date, Path]]:
+    """The first days a Noculus session may start on, each period with the snapshot that holds it (2026-10-28, the
+    trader's choice): the research snapshot's exploration and confirmation slices, up to the study's hold-out, and
+    the 2018-2024 search's development years from their M1 export, a month in so the context has history. The
+    search's test years (2023-2024) stay closed: nothing of theirs is exported."""
+    from algo_research.search_crt import M1_SNAPSHOTS, WINDOWS as SEARCH_WINDOWS
+    periods = [(research.slices.explore[0], research.slices.confirm[1], SNAPSHOTS_DIR / research.snapshot)]
+    develop = M1_SNAPSHOTS["develop"]
+    if develop.is_dir():
+        start, end = (date.fromisoformat(d) for d in SEARCH_WINDOWS["develop"])
+        periods.insert(0, (start + timedelta(days=31), end, develop))
+    return periods
+
+
 class WatchApp:
     def __init__(self, config: Path, snapshot: Path, slice_: tuple[date, date], picks: Optional[Path] = None,
                  noculus_root: Optional[Path] = None, studies_root: Path = REPO_ROOT,
-                 live: Optional[Callable[[], LiveSource]] = None) -> None:
+                 live: Optional[Callable[[], LiveSource]] = None,
+                 periods: Optional[list[tuple[date, date, Path]]] = None) -> None:
+        """``periods`` lists the first days a session may start on, [start, end), each with its snapshot; by
+        default ``slice_`` on ``snapshot``."""
         self.config, self.snapshot, self.slice = Path(config), Path(snapshot), slice_
+        self.periods = [(a, b, Path(p)) for a, b, p in periods] if periods else [(slice_[0], slice_[1], Path(snapshot))]
         self.picks_path = Path(picks) if picks else PICKS
         self.noculus_root = Path(noculus_root) if noculus_root else NOCULUS_DIR
         self.studies_root = Path(studies_root)
@@ -1058,8 +1078,10 @@ class WatchApp:
         variants = sorted(tomllib.loads(self.config.read_text(encoding="utf-8")).get("variants", {}))
         instruments = sorted(p.name.split("_")[0] for p in self.snapshot.glob("*_M1.parquet"))
         return {"instruments": instruments, "variants": ["base", *variants], "live": self._live_feed is not None,
-                "first": self.slice[0].isoformat(),
-                "last": (self.slice[1] - timedelta(days=1)).isoformat(), "max_days": MAX_DAYS, "timeframes": list(TIMEFRAMES),
+                "first": min(a for a, _, _ in self.periods).isoformat(),
+                "last": (max(b for _, b, _ in self.periods) - timedelta(days=1)).isoformat(),
+                "periods": [[a.isoformat(), (b - timedelta(days=1)).isoformat()] for a, b, _ in self.periods],
+                "max_days": MAX_DAYS, "timeframes": list(TIMEFRAMES),
                 "config": str(self.config.relative_to(REPO_ROOT) if self.config.is_relative_to(REPO_ROOT) else self.config)}
 
     def start(self, body: dict) -> dict:
@@ -1067,12 +1089,16 @@ class WatchApp:
         if not 1 <= days <= MAX_DAYS:
             raise ValueError(f"days: 1 to {MAX_DAYS}")
         live = self.live_source() if body.get("live") else None
+        snapshot = self.snapshot
         if live is not None:                                 # the last ``days`` trading days, up to now (Requirement 27.1)
             day = live_first_day(live.now(), days)
         else:
             day = date.fromisoformat(str(body.get("first_day")))
-            if not self.slice[0] <= day < self.slice[1]:
-                raise ValueError(f"first_day: within the exploration slice, {self.slice[0]} to {self.slice[1] - timedelta(days=1)}")
+            held = next((p for a, b, p in self.periods if a <= day < b), None)
+            if held is None:
+                spans = "; ".join(f"{a} to {b - timedelta(days=1)}" for a, b, _ in self.periods)
+                raise ValueError(f"first_day: within {spans} (2023-2024 is the search's unread test window)")
+            snapshot = held
         variant = body.get("variant") or "base"
         instrument = str(body.get("instrument", "XAUUSD")).upper()
         blind = bool(body.get("blind"))
@@ -1081,7 +1107,7 @@ class WatchApp:
         if kept is not None and kept.state != "error":
             self.session = kept
             return kept.status()
-        session = WatchSession(self.config, None if variant == "base" else variant, instrument, day, days, self.snapshot,
+        session = WatchSession(self.config, None if variant == "base" else variant, instrument, day, days, snapshot,
                                studies_root=self.studies_root, blind=blind, live=live)
         session.noculus = self._journal(session)            # an open session's positions are kept too (D39)
         if blind:
@@ -1230,10 +1256,11 @@ def make_watch_server(app: WatchApp, host: str = "127.0.0.1", port: int = 8767) 
 def serve(config: Path, port: int = 8767, browser: bool = True, picks: Optional[Path] = None) -> int:
     research = load_research_config()
     app = WatchApp(Path(config), SNAPSHOTS_DIR / research.snapshot, research.slices.explore, picks=picks,
-                   live=live_feed(config))
+                   live=live_feed(config), periods=noculus_periods(research))
     server = make_watch_server(app, port=port)
     url = f"http://127.0.0.1:{server.server_address[1]}/"
-    print(f"engine watch at {url} (strategy from {config}; days from the exploration slice). Ctrl+C stops.")
+    print(f"engine watch at {url} (strategy from {config}; days from {', '.join(f'{a} to {b}' for a, b in app.meta()['periods'])})."
+          " Ctrl+C stops.")
     if browser:
         webbrowser.open(url)
     try:

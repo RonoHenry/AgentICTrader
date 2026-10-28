@@ -209,7 +209,7 @@ def serve(config: Path, port: int = 8765, browser: bool = True, instrument: str 
     research = load_research_config()
     snapshot = SNAPSHOTS_DIR / research.snapshot
     watch = watch_mod.WatchApp(Path(config), snapshot, research.slices.explore, picks=picks,
-                               live=watch_mod.live_feed(Path(config)))
+                               live=watch_mod.live_feed(Path(config)), periods=watch_mod.noculus_periods(research))
     charts = ChartsApp(snapshot, journal_root or JOURNAL_DIR, research.slices.explore, watch, default=instrument,
                        order=research.instruments)
     server = make_charts_server(charts, port=port)

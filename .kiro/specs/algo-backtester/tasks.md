@@ -998,6 +998,15 @@ The trader's TradingView indicator, ported from Pine and shown on Noculus at the
   - **Done 2026-10-27 (370a, 370b).** 7 tests. Before this, the MT5 paper test ran at zero cost (task 219's profile was never wired), so the 23 Oct forward test's R is gross.
   - **Validates: Requirements 28.6, 28.7**
 
+- [x] 373. Noculus sessions in every open period (Requirement 17.1, D47)
+  - **Done 2026-10-28.** `watch.noculus_periods` lists the open periods: 2025-01-01 to 2026-07-06 on the research snapshot, and 2021-08-16 to 2022-12-31 on `mt5-m1-develop`. `WatchApp(periods=)` starts a session on the period's snapshot and refuses a day outside them, naming 2023-2024 as the unread test window. `meta` gives the periods, and the date field's tooltip lists them. `SnapshotSource` reads the terminal export's `tick_volume` as volume.
+  - **Checked live** on a server with this code (US100, `fresh_near_gap_partial`):
+    - 7 March 2022: ready, with 135 CRTs (24 kept by H-O);
+    - 15 September 2025: ready, with 131 (16 kept);
+    - 5 June 2023: refused.
+  - **Test:** `test_sessions_start_in_any_open_period_on_its_own_snapshot_and_not_between`.
+  - **Validates: Requirement 17.1 (amended)**
+
 ---
 
 ## Task Dependency Graph

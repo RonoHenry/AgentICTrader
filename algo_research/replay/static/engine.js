@@ -597,7 +597,9 @@ async function boot() {
   $("sInst").innerHTML = S.meta.instruments.map((i) => `<option ${i === "XAUUSD" ? "selected" : ""}>${i}</option>`).join("");
   $("sVariant").innerHTML = S.meta.variants.map((v) => `<option>${v}</option>`).join("");
   $("sDays").innerHTML = Array.from({ length: S.meta.max_days }, (_, i) => `<option ${i === 2 ? "selected" : ""}>${i + 1}</option>`).join("");
-  Object.assign($("sDay"), { min: S.meta.first, max: S.meta.last, value: Prefs.get("watch.day", "2025-01-27") });
+  const spans = (S.meta.periods || [[S.meta.first, S.meta.last]]).map(([a, b]) => `${a} to ${b}`).join(", ");
+  Object.assign($("sDay"), { min: S.meta.first, max: S.meta.last, value: Prefs.get("watch.day", "2025-01-27"),
+                             title: `A first day within ${spans}` });
   const want = (new URLSearchParams(location.search).get("inst") || "").toUpperCase();
   if (S.meta.instruments.includes(want)) $("sInst").value = want;
   await Shell.init({ mode: "engine", inst: $("sInst").value, onPick: (i) => act(async () => {

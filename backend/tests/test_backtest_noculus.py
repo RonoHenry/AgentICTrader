@@ -1080,3 +1080,25 @@ def test_the_crt_layer_is_withheld_while_blind_and_shows_only_what_the_clock_has
     assert len(later["rows"]) >= len(shown["rows"])
     assert sum(x["closed"] for x in later["summary"].values()) >= sum(x["closed"] for x in shown["summary"].values())
     json.dumps(later)
+
+
+# ── the periods a session may start in (2026-10-28) ──────────────────────────────
+def test_sessions_start_in_any_open_period_on_its_own_snapshot_and_not_between(setup, tmp_path):  # noqa: F811
+    from datetime import date
+    from algo_backtester.watch import SnapshotSource
+    root, snap = setup
+    early = tmp_path / "early"
+    early.mkdir()
+    periods = [(date(2021, 8, 16), date(2023, 1, 1), early), (DAY, DAY + timedelta(days=1), snap)]
+    app = WatchApp(root / "base.toml", snap, (DAY, DAY + timedelta(days=1)), noculus_root=tmp_path,
+                   studies_root=root, periods=periods)
+    meta = app.meta()
+    assert meta["first"] == "2021-08-16" and meta["last"] == DAY.isoformat()
+    assert meta["periods"] == [["2021-08-16", "2022-12-31"], [DAY.isoformat(), DAY.isoformat()]]
+    with pytest.raises(ValueError, match="2023-2024 is the search's unread test window"):
+        app.start({"instrument": "EURUSD", "first_day": "2023-06-01", "days": 1})
+    app.start({"instrument": "EURUSD", "first_day": DAY.isoformat(), "days": 1})
+    assert app.session.snapshot == snap                                      # the period's own snapshot
+    pd.DataFrame({"time": [pd.Timestamp("2022-03-01", tz="UTC")], "open": [1.0], "high": [1.0], "low": [1.0],
+                  "close": [1.0], "tick_volume": [7], "spread": [0.0001]}).to_parquet(early / "EURUSD_M1.parquet")
+    assert "volume" in SnapshotSource(early)._frame("EURUSD")                # the terminal export's column name
