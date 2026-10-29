@@ -73,3 +73,13 @@ def test_memory_gives_the_nearest_training_weeks_and_their_up_share():
     expect = set(d.nsmallest(20).index)
     assert {w["week"] for w in a["weeks"]} == {train["week"].iat[i].date().isoformat() for i in expect}
     assert np.isclose(a["share_up"], (train.loc[list(expect), "up"] > 0).mean())
+
+
+def test_a_week_already_open_is_read_at_its_open_from_days_before_it():
+    d = days()
+    table = state_table("X", d)
+    row = table.iloc[-3]
+    monday = row["week"]
+    live, provisional = state_at("X", d, monday)              # the days go on past Monday: the week has opened
+    assert not provisional and live["open"] == row["open"]
+    assert np.allclose([live[f] for f in FEATURES], row[list(FEATURES)].to_numpy(float))

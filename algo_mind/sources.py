@@ -73,10 +73,14 @@ def live_days(data: dict, market: str, today: date) -> pd.DataFrame:
 
 def state_at(market: str, days: pd.DataFrame, monday: pd.Timestamp,
              price: Optional[float] = None) -> tuple[Optional[dict], bool]:
-    """The state at the open of the week of ``monday`` from ``days`` (read only before it), at ``price`` (default:
-    the last close), and whether it is provisional (its Friday missing). A month still running at ``monday`` is not
-    a closed candle, as in training."""
+    """The state at the open of the week of ``monday`` from ``days`` (read only before it), at ``price``, and
+    whether it is provisional (its Friday missing). Without ``price``: the week's open once it has opened (its first
+    day in ``days``), else the last close. A month still running at ``monday`` is not a closed candle, as in
+    training."""
     monday = pd.Timestamp(monday).normalize()
+    opened = days[(days["date"] >= monday) & (days["date"] < monday + timedelta(days=7))]
+    if price is None and len(opened):
+        price = float(opened["open"].iat[0])
     before = days[days["date"] < monday].reset_index(drop=True)
     if before.empty:
         return None, True
