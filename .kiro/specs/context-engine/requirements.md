@@ -775,3 +775,47 @@ H-K, H-L and H-M failed on 2018-2022. The trader asked to see the chain's reads 
    - whether H-O keeps it.
 
    This SHALL come through the search's own `algo_research.search_crt_context`, read on a month of the session's M1. A menu SHALL show every trade, only those at a gap, or only H-O's, with the card's totals for what is shown.
+
+## Update 2026-10-29: The Trader's Weekly Context
+
+Every mechanical side tried on the search's unread years came out at a random walk from the same close:
+- the chain (H-K) and the stack (H-M);
+- the turtle soup with the trader's raid, pool and discount (H-U);
+- the side kept by the frames above, with the flip after delivery (H-V).
+
+Meanwhile H-N's trades take both sides on 97% of market-days, and the losing side pays for the winning one. Sorted by the week's own close against its open, a hindsight upper bound, the trades on that side made +0.18R before costs and the others −0.07R. With stops of ten spreads or more, the week's side made +0.16R (3R) and +0.19R (5R) after costs. Called right 57-60% of the time, one weekly side clears the costs.
+
+The trader (2026-10-29): "a trade with context beats a trade that was basically just Model A showing". They will call the context of all nine markets each week. The engine executes only inside it.
+
+### Requirement 32: The Trader's Weekly Context
+
+**User Story:** As the trader, I want to give each market's context once a week (the side, the draw and the protected swing) and have the engine trade only inside it, so that its execution follows my read instead of every setup that shows.
+
+#### Acceptance Criteria
+
+1. **A call.** A CALL SHALL be one market's context for one trading week (Sunday 17:00 to Friday 17:00 New York):
+   - the side: BULLISH, BEARISH or NONE;
+   - the draw;
+   - the protected swing (a bullish call's protected swing is below its draw, and a bearish call's above);
+   - an optional note;
+   - the time it was made.
+
+   A call made after its week opened is kept but marked late. The calls are journal data: local and git-ignored.
+2. **The thesis file.** THE calls SHALL write the engine's thesis file (market-narrative Requirement 17), one entry per trading date of the week: the side, the draw, the protected swing and `since`, the later of the week's open and the call's time.
+3. **When a context ends.** UNDER `bias_mode = THESIS`, a setup against the entry's side is refused as before (`AGAINST_THESIS`), and a date with no entry as before (`NO_THESIS`). When an entry carries a draw, the context ends:
+   - **delivered:** once price has traded at the draw since `since`, refused as `THESIS_DELIVERED`;
+   - **invalidated:** once a D1 candle has closed beyond the protected swing since `since`, refused as `THESIS_INVALIDATED`. A wick beyond it is liquidation and does not end the context.
+
+   A plain side entry keeps its old meaning.
+4. **The page.** NOCULUS SHALL have a context page:
+   - for a chosen week (by default the next to open), the nine markets with their last price when the terminal is connected;
+   - each market's call, with its side, draw and protected swing checked on entry;
+   - saving a call rewrites the thesis file.
+5. **The variant.** THE configuration SHALL have a variant that trades the partial strategy only inside the calls: `bias_mode = THESIS` on the calls' thesis file, with stops of at least ten typical spreads. A paper agent SHALL run it on the control agents' markets, beside them.
+6. **The scorecard.** A SCORECARD SHALL give, for each called week and market:
+   - **the call:** side, draw and protected swing, and whether it was late;
+   - **the week:** its open and close, and whether it closed on the call's side;
+   - **the context:** delivered, invalidated or still open, and when, with a random walk's chance of reaching the draw before the protected swing from the price at `since`;
+   - **the paper agents:** the R net of the trades placed in the week by the context agent and by each control.
+
+   Its totals SHALL give the hit rate of the week's close against the 57-60% the costs need.

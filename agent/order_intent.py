@@ -272,11 +272,16 @@ def _candle_policy(
                                  f"its range {box.low:.6g}-{box.high:.6g}")
     if cfg.bias_mode == BiasMode.THESIS:
         day = trading_date(as_of)
-        side = theses(cfg.thesis_file).get(liquidity_map.instrument, {}).get(day)
+        entry = theses(cfg.thesis_file).get(liquidity_map.instrument, {}).get(day)
+        side = entry.get("side") if isinstance(entry, dict) else entry
         if side not in ("BULLISH", "BEARISH"):
             return "NO_THESIS", f"no thesis for {liquidity_map.instrument} on trading date {day}"
         if side != sequence.direction.value:
             return "AGAINST_THESIS", f"{sequence.direction.value} setup on a {side} thesis day ({day})"
+        if isinstance(entry, dict) and entry.get("draw") is not None:
+            ended = _context_ended(entry, view, as_of, cfg.entry_tf)
+            if ended is not None:
+                return ended
     if cfg.bias_mode == BiasMode.PROFILE:
         if profile is None or profile.direction == BiasDirection.NEUTRAL:
             return "NO_ANTICIPATION", "no anticipated direction for the candle"
@@ -297,6 +302,29 @@ def _candle_policy(
         for a in liquidity_map.pd_arrays
     ):
         return "NO_POI", f"protected swing {wick} is not inside an unfilled H4 or D1 {sequence.direction.value} PD array"
+    return None
+
+
+def _context_ended(entry: Mapping, view: Mapping[Timeframe, Sequence[Candle]], as_of: datetime,
+                   entry_tf: Timeframe) -> Optional[tuple[str, str]]:
+    """Whether the trader's weekly context (context-engine Requirement 32.3) has ended by ``as_of``: its draw traded
+    since ``since`` (on the closed H1 and entry candles opened since), or a closed D1 candle ending after ``since``
+    closed beyond its protected swing. A wick beyond the protected swing is liquidation, not an end."""
+    since = datetime.fromisoformat(entry["since"])
+    bullish = entry["side"] == "BULLISH"
+    draw, protected = float(entry["draw"]), float(entry["protected"])
+    closed = closed_candles({tf: view.get(tf, []) for tf in (Timeframe.H1, entry_tf, Timeframe.D1)}, as_of)
+    for tf in (Timeframe.H1, entry_tf):
+        for c in closed[tf]:
+            if c.timestamp >= since and (c.high >= draw if bullish else c.low <= draw):
+                return "THESIS_DELIVERED", (f"the {entry['side']} context's draw {draw:.6g} traded in the {tf.value} "
+                                            f"candle of {c.timestamp:%Y-%m-%d %H:%M} UTC")
+    calendar = StrategyCalendar()
+    for c in closed[Timeframe.D1]:
+        if calendar.period_end(c.timestamp, Timeframe.D1) > since and (c.close < protected if bullish
+                                                                        else c.close > protected):
+            return "THESIS_INVALIDATED", (f"the D1 candle of {trading_date(c.timestamp)} closed at {c.close:.6g}, "
+                                          f"beyond the {entry['side']} context's protected swing {protected:.6g}")
     return None
 
 

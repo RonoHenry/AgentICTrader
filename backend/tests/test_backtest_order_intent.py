@@ -678,6 +678,50 @@ def test_a_day_without_a_thesis_orders_nothing(tmp_path):
     assert isinstance(result, NoTrade) and result.reason == "NO_THESIS" and "2026-01-14" in result.detail
 
 
+# ── the trader's weekly context ends at its draw or a close beyond its protected swing (context-engine Req 32.3) ──
+def _context(tmp_path, **entry):
+    path = tmp_path / "context.json"
+    entry = {"side": "BULLISH", "draw": 1.1030, "protected": 1.0980, "since": "2026-01-11T22:00:00+00:00", **entry}
+    path.write_text(json.dumps({"EURUSD": {"2026-01-14": entry}}), encoding="utf-8")
+    return str(path)
+
+
+def _context_view(h1_high=None, d1=None):
+    """_view() with a closed H1 candle on 13 January (high ``h1_high``) and a closed D1 candle for 13 January's
+    trading day (``d1``: its low and close) before the in-progress 14 January one."""
+    view = _view()
+    if h1_high is not None:
+        ts = datetime(2026, 1, 13, 15, tzinfo=timezone.utc)
+        view[Timeframe.H1] = [Candle(timestamp=ts, open=1.1000, high=h1_high, low=1.0995, close=1.1000, volume=1,
+                                     timeframe=Timeframe.H1, instrument="EURUSD")]
+    if d1 is not None:
+        ts = datetime(2026, 1, 12, 22, tzinfo=timezone.utc)
+        view[Timeframe.D1] = [Candle(timestamp=ts, open=1.1000, high=1.1010, low=d1[0], close=d1[1], volume=1,
+                                     timeframe=Timeframe.D1, instrument="EURUSD")] + view[Timeframe.D1]
+    return view
+
+
+def _in_context(tmp_path, view, **entry):
+    return build_order_intent(_policy_map(profile=_profile()), view, "EURUSD", AS_OF,
+                              policy(bias_mode="THESIS", thesis_file=_context(tmp_path, **entry)))
+
+
+def test_a_weekly_context_trades_its_side_until_its_draw_trades(tmp_path):
+    assert reason(_in_context(tmp_path, _context_view(h1_high=1.1020))) == "ORDER"
+    done = _in_context(tmp_path, _context_view(h1_high=1.1031))
+    assert isinstance(done, NoTrade) and done.reason == "THESIS_DELIVERED" and "1.103" in done.detail
+    later = _in_context(tmp_path, _context_view(h1_high=1.1031), since="2026-01-13T16:00:00+00:00")
+    assert reason(later) == "ORDER"                                          # the touch came before the call
+    against = _in_context(tmp_path, _context_view(), side="BEARISH", draw=1.0950, protected=1.1040)
+    assert reason(against) == "AGAINST_THESIS"
+
+
+def test_a_weekly_context_ends_at_a_d1_close_beyond_its_protected_swing_not_a_wick(tmp_path):
+    broken = _in_context(tmp_path, _context_view(d1=(1.0970, 1.0975)))
+    assert isinstance(broken, NoTrade) and broken.reason == "THESIS_INVALIDATED" and "2026-01-13" in broken.detail
+    assert reason(_in_context(tmp_path, _context_view(d1=(1.0970, 1.0990)))) == "ORDER"     # a wick: liquidation
+
+
 def test_the_thesis_mode_needs_a_file():
     with pytest.raises(ValueError, match="thesis_file"):
         StrategyConfig(bias_mode="THESIS")

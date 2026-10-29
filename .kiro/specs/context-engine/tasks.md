@@ -444,6 +444,36 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
   - **Tests:** the session test checks the tags and the keep rule; `test_research_search_crt_context.py` (3).
   - **Validates: Requirement 31.4**
 
+- [x] 378. The weekly context book and the end of a context (Requirement 32.1-32.3)
+  - **378a. RED** — on hand-made calls and candles:
+    - a call's week opens on the Sunday 17:00 New York before its trading dates;
+    - a weekend time belongs to the next week;
+    - a bullish call needs its protected swing below its draw, a bearish one above;
+    - a call after its week's open is marked late, and its `since` is its own time;
+    - the thesis file holds one entry per trading date of every called week, with NONE left out;
+    - under `THESIS`, an entry with a draw refuses `THESIS_DELIVERED` once an H1 or entry candle since `since` reached the draw, and `THESIS_INVALIDATED` once a D1 candle closed beyond the protected swing;
+    - a wick beyond the protected swing doesn't end it;
+    - a plain side entry behaves as before.
+  - **378b. GREEN** — `agent/context_calls.py` (`week_monday`, `week_open`, `Call`, `ContextBook`, `thesis_table`); `order_intent` reads either kind of entry.
+  - Editing `agent/order_intent.py` changes `ENGINE_SOURCES`, so Phase A recomputes on the next backtest.
+  - **Done 2026-10-29.**
+    - Tests: `test_context_calls.py` (4) and, in `test_backtest_order_intent.py`, `test_a_weekly_context_trades_its_side_until_its_draw_trades` and `test_a_weekly_context_ends_at_a_d1_close_beyond_its_protected_swing_not_a_wick`.
+    - Delivery reads the closed H1 and entry candles opened since `since`. The H1 candle holding `since` is left out, so a touch earlier in that hour doesn't count.
+  - **Validates: Requirement 32.1-32.3**
+
+- [ ] 379. The context page on Noculus (Requirement 32.4)
+  - `/context`: the week, the nine markets, their last prices from the terminal when connected, and each call's form. `GET /api/context`, `POST /api/context/call`. Saving rewrites the thesis file.
+  - **Validates: Requirement 32.4**
+
+- [ ] 380. The context variant and its paper agent (Requirement 32.5)
+  - `[variants.fresh_near_gap_context]`: `fresh_near_gap_partial` with `bias_mode = "THESIS"`, `thesis_file = "data/research/theses/context_theses.json"` and `min_stop_spreads = 10`.
+  - A paper agent on the control agents' eight markets: `data/paper_trades_fresh_near_gap_context.json`.
+  - **Validates: Requirement 32.5**
+
+- [ ] 381. The weekly scorecard (Requirement 32.6)
+  - `GET /api/context/scorecard` and the page's table: each called week and market, scored on the terminal's bars and the paper agents' records.
+  - **Validates: Requirement 32.6**
+
 ---
 
 ## Task Dependency Graph
