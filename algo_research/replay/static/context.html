@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Noculus · Context</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  main.ctx { max-width: 1180px; margin: 0 auto; padding: 14px 16px 40px; }
+  .weekbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 12px; }
+  .weekbar h2 { font-size: 15px; margin: 0 6px; font-weight: 650; }
+  .weekbar .pill.open { color: var(--warn); } .weekbar .pill.ahead { color: var(--good); }
+  table.calls { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  table.calls th, table.calls td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+  table.calls th { font-size: 12px; color: var(--muted); font-weight: 600; }
+  table.calls tr:last-child td { border-bottom: 0; }
+  table.calls td.num, table.calls th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.calls input[type=number] { width: 120px; font-variant-numeric: tabular-nums; }
+  table.calls input.note { width: 100%; min-width: 140px; }
+  table.calls select.BULLISH { color: var(--good); font-weight: 650; } table.calls select.BEARISH { color: var(--bad); font-weight: 650; }
+  .msg { font-size: 12px; } .msg.err { color: var(--bad); } .msg.warn { color: var(--warn); } .msg.ok { color: var(--good); }
+  .tag { font-size: 11px; padding: 1px 6px; border-radius: 999px; background: var(--chip); margin-left: 4px; }
+  .tag.late { color: var(--warn); }
+  section.score { margin-top: 26px; }
+  section.score h3 { font-size: 14px; margin: 0 0 6px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+  @media (max-width: 760px) { table.calls input[type=number] { width: 90px; } table.calls .hide-s { display: none; } }
+</style>
+</head>
+<body>
+<div id="shell"><span class="modes" title="Who is reading the chart"><a href="/">You</a><a href="/engine">Engine</a><a href="/context" class="on">Context</a></span></div>
+<header>
+  <h1>Noculus · Context</h1>
+  <span class="muted">Your weekly call per market: the engine trades only its side, until the draw trades or a D1 candle closes beyond the protected swing.</span>
+</header>
+<main class="ctx">
+  <div class="weekbar">
+    <button class="boxed" id="prev" title="The week before">◀</button>
+    <h2 id="weekLabel">—</h2>
+    <button class="boxed" id="next" title="The week after">▶</button>
+    <span class="pill" id="weekState"></span>
+    <span class="spacer"></span>
+    <select id="weeks" title="Weeks with calls"></select>
+  </div>
+  <table class="calls">
+    <thead><tr><th>Market</th><th class="num">Last</th><th>Side</th><th class="num">Draw</th><th class="num">Protected swing</th>
+      <th class="hide-s">Note</th><th></th><th>Saved</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <p class="hint">A bullish call's protected swing is below its draw; a bearish one's above. A call made after the week opens is kept but marked late, and counts from when it was made. Every version is kept.</p>
+  <section class="score">
+    <h3>Scorecard</h3>
+    <div id="score" class="muted">—</div>
+  </section>
+</main>
+<script src="/static/context.js"></script>
+</body>
+</html>

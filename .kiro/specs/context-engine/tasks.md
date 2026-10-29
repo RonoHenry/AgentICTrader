@@ -461,8 +461,12 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
     - Delivery reads the closed H1 and entry candles opened since `since`. The H1 candle holding `since` is left out, so a touch earlier in that hour doesn't count.
   - **Validates: Requirement 32.1-32.3**
 
-- [ ] 379. The context page on Noculus (Requirement 32.4)
+- [x] 379. The context page on Noculus (Requirement 32.4)
   - `/context`: the week, the nine markets, their last prices from the terminal when connected, and each call's form. `GET /api/context`, `POST /api/context/call`. Saving rewrites the thesis file.
+  - **Done 2026-10-29.**
+    - `algo_research/replay/context.py` (`ContextApp`, `default_week`, `MARKETS`), with `static/context.html` and `context.js`; the shell links to the page.
+    - The form checks the levels against each other (an error blocks the save) and against the last price (a warning). It also shows a random walk's chance of reaching the draw first from there.
+    - Test: `test_the_context_page_keeps_a_call_per_market_and_week_and_writes_the_thesis_file`.
   - **Validates: Requirement 32.4**
 
 - [ ] 380. The context variant and its paper agent (Requirement 32.5)
