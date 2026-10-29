@@ -7,6 +7,10 @@ open, high, low, close, tick volume and the spread in price units; a manifest re
 and each market's first intraday date.
 
     python scripts/export_mt5_history.py [--name mt5-2018-2026] [--start 2018-01-01]
+    python scripts/export_mt5_history.py --name mt5-m1-develop --timeframes M1 --start 2021-07-16 --end 2023-01-01
+
+Requests go a month at a time, so the terminal's bar limit never truncates M1. ``--end`` keeps a window unread
+(the 2018-2024 search's test years stay out of a development export).
 
 Nothing is sent to the terminal but history requests.
 """
@@ -14,7 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -31,24 +35,26 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--name", default="mt5-2018-2026")
     parser.add_argument("--start", default="2018-01-01")
+    parser.add_argument("--end", default=None, help="exclusive, UTC; default now")
+    parser.add_argument("--timeframes", default=",".join(TIMEFRAMES))
     args = parser.parse_args()
     out = REPO / "data" / "research" / "snapshots" / args.name
     out.mkdir(parents=True, exist_ok=True)
     if not mt5.initialize():
         raise SystemExit(f"MT5 initialize failed: {mt5.last_error()}")
     start = datetime.fromisoformat(args.start).replace(tzinfo=timezone.utc)
-    end = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    end = datetime.fromisoformat(args.end).replace(tzinfo=timezone.utc) if args.end else now
     manifest = {"source": f"{mt5.account_info().server} ({mt5.terminal_info().name})", "server_utc_offset": 0,
-                "exported_at": end.isoformat(timespec="seconds"), "markets": {}}
+                "exported_at": now.isoformat(timespec="seconds"), "until": end.isoformat(), "markets": {}}
     for instrument, symbol in SYMBOLS.items():
         mt5.symbol_select(symbol, True)
         point = mt5.symbol_info(symbol).point
         manifest["markets"][instrument] = {"symbol": symbol, "point": point, "timeframes": {}}
-        for tf in TIMEFRAMES:
-            rates = mt5.copy_rates_range(symbol, getattr(mt5, f"TIMEFRAME_{tf}"), start, end)
-            if rates is None or not len(rates):
+        for tf in args.timeframes.split(","):
+            frame = _rates(mt5, symbol, getattr(mt5, f"TIMEFRAME_{tf}"), start, end)
+            if frame is None:
                 continue
-            frame = pd.DataFrame(rates)
             bars = pd.DataFrame({"time": pd.to_datetime(frame["time"], unit="s", utc=True),
                                  **{k: frame[k].astype(float) for k in ("open", "high", "low", "close")},
                                  "tick_volume": frame["tick_volume"].astype("int64"),
@@ -66,6 +72,21 @@ def main() -> None:
     mt5.shutdown()
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
     print("wrote", out)
+
+
+def _rates(mt5, symbol: str, timeframe: int, start: datetime, end: datetime):
+    """[start, end) a month at a time, joined; None when the server has nothing."""
+    parts, cursor = [], start
+    while cursor < end:
+        upto = min(cursor + timedelta(days=31), end)
+        rates = mt5.copy_rates_range(symbol, timeframe, cursor, upto)
+        if rates is not None and len(rates):
+            parts.append(pd.DataFrame(rates))
+        cursor = upto
+    if not parts:
+        return None
+    frame = pd.concat(parts, ignore_index=True).drop_duplicates("time")
+    return frame[frame["time"] < int(end.timestamp())].reset_index(drop=True)
 
 
 if __name__ == "__main__":

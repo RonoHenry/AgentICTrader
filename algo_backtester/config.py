@@ -39,6 +39,7 @@ from agent.strategy_config import StrategyConfig
 __all__ = [
     "HOLDOUT_MONTHS",
     "HoldoutOverlapError",
+    "ManagementSection",
     "RunConfig",
     "StudyConfig",
     "check_holdout",
@@ -90,6 +91,14 @@ class DataSection(_Section):
     allow_gaps: bool = False
 
 
+class ManagementSection(_Section):
+    """How an open trade is managed (Requirement 28): close ``partial_fraction`` of it at ``partial_r`` times its
+    fill-to-stop distance and move the rest's stop to the fill. Read by the broker only, after Phase A, so it lives
+    here and not in the StrategyConfig, whose source keys Phase A's cache (D43)."""
+    partial_r: float = Field(default=0.0, ge=0)                 # 0 is off
+    partial_fraction: float = Field(default=1 / 3, gt=0, lt=1)
+
+
 class ReportSection(_Section):
     min_trades: PositiveInt = 30         # D8
     cost_flag_fraction: float = Field(default=0.25, gt=0)   # Req 5.5
@@ -103,6 +112,7 @@ class RunConfig(_Section):
     # default_factory: a model default is deep-copied, and StrategyConfig's read-only mappings can't be.
     account: AccountSection = Field(default_factory=AccountSection)
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
+    management: ManagementSection = Field(default_factory=ManagementSection)
     data: DataSection = Field(default_factory=DataSection)
     report: ReportSection = Field(default_factory=ReportSection)
     variant: Optional[str] = None        # the variant applied, if any

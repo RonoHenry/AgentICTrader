@@ -934,6 +934,85 @@ The trader's TradingView indicator, ported from Pine and shown on Noculus at the
     3 more tests; the walk-through now has 19 checks. On the real terminal a `live_now` call takes 3–16 ms, and gold's bid moved every second. A live GER40 session opened: grade A, bullish, drawing to 25736.0, refused as STALE_RAID.
   - **Validates: Requirements 27.1–27.7**
 
+### Update 2026-10-27: partials and break-even (task 369)
+
+- [ ] 369. A partial, then break-even
+  - **369a. RED**
+    - Config: `[management]` is off by default; a variant sets `partial_r` and `partial_fraction`; a share of 0 or 1 or more is refused; the strategy is unchanged (D43); `focus.toml` has `fresh_near_gap_partial`.
+    - Fill model:
+      - the partial at 3R from the fill, and the rest at break-even;
+      - break-even from the next bar;
+      - stop and partial on one bar is the stop;
+      - partial and target on one bar;
+      - none on a limit's fill bar;
+      - measured from a market fill;
+      - a SHORT on the ask;
+      - none at or beyond the target.
+    - Broker:
+      - LONG accounting (R, gross, each cost, pnl);
+      - a SHORT paying each exit's spread;
+      - each part's swap nights;
+      - a position too small to split runs unmanaged (D44).
+    - `simulate(management=)` takes the partial, and the journal carries it; the watch's rows carry it.
+  - **369b. GREEN**
+    - `ManagementSection` and `RunConfig.management`.
+    - `SimOrder.partial_*`, `_fill`, `_manage` and the `PARTIAL` event.
+    - `SimBroker(partial_r, partial_fraction)`, `advance`, `_closed_trade`, and the `ClosedTrade` partial fields.
+    - `simulate(management=)` and `run_backtest`.
+    - The journal columns, `WatchSession._journal_row`, and `engine.js` (the partial's mark, "BE").
+    - The `fresh_near_gap_partial` variant.
+  - **369c. REFACTOR**
+    - Run `fresh_near_gap_partial` on the exploration slice and the confirmation period from the Phase A cache, against the replay's ⅓-at-3R numbers (+29.0R, −74.5R). Lot rounding is the only expected difference.
+    - The golden journal regains its columns: no result may change.
+    - The trader watches a managed session on Noculus.
+  - **Done 2026-10-27 (369a, 369b; 369c in part).** 18 tests, plus the page's "BE" label in `load_engine.js`.
+    - **Exploration slice** (`fresh_near_gap_partial`, run `1633a533`): +29.1R over 116 trades, drawdown 20.6R, total over drawdown 1.41, wins 28%. The replay gave +29.0R and 1.38; `fresh_near_gap` itself gives +30.4R and 1.14.
+      - Partials were taken on 32 trades. Their actual share was 0.316–0.333 after lot rounding.
+      - Every trade without a partial is unchanged to 0.0001R.
+      - Two more orders filled, freed by earlier break-even exits; together about 0R.
+    - **Golden journal:** 277 rows, every old value identical, the three new columns empty.
+    - **Confirmation period** (July 2025 – June 2026), run from a scratch copy of `confirm.toml`, which is pre-registered and stays as it is.
+      - The run: −76.9R over 185 trades, drawdown 80.9R, total over drawdown −0.95. `fresh_near_gap` alone gives −81.4R and −0.96.
+      - On the 175 trades both runs share, −74.6R against the replay's −74.5R. Every trade without a partial is unchanged.
+      - Ten more orders filled, freed by break-even exits: −2.3R.
+      - Partials were taken on 30 trades.
+    - **Still to do:** the trader's look on Noculus.
+    - **Not covered:** the live MT5 path doesn't manage trades yet. Paper does from task 370.
+  - **Validates: Requirements 28.1–28.5**
+
+- [ ] 370. The paper agents trade the variant as backtested: its management and its costs
+  - **370a. RED**
+    - `test_paper_broker.py::TestManagement`:
+      - a third off at 3R, then the rest stopped at the fill;
+      - the rest reaching the target;
+      - off unless set;
+      - a SHORT on the ask, with its spread and slippage;
+      - a restart keeps the partial and the break-even stop;
+      - the report counts the partials.
+    - `test_backtest_runner_view.py`: the runner reads the variant's `[management]` and prices paper with its profile's specs.
+  - **370b. GREEN**
+    - `fill_model.partial_level`, shared by `_fill` and the paper broker.
+    - `PaperBrokerAdapter(partial_r, partial_fraction)`: `_to_order` and `_from_order` carry the partial; `_r_multiples` books its bid.
+    - `run_live_agent._run_config` and `_paper_specs`; a PARTIAL line in the log.
+  - **370c.** Run `fresh_near_gap_partial` on paper across the 8 Exness markets, with plain `fresh_near_gap` beside it as the unmanaged control on the same signals.
+  - **Done 2026-10-27 (370a, 370b).** 7 tests. Before this, the MT5 paper test ran at zero cost (task 219's profile was never wired), so the 23 Oct forward test's R is gross.
+  - **Validates: Requirements 28.6, 28.7**
+
+- [x] 373. Noculus sessions in every open period (Requirement 17.1, D47)
+  - **Done 2026-10-28.** `watch.noculus_periods` lists the open periods: 2025-01-01 to 2026-07-06 on the research snapshot, and 2021-08-16 to 2022-12-31 on `mt5-m1-develop`. `WatchApp(periods=)` starts a session on the period's snapshot and refuses a day outside them, naming 2023-2024 as the unread test window. `meta` gives the periods, and the date field's tooltip lists them. `SnapshotSource` reads the terminal export's `tick_volume` as volume.
+  - **Checked live** on a server with this code (US100, `fresh_near_gap_partial`):
+    - 7 March 2022: ready, with 135 CRTs (24 kept by H-O);
+    - 15 September 2025: ready, with 131 (16 kept);
+    - 5 June 2023: refused.
+  - **Test:** `test_sessions_start_in_any_open_period_on_its_own_snapshot_and_not_between`.
+  - **Validates: Requirement 17.1 (amended)**
+
+- [x] 374. Noculus drops the pre-fix base strategy (Requirement 17.1, D48)
+  - **Done 2026-10-28.** `WatchApp.meta` lists a configuration's variants without "base" (a configuration with none still offers base) and gives `default_variant` (`watch.DEFAULT_VARIANT`, `fresh_near_gap_partial`), which the page preselects. `start` still accepts "base" by name, so old journals and links open.
+  - **Test:** `test_the_strategy_menu_offers_the_variants_not_the_pre_fix_base`.
+  - **Not done:** the engine's own defaults (`StrategyConfig`) are still the pre-fix ones. That is the trader's call (D48).
+  - **Validates: Requirement 17.1 (amended)**
+
 ---
 
 ## Task Dependency Graph

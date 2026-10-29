@@ -58,6 +58,16 @@ strategy.max_stop_atr = 1.0
 strategy.target_mode = "NEAREST"
 strategy.fvg_zone = "gap"
 
+# The full fix, managed as the trader chose on 2026-10-27 (algo-backtester Req 28): a third off at 3R, the rest
+# moved to break-even at that moment. An exit rule judged on forward data, not an edge.
+[variants.fresh_near_gap_partial]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+management.partial_r = 3.0
+management.partial_fraction = 0.3333333333333333
+
 # The full fix, standing aside while price is still inside the last expansion day's range (Req 29, LE-D25/D26):
 # GBPUSD 27-29 January 2025, the engine trading the middle of that box with expansion targets.
 [variants.fresh_near_gap_box]
@@ -88,6 +98,24 @@ strategy.max_stop_atr = 1.0
 strategy.target_mode = "NEAREST"
 strategy.fvg_zone = "gap"
 strategy.cisd = "crt"
+
+# The trader's order blocks (Req 31, LE-D31-D33): the run closed through its first open, read from its bodies, the
+# entry at their mean threshold; a close beyond the bodies inverts it into a breaker. Unmanaged and managed.
+[variants.fresh_near_gap_ob]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.ob_rule = "cisd"
+
+[variants.fresh_near_gap_partial_ob]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.ob_rule = "cisd"
+management.partial_r = 3.0
+management.partial_fraction = 0.3333333333333333
 
 # On M5, where the trader executes (M1-M5): the sequence from sweep to entry forms there inside one M15 candle.
 # The fresh raid is then read on H1, the trader's indicator's frame for M5; the stop cap stays in M15 ranges.

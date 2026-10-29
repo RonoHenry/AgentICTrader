@@ -1058,3 +1058,76 @@ def test_the_chain_layer_is_withheld_while_blind_and_served_up_to_the_clock(blin
     assert [r["i"] for r in later[: len(shown["rows"])]] == [r["i"] for r in shown["rows"]]
     assert later[len(shown["rows"]) - 1]["next"] in (-1, 0, 1)                      # its next candle has closed
     json.dumps(later)
+
+
+# ── H-N, the trader's M15 CRT at market on M1 (the CRT layer, 2026-10-27) ──
+def test_the_crt_layer_is_withheld_while_blind_and_shows_only_what_the_clock_has_seen(blind, session):  # noqa: F811
+    clock = wall(session.start) + 8 * 3600
+    shown = session.crt({"t": clock})
+    assert not shown["withheld"] and shown["rows"] and set(shown["summary"]) == {"3", "4", "5"}
+    assert all(r["c3"] <= clock and r["c2"] < r["c3"] for r in shown["rows"])
+    for r in shown["rows"]:
+        long = r["side"] > 0
+        assert (r["stop"] < r["fill"]) if long else (r["stop"] > r["fill"])
+        assert (r["extreme"] < r["swept"]) if long else (r["extreme"] > r["swept"])   # C2's wick beyond C1
+        assert r["trend"] in (-1, 0, 1) and isinstance(r["pools"], list) and isinstance(r["arrays"], list)
+        assert r["kept"] == bool((r["pools"] or r["arrays"]) and r["trend"] == r["side"])   # H-O's filter
+        for x in r["targets"].values():
+            assert all(leg["at"] <= clock for leg in x["legs"])
+            assert x["net"] is None or (x["legs"] and x["legs"][-1]["at"] <= clock)
+    assert blind.crt({"t": clock}) == {"withheld": True, "rows": []}
+    later = session.crt({"t": wall(session.end)})
+    assert len(later["rows"]) >= len(shown["rows"])
+    assert sum(x["closed"] for x in later["summary"].values()) >= sum(x["closed"] for x in shown["summary"].values())
+    json.dumps(later)
+
+
+# ── the periods a session may start in (2026-10-28) ──────────────────────────────
+def test_sessions_start_in_any_open_period_on_its_own_snapshot_and_not_between(setup, tmp_path):  # noqa: F811
+    from datetime import date
+    from algo_backtester.watch import SnapshotSource
+    root, snap = setup
+    early = tmp_path / "early"
+    early.mkdir()
+    periods = [(date(2021, 8, 16), date(2023, 1, 1), early), (DAY, DAY + timedelta(days=1), snap)]
+    app = WatchApp(root / "base.toml", snap, (DAY, DAY + timedelta(days=1)), noculus_root=tmp_path,
+                   studies_root=root, periods=periods)
+    meta = app.meta()
+    assert meta["first"] == "2021-08-16" and meta["last"] == DAY.isoformat()
+    assert meta["periods"] == [["2021-08-16", "2022-12-31"], [DAY.isoformat(), DAY.isoformat()]]
+    with pytest.raises(ValueError, match="2023-2024 is the search's unread test window"):
+        app.start({"instrument": "EURUSD", "first_day": "2023-06-01", "days": 1})
+    app.start({"instrument": "EURUSD", "first_day": DAY.isoformat(), "days": 1})
+    assert app.session.snapshot == snap                                      # the period's own snapshot
+    pd.DataFrame({"time": [pd.Timestamp("2022-03-01", tz="UTC")], "open": [1.0], "high": [1.0], "low": [1.0],
+                  "close": [1.0], "tick_volume": [7], "spread": [0.0001]}).to_parquet(early / "EURUSD_M1.parquet")
+    assert "volume" in SnapshotSource(early)._frame("EURUSD")                # the terminal export's column name
+
+
+def test_the_strategy_menu_offers_the_variants_not_the_pre_fix_base(setup, tmp_path):  # noqa: F811
+    from algo_backtester.watch import DEFAULT_VARIANT, REPO_ROOT
+    root, snap = setup
+    focus = WatchApp(REPO_ROOT / "config" / "backtests" / "focus.toml", snap, (DAY, DAY + timedelta(days=1)),
+                     noculus_root=tmp_path, studies_root=root).meta()
+    assert "base" not in focus["variants"] and focus["default_variant"] == DEFAULT_VARIANT == "fresh_near_gap_partial"
+    plain = WatchApp(root / "base.toml", snap, (DAY, DAY + timedelta(days=1)), noculus_root=tmp_path,
+                     studies_root=root).meta()
+    assert plain["variants"] == ["base"] and plain["default_variant"] == "base"   # a configuration with no variants
+
+
+def test_the_traders_order_block_is_drawn_from_its_run_with_the_bodies_mean_threshold():
+    # Liquidity-engine Req 31.7: the engine's block keeps its one candle's MT; the trader's carries its run and grade.
+    from datetime import datetime, timezone
+
+    from algo_backtester.watch import _ob_marks
+    from liquidity_engine.models import BiasDirection, PDArray, PDArrayType
+
+    t = datetime(2025, 3, 3, 14, tzinfo=timezone.utc)
+    common = dict(array_id="x", array_type=PDArrayType.OB, direction=BiasDirection.BULLISH, timeframe=Timeframe.M15,
+                  formed_at=t, strength_score=0.7)
+    engine = PDArray(high=1.0, low=0.97, ob_candle_open=1.0, ob_candle_close=0.97, **common)
+    assert _ob_marks(engine, wall) == {"mt": pytest.approx(0.985)}
+    trader = PDArray(high=1.038, low=1.015, ob_candle_open=1.032, ob_candle_close=1.015,
+                     ob_series_start=t - timedelta(hours=3), high_probability=True, **common)
+    marks = _ob_marks(trader, wall)
+    assert marks == {"mt": pytest.approx(1.0265), "from": wall(t - timedelta(hours=3)), "hp": True}

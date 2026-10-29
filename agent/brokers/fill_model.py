@@ -10,7 +10,7 @@ comparable (Req 4.1). It reads no clock: time is the bars' own timestamps.
                      kind="LIMIT", entry=1.0850, stop=1.0830, target=1.0910,
                      placed_at=t, expires_at=pending_expiry(t, cfg.pending_expiry, cfg.fallback_ttl))
     for bar in m1_bars:
-        events = model.step(order, bar)   # FILLED / SL / TP / EXPIRED / REJECTED
+        events = model.step(order, bar)   # FILLED / PARTIAL / SL / TP / EXPIRED / REJECTED
 
 Prices. Bars are bid prices (MT5 convention); ask = bid + spread. Fills and
 exits happen on the executing side: buys at the ask, sells at the bid, stop
@@ -38,12 +38,18 @@ Rules (Req 4):
 - MAE/MFE track the closing-side price from the fill. A limit's fill bar
   counts only its adverse extreme (the favourable one may predate the fill);
   an exit caps the excursion at the exit's market price.
+- A partial (algo-backtester Req 28), when the order sets ``partial_r``: once
+  the closing side reaches the fill plus ``partial_r`` times the fill-to-stop
+  distance, ``partial_fraction`` of the position exits there (like a target:
+  no slippage, never on a limit's fill bar, and a bar that also reaches the
+  stop is the stop's) and the rest's stop moves to the fill from the next bar
+  (D45). A partial at or beyond the target is not taken.
 
 Swap: ``swap_nights`` counts the nights a filled position pays, one per
 17:00 New York rollover it is held through from Monday to Friday, three on
 the instrument's triple day; the weekend has no rollover of its own.
 
-Validates: Requirements 4.1-4.12 (.kiro/specs/algo-backtester/requirements.md);
+Validates: Requirements 4.1-4.12, 28.2 (.kiro/specs/algo-backtester/requirements.md);
 Requirement 25.1 (.kiro/specs/liquidity-engine/requirements.md)
 """
 from __future__ import annotations
@@ -57,12 +63,12 @@ from agent.strategy_config import PendingExpiry
 from liquidity_engine.models import KillzoneWindow
 from liquidity_engine.utils.time_utils import KILLZONE_WINDOWS, get_killzone, to_est, to_utc
 
-__all__ = ["Bar", "FillEvent", "FillModel", "SimOrder", "pending_expiry", "swap_nights"]
+__all__ = ["Bar", "FillEvent", "FillModel", "SimOrder", "partial_level", "pending_expiry", "swap_nights"]
 
 Direction = Literal["LONG", "SHORT"]
 OrderKind = Literal["MARKET", "LIMIT"]
 OrderStatus = Literal["PENDING", "OPEN", "CLOSED"]
-EventKind = Literal["FILLED", "SL", "TP", "EXPIRED", "REJECTED"]
+EventKind = Literal["FILLED", "PARTIAL", "SL", "TP", "EXPIRED", "REJECTED"]
 
 
 @dataclass(frozen=True)
@@ -99,6 +105,12 @@ class SimOrder:
     closed_at: Optional[datetime] = None
     mae_price: Optional[float] = None    # closing-side price: bid for LONG, ask for SHORT
     mfe_price: Optional[float] = None
+    # A partial, then break-even (algo-backtester Req 28); None is off.
+    partial_r: Optional[float] = None
+    partial_fraction: float = 0.0
+    partial_price: Optional[float] = None       # set at the fill; None when it is at or beyond the target
+    partial_at: Optional[datetime] = None
+    partial_ideal_exit: Optional[float] = None  # bid at the partial
 
 
 @dataclass(frozen=True)
@@ -163,6 +175,8 @@ class FillModel:
         order.ideal_fill, order.fill = ideal, price
         # Excursions start from the price the position would close at right now.
         order.mae_price = order.mfe_price = price - bar.spread if order.direction == "LONG" else price + bar.spread
+        if order.partial_r:
+            order.partial_price = partial_level(order.direction, price, order.stop, order.target, order.partial_r)
 
     # ── an open position ───────────────────────────────────────────────────
 
@@ -183,12 +197,20 @@ class FillModel:
             exit_price = market - self.stop_slippage if long_ else market + self.stop_slippage
             self._close(order, bar, "SL", market if long_ else market - bar.spread, exit_price)
             return [FillEvent("SL", order.order_id, bar.timestamp, exit_price)]
+        events = []
+        partial = order.partial_price
+        if (partial is not None and order.partial_at is None and not limit_fill_bar
+                and (favourable >= partial if long_ else favourable <= partial)):
+            order.partial_at = bar.timestamp
+            order.partial_ideal_exit = partial if long_ else partial - bar.spread
+            order.stop = order.fill        # the rest at break-even, from the next bar: this one met the old stop
+            events.append(FillEvent("PARTIAL", order.order_id, bar.timestamp, partial))
         if target_hit:
             self._extend(order, adverse=adverse, favourable=order.target)
             self._close(order, bar, "TP", order.target if long_ else order.target - bar.spread, order.target)
-            return [FillEvent("TP", order.order_id, bar.timestamp, order.target)]
+            return events + [FillEvent("TP", order.order_id, bar.timestamp, order.target)]
         self._extend(order, adverse=adverse, favourable=None if limit_fill_bar else favourable)
-        return []
+        return events
 
     @staticmethod
     def _extend(order: SimOrder, adverse: float, favourable: Optional[float]) -> None:
@@ -205,6 +227,16 @@ class FillModel:
     def _close(order: SimOrder, bar: Bar, reason: str, ideal_exit: Optional[float], exit_price: Optional[float]) -> None:
         order.status, order.closed_at, order.exit_reason = "CLOSED", bar.timestamp, reason
         order.ideal_exit, order.exit = ideal_exit, exit_price
+
+
+def partial_level(direction: Direction, fill: float, stop: float, target: Optional[float],
+                  partial_r: float) -> Optional[float]:
+    """Where a position filled at ``fill`` takes its partial: ``partial_r`` times the
+    fill-to-stop distance beyond the fill, or None when that is at or beyond the target."""
+    sign = 1 if direction == "LONG" else -1
+    level = fill + sign * partial_r * abs(fill - stop)
+    short_of_target = target is None or (level < target if sign > 0 else level > target)
+    return level if short_of_target else None
 
 
 def pending_expiry(placed_at: datetime, rule: PendingExpiry, fallback_ttl: timedelta) -> datetime:

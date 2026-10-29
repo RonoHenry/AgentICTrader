@@ -62,6 +62,9 @@ from algo_backtester.report import journal_csv
 from algo_backtester.run import run_backtest
 from algo_backtester.signals import entry_closes, signals_at
 from algo_research.chain_view import ChainView, trading_days
+from algo_research.search_crt import m15_from_m1, session_trades
+from algo_research.search_crt_context import WARMUP as CRT_WARMUP
+from algo_research.search_crt_context import Context as CrtContext
 from algo_research.config import load_research_config, trading_date_open
 from algo_research.fractal_poi import FractalPOI, FractalSettings, partners_for, warmup_days
 from algo_research.fractal_poi import defaults as fractal_defaults
@@ -90,6 +93,10 @@ FILES = {"engine.html": "text/html; charset=utf-8", "engine.js": "text/javascrip
          "motion.js": "text/javascript; charset=utf-8", "noculus.js": "text/javascript; charset=utf-8",
          "fractal.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8"}
 MAX_DAYS = 5
+#: The strategy a session starts on unless the trader picks another (2026-10-28: "since the base strategy is wrong,
+#: why not do away with it"). A configuration's own [strategy] is the pre-fix engine, with the three-candle FVG zone
+#: and the forming HTF candle read as closed, so Noculus offers only its variants when it has any.
+DEFAULT_VARIANT = "fresh_near_gap_partial"
 KEPT_SESSIONS = 3
 #: The trader's picks against the engine's choice (Requirement 16.3): local, git-ignored.
 PICKS = REPO_ROOT / "data" / "journal" / "watch_picks.jsonl"
@@ -139,6 +146,8 @@ class SnapshotSource:
             frame = pd.read_parquet(path) if path.exists() else pd.DataFrame(
                 columns=["time", "open", "high", "low", "close", "volume", "spread"])
             frame["time"] = pd.to_datetime(frame["time"], utc=True)
+            if "volume" not in frame and "tick_volume" in frame:      # the terminal's export names it so
+                frame = frame.rename(columns={"tick_volume": "volume"})
             self._m1[instrument] = frame.sort_values("time").reset_index(drop=True)
         return self._m1[instrument]
 
@@ -238,6 +247,7 @@ class WatchSession:
         self.states: dict[int, dict] = {}
         self._keys: list[int] = []
         self.summary: dict = {}
+        self.management: dict = {}             # the run's partial and break-even (Requirement 28)
         self.model_a: dict[str, list[dict]] = {}
         self._fractal: "OrderedDict[tuple, FractalPOI]" = OrderedDict()
         self._fractal_lock = threading.Lock()
@@ -246,6 +256,8 @@ class WatchSession:
         self._trend_lock = threading.Lock()
         self._chain: Optional[tuple] = None                     # (trading day, days, reader, reads by day)
         self._chain_lock = threading.Lock()
+        self._crt: Optional[tuple[int, list[dict]]] = None      # (M1 bars read, H-N's trades on them)
+        self._crt_lock = threading.Lock()
 
     # ── preparing ───────────────────────────────────────────────────────────
     def prepare(self) -> None:
@@ -288,6 +300,7 @@ class WatchSession:
 
     def _prepare(self) -> None:
         cfg = load_run_config(self.config, self.variant)
+        self.management = cfg.management.model_dump()
         end = self.end                 # a live session's new end is shown with the states that reach it, not before
         if self.live:
             self.source.refresh(self.instrument)
@@ -327,7 +340,7 @@ class WatchSession:
         # A live session's earlier closes read the same closed candles, so only the new ones are read.
         closes = entry_closes(data, cfg.strategy.entry_tf, start_dt, end_dt)
         spread = spec.default_spread
-        engine = _Capturing(cfg.strategy.fvg_zone, cfg.strategy.cisd)
+        engine = _Capturing(cfg.strategy.fvg_zone, cfg.strategy.cisd, cfg.strategy.ob_rule)
         states = dict(self.states)
         new = [t for t in closes if t not in self._records]
         for n, t in enumerate(new):
@@ -377,8 +390,8 @@ class WatchSession:
 
     def _paths(self, m1, journal: list[dict], end: pd.Timestamp) -> None:
         """Each filled trade's best and worst point from the fill to the exit (or the session's end), in R and at
-        their times (Requirement 16.1). The backtest never moves a stop or takes a partial, so this is all the
-        managing there was to see. Within the fill's minute the extremes may precede the fill."""
+        their times (Requirement 16.1). Unless the run manages its trades (Requirement 28), the backtest never moves a
+        stop or takes a partial, so this is all the managing there was to see. Within the fill's minute the extremes may precede the fill."""
         times = np.array(wall_seconds([b.timestamp for b in m1])) if m1 else np.array([], dtype=np.int64)
         highs = np.array([b.high for b in m1]); lows = np.array([b.low for b in m1])
         end_of_session = wall(end)
@@ -593,7 +606,9 @@ class WatchSession:
                 "placed_at": _iso_wall(r.get("placed_at")), "expires_at": _iso_wall(r.get("expires_at")),
                 "filled_at": _iso_wall(r.get("filled_at")), "fill": _num(r.get("fill")), "closed_at": _iso_wall(r.get("closed_at")),
                 "exit": _num(r.get("exit")), "exit_reason": r.get("exit_reason") if isinstance(r.get("exit_reason"), str) else None,
-                "net_r": _num(r.get("net_r")), "mfe_r": _num(r.get("mfe_r"))}
+                "net_r": _num(r.get("net_r")), "mfe_r": _num(r.get("mfe_r")),
+                "partial_at": _iso_wall(r.get("partial_at")), "partial_exit": _num(r.get("partial_exit")),
+                "partial_fraction": _num(r.get("partial_fraction"))}
 
     def _state(self, lm, view, seen, t: datetime, entry_tf: Timeframe, cisd: str = "next") -> dict:
         price = view[entry_tf][-1].close if view.get(entry_tf) else None
@@ -609,8 +624,7 @@ class WatchSession:
         keep = {seq.entry_array_id} if seq else set()
         shown = [a for a in arrays if a.array_id in keep] + [a for a in arrays if a.array_id not in keep][:_ARRAYS_SHOWN]
         out_arrays = [{"id": a.array_id, "type": a.array_type.value, "dir": a.direction.value, "tf": a.timeframe.value,
-                       "high": a.high, "low": a.low, "formed": wall(a.formed_at),
-                       "mt": None if a.ob_candle_open is None else (a.ob_candle_open + a.ob_candle_close) / 2,
+                       "high": a.high, "low": a.low, "formed": wall(a.formed_at), **_ob_marks(a, wall),
                        "entry": bool(seq and a.array_id == seq.entry_array_id)} for a in shown]
         pools = []
         bars = view.get(entry_tf, [])
@@ -677,7 +691,7 @@ class WatchSession:
             ranked.append({
                 "id": a.array_id, "rank": len(ranked) + 1, "tf": a.timeframe.value, "type": a.array_type.value, "dir": a.direction.value,
                 "low": a.low, "high": a.high, "formed": wall(a.formed_at), "strength": round(a.strength_score, 3),
-                "mt": None if a.ob_candle_open is None else (a.ob_candle_open + a.ob_candle_close) / 2,
+                **_ob_marks(a, wall),
                 "raid": {"side": s.raid.pool.side.value, "source": s.raid.pool.source.value, "tf": s.raid.pool.timeframe.value,
                          "price": s.raid.pool.price, "at": wall(s.raid.raided_at),
                          "age_h": round((pd.Timestamp(t) - pd.Timestamp(s.raid.raided_at)).total_seconds() / 3600, 1)},
@@ -694,7 +708,8 @@ class WatchSession:
                 "variant": self.variant or "base", "first_day": self.first_day.isoformat(), "days": self.days,
                 "start": wall(self.start), "end": wall(self.end), "digits": self.bars.digits if self.bars else 5,
                 "summary": {} if self.withheld else self.summary, "closes": len(self._keys),
-                "blind": self.blind, "revealed_at": self.revealed_at, "live": self.live, "version": self.version}
+                "blind": self.blind, "revealed_at": self.revealed_at, "live": self.live, "version": self.version,
+                "management": self.management}
 
     def _read_model_a(self) -> dict[str, list[dict]]:
         """Model A's instances over the session, both of the trader's frame sets, both sides (Requirement 17), with
@@ -869,6 +884,59 @@ class WatchSession:
             rows.append(row)
         return {"withheld": False, "smt": "abstains: one market on this chart", "rows": rows}
 
+    # ── H-N, the trader's M15 CRT at market on M1 (2026-10-27) ─────────────────
+    def crt(self, q: dict) -> dict:
+        """H-N's trades (``algo_research.search_crt.session_trades``) on the session's own M1 and spreads, those whose
+        C3 has opened by the clock ``t``: the sweep, the fill, the stop and, per target, the exits taken by the clock.
+        A trade's result shows once all its exits are in the past; one still open at the end of a live session's bars
+        has none. Nothing while the session is blind."""
+        clock = min(int(q["t"]), wall(self.end))
+        if self.withheld:
+            return {"withheld": True, "rows": []}
+        with self._crt_lock:
+            n = len(self.frame.m1)
+            if self._crt is None or self._crt[0] != n:
+                m1 = pd.DataFrame({"time": self.frame.m1["time"].reset_index(drop=True),
+                                   **{k: self.frame.arrays[k] for k in ("open", "high", "low", "close", "spread")}})
+                found = session_trades(m1)
+                # H-O's context (the pools, gaps and H4 trend of each CRT), from a month of the session's M1
+                ctx = CrtContext(m15_from_m1(self._m1(self.instrument, CRT_WARMUP.days).reset_index(drop=True)))
+                for tr in found:
+                    tr.update(ctx.tag(int(tr["c3"].value), tr["side"], tr["c2_high"], tr["c2_low"], tr["c2_close"]))
+                for tr in found:                              # in the chart's wall seconds, once
+                    for key in ("c2", "c3", "day_end"):
+                        tr[key] = wall(tr[key])
+                    for x in tr["targets"].values():
+                        x["legs"] = [dict(leg, at=wall(leg["at"])) for leg in x["legs"]]
+                self._crt = (n, found)
+            found = self._crt[1]
+        since, until = wall(self.start), wall(self.end)
+        data_end = int(self.path["time"][-1]) + 60 if len(self.path["time"]) else since
+        rows = []
+        for tr in found:
+            c3 = tr["c3"]
+            if not since <= c3 < until or c3 > clock:
+                continue
+            row = {"c2": tr["c2"], "c3": c3, "side": tr["side"], "swept": tr["swept"], "extreme": tr["extreme"],
+                   "fill": tr["fill"], "stop": tr["stop"], "risk": tr["risk"], "pools": tr["pools"],
+                   "arrays": tr["arrays"], "trend": tr["trend"], "kept": tr["kept"], "targets": {}}
+            day_end = tr["day_end"]
+            for k, x in tr["targets"].items():
+                legs = x["legs"]
+                cut = legs[-1]["kind"] == "close" and data_end < day_end       # the bars stop before the day closes
+                done = not cut and legs[-1]["at"] <= clock
+                row["targets"][k] = {"legs": [leg for leg in legs if leg["at"] <= clock and not (cut and leg["kind"] == "close")],
+                                     "net": x["net"] if done else None}
+            rows.append(row)
+        summary = {}
+        for k in ("3", "4", "5"):
+            nets = [r["targets"][k]["net"] for r in rows if r["targets"][k]["net"] is not None]
+            summary[k] = {"closed": len(nets), "total": round(sum(nets), 2), "wins": sum(v > 0 for v in nets)}
+        reached = [any(leg["kind"] in ("partial", "target") for leg in r["targets"]["5"]["legs"]) for r in rows]
+        return {"withheld": False, "rows": rows, "summary": summary, "reached_3r": sum(reached),
+                "develop": "2021-07 to 2022, nine markets: every CRT -0.21R a trade at 3R, 4R and 5R (H-N); "
+                           "H-O's filter -0.17R; at a gap -0.16R net, +0.10R better than the other side"}
+
     def _m1(self, instrument: str, days: int) -> pd.DataFrame:
         """The session's M1 (the snapshot's or the terminal's) for ``instrument`` from ``days`` before the session to
         its end."""
@@ -937,11 +1005,20 @@ class WatchSession:
                 for r in frame.itertuples()]
 
 
+def _ob_marks(a, wall) -> dict:
+    """An order block's mean threshold, and under ob_rule "cisd" its run's first candle and grade (liquidity-engine
+    Req 31.7). The engine's own block is one candle, its MT that body's midpoint; the trader's is the run's bodies,
+    its MT their midpoint."""
+    if a.ob_series_start is not None:
+        return {"mt": (a.high + a.low) / 2, "from": wall(a.ob_series_start), "hp": bool(a.high_probability)}
+    return {"mt": None if a.ob_candle_open is None else (a.ob_candle_open + a.ob_candle_close) / 2}
+
+
 class _Capturing:
     """The engine, keeping the last view and map it produced, for the page."""
 
-    def __init__(self, fvg_zone: str = "candles", cisd: str = "next") -> None:
-        self.engine = LiquidityMappingEngine(fvg_zone, cisd)
+    def __init__(self, fvg_zone: str = "candles", cisd: str = "next", ob_rule: str = "candle") -> None:
+        self.engine = LiquidityMappingEngine(fvg_zone, cisd, ob_rule)
         self.last = None
 
     def analyze(self, view, instrument, t):
@@ -971,11 +1048,29 @@ def live_feed(config: Path) -> Optional[Callable[[], LiveSource]]:
     return lambda: LiveSource(Terminal(profile), research.instruments)
 
 
+def noculus_periods(research) -> list[tuple[date, date, Path]]:
+    """The first days a Noculus session may start on, each period with the snapshot that holds it (2026-10-28, the
+    trader's choice): the research snapshot's exploration and confirmation slices, up to the study's hold-out, and
+    the 2018-2024 search's development years from their M1 export, a month in so the context has history. The
+    search's test years (2023-2024) stay closed: nothing of theirs is exported."""
+    from algo_research.search_crt import M1_SNAPSHOTS, WINDOWS as SEARCH_WINDOWS
+    periods = [(research.slices.explore[0], research.slices.confirm[1], SNAPSHOTS_DIR / research.snapshot)]
+    develop = M1_SNAPSHOTS["develop"]
+    if develop.is_dir():
+        start, end = (date.fromisoformat(d) for d in SEARCH_WINDOWS["develop"])
+        periods.insert(0, (start + timedelta(days=31), end, develop))
+    return periods
+
+
 class WatchApp:
     def __init__(self, config: Path, snapshot: Path, slice_: tuple[date, date], picks: Optional[Path] = None,
                  noculus_root: Optional[Path] = None, studies_root: Path = REPO_ROOT,
-                 live: Optional[Callable[[], LiveSource]] = None) -> None:
+                 live: Optional[Callable[[], LiveSource]] = None,
+                 periods: Optional[list[tuple[date, date, Path]]] = None) -> None:
+        """``periods`` lists the first days a session may start on, [start, end), each with its snapshot; by
+        default ``slice_`` on ``snapshot``."""
         self.config, self.snapshot, self.slice = Path(config), Path(snapshot), slice_
+        self.periods = [(a, b, Path(p)) for a, b, p in periods] if periods else [(slice_[0], slice_[1], Path(snapshot))]
         self.picks_path = Path(picks) if picks else PICKS
         self.noculus_root = Path(noculus_root) if noculus_root else NOCULUS_DIR
         self.studies_root = Path(studies_root)
@@ -992,11 +1087,14 @@ class WatchApp:
 
     def meta(self) -> dict:
         import tomllib
-        variants = sorted(tomllib.loads(self.config.read_text(encoding="utf-8")).get("variants", {}))
+        variants = sorted(tomllib.loads(self.config.read_text(encoding="utf-8")).get("variants", {})) or ["base"]
         instruments = sorted(p.name.split("_")[0] for p in self.snapshot.glob("*_M1.parquet"))
-        return {"instruments": instruments, "variants": ["base", *variants], "live": self._live_feed is not None,
-                "first": self.slice[0].isoformat(),
-                "last": (self.slice[1] - timedelta(days=1)).isoformat(), "max_days": MAX_DAYS, "timeframes": list(TIMEFRAMES),
+        return {"instruments": instruments, "variants": variants, "live": self._live_feed is not None,
+                "default_variant": DEFAULT_VARIANT if DEFAULT_VARIANT in variants else variants[0],
+                "first": min(a for a, _, _ in self.periods).isoformat(),
+                "last": (max(b for _, b, _ in self.periods) - timedelta(days=1)).isoformat(),
+                "periods": [[a.isoformat(), (b - timedelta(days=1)).isoformat()] for a, b, _ in self.periods],
+                "max_days": MAX_DAYS, "timeframes": list(TIMEFRAMES),
                 "config": str(self.config.relative_to(REPO_ROOT) if self.config.is_relative_to(REPO_ROOT) else self.config)}
 
     def start(self, body: dict) -> dict:
@@ -1004,12 +1102,16 @@ class WatchApp:
         if not 1 <= days <= MAX_DAYS:
             raise ValueError(f"days: 1 to {MAX_DAYS}")
         live = self.live_source() if body.get("live") else None
+        snapshot = self.snapshot
         if live is not None:                                 # the last ``days`` trading days, up to now (Requirement 27.1)
             day = live_first_day(live.now(), days)
         else:
             day = date.fromisoformat(str(body.get("first_day")))
-            if not self.slice[0] <= day < self.slice[1]:
-                raise ValueError(f"first_day: within the exploration slice, {self.slice[0]} to {self.slice[1] - timedelta(days=1)}")
+            held = next((p for a, b, p in self.periods if a <= day < b), None)
+            if held is None:
+                spans = "; ".join(f"{a} to {b - timedelta(days=1)}" for a, b, _ in self.periods)
+                raise ValueError(f"first_day: within {spans} (2023-2024 is the search's unread test window)")
+            snapshot = held
         variant = body.get("variant") or "base"
         instrument = str(body.get("instrument", "XAUUSD")).upper()
         blind = bool(body.get("blind"))
@@ -1018,7 +1120,7 @@ class WatchApp:
         if kept is not None and kept.state != "error":
             self.session = kept
             return kept.status()
-        session = WatchSession(self.config, None if variant == "base" else variant, instrument, day, days, self.snapshot,
+        session = WatchSession(self.config, None if variant == "base" else variant, instrument, day, days, snapshot,
                                studies_root=self.studies_root, blind=blind, live=live)
         session.noculus = self._journal(session)            # an open session's positions are kept too (D39)
         if blind:
@@ -1109,6 +1211,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.app.need().trend(q))
         elif url.path == "/api/watch/chain":
             self._answer(lambda: self.app.need().chain(q))
+        elif url.path == "/api/watch/crt":
+            self._answer(lambda: self.app.need().crt(q))
         elif url.path == "/api/watch/noculus/trend_calls":
             self._answer(lambda: self.app.need().trend_calls(q))
         elif url.path == "/api/watch/fractal-defaults":
@@ -1165,10 +1269,11 @@ def make_watch_server(app: WatchApp, host: str = "127.0.0.1", port: int = 8767) 
 def serve(config: Path, port: int = 8767, browser: bool = True, picks: Optional[Path] = None) -> int:
     research = load_research_config()
     app = WatchApp(Path(config), SNAPSHOTS_DIR / research.snapshot, research.slices.explore, picks=picks,
-                   live=live_feed(config))
+                   live=live_feed(config), periods=noculus_periods(research))
     server = make_watch_server(app, port=port)
     url = f"http://127.0.0.1:{server.server_address[1]}/"
-    print(f"engine watch at {url} (strategy from {config}; days from the exploration slice). Ctrl+C stops.")
+    print(f"engine watch at {url} (strategy from {config}; days from {', '.join(f'{a} to {b}' for a, b in app.meta()['periods'])})."
+          " Ctrl+C stops.")
     if browser:
         webbrowser.open(url)
     try:

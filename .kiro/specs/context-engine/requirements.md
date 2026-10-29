@@ -749,3 +749,29 @@ H-K, H-L and H-M failed on 2018-2022. The trader asked to see the chain's reads 
 
    A panel card SHALL spell out the frames, the links and the votes.
 3. NOTHING SHALL be served while a session is blind, and nothing after the clock.
+
+### Requirement 31: H-N, the M15 CRT, on the Chart
+
+**User Story:** As the trader, I want H-N's trades drawn on Noculus (my M15 CRT at market on M1, with fixed targets and the partial), so that I can see on the candles what the rule takes and why it loses.
+
+#### Acceptance Criteria
+
+1. NOCULUS SHALL serve H-N's trades on the session's own M1 and spreads, through the search's own code (`algo_research.search_crt`), for each C3 that has opened by the replay clock:
+   - C1's swept level and C2's wick;
+   - the fill, the stop and 1R;
+   - for each target (3R; 4R and 5R with the partial), the exits taken by the clock, and the R net once every exit is in the past.
+
+   A trade the session's bars end before closing has no result.
+2. THE layer SHALL draw, at the target chosen in a menu:
+   - the risk and the target;
+   - the 3R partial's level;
+   - the exits, and the result after the last one.
+
+   A panel card SHALL give the session's totals at the three targets, and the development result.
+3. NOTHING SHALL be served while a session is blind, and nothing after the clock.
+4. Added 2026-10-27 (H-O): each trade SHALL carry H-O's context:
+   - the pools C2 took and the gaps it reached into, labelled at C2's wick;
+   - the H4 trend;
+   - whether H-O keeps it.
+
+   This SHALL come through the search's own `algo_research.search_crt_context`, read on a month of the session's M1. A menu SHALL show every trade, only those at a gap, or only H-O's, with the card's totals for what is shown.

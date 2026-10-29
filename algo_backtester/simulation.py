@@ -55,7 +55,7 @@ from agent.order_intent import OWN_DECISION_REASONS, NoTrade, OrderIntent
 from agent.state import AgentMode
 from agent.strategy_config import StrategyConfig
 from algo_backtester.account import SimAccount
-from algo_backtester.config import AccountSection
+from algo_backtester.config import AccountSection, ManagementSection
 from algo_backtester.signals import EngineError, SignalRecord, TradeContext
 from algo_backtester.sim_broker import ClosedTrade, Conversion, SimBroker, SimTrade
 from services.risk_engine.main import RiskEngine
@@ -115,13 +115,16 @@ def simulate(
     conversion: Optional[Conversion] = None,
     cost_flag_fraction: float = 0.25,
     on_step: Optional[Step] = None,
+    management: ManagementSection = ManagementSection(),
 ) -> SimulationResult:
     """Run the account over ``bars`` (each instrument's M1 fill bars, oldest
     first) and ``signals`` (each instrument's Phase A records, oldest first).
-    ``on_step(t, broker, account)`` is called after each minute."""
+    ``on_step(t, broker, account)`` is called after each minute; ``management``
+    is the run's partial and break-even (Req 28), off by default."""
     clock = _SimClock()
     broker = SimBroker(specs, clock, strategy.pending_expiry, strategy.fallback_ttl, conversion,
-                       cost_flag_fraction=cost_flag_fraction)
+                       cost_flag_fraction=cost_flag_fraction, partial_r=management.partial_r,
+                       partial_fraction=management.partial_fraction)
     account = SimAccount(account_cfg.initial_equity, account_cfg.risk_per_trade, account_cfg.compounding)
     redis = fakeredis.FakeRedis(decode_responses=True)
     graph = AgentGraph(

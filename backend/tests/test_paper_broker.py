@@ -168,6 +168,69 @@ class TestBrokerClientMethods:
             broker.partial_close(_long(broker))
 
 
+class TestManagement:
+    """A partial, then break-even (algo-backtester Req 28.6): the paper broker takes it through the fill model."""
+
+    def _managed(self, **kwargs) -> PaperBrokerAdapter:
+        return _broker(partial_r=3.0, partial_fraction=1 / 3, **kwargs)
+
+    def test_a_third_off_at_3r_then_the_rest_stops_at_the_fill(self):
+        broker = self._managed()
+        _long(broker)  # limit 98, stop 97, target 103: 1R is 1.0, the partial at 101
+        assert [e["event"] for e in broker.update("BTCUSDT", [bar(1, 100, 97.9), bar(2, 101.2, 99.5)])] == [
+            "FILLED", "PARTIAL"]
+        trade = broker.active_trade("BTCUSDT")
+        assert trade["partial_at"] == (T0 + timedelta(minutes=2)).isoformat()
+        assert trade["remaining_ratio"] == pytest.approx(2 / 3) and trade["stop_loss"] == 97.0  # the planned stop
+        assert trade["partials"] == [{"ratio": pytest.approx(1 / 3), "price": 101.0, "ideal": 101.0,
+                                      "at": trade["partial_at"]}]
+        assert [e["event"] for e in broker.update("BTCUSDT", [bar(3, 99.5, 97.95)])] == ["SL"]  # 97.95: under the fill
+        closed = broker.trades()[0]
+        assert closed["exit_price"] == 98.0 and closed["gross_r"] == pytest.approx(1.0)  # 1/3 x 3R + 2/3 x 0
+
+    def test_the_rest_can_still_reach_the_target(self):
+        broker = self._managed()
+        _long(broker)
+        broker.update("BTCUSDT", [bar(1, 100, 97.9), bar(2, 101.2, 99.5), bar(3, 103.5, 100)])
+        assert broker.trades()[0]["gross_r"] == pytest.approx(1 / 3 * 3 + 2 / 3 * 5, abs=1e-3)  # R to 3 places
+
+    def test_off_unless_set(self):
+        broker = _broker()
+        _long(broker)
+        assert [e["event"] for e in broker.update("BTCUSDT", [bar(1, 100, 97.9), bar(2, 101.2, 99.5)])] == ["FILLED"]
+        assert broker.active_trade("BTCUSDT")["partials"] == []
+
+    def test_a_short_takes_it_on_the_ask_and_pays_its_costs(self):
+        broker = self._managed(specs=SPECS)  # spread 0.1, stop slippage 0.05
+        broker.place_order({"instrument": "BTCUSDT", "direction": "SHORT", "entry": 102.0, "stop_loss": 103.0,
+                            "take_profit": 97.0, "size": 1.0, "setup_id": "s2"})
+        # Filled at 102; the partial at 99 on the ask (a bid low of 98.8); the rest's stop at 102 on the ask.
+        events = broker.update("BTCUSDT", [bar(1, 102.5, 100), bar(2, 100, 98.8), bar(3, 102.0, 100)])
+        assert [e["event"] for e in events] == ["FILLED", "PARTIAL", "SL"]
+        trade = broker.trades()[0]
+        assert trade["partials"][0]["price"] == 99.0 and trade["partials"][0]["ideal"] == pytest.approx(98.9)
+        assert trade["exit_price"] == pytest.approx(102.05)  # break-even plus the stop's slippage
+        assert trade["net_r"] == pytest.approx(1 / 3 * 3 + 2 / 3 * -0.05, abs=1e-3)
+
+    def test_a_restart_keeps_the_partial_and_the_break_even_stop(self, tmp_path):
+        path = tmp_path / "paper.json"
+        broker = self._managed(state_path=path)
+        _long(broker)
+        broker.update("BTCUSDT", [bar(1, 100, 97.9)])  # filled before the restart
+
+        reloaded = PaperBrokerAdapter(state_path=path, partial_r=3.0, partial_fraction=1 / 3)
+        assert [e["event"] for e in reloaded.update("BTCUSDT", [bar(2, 101.2, 99.5)])] == ["PARTIAL"]
+        again = PaperBrokerAdapter(state_path=path, partial_r=3.0, partial_fraction=1 / 3)
+        assert [e["event"] for e in again.update("BTCUSDT", [bar(3, 99.5, 97.95)])] == ["SL"]
+        assert again.trades()[0]["gross_r"] == pytest.approx(1.0)
+
+    def test_the_report_counts_the_partials(self):
+        broker = self._managed()
+        _long(broker)
+        broker.update("BTCUSDT", [bar(1, 100, 97.9), bar(2, 101.2, 99.5), bar(3, 99.5, 97.95)])
+        assert "1 took the partial" in broker.report()
+
+
 class TestPersistence:
     def test_trades_survive_a_restart(self, tmp_path):
         path = tmp_path / "paper.json"

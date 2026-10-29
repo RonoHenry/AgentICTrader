@@ -359,3 +359,88 @@ def test_triple_day_is_the_specs():
     # MT5 numbers days from Sunday = 0: 5 is a Friday triple, as some metals use.
     assert swap_nights(ny_at(2026, 1, 16, 10), ny_at(2026, 1, 19, 9), triple_day=5) == 3
     assert swap_nights(ny_at(2026, 1, 14, 10), ny_at(2026, 1, 15, 9), triple_day=5) == 1
+
+
+# ── a partial, then break-even (Requirement 28) ─────────────────────────────
+
+def managed(direction: str = "LONG", kind: str = "LIMIT", partial_r: float = 3.0, fraction: float = 1 / 3,
+            **levels) -> SimOrder:
+    """An order that closes ``fraction`` at ``partial_r`` R from its fill and moves the rest to break-even."""
+    sides = {"LONG": dict(entry=100.0, stop=99.0, target=106.0), "SHORT": dict(entry=100.0, stop=101.0, target=94.0)}
+    o = order(direction=direction, kind=kind, **{**sides[direction], **levels})
+    o.partial_r, o.partial_fraction = partial_r, fraction
+    return o
+
+
+def test_partial_at_3r_then_the_rest_at_break_even():
+    o = managed()
+    assert run(o, [bar(0, 100.3, 100.4, 99.8, 100.1)]) == ["FILLED"]
+    assert o.partial_price == pytest.approx(103.0)                       # 3 x the fill-to-stop distance
+    assert run(o, [bar(1, 101.0, 103.05, 100.9, 102.5)]) == ["PARTIAL"]
+    assert o.partial_at == T0 + MIN and o.partial_ideal_exit == pytest.approx(103.0)
+    assert o.stop == 100.0 and o.status == "OPEN"
+    # Back to the fill: the rest is stopped at break-even, with a stop's slippage.
+    assert run(o, [bar(2, 101.0, 101.1, 99.95, 100.2)]) == ["SL"]
+    assert o.ideal_exit == pytest.approx(100.0) and o.exit == pytest.approx(100.0 - SLIP)
+
+
+def test_break_even_holds_from_the_next_bar():
+    # The partial's bar was checked against the old stop: its dip under the fill doesn't take the rest (D45).
+    o = managed()
+    run(o, [bar(0, 100.3, 100.4, 99.8, 100.1)])
+    assert run(o, [bar(1, 100.2, 103.1, 99.9, 102.0)]) == ["PARTIAL"]
+    assert o.status == "OPEN"
+
+
+def test_a_bar_with_the_stop_and_the_partial_is_the_stops():
+    o = managed()
+    run(o, [bar(0, 100.3, 100.4, 99.8, 100.1)])
+    assert run(o, [bar(1, 100.0, 103.2, 98.9, 101.0)]) == ["SL"]
+    assert o.partial_at is None and o.exit == pytest.approx(99.0 - SLIP)
+
+
+def test_the_partial_and_the_target_on_one_bar():
+    o = managed()
+    run(o, [bar(0, 100.3, 100.4, 99.8, 100.1)])
+    assert run(o, [bar(1, 101.0, 106.2, 100.9, 106.0)]) == ["PARTIAL", "TP"]
+    assert o.exit == pytest.approx(106.0)
+
+
+def test_no_partial_on_a_limits_fill_bar():
+    # As for the target (4.9): the favourable extreme may predate the fill.
+    o = managed()
+    assert run(o, [bar(0, 100.3, 103.5, 99.8, 103.0)]) == ["FILLED"]
+    assert o.partial_at is None and o.stop == 99.0
+
+
+def test_the_partial_is_measured_from_a_market_fill():
+    # Filled at the ask 100.3 with the stop at 99.0: 1R is 1.3, so 3R is 104.2.
+    o = managed(kind="MARKET", entry=100.2)
+    assert run(o, [bar(0, 100.2, 100.4, 100.1, 100.3)]) == ["FILLED"]
+    assert o.partial_price == pytest.approx(104.2)
+
+
+def test_a_short_takes_its_partial_on_the_ask():
+    o = managed("SHORT")
+    assert run(o, [bar(0, 99.8, 100.05, 99.7, 99.9)]) == ["FILLED"]
+    assert o.partial_price == pytest.approx(97.0)
+    assert run(o, [bar(1, 98.0, 98.1, 96.95, 97.5)]) == []                # ask low 97.05: not yet
+    assert run(o, [bar(2, 97.5, 97.6, 96.9, 97.2)]) == ["PARTIAL"]        # ask low 97.0
+    assert o.partial_ideal_exit == pytest.approx(96.9) and o.stop == 100.0
+
+
+def test_no_partial_at_or_beyond_the_target():
+    # The target is nearer than 3R: the whole position goes there, as an unmanaged trade would.
+    o = managed(target=102.5)
+    run(o, [bar(0, 100.3, 100.4, 99.8, 100.1)])
+    assert o.partial_price is None
+    assert run(o, [bar(1, 101.0, 102.6, 100.9, 102.5)]) == ["TP"]
+    assert o.partial_at is None
+
+
+def test_an_order_without_management_is_unchanged():
+    o = order(target=106.0)
+    run(o, [bar(0, 100.3, 100.4, 99.8, 100.1)])
+    assert o.partial_price is None
+    assert run(o, [bar(1, 101.0, 103.05, 100.9, 102.5), bar(2, 101.0, 101.1, 99.95, 100.2)]) == []
+    assert o.stop == 99.0

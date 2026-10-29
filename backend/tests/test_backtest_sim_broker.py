@@ -309,6 +309,73 @@ def test_swap_credit_and_no_rollover():
     assert math.copysign(1.0, same_day.cost_r_swap) == 1.0      # not -0.0, which the journal prints as -0.0000
 
 
+# ── a partial, then break-even (Requirement 28) ────────────────────────────
+
+def managed_broker(specs: InstrumentSpecs = SPECS) -> SimBroker:
+    """A third off at 3R, the rest to break-even."""
+    return broker(specs, partial_r=3.0, partial_fraction=1 / 3)
+
+
+def test_a_partial_then_break_even_accounting():
+    # 1 lot LONG at 1.1000, stop 1.0990 (1R = 10 pips), target 1.1100. 0.33 lots come off at 3R, 1.1030, and the
+    # stop goes to the fill; the rest is then stopped there.
+    b = priced(managed_broker(), "EURUSD", close=1.1010)
+    b.place_order(order("LONG", 1.1000, 1.0990, 1.1100, risk_amount=100.0))
+    b.advance("EURUSD", bar(T0, 1.1005, 1.1006, 1.0998, 1.1000))                       # filled
+    assert b.advance("EURUSD", bar(T0 + MIN, 1.1010, 1.1031, 1.1009, 1.1025)) == []   # the partial; still open
+    assert b.active_trade("EURUSD").stop == pytest.approx(1.1000)
+    [trade] = b.advance("EURUSD", bar(T0 + 2 * MIN, 1.1005, 1.1006, 1.0999, 1.1001))   # back to the fill
+
+    assert trade.exit_reason == "SL" and trade.lots == 1.0
+    assert trade.partial_at == T0 + MIN and trade.partial_fraction == pytest.approx(0.33)
+    assert trade.partial_exit == pytest.approx(1.1030) and trade.exit == pytest.approx(1.1000 - 0.00002)
+    assert trade.net_r == pytest.approx(0.33 * 3 - 0.67 * 0.02 - 0.07)               # $90.66 on a $100 budget
+    assert trade.gross_r == pytest.approx(0.33 * 3.1 + 0.67 * 0.1)                     # bid to bid
+    assert trade.cost_r_spread == pytest.approx(0.1)                                   # paid once, on the buy
+    assert trade.cost_r_slippage == pytest.approx(0.67 * 0.02)                         # the rest's stop only
+    assert trade.cost_r_commission == pytest.approx(0.07)                              # every lot, both sides
+    assert trade.cost_r == pytest.approx(trade.gross_r - trade.net_r)
+    assert trade.pnl == pytest.approx(90.66)
+
+
+def test_a_short_pays_each_exits_spread():
+    # SHORT 1 lot at 1.1020, stop 1.1030, target 1.0920: the partial at 1.0990 buys at a 1-pip spread, the
+    # target at a 2-pip one.
+    b = priced(managed_broker(), "EURUSD", close=1.1010)
+    b.place_order(order("SHORT", 1.1020, 1.1030, 1.0920, risk_amount=100.0))
+    b.advance("EURUSD", bar(T0, 1.1015, 1.1022, 1.1014, 1.1018))                          # filled at 1.1020
+    b.advance("EURUSD", bar(T0 + MIN, 1.1000, 1.1001, 1.0988, 1.0990))                    # ask low 1.0989
+    [trade] = b.advance("EURUSD", bar(T0 + 2 * MIN, 1.0950, 1.0951, 1.0915, 1.0930, spread=0.0002))
+
+    assert trade.exit_reason == "TP" and trade.partial_exit == pytest.approx(1.0990)
+    assert trade.cost_r_spread == pytest.approx((0.33 * 0.0001 + 0.67 * 0.0002) / 0.0010)
+    assert trade.net_r == pytest.approx(0.33 * 3 + 0.67 * 10 - 0.07)
+    assert trade.cost_r == pytest.approx(trade.gross_r - trade.net_r)
+
+
+def test_each_part_pays_its_own_nights():
+    # The third comes off before Wednesday's triple rollover; the rest is held through it: 3 x $10 x 0.67 lots.
+    b = priced(managed_broker(_swapped()), "EURUSD", close=1.1010)
+    b.place_order(order("LONG", 1.1000, 1.0990, 1.1100, risk_amount=100.0))
+    b.advance("EURUSD", bar(T0, 1.1005, 1.1006, 1.0998, 1.1000))
+    b.advance("EURUSD", bar(T0 + MIN, 1.1010, 1.1031, 1.1009, 1.1025))
+    [trade] = b.advance("EURUSD", bar(T0 + timedelta(hours=20), 1.1005, 1.1006, 1.0999, 1.1001))
+    assert trade.cost_r_swap == pytest.approx(0.67 * 0.30)
+    assert trade.cost_r == pytest.approx(trade.gross_r - trade.net_r)
+
+
+def test_a_position_too_small_to_split_runs_unmanaged():
+    # 0.02 lots: a third is under the 0.01 minimum, so no partial and no stop move (D44).
+    b = priced(managed_broker(), "EURUSD", close=1.1010)
+    b.place_order(order("LONG", 1.1000, 1.0990, 1.1100, risk_amount=2.0))
+    assert b.active_trade("EURUSD").lots == 0.02
+    b.advance("EURUSD", bar(T0, 1.1005, 1.1006, 1.0998, 1.1000))
+    b.advance("EURUSD", bar(T0 + MIN, 1.1010, 1.1031, 1.1009, 1.1025))
+    assert b.active_trade("EURUSD").stop == pytest.approx(1.0990)
+    [trade] = b.advance("EURUSD", bar(T0 + 2 * MIN, 1.1005, 1.1006, 1.0985, 1.0986))
+    assert trade.partial_at is None and trade.partial_fraction == 0.0 and trade.exit_reason == "SL"
+
+
 # ── the rest of the BrokerClient interface ─────────────────────────────────
 
 def test_close_position_cancels_pending_and_closes_open_at_market():

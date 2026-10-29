@@ -26,7 +26,7 @@ const TOOLS = [
   { type: "short", icon: "▼", title: "Short position: entry, stop, target (Alt+S)", key: "s" },
 ];
 const LAYERS = [["fractal", "Fractal + POI"], ["modelA", "Model A"], ["modelAFramed", "Model A: unswept C1s"], ["arrays", "Arrays"], ["pools", "Pools"],
-                ["profile", "Day bias & draw"], ["trend", "Trend"], ["chain", "Chain & stack"], ["sequence", "Setup"], ["candidates", "Candidates"],
+                ["profile", "Day bias & draw"], ["trend", "Trend"], ["chain", "Chain & stack"], ["crt", "CRT (H-N)"], ["sequence", "Setup"], ["candidates", "Candidates"],
                 ["orders", "Orders & trades"]];
 // The trader's trend (context-engine Requirement 23): the frames it is read on.
 const TREND_TFS = ["H1", "H4", "D1"];
@@ -40,6 +40,7 @@ const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, jo
             ma: [], maSet: Prefs.get("watch.maSet", "model_d1"), maAt: null,
             trendTf: Prefs.get("watch.trendTf", "H1"), trend: { rows: [], withheld: false, at: null },
             chain: { rows: [], withheld: false, at: null, smt: "" },
+            crt: { rows: [], withheld: false, at: null, summary: null, reached: 0, develop: "" }, crtTarget: Prefs.get("watch.crtTarget", "5"), crtFilter: Prefs.get("watch.crtFilter", "all"),
             speed: 1, digits: 5, layers: Prefs.get("watch.layers", { arrays: true, pools: true, profile: true, sequence: true, orders: true }),
             arrayMode: Prefs.get("watch.arrayMode", "interval"), arrayVis: Prefs.get("watch.arrayVis", {}) };
 // The chart timeframes each array timeframe shows on by default (Requirement 14.3); the trader can change them.
@@ -50,6 +51,7 @@ const arrayInterval = (tf) => S.arrayVis[tf] || ARRAY_SHOWS[tf] || null;
 if (S.layers.modelA === undefined) S.layers.modelA = true;      // new in 2026-10-15: on until switched off
 if (S.layers.fractal === undefined) S.layers.fractal = true;    // new in 2026-10-19: the trader's indicator
 if (S.layers.chain === undefined) S.layers.chain = true;        // new in 2026-10-24: the chain and the stack
+if (S.layers.crt === undefined) S.layers.crt = true;            // new in 2026-10-27: H-N, the trader's M15 CRT
 
 // ── the chart ─────────────────────────────────────────────────────────────
 const chart = LightweightCharts.createChart($("chart"), {
@@ -175,7 +177,7 @@ function paintEngine(ctx, size) {
   if (st && !st.error && !st.withheld) {
     if (S.layers.arrays) {
       for (const a of st.arrays.filter(showArray)) {
-        const x1 = Math.max(X(a.formed), -10), y1 = Y(a.high), y2 = Y(a.low);
+        const x1 = Math.max(X(a.from || a.formed), -10), y1 = Y(a.high), y2 = Y(a.low);   // a block from its run (Req 31.7)
         if (!isFinite(y1) || !isFinite(y2)) continue;
         const c = a.dir === "BULLISH" ? pal.up : a.dir === "BEARISH" ? pal.bad : pal.muted;
         ctx.fillStyle = rgba(c.startsWith("#") ? c : "#888888", a.entry ? 0.22 : 0.06);
@@ -183,7 +185,7 @@ function paintEngine(ctx, size) {
         ctx.strokeStyle = rgba(c.startsWith("#") ? c : "#888888", a.entry ? 0.95 : 0.35); ctx.lineWidth = a.entry ? 2 : 1;
         ctx.strokeRect(x1, Math.min(y1, y2), W - x1, Math.abs(y2 - y1));
         if (a.mt != null) line(x1, Y(a.mt), W, Y(a.mt), rgba(c.startsWith("#") ? c : "#888888", 0.7), [2, 3]);
-        text(`${a.tf} ${a.type}${a.entry ? "  ← entry array" : ""}`, Math.max(x1, 0) + 3, Math.min(y1, y2) - 1, c);
+        text(`${a.tf} ${a.type}${a.hp ? " · high prob" : ""}${a.entry ? "  ← entry array" : ""}`, Math.max(x1, 0) + 3, Math.min(y1, y2) - 1, c);
       }
     }
     if (S.layers.pools) {
@@ -273,10 +275,12 @@ function paintEngine(ctx, size) {
       const x1 = X(r.filled_at), x2 = closed ? Math.max(X(r.closed_at), x1 + 6) : Math.max(X(S.t), x1 + 40);
       const fy = Y(r.fill), sy = Y(r.stop), ty = Y(r.target);
       const shade = (col, a) => rgba(col.startsWith("#") ? col : "#888888", a);
-      ctx.fillStyle = shade(pal.bad, 0.12); ctx.fillRect(x1, Math.min(fy, sy), x2 - x1, Math.abs(sy - fy));     // risk
+      // After a partial (Requirement 28) the stop is the fill: the risk ends where the partial came off.
+      const xs = r.partial_at != null && r.partial_at <= S.t ? Math.min(Math.max(X(r.partial_at), x1), x2) : x2;
+      ctx.fillStyle = shade(pal.bad, 0.12); ctx.fillRect(x1, Math.min(fy, sy), xs - x1, Math.abs(sy - fy));     // risk
       ctx.fillStyle = shade(pal.good, 0.12); ctx.fillRect(x1, Math.min(fy, ty), x2 - x1, Math.abs(ty - fy));    // reward
       line(x1, fy, x2, fy, c, [], 1.5);
-      line(x1, Y(r.stop), x2, Y(r.stop), pal.bad, [], 1.2); line(x1, Y(r.target), x2, Y(r.target), pal.good, [], 1.2);
+      line(x1, Y(r.stop), xs, Y(r.stop), pal.bad, [], 1.2); line(x1, Y(r.target), x2, Y(r.target), pal.good, [], 1.2);
       ctx.fillStyle = c; ctx.beginPath();
       if (long) { ctx.moveTo(x1, fy); ctx.lineTo(x1 - 6, fy + 10); ctx.lineTo(x1 + 6, fy + 10); } else { ctx.moveTo(x1, fy); ctx.lineTo(x1 - 6, fy - 10); ctx.lineTo(x1 + 6, fy - 10); }
       ctx.fill();
@@ -288,6 +292,10 @@ function paintEngine(ctx, size) {
         ctx.fillStyle = color; ctx.beginPath(); ctx.arc(mx, my, 3.5, 0, 2 * Math.PI); ctx.fill();
         text(label, mx + 6, up ? my - 5 : my + 13, color);
       };
+      if (r.partial_at != null && r.partial_at <= S.t) {  // the partial (Requirement 28), once taken
+        const partialR = (long ? r.partial_exit - r.fill : r.fill - r.partial_exit) / Math.abs(r.fill - r.stop);
+        mark(r.partial_at, r.partial_exit, `${Math.round(100 * r.partial_fraction)}% off +${partialR.toFixed(1)}R, rest to BE`, pal.good, long);
+      }
       if (closed && r.path) {                           // the path, once it is all in the past
         mark(r.path.best_at, r.path.best, `best +${r.path.best_r.toFixed(2)}R`, pal.good, long);
         mark(r.path.worst_at, r.path.worst, `worst ${r.path.worst_r.toFixed(2)}R`, pal.bad, !long);
@@ -314,13 +322,14 @@ function paintEngine(ctx, size) {
         ctx.strokeStyle = win ? pal.good : pal.bad; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(x2 - 5, ey - 5); ctx.lineTo(x2 + 5, ey + 5); ctx.moveTo(x2 + 5, ey - 5); ctx.lineTo(x2 - 5, ey + 5); ctx.stroke();
         ctx.font = "11px system-ui, sans-serif";
-        text(`${r.exit_reason || "exit"} ${r.net_r != null ? (r.net_r >= 0 ? "+" : "") + r.net_r.toFixed(2) + "R" : ""}`, x2 + 7, ey - 3, win ? pal.good : pal.bad);
+        text(`${exitLabel(r)} ${r.net_r != null ? (r.net_r >= 0 ? "+" : "") + r.net_r.toFixed(2) + "R" : ""}`, x2 + 7, ey - 3, win ? pal.good : pal.bad);
         ctx.font = "10px system-ui, sans-serif";
       }
     }
   }
   if (S.layers.trend) paintTrend(ctx, size, pal, text);
   if (S.layers.chain) paintChain(ctx, size, pal, text, line);
+  if (S.layers.crt) paintCrt(ctx, size, pal, text, line);
   ctx.restore();
 }
 // The trader's trend (context-engine Requirement 23): a strip along the chart's foot, one cell per closed candle of
@@ -401,6 +410,66 @@ async function loadChain() {
   if (S.chain.at === key) return;
   const got = await api(`/api/watch/chain?t=${S.t}`);
   S.chain = { rows: got.rows || [], withheld: !!got.withheld, at: key, smt: got.smt || "" };
+}
+// H-N, the trader's M15 CRT at market on M1 (context-engine Requirement 31): every trade the rule takes, from C3's
+// open to its last exit (or the clock). C1's swept level runs dashed to the entry and a dot marks C2's wick; red is the
+// risk, green the target chosen in the menu, dotted the 3R partial; dots mark the exits and the result follows the last.
+// The menu's filter (H-O, 2026-10-27): every CRT, those whose C2 reached into a gap of their side, or H-O's keep
+// (a pool taken or a gap reached, and with the H4 trend).
+const CRT_FILTERS = [["all", "CRT trades: every one"], ["array", "CRT trades: at a gap (FVG)"], ["kept", "CRT trades: H-O filter"]];
+const crtRows = () => S.crt.rows.filter((r) => S.crtFilter === "array" ? r.arrays.length > 0 : S.crtFilter === "kept" ? r.kept : true);
+function paintCrt(ctx, size, pal, text, line) {
+  if (S.crt.withheld) { text("CRT (H-N): hidden until you reveal", 6, 28, pal.muted); return; }
+  const W = size.width, k = Number(S.crtTarget);
+  const kinds = { partial: pal.good, target: pal.good, stop: pal.bad, be: pal.muted, close: pal.muted };
+  for (const r of crtRows()) {
+    const t = r.targets[S.crtTarget];
+    if (!t) continue;
+    const long = r.side > 0, sign = long ? 1 : -1, legs = t.legs, end = t.net != null && legs.length ? legs[legs.length - 1].at : S.t;
+    const x0 = X(r.c3), x1 = Math.max(X(end), x0 + 4), xc = X(r.c2);
+    if (!isFinite(x0) || !isFinite(x1) || x1 < 0 || x0 > W) continue;
+    const ey = Y(r.fill), sy = Y(r.stop), ty = Y(r.fill + sign * k * r.risk), py = Y(r.fill + sign * 3 * r.risk);
+    if (!isFinite(ey) || !isFinite(sy)) continue;
+    ctx.fillStyle = rgba(hexOf(pal.bad), 0.10); ctx.fillRect(x0, Math.min(ey, sy), x1 - x0, Math.abs(sy - ey));
+    ctx.fillStyle = rgba(hexOf(pal.good), 0.07); ctx.fillRect(x0, Math.min(ey, ty), x1 - x0, Math.abs(ty - ey));
+    line(x0, ey, x1, ey, long ? pal.up : pal.bad, [], 1.5);
+    if (k > 3) line(x0, py, x1, py, pal.good, [2, 3], 1);
+    if (isFinite(xc)) {
+      line(xc, Y(r.swept), x0, Y(r.swept), pal.muted, [3, 3], 1);
+      ctx.fillStyle = long ? pal.up : pal.bad; ctx.beginPath(); ctx.arc(xc, Y(r.extreme), 3, 0, 2 * Math.PI); ctx.fill();
+      const why = [...r.pools, ...r.arrays].join(", ");
+      if (why) text(why, xc + 5, Y(r.extreme) + (long ? 12 : -6), pal.muted);
+    }
+    for (const leg of legs) {
+      ctx.fillStyle = kinds[leg.kind] || pal.muted; ctx.beginPath(); ctx.arc(X(leg.at), Y(leg.price), 3, 0, 2 * Math.PI); ctx.fill();
+    }
+    if (t.net != null) {
+      const ly = legs.length ? Y(legs[legs.length - 1].price) : ey, good = t.net > 0;
+      text(`${good ? "+" : ""}${t.net.toFixed(2)}R`, x1 + 4, ly + 4, good ? pal.good : t.net < 0 ? pal.bad : pal.muted);
+    }
+  }
+}
+async function loadCrt() {
+  if (!S.status || !S.layers.crt) { S.crt = { rows: [], withheld: false, at: null, summary: null, reached: 0, develop: "" }; return; }
+  const key = `${Math.floor(S.t / 60)}|${!!(S.state && S.state.withheld)}`;   // its exits move by the minute
+  if (S.crt.at === key) return;
+  const got = await api(`/api/watch/crt?t=${S.t}`);
+  S.crt = { rows: got.rows || [], withheld: !!got.withheld, at: key, summary: got.summary || null,
+            reached: got.reached_3r || 0, develop: got.develop || "" };
+}
+function crtCard() {
+  if (S.crt.withheld) return `<div class="card"><b>CRT (H-N)</b><div class="muted">Hidden: this session is blind.</div></div>`;
+  const rows = crtRows(), label = (CRT_FILTERS.find(([v]) => v === S.crtFilter) || ["", ""])[1].replace("CRT trades: ", "");
+  const part = (k) => {
+    const nets = rows.map((r) => r.targets[k].net).filter((v) => v != null), total = nets.reduce((a, b) => a + b, 0);
+    return `${k}R${k === "3" ? "" : " + partial"} <b>${total >= 0 ? "+" : ""}${total.toFixed(2)}R</b> (${nets.length} closed, ${nets.filter((v) => v > 0).length} won)`;
+  };
+  const reached = rows.filter((r) => r.targets["5"].legs.some((l) => l.kind === "partial" || l.kind === "target")).length;
+  return `<div class="card"><b>CRT (H-N)</b>, ${esc(label)}: ${rows.length} of ${S.crt.rows.length} trade(s) so far in this session; ${reached} reached 3R.
+    <div>${["3", "4", "5"].map(part).join(" · ")}</div>
+    <div class="muted">C2 sweeps C1's M15 high or low and closes back inside; market at C3's first M1 bar; the stop beyond C2's wick;
+      a third off at 3R and the rest to the fill on the 4R and 5R targets; out by 17:00 New York. Drawn at the menu's target.</div>
+    <div class="hint">The test: ${esc(S.crt.develop)}.</div></div>`;
 }
 // The chain and the stack at the latest D1 close, in words: each frame's read, the links and the thirteen votes.
 const VOTE_NAMES = { "own-MN1": "MN1 own", "own-W1": "W1 own", "own-D1": "D1 own", "H-K": "chain", profile: "candle profile",
@@ -526,9 +595,11 @@ async function act(fn) { say(""); try { await fn(); } catch (e) { say(e.message)
 async function boot() {
   S.meta = await api("/api/watch/meta");
   $("sInst").innerHTML = S.meta.instruments.map((i) => `<option ${i === "XAUUSD" ? "selected" : ""}>${i}</option>`).join("");
-  $("sVariant").innerHTML = S.meta.variants.map((v) => `<option>${v}</option>`).join("");
+  $("sVariant").innerHTML = S.meta.variants.map((v) => `<option ${v === S.meta.default_variant ? "selected" : ""}>${v}</option>`).join("");
   $("sDays").innerHTML = Array.from({ length: S.meta.max_days }, (_, i) => `<option ${i === 2 ? "selected" : ""}>${i + 1}</option>`).join("");
-  Object.assign($("sDay"), { min: S.meta.first, max: S.meta.last, value: Prefs.get("watch.day", "2025-01-27") });
+  const spans = (S.meta.periods || [[S.meta.first, S.meta.last]]).map(([a, b]) => `${a} to ${b}`).join(", ");
+  Object.assign($("sDay"), { min: S.meta.first, max: S.meta.last, value: Prefs.get("watch.day", "2025-01-27"),
+                             title: `A first day within ${spans}` });
   const want = (new URLSearchParams(location.search).get("inst") || "").toUpperCase();
   if (S.meta.instruments.includes(want)) $("sInst").value = want;
   await Shell.init({ mode: "engine", inst: $("sInst").value, onPick: (i) => act(async () => {
@@ -679,7 +750,7 @@ async function loadBars(fit) {
 }
 async function loadState() {
   S.state = (await api(`/api/watch/state?t=${S.t}`)).state;
-  await loadModelA(); await loadTrend(); await loadChain();
+  await loadModelA(); await loadTrend(); await loadChain(); await loadCrt();
   await fractal.tick();
   renderFractal();
   Shell.refresh("t=" + S.t);
@@ -705,7 +776,7 @@ async function advance(dt) {
     const got = (await api(`/api/watch/bars?tf=${S.tf}&until=${S.t}&since=${last ? last.time : S.t - 86400}`)).bars;
     try { for (const b of got) put(b); } catch (e) { await loadBars(false); }
     if (Math.floor(S.t / 900) !== Math.floor(before / 900)) await loadState();
-    else { await loadModelA(); await loadTrend(); await loadChain(); await fractal.tick(); renderFractal(); renderEngine(); renderLog(); refresh(); }
+    else { await loadModelA(); await loadTrend(); await loadChain(); await loadCrt(); await fractal.tick(); renderFractal(); renderEngine(); renderLog(); refresh(); }
     await noculus.tick();                               // the trader's own trades settle to the clock too
     renderHeader();
   } finally { S.busy = false; }
@@ -786,7 +857,7 @@ function buildLayers() {
     c.type = "checkbox"; c.checked = !!S.layers[key];
     c.onchange = () => act(async () => { S.layers[key] = c.checked; Prefs.set("watch.layers", S.layers); S.maAt = null;
                                          fractal.setOn(S.layers.fractal); await fractal.tick(); renderFractal();
-                                         await loadModelA(); await loadTrend(); await loadChain(); renderEngine(); renderLog(); refresh(); });
+                                         await loadModelA(); await loadTrend(); await loadChain(); await loadCrt(); renderEngine(); renderLog(); refresh(); });
     l.append(c, " " + name); box.append(l);
     if (key === "fractal") {
       const gear = document.createElement("button");
@@ -798,14 +869,24 @@ function buildLayers() {
   const ma = document.createElement("select");
   ma.id = "maSet"; ma.title = "Which of your frame sets Model A reads";
   ma.innerHTML = MA_SETS.map(([v, t]) => `<option value="${v}" ${S.maSet === v ? "selected" : ""}>${t}</option>`).join("");
-  ma.onchange = () => act(async () => { S.maSet = ma.value; Prefs.set("watch.maSet", ma.value); S.maAt = null; await loadModelA(); await loadTrend(); await loadChain(); renderEngine(); renderLog(); refresh(); });
+  ma.onchange = () => act(async () => { S.maSet = ma.value; Prefs.set("watch.maSet", ma.value); S.maAt = null; await loadModelA(); await loadTrend(); await loadChain(); await loadCrt(); renderEngine(); renderLog(); refresh(); });
   box.append(ma);
   const tr = document.createElement("select");
   tr.id = "trendTf"; tr.title = "The frame your trend is read on (the Trend layer)";
   tr.innerHTML = TREND_TFS.map((v) => `<option value="${v}" ${S.trendTf === v ? "selected" : ""}>trend: ${v}</option>`).join("");
   tr.onchange = () => act(async () => { S.trendTf = tr.value; Prefs.set("watch.trendTf", tr.value); S.trend.at = null;
-                                        await loadTrend(); await loadChain(); refresh(); });
+                                        await loadTrend(); await loadChain(); await loadCrt(); refresh(); });
   box.append(tr);
+  const ct = document.createElement("select");
+  ct.id = "crtTarget"; ct.title = "The target the CRT (H-N) layer draws";
+  ct.innerHTML = [["3", "CRT: 3R"], ["4", "CRT: 4R + partial"], ["5", "CRT: 5R + partial"]]
+    .map(([v, t]) => `<option value="${v}" ${S.crtTarget === v ? "selected" : ""}>${t}</option>`).join("");
+  ct.onchange = () => { S.crtTarget = ct.value; Prefs.set("watch.crtTarget", ct.value); renderEngine(); refresh(); };
+  const cf = document.createElement("select");
+  cf.id = "crtFilter"; cf.title = "Which CRT trades the layer draws: every one, at a gap, or H-O's filter";
+  cf.innerHTML = CRT_FILTERS.map(([v, t]) => `<option value="${v}" ${S.crtFilter === v ? "selected" : ""}>${t}</option>`).join("");
+  cf.onchange = () => { S.crtFilter = cf.value; Prefs.set("watch.crtFilter", cf.value); renderEngine(); refresh(); };
+  box.append(ct, cf);
   const sel = document.createElement("select");
   sel.title = "Which of the engine's arrays to draw";
   sel.innerHTML = [["interval", "arrays: by visibility interval"], ["all", "arrays: every one"], ["M15", "arrays: M15 and up"],
@@ -905,11 +986,14 @@ function renderEngine() {
       : `<div class="muted">Nothing framed: price isn't in premium with a POI above (or discount with one below) on ${esc(label.split(": ")[1] || "")}, or C2 would open outside the early phases (20:00-07:00 New York).</div>`) + `</div>`;
   }
   if (S.layers.chain) html += chainCard();
+  if (S.layers.crt) html += crtCard();
   const open = S.journal.find((r) => r.filled_at != null && r.filled_at <= S.t && (r.closed_at == null || r.closed_at > S.t));
   if (open) {
-    html += `<div class="card"><b>Open trade</b>: ${esc(open.direction)} from ${fmt(open.fill)}, stop ${fmt(open.stop)}, target ${fmt(open.target)}.
-      <div class="muted">The engine doesn't manage trades: no break-even, trailing or partial close. It waits for the stop or the target;
-      the dotted +1R line is where a break-even would arm.</div></div>`;
+    const m = (S.status && S.status.management) || {}, partialDone = open.partial_at != null && open.partial_at <= S.t;
+    html += `<div class="card"><b>Open trade</b>: ${esc(open.direction)} from ${fmt(open.fill)}, stop ${fmt(partialDone ? open.fill : open.stop)}, target ${fmt(open.target)}.
+      <div class="muted">${m.partial_r ? `Managed: ${Math.round(100 * m.partial_fraction)}% off at ${m.partial_r}R, the rest's stop to the fill (break-even). ${partialDone ? "The partial is taken." : "No partial yet."} No trailing.`
+        : `The engine doesn't manage trades: no break-even, trailing or partial close. It waits for the stop or the target;
+      the dotted +1R line is where a break-even would arm.`}</div></div>`;
   }
   const cd = st.candidates;
   if (cd) {
@@ -941,13 +1025,16 @@ function renderEngine() {
     });
   }
 }
+// A rest stopped at its own fill after the partial is a break-even, not a loss (Requirement 28.5).
+function exitLabel(r) { return r.partial_at != null && r.exit_reason === "SL" ? "BE" : (r.exit_reason || "exit"); }
 function renderLog() {
   const items = [];
   for (const r of S.journal) {
     if (r.decision !== "EXECUTE") continue;
     if (r.t <= S.t) items.push({ t: r.t, text: `${r.order_kind || ""} ${r.direction} placed @ ${fmt(r.entry)} (R:R ${r.r_ratio ? r.r_ratio.toFixed(1) : "—"})`, cls: "" });
     if (r.filled_at != null && r.filled_at <= S.t) items.push({ t: r.filled_at, text: `${r.direction} filled @ ${fmt(r.fill)}`, cls: "" });
-    if (r.closed_at != null && r.closed_at <= S.t) items.push({ t: r.closed_at, text: `${r.exit_reason || "closed"} ${r.net_r != null ? (r.net_r >= 0 ? "+" : "") + r.net_r.toFixed(2) + "R" : ""}`
+    if (r.partial_at != null && r.partial_at <= S.t) items.push({ t: r.partial_at, text: `${Math.round(100 * r.partial_fraction)}% closed @ ${fmt(r.partial_exit)}, stop to break-even ${fmt(r.fill)}`, cls: "good" });
+    if (r.closed_at != null && r.closed_at <= S.t) items.push({ t: r.closed_at, text: `${r.exit_reason ? exitLabel(r) : "closed"} ${r.net_r != null ? (r.net_r >= 0 ? "+" : "") + r.net_r.toFixed(2) + "R" : ""}`
                                                                + (r.path ? ` (best +${r.path.best_r.toFixed(2)}R at ${fmtTime(r.path.best_at)})` : ""),
                                                                cls: (r.net_r || 0) > 0 ? "good" : "bad" });
     else if (r.filled_at == null && r.expires_at != null && r.expires_at <= S.t) items.push({ t: r.expires_at, text: "order expired unfilled", cls: "muted" });

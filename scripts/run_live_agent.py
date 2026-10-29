@@ -111,6 +111,7 @@ from agent.algorag_client import AlgoRAGSyncClient
 from agent.brokers.factory import create_broker_client
 from agent.brokers.paper import PaperBrokerAdapter
 from agent.graph import AgentGraph
+from agent.instruments import InstrumentSpecs
 from agent.order_intent import NoTrade, build_order_intent
 from agent.strategy_config import ENTRY_TIMEFRAMES, StrategyConfig
 from agent.visual_model_client import VisualModelClient
@@ -459,7 +460,7 @@ def _process_instrument(
     if evaluated is not None and evaluated.get(instrument) == t:
         return {"instrument": instrument, "grade": "-", "decision": "NO NEW BAR", "trade_id": None}
 
-    liquidity_map = LiquidityMappingEngine(cfg.fvg_zone, cfg.cisd).analyze(candles_by_tf, instrument, t)
+    liquidity_map = LiquidityMappingEngine(cfg.fvg_zone, cfg.cisd, cfg.ob_rule).analyze(candles_by_tf, instrument, t)
     if evaluated is not None:
         evaluated[instrument] = t  # before acting: a failed order isn't re-sent on the same bar
     if verbose:
@@ -515,6 +516,7 @@ def main() -> None:
     args = _parse_args()
     signal.signal(signal.SIGTERM, _stop_on_sigterm)
     cfg, symbol_of = _strategy(args)
+    run_cfg = _run_config(args)
     instruments = (
         [s.strip().upper() for s in args.instruments.split(",") if s.strip()]
         if args.instruments
@@ -552,10 +554,8 @@ def main() -> None:
         fee = args.paper_fee if args.paper_fee is not None else (0.001 if args.feed == "binance" else 0.0)
         # Free the risk engine's concurrent-trades slot whenever a paper
         # trade closes or a pending order expires.
-        # Spreads and stop slippage per instrument come from the venue's spec file
-        # (the shared fill model, task 195). The MT5 feed has no broker profile
-        # here yet (the Exness forward test, task 219, adds one): zero costs.
-        specs = broker_profiles.load_profile("binance").specs() if args.feed == "binance" else None
+        specs = _paper_specs(args.feed, run_cfg)
+        management = run_cfg.management if run_cfg is not None else None
         paper = PaperBrokerAdapter(
             args.paper_state,
             pending_ttl=cfg.fallback_ttl,
@@ -563,6 +563,8 @@ def main() -> None:
             on_close=lambda _trade: risk_engine.decrement_open_trades(_USER_ID),
             specs=specs,
             expiry_rule=cfg.pending_expiry,
+            partial_r=management.partial_r if management else 0.0,
+            partial_fraction=management.partial_fraction if management else 0.0,
         )
         broker_client = paper
     else:
@@ -705,6 +707,9 @@ def _print_paper_event(event: dict) -> None:
         f"[{event['instrument']}] PAPER {event['event']}: {event['direction']} entry {event['entry']} "
         f"stop {event['stop_loss']} target {event['take_profit']}"
     )
+    if event["event"].endswith("PARTIAL"):
+        part = event["partials"][-1]
+        line += f" -> {part['ratio']:.0%} off at {part['price']}, the rest's stop to {event['fill_price']}"
     if event["status"] == "CLOSED" and event["gross_r"] is not None:
         line += f" -> {event['gross_r']:+.2f}R gross / {event['net_r']:+.2f}R net"
     print(line, flush=True)
@@ -733,15 +738,29 @@ def _mt5_broker_client():
 def _strategy(args) -> tuple[StrategyConfig, Optional[Callable[[str], str]]]:
     """The run's strategy settings, and the broker's symbol for each instrument when a backtest configuration
     names its profile (update 2026-10-22: the live run trades the version that was backtested)."""
-    if args.config:
-        from agent.broker_profiles import load_profile
-        from algo_backtester.config import load_run_config
-
-        run_cfg = load_run_config(Path(args.config), None if args.variant in (None, "base") else args.variant)
-        return run_cfg.strategy, load_profile(run_cfg.run.profile).symbol
+    run_cfg = _run_config(args)
+    if run_cfg is not None:
+        return run_cfg.strategy, broker_profiles.load_profile(run_cfg.run.profile).symbol
     if args.variant:
         raise SystemExit("--variant needs --config")
     return StrategyConfig(entry_tf=args.timeframe, min_rr=args.min_rr), None
+
+
+def _run_config(args):
+    """The backtest configuration (with its variant) that --config names, or None."""
+    if not args.config:
+        return None
+    from algo_backtester.config import load_run_config
+
+    return load_run_config(Path(args.config), None if args.variant in (None, "base") else args.variant)
+
+
+def _paper_specs(feed: str, run_cfg) -> Optional[InstrumentSpecs]:
+    """Spreads and stop slippage for paper fills (the shared fill model, task 195): Binance's on its feed, the
+    configuration's broker profile on MT5 (algo-backtester Req 28.7), none otherwise (zero costs)."""
+    if feed == "binance":
+        return broker_profiles.load_profile("binance").specs()
+    return broker_profiles.load_profile(run_cfg.run.profile).specs() if run_cfg is not None else None
 
 
 def _connect_mt5(instruments: list[str], symbol_of: Optional[Callable[[str], str]] = None):

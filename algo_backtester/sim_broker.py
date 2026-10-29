@@ -38,7 +38,14 @@ mirror-image SHORT, and stays meaningful when the spread is as wide as the stop.
   swap, which is a credit (negative) when the instrument pays it;
 - MAE / MFE: the closing-side excursions from the fill, in R.
 
-Validates: Requirements 4.12, 5.1, 5.3, 5.5, 6.1, 6.2 (.kiro/specs/algo-backtester/requirements.md)
+A partial (Req 28, ``SimBroker(partial_r=3.0, partial_fraction=1/3)``) is
+sized at placement, rounded down to the volume step; a position too small to
+split runs unmanaged (D44). The trade stays one result: R is the lots-weighted
+sum of its two exits, and each cost splits the same way (a SHORT pays each
+exit's spread, the slippage is the rest's stop exit's, each part pays its own
+nights).
+
+Validates: Requirements 4.12, 5.1, 5.3, 5.5, 6.1, 6.2, 28.3, 28.4 (.kiro/specs/algo-backtester/requirements.md)
 """
 from __future__ import annotations
 
@@ -79,6 +86,7 @@ class SimTrade(SimOrder):
     conversion: Optional[float] = None        # quote -> account rate at placement (crosses only)
     entry_spread: Optional[float] = None      # the spread on the fill bar
     exit_spread: Optional[float] = None       # and on the exit bar
+    partial_spread: Optional[float] = None    # and on the partial's bar (Req 28)
 
 
 @dataclass(frozen=True)
@@ -116,6 +124,10 @@ class ClosedTrade:
     cost_flag: bool                   # costs above the configured share of 1R (Req 5.5)
     # Overnight swap held through (liquidity-engine Req 25.1); negative is a credit.
     cost_r_swap: Optional[float] = 0.0
+    # A partial (Req 28): when, at what price, and the share of the lots it closed; 0 without one.
+    partial_at: Optional[datetime] = None
+    partial_exit: Optional[float] = None
+    partial_fraction: float = 0.0
 
     @property
     def filled(self) -> bool:
@@ -142,10 +154,14 @@ class SimBroker(BrokerClient):
         conversion: Optional[Conversion] = None,
         min_volume_tolerance: float = 0.10,
         cost_flag_fraction: float = 0.25,
+        partial_r: float = 0.0,
+        partial_fraction: float = 0.0,
     ) -> None:
         """``conversion`` gives a cross's quote -> account rate at a time (e.g.
         GBPUSD for EURGBP on a USD account); pairs quoted in or based on the
-        account currency don't need it."""
+        account currency don't need it. ``partial_r`` > 0 closes
+        ``partial_fraction`` of each trade at that many R and moves the rest
+        to break-even (Req 28)."""
         self._specs = specs
         self._clock = clock
         self._expiry_rule = expiry_rule
@@ -153,6 +169,7 @@ class SimBroker(BrokerClient):
         self._conversion = conversion
         self._tolerance = min_volume_tolerance
         self._cost_flag_fraction = cost_flag_fraction
+        self._partial_r, self._partial_fraction = partial_r, partial_fraction
         self._models: dict[str, FillModel] = {}
         self._last_bar: dict[str, Bar] = {}
         self._active: dict[str, SimTrade] = {}   # by order id, in placement order
@@ -188,6 +205,7 @@ class SimBroker(BrokerClient):
         conversion = self._conversion_rate(spec, now)
         per_price_unit = money_per_price_unit(spec, reference, conversion, self._specs.account_ccy)
         lots = self._lots(spec, risk_amount, abs(reference - stop) * per_price_unit)
+        partial_r, share = self._partial(spec, lots)
 
         order_id = f"sim-{self._next_id:06d}"
         self._next_id += 1
@@ -196,7 +214,7 @@ class SimBroker(BrokerClient):
             kind="LIMIT" if pending else "MARKET", entry=reference, stop=stop, target=target, placed_at=now,
             expires_at=pending_expiry(now, self._expiry_rule, self._fallback_ttl) if pending else None,
             lots=lots, risk_amount=risk_amount, planned_risk=abs(reference - stop),
-            money_per_price_unit=per_price_unit, conversion=conversion,
+            money_per_price_unit=per_price_unit, conversion=conversion, partial_r=partial_r, partial_fraction=share,
         )
         return {"order_id": order_id, "trade_id": order_id, "pending": pending}
 
@@ -223,7 +241,8 @@ class SimBroker(BrokerClient):
         return True
 
     def partial_close(self, trade_id: str, ratio: float = 0.5) -> dict[str, Any]:
-        raise SimBrokerError("NOT_SIMULATED", "partial closes are not simulated (scale-out is deferred, D19)")
+        # The agent never scales out by itself; the run's management does, at a fixed R (Req 28).
+        raise SimBrokerError("NOT_SIMULATED", "agent-driven partial closes are not simulated: use [management] (Req 28)")
 
     def get_position_status(self, trade_id: str) -> dict[str, Any]:
         trade = self._active.get(trade_id)
@@ -234,7 +253,10 @@ class SimBroker(BrokerClient):
             return {"status": "PENDING", "unrealised_pnl": 0.0, "current_price": bar.close}
         long_ = trade.direction == "LONG"
         mark = bar.close if long_ else bar.close + bar.spread
-        pnl = (1 if long_ else -1) * (mark - trade.fill) * trade.lots * trade.money_per_price_unit
+        moved = mark - trade.fill
+        if trade.partial_at is not None:   # the part already closed counts at its own exit until the trade is booked
+            moved = (1 - trade.partial_fraction) * moved + trade.partial_fraction * (trade.partial_price - trade.fill)
+        pnl = (1 if long_ else -1) * moved * trade.lots * trade.money_per_price_unit
         return {"status": "OPEN", "unrealised_pnl": pnl, "current_price": bar.close}
 
     # ── simulation ─────────────────────────────────────────────────────────
@@ -250,6 +272,8 @@ class SimBroker(BrokerClient):
             for event in model.step(trade, bar):
                 if event.kind == "FILLED":
                     trade.entry_spread = bar.spread
+                elif event.kind == "PARTIAL":
+                    trade.partial_spread = bar.spread
                 elif event.kind in ("SL", "TP"):
                     trade.exit_spread = bar.spread
             if trade.status == "CLOSED":
@@ -289,6 +313,16 @@ class SimBroker(BrokerClient):
                 f"over the {risk_amount:.2f} budget + {self._tolerance:.0%}",
             )
         return spec.volume_min
+
+    def _partial(self, spec: InstrumentSpec, lots: float) -> tuple[Optional[float], float]:
+        """The partial's setting and its actual share of ``lots``, rounded down to the volume step; none when the
+        part or the rest would be under the minimum volume (D44)."""
+        if not self._partial_r:
+            return None, 0.0
+        part = _round_down(lots * self._partial_fraction, spec.volume_step)
+        if part < spec.volume_min or lots - part < spec.volume_min - 1e-9:
+            return None, 0.0
+        return self._partial_r, part / lots
 
     def _conversion_rate(self, spec: InstrumentSpec, t: datetime) -> Optional[float]:
         account = self._specs.account_ccy
@@ -344,20 +378,33 @@ def _closed_trade(trade: SimTrade, spec: InstrumentSpec, account_ccy: str, cost_
     sign = 1 if trade.direction == "LONG" else -1
     risk = trade.planned_risk
     risk_money = trade.lots * risk * trade.money_per_price_unit
-    commission = sum(commission_per_side(spec, trade.lots, price, trade.conversion, account_ccy)
-                     for price in (trade.fill, trade.exit))
-    cost_r_spread = (trade.entry_spread if sign > 0 else trade.exit_spread) / risk
-    cost_r_slippage = (spec.stop_slippage if trade.exit_reason == "SL" else 0.0) / risk
+    # A partial (Req 28) splits the position: share f exited at the partial, the rest at the exit. With f = 0
+    # every expression below reduces to the unmanaged one exactly.
+    f = trade.partial_fraction if trade.partial_at is not None else 0.0
+    rest = 1.0 - f
+    commission = (commission_per_side(spec, trade.lots, trade.fill, trade.conversion, account_ccy)
+                  + commission_per_side(spec, trade.lots * rest, trade.exit, trade.conversion, account_ccy))
+    if f:
+        commission += commission_per_side(spec, trade.lots * f, trade.partial_price, trade.conversion, account_ccy)
+    # The spread is paid on the buys: a LONG's entry, or each part of a SHORT's exit.
+    buys = trade.entry_spread if sign > 0 else rest * trade.exit_spread + (f * trade.partial_spread if f else 0.0)
+    cost_r_spread = buys / risk
+    cost_r_slippage = (rest * spec.stop_slippage if trade.exit_reason == "SL" else 0.0) / risk
     cost_r_commission = commission / risk_money
     nights = swap_nights(trade.filled_at, trade.closed_at, spec.swap.triple_day)
-    swap = trade.lots * nights * swap_per_lot_per_night(spec, trade.direction, trade.fill, trade.conversion,
-                                                        account_ccy) if nights else 0.0
+    partial_nights = swap_nights(trade.filled_at, trade.partial_at, spec.swap.triple_day) if f else 0
+    lot_nights = trade.lots * (rest * nights + f * partial_nights)
+    swap = lot_nights * swap_per_lot_per_night(spec, trade.direction, trade.fill, trade.conversion,
+                                               account_ccy) if lot_nights else 0.0
     cost_r_swap = -swap / risk_money if swap else 0.0       # never -0.0, which the journal prints as -0.0000
-    net_r = sign * (trade.exit - trade.fill) / risk - cost_r_commission - cost_r_swap
+    moved = rest * (trade.exit - trade.fill) + (f * (trade.partial_price - trade.fill) if f else 0.0)
+    ideal = (rest * (trade.ideal_exit - trade.ideal_fill)
+             + (f * (trade.partial_ideal_exit - trade.ideal_fill) if f else 0.0))
+    net_r = sign * moved / risk - cost_r_commission - cost_r_swap
     return ClosedTrade(
         **common,
         initial_risk=risk,
-        gross_r=sign * (trade.ideal_exit - trade.ideal_fill) / risk,
+        gross_r=sign * ideal / risk,
         net_r=net_r,
         cost_r_spread=cost_r_spread,
         cost_r_slippage=cost_r_slippage,
@@ -367,4 +414,7 @@ def _closed_trade(trade: SimTrade, spec: InstrumentSpec, account_ccy: str, cost_
         pnl=net_r * risk_money,
         cost_flag=cost_r_spread + cost_r_slippage + cost_r_commission + cost_r_swap > cost_flag_fraction,
         cost_r_swap=cost_r_swap,
+        partial_at=trade.partial_at if f else None,
+        partial_exit=trade.partial_price if f else None,
+        partial_fraction=f,
     )

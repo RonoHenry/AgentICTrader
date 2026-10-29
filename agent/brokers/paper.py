@@ -15,6 +15,13 @@ pay the instrument's slippage, and a stop wins a bar that also reaches the
 target. Spreads and slippage come from the instrument specs
 (config/instruments/<venue>.toml); without specs both are zero.
 
+With ``partial_r`` set, a filled trade is managed as the backtest manages it
+(algo-backtester Req 28.6): ``partial_fraction`` of it closes at the fill plus
+``partial_r`` times the fill-to-stop distance, and the rest's stop moves to
+the fill. Paper has no lots, so the share is exact and every trade splits.
+The trade's ``stop_loss`` stays the planned stop that R is measured on; a
+recorded ``partial_at`` puts the working stop at the fill, across restarts.
+
 The runner feeds it closed M1 bars via ``update(instrument, candles)``.
 Each bar is processed once, so overlapping windows are safe; a bar that is
 still forming must not be passed, since its later extremes would be missed.
@@ -35,7 +42,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
 from agent.brokers.base import BrokerClient
-from agent.brokers.fill_model import Bar, FillModel, SimOrder, pending_expiry
+from agent.brokers.fill_model import Bar, FillModel, SimOrder, partial_level, pending_expiry
 from agent.clock import Clock, wall_clock
 from agent.instruments import CommissionSpec, InstrumentSpecs
 from agent.strategy_config import PendingExpiry
@@ -61,12 +68,16 @@ class PaperBrokerAdapter(BrokerClient):
         specs: Optional[InstrumentSpecs] = None,
         clock: Optional[Clock] = None,
         expiry_rule: PendingExpiry = PendingExpiry.FIXED_TTL,
+        partial_r: float = 0.0,
+        partial_fraction: float = 0.0,
     ) -> None:
         """``pending_ttl`` is the fallback TTL of ``expiry_rule`` (the whole TTL
-        under FIXED_TTL); the live runner passes its StrategyConfig's rule."""
+        under FIXED_TTL); the live runner passes its StrategyConfig's rule, and
+        the partial from its run configuration's ``[management]`` (0 is off)."""
         self._path = Path(state_path) if state_path else None
         self._pending_ttl = pending_ttl
         self._expiry_rule = expiry_rule
+        self._partial_r, self._partial_fraction = partial_r, partial_fraction
         self.commission = CommissionSpec("RATE_PER_SIDE", fee_rate)
         self._specs = specs
         self._clock = clock or _now
@@ -189,7 +200,7 @@ class PaperBrokerAdapter(BrokerClient):
         events = []
         for trade in [t for t in self._trades.values() if t["instrument"] == instrument and t["status"] in ACTIVE]:
             model = FillModel(self._spec_value(instrument, "stop_slippage"))
-            order = _to_order(trade)
+            order = _to_order(trade, self._partial_r, self._partial_fraction)
             done = _processed_through(trade)
             for candle in candles:
                 if done is not None and candle.timestamp <= done:
@@ -235,8 +246,8 @@ class PaperBrokerAdapter(BrokerClient):
         fill, ideal_fill = trade["fill_price"], trade.get("ideal_fill") or trade["fill_price"]
         risk = abs(ideal_fill - trade["stop_loss"]) or float("nan")
         sign = 1 if trade["direction"] == "LONG" else -1
-        # Manual partial closes book at the last price on both measures.
-        legs = [(p["ratio"], p["price"], p["price"]) for p in trade["partials"]]
+        # Manual partial closes book at the last price on both measures; a managed one records its bid.
+        legs = [(p["ratio"], p.get("ideal", p["price"]), p["price"]) for p in trade["partials"]]
         legs.append((trade["remaining_ratio"], trade.get("ideal_exit") or trade["exit_price"], trade["exit_price"]))
         gross = sum(ratio * sign * (ideal - ideal_fill) for ratio, ideal, _ in legs) / risk
         executed = sum(ratio * sign * (price - fill) for ratio, _, price in legs) / risk
@@ -268,10 +279,12 @@ class PaperBrokerAdapter(BrokerClient):
             )
         gross = sum(t["gross_r"] for t in filled)
         net = sum(t["net_r"] for t in filled)
+        managed = sum(bool(t.get("partial_at")) for t in trades)
         lines.append(
             f"\n{len(trades)} orders: {len(filled)} filled & closed ({len(wins)} won), "
             f"{sum(t['exit_reason'] == 'EXPIRED' for t in closed)} expired unfilled, "
-            f"{sum(t['status'] in ACTIVE for t in trades)} still active. "
+            f"{sum(t['status'] in ACTIVE for t in trades)} still active"
+            f"{f', {managed} took the partial' if managed else ''}. "
             f"Total {gross:+.2f}R gross, {net:+.2f}R net of costs ({self.commission.value:.2%}/side fees)."
         )
         return "\n".join(lines)
@@ -292,10 +305,13 @@ class PaperBrokerAdapter(BrokerClient):
             os.replace(tmp, self._path)
 
 
-def _to_order(trade: dict) -> SimOrder:
+def _to_order(trade: dict, partial_r: float = 0.0, partial_fraction: float = 0.0) -> SimOrder:
     """The trade dict as a fill-model order. Trades saved before task 195 lack
-    kind / ideal prices / excursions: an OPEN one continues from its fill."""
+    kind / ideal prices / excursions: an OPEN one continues from its fill.
+    The partial's level is recomputed from the fill and the planned stop, so a
+    trade filled before a restart is managed too."""
     fill = trade["fill_price"]
+    taken = trade.get("partial_at")
     return SimOrder(
         order_id=trade["trade_id"],
         setup_id=trade.get("setup_id") or "",
@@ -303,7 +319,7 @@ def _to_order(trade: dict) -> SimOrder:
         direction=trade["direction"],
         kind=trade.get("kind") or ("LIMIT" if trade["status"] == "PENDING" else "MARKET"),
         entry=trade["entry"],
-        stop=trade["stop_loss"],
+        stop=fill if taken else trade["stop_loss"],
         target=trade["take_profit"],
         placed_at=datetime.fromisoformat(trade["placed_at"]),
         expires_at=datetime.fromisoformat(trade["expires_at"]) if trade.get("expires_at") else None,
@@ -313,6 +329,12 @@ def _to_order(trade: dict) -> SimOrder:
         filled_at=datetime.fromisoformat(trade["filled_at"]) if trade.get("filled_at") else None,
         mae_price=trade.get("mae_price") if trade.get("mae_price") is not None else fill,
         mfe_price=trade.get("mfe_price") if trade.get("mfe_price") is not None else fill,
+        partial_r=partial_r or None,
+        partial_fraction=partial_fraction,
+        partial_price=(partial_level(trade["direction"], fill, trade["stop_loss"], trade["take_profit"], partial_r)
+                       if partial_r and fill is not None else None),
+        partial_at=datetime.fromisoformat(taken) if taken else None,
+        partial_ideal_exit=trade.get("partial_ideal_exit"),
     )
 
 
@@ -325,6 +347,12 @@ def _from_order(trade: dict, order: SimOrder) -> None:
         mae_price=order.mae_price,
         mfe_price=order.mfe_price,
     )
+    if order.partial_at is not None and not trade.get("partial_at"):
+        portion = trade["remaining_ratio"] * order.partial_fraction
+        trade["partials"].append({"ratio": portion, "price": order.partial_price, "ideal": order.partial_ideal_exit,
+                                  "at": order.partial_at.isoformat()})
+        trade.update(remaining_ratio=trade["remaining_ratio"] - portion, partial_at=order.partial_at.isoformat(),
+                     partial_ideal_exit=order.partial_ideal_exit)
 
 
 def _processed_through(trade: dict) -> Optional[datetime]:

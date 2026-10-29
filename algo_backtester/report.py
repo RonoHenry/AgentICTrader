@@ -79,6 +79,8 @@ JOURNAL_COLUMNS = (
     # the order
     "order_id", "order_kind", "placed_at", "expires_at", "filled_at", "fill", "ideal_fill",
     "closed_at", "exit", "ideal_exit", "exit_reason", "lots",
+    # a partial (Req 28.4)
+    "partial_at", "partial_exit", "partial_fraction",
     # results
     "gross_r", "net_r", "cost_r_spread", "cost_r_slippage", "cost_r_commission", "cost_r_swap", "mae_r", "mfe_r",
     "holding_minutes", "cost_flag",
@@ -184,6 +186,7 @@ def _journal_values(row: JournalRow, open_order: Optional[SimTrade]) -> dict:
         "ideal_exit": _num(trade and trade.ideal_exit, 6),
         "exit_reason": trade.exit_reason if trade else ("OPEN_AT_END" if open_order else None),
         "lots": _num(order and order.lots, 5),
+        **_partial_values(trade, open_order),
         "holding_minutes": round(trade.holding_time.total_seconds() / 60) if filled else None,
         "cost_flag": ("true" if trade.cost_flag else "false") if filled else None,
     }
@@ -191,6 +194,16 @@ def _journal_values(row: JournalRow, open_order: Optional[SimTrade]) -> dict:
                  "mae_r", "mfe_r"):
         values[name] = _num(getattr(trade, name) if filled else None, 4)
     return values
+
+
+def _partial_values(trade: Optional[ClosedTrade], open_order: Optional[SimTrade]) -> dict:
+    """A partial taken, by a closed trade or by one still open at the end (Req 28.4)."""
+    order = trade or open_order
+    if order is None or order.partial_at is None:
+        return {"partial_at": None, "partial_exit": None, "partial_fraction": None}
+    price = trade.partial_exit if trade is not None else open_order.partial_price
+    return {"partial_at": _time(order.partial_at), "partial_exit": _num(price, 6),
+            "partial_fraction": _num(order.partial_fraction, 4)}
 
 
 def _num(value: Optional[float], decimals: int) -> Optional[str]:
