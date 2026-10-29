@@ -31,7 +31,7 @@
 <div id="shell"><span class="modes" title="Who is reading the chart"><a href="/">You</a><a href="/engine">Engine</a><a href="/context" class="on">Context</a></span></div>
 <header>
   <h1>Noculus · Context</h1>
-  <span class="muted">Your weekly call per market: the engine trades only its side, until the draw trades or a D1 candle closes beyond the protected swing.</span>
+  <span class="muted">Your weekly call per market, beside Algo Mind's: the engine trades only the given side, until the draw trades or a D1 candle closes beyond the protected swing.</span>
 </header>
 <main class="ctx">
   <div class="weekbar">
@@ -42,8 +42,13 @@
     <span class="spacer"></span>
     <select id="weeks" title="Weeks with calls"></select>
   </div>
+  <div class="weekbar">
+    <button class="boxed" id="runBrain" title="Read the nine markets now and make this week's brief again">Run the brain</button>
+    <span id="brainState" class="muted"></span>
+  </div>
+  <div id="notes"></div>
   <table class="calls">
-    <thead><tr><th>Market</th><th class="num">Last</th><th>Side</th><th class="num">Draw</th><th class="num">Protected swing</th>
+    <thead><tr><th>Market</th><th class="num">Last</th><th>Brain</th><th>Your side</th><th class="num">Draw</th><th class="num">Protected swing</th>
       <th class="hide-s">Note</th><th></th><th>Saved</th></tr></thead>
     <tbody id="rows"></tbody>
   </table>

@@ -654,8 +654,9 @@ def test_the_box_needs_the_mean_range_of_twenty_closed_days():
 
 # ── the engine trades the thesis's side (market-narrative Requirement 17, task 351) ──
 def _theses(tmp_path, side):
-    """A thesis file: AS_OF (09:00 New York, 14 January 2026) falls in trading date 2026-01-14."""
-    path = tmp_path / "theses.json"
+    """A thesis file: AS_OF (09:00 New York, 14 January 2026) falls in trading date 2026-01-14. A file per side: the
+    reader caches by time, size and identity, which in-place rewrites of one file can share."""
+    path = tmp_path / f"theses-{side}.json"
     path.write_text(json.dumps({"EURUSD": {"2026-01-14": side, "2026-01-13": "BEARISH"}}), encoding="utf-8")
     return str(path)
 

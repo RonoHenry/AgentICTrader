@@ -138,7 +138,8 @@ def test_the_scorecard_sets_the_context_agent_against_the_controls(tmp_path):
     app = ContextApp(tmp_path / "calls.json", tmp_path / "theses.json", clock=lambda: datetime(2026, 11, 7, tzinfo=UTC),
                      bars=lambda inst, a, b: week_bars(),
                      paper={"context": tmp_path / "context.json", "partial": tmp_path / "none.json",
-                            "control": tmp_path / "control.json"})
+                            "control": tmp_path / "control.json"},
+                     briefs=tmp_path / "briefs", agree=tmp_path / "agree.json")
     book = app.book()
     book.put(Call("EURUSD", "2026-11-02", "BULLISH", 105, 95, made_at="2026-10-31T12:00:00+00:00"))
     book.put(Call("GBPUSD", "2026-11-02", "NONE", made_at="2026-10-31T12:00:00+00:00"))

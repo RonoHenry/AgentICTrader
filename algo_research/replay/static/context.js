@@ -37,6 +37,17 @@
     return null;
   }
 
+  // The brain's call (Algo Mind): its side, its probability of an up week and the share of its 20 nearest past weeks
+  // that went up, with whether it agrees with the trader's saved side.
+  function brainCell(b, mine) {
+    if (!b) return '<span class="muted">—</span>';
+    const s = b.call === "BULLISH" ? '<span class="up">Bullish</span>' : b.call === "BEARISH" ? '<span class="down">Bearish</span>' : '<span class="muted">None</span>';
+    const agree = mine && mine !== "NONE" && b.call !== "NONE" ? (mine === b.call ? ' <span class="tag" title="you agree">✓ agree</span>' : ' <span class="tag late" title="you differ">≠</span>') : "";
+    const p = b.p == null ? "" : ` <span class="muted">${Math.round(b.p * 100)}%</span>`;
+    const mem = b.share_up == null ? "" : `<div class="muted" style="font-size:11px">similar weeks up ${Math.round(b.share_up * 100)}%</div>`;
+    return s + p + agree + mem;
+  }
+
   function render() {
     const d = S.data;
     $("weekLabel").textContent = weekLabel(d.week);
@@ -45,12 +56,19 @@
     if (d.open) { state.className = "pill open"; state.textContent = `opened ${opens.toLocaleString(undefined, NY)} New York · calls now are late`; }
     else { state.className = "pill ahead"; state.textContent = `opens ${opens.toLocaleString(undefined, NY)} New York · in ${until(opens - now)}`; }
     $("weeks").innerHTML = d.weeks.map((w) => `<option value="${w}" ${w === d.week ? "selected" : ""}>${w === d.default ? "next · " : ""}${weekLabel(w)}</option>`).join("");
+    const b = d.brain;
+    $("brainState").innerHTML = b
+      ? `brain ${esc(b.version)} · made ${new Date(b.made_at).toLocaleString(undefined, NY)} New York${b.provisional ? ' · <span class="tag late">provisional: rerun after Friday’s close</span>' : ""}`
+      : '<span class="muted">no brief for this week yet</span>';
+    const notes = [...(b ? b.notes.map((n) => "Brain: " + n) : []), ...d.notes.map((n) => "Your calls: " + n)];
+    $("notes").innerHTML = notes.map((n) => `<div class="msg warn">${esc(n)}</div>`).join("");
     $("rows").innerHTML = d.rows.map((r) => {
       const c = r.call || {};
       const saved = r.call ? `${new Date(c.made_at).toLocaleString(undefined, NY)}${c.late ? '<span class="tag late">late</span>' : ""}` : '<span class="muted">—</span>';
       return `<tr data-inst="${r.instrument}">
         <td><b>${r.instrument}</b></td>
         <td class="num">${fmt(r.price)}</td>
+        <td class="brain">${brainCell(r.brain, c.side)}</td>
         <td><select class="side ${esc(c.side || "")}">${["", "BULLISH", "BEARISH", "NONE"].map((s) => `<option value="${s}" ${s === (c.side || "") ? "selected" : ""}>${s ? s[0] + s.slice(1).toLowerCase() : "—"}</option>`).join("")}</select></td>
         <td class="num"><input type="number" step="any" class="draw" value="${c.draw ?? ""}"></td>
         <td class="num"><input type="number" step="any" class="prot" value="${c.protected ?? ""}"></td>
@@ -87,19 +105,30 @@
       if (!r.ok) { msg.className = "msg err"; msg.textContent = out.error || "Not saved."; return; }
       row.call = out.call;
       tr.querySelector(".saved").innerHTML = `${new Date(out.call.made_at).toLocaleString(undefined, NY)}${out.call.late ? '<span class="tag late">late</span>' : ""}<div class="msg ok">saved</div>`;
+      tr.querySelector(".brain").innerHTML = brainCell(row.brain, out.call.side);
     };
   }
 
   async function load(week) {
     const r = await fetch("/api/context" + (week ? `?week=${week}` : ""));
     const d = await r.json();
-    if (!r.ok) { $("rows").innerHTML = `<tr><td colspan="8" class="msg err">${esc(d.error)}</td></tr>`; return; }
+    if (!r.ok) { $("rows").innerHTML = `<tr><td colspan="9" class="msg err">${esc(d.error)}</td></tr>`; return; }
     S.data = d; S.week = d.week;
     history.replaceState(null, "", `/context?week=${d.week}`);
     render();
     if (window.ContextScore) window.ContextScore.load();
   }
 
+  $("runBrain").onclick = async () => {
+    const btn = $("runBrain");
+    btn.disabled = true; btn.textContent = "Reading the markets…";
+    try {
+      const r = await fetch("/api/context/brief", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ week: S.week }) });
+      const d = await r.json();
+      if (!r.ok) { $("brainState").innerHTML = `<span class="msg err">${esc(d.error)}</span>`; return; }
+      S.data = d; render();
+    } finally { btn.disabled = false; btn.textContent = "Run the brain"; }
+  };
   $("prev").onclick = () => load(shift(S.week, -7));
   $("next").onclick = () => load(shift(S.week, 7));
   $("weeks").onchange = (e) => load(e.target.value);
@@ -125,20 +154,25 @@
     if (!d.weeks.length) { box.innerHTML = '<span class="muted">No week with calls has opened yet.</span>'; return; }
     const t = d.totals, be = t.break_even;
     const rate = t.hit_rate == null ? "—" : `${Math.round(t.hit_rate * 100)}%`;
-    let html = `<p><b>${t.hits}/${t.final}</b> finished calls closed on their side (${rate}; the costs need ${Math.round(be[0] * 100)}–${Math.round(be[1] * 100)}%).
-      Delivered ${t.delivered}, invalidated ${t.invalidated}, of ${t.calls} with a side.
-      Paper R on the called markets: context ${r(t.agents.context)}, partial ${r(t.agents.partial)}, control ${r(t.agents.control)}.</p>`;
+    const pct = (x) => (x.hit_rate == null ? "—" : `${Math.round(x.hit_rate * 100)}%`);
+    let html = `<p><b>You: ${t.hits}/${t.final}</b> finished calls closed on their side (${rate}; the costs need ${Math.round(be[0] * 100)}–${Math.round(be[1] * 100)}%).
+      Delivered ${t.delivered}, invalidated ${t.invalidated}, of ${t.calls} with a side.<br>
+      <b>Brain: ${t.brain.hits}/${t.brain.final}</b> (${pct(t.brain)}) · <b>you and the brain agreeing: ${t.agree.hits}/${t.agree.final}</b> (${pct(t.agree)}).<br>
+      Paper R on your called markets: context ${r(t.agents.context)}, partial ${r(t.agents.partial)}, control ${r(t.agents.control)}.</p>`;
+    const yes = (h, final) => (h == null ? "—" : `${h ? '<span class="up">yes</span>' : '<span class="down">no</span>'}${final ? "" : ' <span class="muted">(so far)</span>'}`);
     for (const w of d.weeks) {
-      html += `<h3 style="margin-top:14px">Week of ${esc(w.week)}</h3><table class="calls"><thead><tr><th>Market</th><th>Call</th>
-        <th class="num">Week open → close</th><th>Closed its way</th><th>Context</th><th class="num">Walk odds</th>
+      html += `<h3 style="margin-top:14px">Week of ${esc(w.week)}</h3><table class="calls"><thead><tr><th>Market</th><th>Your call</th>
+        <th class="num">Week open → close</th><th>Closed your way</th><th>Brain</th><th>Closed its way</th><th>Context</th><th class="num">Walk odds</th>
         <th>Context agent</th><th>Partial</th><th>Control</th></tr></thead><tbody>`;
       for (const x of w.rows) {
-        const c = x.call;
-        if (x.error) { html += `<tr><td><b>${c.instrument}</b></td><td colspan="8" class="msg err">${esc(x.error)}</td></tr>`; continue; }
-        const hit = x.hit == null ? "—" : `${x.hit ? '<span class="up">yes</span>' : '<span class="down">no</span>'}${x.final ? "" : ' <span class="muted">(so far)</span>'}`;
+        const c = x.call, b = x.brain;
+        if (x.error) { html += `<tr><td><b>${x.market}</b></td><td colspan="10" class="msg err">${esc(x.error)}</td></tr>`; continue; }
         const ctx = x.outcome ? `${x.outcome} ${when(x.at)}` : "—";
-        html += `<tr><td><b>${c.instrument}</b></td><td>${side(c.side)}${c.side !== "NONE" ? ` <span class="muted">${fmt(c.draw)} / ${fmt(c.protected)}</span>` : ""}${c.late ? '<span class="tag late">late</span>' : ""}</td>
-          <td class="num">${fmt(x.week_open)} → ${fmt(x.week_close)}</td><td>${hit}</td><td>${esc(ctx)}</td>
+        const mine = c ? `${side(c.side)}${c.side !== "NONE" ? ` <span class="muted">${fmt(c.draw)} / ${fmt(c.protected)}</span>` : ""}${c.late ? '<span class="tag late">late</span>' : ""}` : '<span class="muted">—</span>';
+        const brain = b ? `${side(b.call)}${b.p == null ? "" : ` <span class="muted">${Math.round(b.p * 100)}%</span>`}` : '<span class="muted">—</span>';
+        html += `<tr><td><b>${x.market}</b></td><td>${mine}</td>
+          <td class="num">${fmt(x.week_open)} → ${fmt(x.week_close)}</td><td>${yes(x.hit, x.final)}</td>
+          <td>${brain}</td><td>${yes(b ? b.hit : null, x.final)}</td><td>${esc(ctx)}</td>
           <td class="num">${x.walk == null ? "—" : Math.round(x.walk * 100) + "%"}</td>
           <td>${r(x.agents.context)}</td><td>${r(x.agents.partial)}</td><td>${r(x.agents.control)}</td></tr>`;
       }

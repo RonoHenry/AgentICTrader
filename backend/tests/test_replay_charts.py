@@ -165,7 +165,8 @@ def test_the_context_page_keeps_a_call_per_market_and_week_and_writes_the_thesis
 
     thursday = datetime(2026, 10, 29, 12, tzinfo=timezone.utc)
     charts.context = ContextApp(tmp_path / "calls.json", tmp_path / "theses.json",
-                                quote=lambda inst: {"EURUSD": 1.1}[inst], clock=lambda: thursday)
+                                quote=lambda inst: {"EURUSD": 1.1}[inst], clock=lambda: thursday,
+                                briefs=tmp_path / "briefs", agree=tmp_path / "agree.json")
     server = make_charts_server(charts, port=0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}"

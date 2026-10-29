@@ -22,7 +22,7 @@ from typing import Iterable, Optional
 from zoneinfo import ZoneInfo
 
 __all__ = ["CALLS_FILE", "PAPER_FILES", "SIDES", "THESIS_FILE", "Call", "ContextBook", "paper_r", "score_call",
-           "thesis_table", "trading_dates", "week_close", "week_monday", "week_open"]
+           "thesis_table", "trading_dates", "week_close", "week_monday", "week_move", "week_open"]
 
 REPO = Path(__file__).resolve().parents[1]
 CALLS_FILE = REPO / "data" / "journal" / "context" / "calls.json"
@@ -117,6 +117,17 @@ def thesis_table(calls: Iterable[Call]) -> dict:
         for day in trading_dates(date.fromisoformat(call.week)):
             table.setdefault(call.instrument, {})[day] = entry
     return table
+
+
+def week_move(bars, monday: date, now: datetime) -> dict:
+    """A week's open and close on ``bars`` (the last close so far while it runs), and whether it has ended."""
+    import pandas as pd
+
+    opens, closes = week_open(monday), week_close(monday)
+    t = pd.to_datetime(bars["time"], utc=True) if len(bars) else pd.Series([], dtype="datetime64[ns, UTC]")
+    week = bars[(t >= opens) & (t < closes)]
+    return {"final": now >= closes, "week_open": float(week["open"].iloc[0]) if len(week) else None,
+            "week_close": float(week["close"].iloc[-1]) if len(week) else None}
 
 
 def score_call(call: Call, bars, now: datetime) -> dict:

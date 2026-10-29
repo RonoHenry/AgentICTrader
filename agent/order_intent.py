@@ -362,11 +362,13 @@ def theses(path: str) -> dict:
     """The thesis file's {instrument: {trading date: side}}, read once per version of the file."""
     p = Path(path)
     stat = p.stat()
-    return _read_theses(str(p.resolve()), stat.st_mtime_ns, stat.st_size)
+    return _read_theses(str(p.resolve()), stat.st_mtime_ns, stat.st_size, stat.st_ino)
 
 
 @lru_cache(maxsize=8)
-def _read_theses(path: str, mtime_ns: int, size: int) -> dict:
+def _read_theses(path: str, mtime_ns: int, size: int, inode: int) -> dict:
+    # The file's identity is in the key: a thesis file replaced by a new one (agent.context_calls writes through a
+    # temporary file) is never served from the old one's entry, however close its time and size.
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 

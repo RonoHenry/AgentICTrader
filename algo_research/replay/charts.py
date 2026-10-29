@@ -197,6 +197,13 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": str(exc)})
                 return
             self._answer(lambda: self.charts.context.call(body))
+        elif path == "/api/context/brief":
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            except ValueError as exc:
+                self._send(400, {"error": str(exc)})
+                return
+            self._answer(lambda: self.charts.context.run_brain(body))
         else:
             self._with_replay(_ReplayHandler.do_POST)
 

@@ -48,8 +48,15 @@
       - **Calls:** DXY, EURUSD, GBPUSD, US500, US30 and GER40 BULLISH; XAUUSD BEARISH; US100 and UK100 NONE.
       - DXY and the euro and pound all up is the brain reading each market alone. It needs re-running after Friday's close.
 
-- [ ] 385. The brain on the context page (Requirements 4.2-4.3)
+- [x] 385. The brain on the context page (Requirements 4.2-4.3)
   - The brain's call, probability and the analogs' up share beside the trader's call. The scorecard scores the brain and the agreement too.
+  - **Done 2026-10-29.**
+    - The view carries the week's brief and coherence notes: DXY called the same way as EURUSD, GBPUSD or gold, and the US indices called apart.
+    - "Run the brain" (`POST /api/context/brief`) makes the brief again, and saving a call rewrites the agreement file.
+    - The scorecard keeps rows the brain called but the trader didn't, and totals the trader, the brain and the agreement.
+    - `agent.context_calls.week_move` is shared by both.
+    - **The thesis reader's cache key** now includes the file's identity. In-place same-size rewrites could serve stale content, and task 351's test was flaky for that reason.
+    - Tests: `test_algo_mind_context.py` (3).
 
 - [ ] 386. The hands (Requirements 5.2-5.3)
   - `fresh_near_gap_brain` and `fresh_near_gap_agree`, and their paper agents.
