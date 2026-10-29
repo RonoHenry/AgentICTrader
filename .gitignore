@@ -92,3 +92,6 @@ data/research/
 
 # The trader's journals and blind reads stay on this machine (market-narrative Requirement 10.8)
 data/journal/
+
+# Algo Mind's fitted versions, live bars and briefs (algo-mind AM-D6): reproducible from the code and snapshots
+data/algo_mind/
