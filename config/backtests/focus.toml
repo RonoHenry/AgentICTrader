@@ -139,3 +139,17 @@ strategy.target_mode = "NEAREST"
 strategy.fvg_zone = "gap"
 strategy.bias_mode = "THESIS"
 strategy.thesis_file = "data/research/theses/engine_theses.json"
+
+# The trader's weekly context (context-engine Requirement 32.5): the partial strategy trading only the side of the
+# trader's call for the week (Noculus /context), until its draw trades or a D1 candle closes beyond its protected
+# swing, with stops of at least ten typical spreads. The calls write the thesis file.
+[variants.fresh_near_gap_context]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.bias_mode = "THESIS"
+strategy.thesis_file = "data/research/theses/context_theses.json"
+strategy.min_stop_spreads = 10.0
+management.partial_r = 3.0
+management.partial_fraction = 0.3333333333333333

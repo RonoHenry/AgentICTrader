@@ -469,9 +469,13 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
     - Test: `test_the_context_page_keeps_a_call_per_market_and_week_and_writes_the_thesis_file`.
   - **Validates: Requirement 32.4**
 
-- [ ] 380. The context variant and its paper agent (Requirement 32.5)
+- [x] 380. The context variant and its paper agent (Requirement 32.5)
   - `[variants.fresh_near_gap_context]`: `fresh_near_gap_partial` with `bias_mode = "THESIS"`, `thesis_file = "data/research/theses/context_theses.json"` and `min_stop_spreads = 10`.
   - A paper agent on the control agents' eight markets: `data/paper_trades_fresh_near_gap_context.json`.
+  - **Done 2026-10-29.**
+    - Test: `test_the_context_variant_trades_only_inside_the_calls`. It differs from the partial strategy only in the three settings.
+    - The thesis file starts empty (`{}`), so the agent orders nothing until the first calls.
+    - Its agent started 2026-10-29 beside the two controls; DXY is called and scored but not traded, as in the controls.
   - **Validates: Requirement 32.5**
 
 - [ ] 381. The weekly scorecard (Requirement 32.6)

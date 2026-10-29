@@ -61,3 +61,20 @@ def test_the_thesis_file_holds_each_trading_date_of_a_called_week(tmp_path):
     assert thesis_table([]) == {}
     reopened = ContextBook(tmp_path / "calls.json", tmp_path / "theses.json")
     assert reopened.week(date(2026, 11, 2))["EURUSD"].side == "BULLISH"
+
+
+def test_the_context_variant_trades_only_inside_the_calls():
+    from pathlib import Path
+
+    from agent.context_calls import THESIS_FILE, REPO
+    from agent.strategy_config import BiasMode
+    from algo_backtester.config import load_run_config
+
+    focus = load_run_config(REPO / "config" / "backtests" / "focus.toml", "fresh_near_gap_context")
+    partial = load_run_config(REPO / "config" / "backtests" / "focus.toml", "fresh_near_gap_partial")
+    assert focus.strategy.bias_mode == BiasMode.THESIS and focus.strategy.min_stop_spreads == 10
+    assert (REPO / focus.strategy.thesis_file).resolve() == Path(THESIS_FILE).resolve()
+    assert focus.management == partial.management
+    same = {"bias_mode", "thesis_file", "min_stop_spreads"}
+    assert {k: v for k, v in focus.strategy.model_dump().items() if k not in same} == \
+           {k: v for k, v in partial.strategy.model_dump().items() if k not in same}
