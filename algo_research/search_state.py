@@ -12,6 +12,7 @@ side only in its training probabilities' top and bottom thirds, against each mar
 from __future__ import annotations
 
 import argparse
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -21,7 +22,7 @@ from algo_research.search_d1 import MARKETS, MIN_MARKETS, OUT
 from algo_research.search_soup import _next_above
 from algo_research.snapshot import SNAPSHOTS_DIR
 
-__all__ = ["FEATURES", "build_frames", "load", "state_table", "fit_and_call", "judge"]
+__all__ = ["FEATURES", "build_frames", "load", "state_table", "week_state", "fit_and_call", "judge"]
 
 YAHOO = SNAPSHOTS_DIR / "yahoo-daily-to-2022"
 FX = ("EURUSD", "GBPUSD")
@@ -141,6 +142,24 @@ class _Frame:
                 "fvg_in": float(self.g_side[inside][-1]) if inside.any() else 0.0}
 
 
+def week_state(market: str, frames: dict, first: pd.Timestamp, price: float, prev_close: float,
+               prev_last: pd.Timestamp, last: pd.Timestamp) -> Optional[dict]:
+    """The state at a week's open: its first day ``first``, its open ``price``, the week before's close and last day,
+    and its own last day (Algo Mind reads a week not yet open with its Friday). None while a frame lacks history."""
+    ks = {tf: frames[tf].closed_before(np.datetime64(first, "ns")) for tf in FRAMES}
+    if any(k < max(MEAN_N[tf], RANGE_N[tf]) + 2 for tf, k in ks.items()):
+        return None
+    monday = pd.Timestamp(first) - pd.Timedelta(days=pd.Timestamp(first).dayofweek)
+    row = {"market": market, "week": monday, "open": price,
+           "quarter": (monday.month - 1) // 3 + 1, "month_of_quarter": (monday.month - 1) % 3 + 1,
+           "week_of_month": (monday.day - 1) // 7 + 1, "new_month": float(last.month != prev_last.month),
+           "new_quarter": float((last.month - 1) // 3 != (prev_last.month - 1) // 3 or last.year != prev_last.year),
+           "gap": (price - prev_close) / frames["W1"].mean[ks["W1"]]}
+    for tf in FRAMES:
+        row.update({f"{tf}_{x}": v for x, v in frames[tf].read(ks[tf], price).items()})
+    return row
+
+
 def state_table(market: str, days: pd.DataFrame) -> pd.DataFrame:
     """Every week's state at its open, its outcome (the close against the open) and the market."""
     fr = build_frames(days)
@@ -148,21 +167,11 @@ def state_table(market: str, days: pd.DataFrame) -> pd.DataFrame:
     weeks = fr["W1"]
     rows = []
     for w in range(WARM_UP_WEEKS, len(weeks)):
-        first = np.datetime64(weeks["first"].iat[w], "ns")
-        price = float(weeks["open"].iat[w])
-        ks = {tf: frames[tf].closed_before(first) for tf in FRAMES}
-        if any(k < max(MEAN_N[tf], RANGE_N[tf]) + 2 for tf, k in ks.items()):
-            continue
-        prev_last, last = pd.Timestamp(weeks["last"].iat[w - 1]), pd.Timestamp(weeks["last"].iat[w])
-        monday = pd.Timestamp(first) - pd.Timedelta(days=pd.Timestamp(first).dayofweek)
-        row = {"market": market, "week": monday, "open": price, "close": float(weeks["close"].iat[w]),
-               "quarter": (monday.month - 1) // 3 + 1, "month_of_quarter": (monday.month - 1) % 3 + 1,
-               "week_of_month": (monday.day - 1) // 7 + 1, "new_month": float(last.month != prev_last.month),
-               "new_quarter": float((last.month - 1) // 3 != (prev_last.month - 1) // 3 or last.year != prev_last.year),
-               "gap": (price - float(weeks["close"].iat[w - 1])) / frames["W1"].mean[ks["W1"]]}
-        for tf in FRAMES:
-            row.update({f"{tf}_{x}": v for x, v in frames[tf].read(ks[tf], price).items()})
-        rows.append(row)
+        row = week_state(market, frames, pd.Timestamp(weeks["first"].iat[w]), float(weeks["open"].iat[w]),
+                         float(weeks["close"].iat[w - 1]), pd.Timestamp(weeks["last"].iat[w - 1]),
+                         pd.Timestamp(weeks["last"].iat[w]))
+        if row is not None:
+            rows.append({**row, "close": float(weeks["close"].iat[w])})
     t = pd.DataFrame(rows)
     return t.assign(up=np.sign(t["close"] - t["open"]))
 

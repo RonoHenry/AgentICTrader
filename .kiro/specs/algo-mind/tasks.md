@@ -24,12 +24,17 @@
     - The states are cached at `data/algo_mind/states_to_2022.parquet`.
     - Tests: `test_algo_mind_brain.py` (2).
 
-- [ ] 383. The live senses and memory (Requirements 1.2-1.3, 3)
+- [x] 383. The live senses and memory (Requirements 1.2-1.3, 3)
   - **383a. RED:**
     - the live state of a week reads only days before its Monday and before the run's day;
     - a week missing its Friday is provisional;
     - the analogs are 20 training weeks, the nearest on the z-scores, with their outcomes.
   - **383b. GREEN:** `algo_mind/sources.py` and `algo_mind/memory.py`.
+  - **Done 2026-10-29.**
+    - `search_state.week_state` is the per-week reading, shared by training and live; H-Y's table is unchanged (checked on EURUSD and US500).
+    - Live, a month still running at the Monday isn't a closed candle, as in training.
+    - The last closed FX day closes at the last price.
+    - Tests: `test_algo_mind_senses.py` (3), including live = training on mid-month and month-turn weeks, and nothing read from the week on.
 
 - [ ] 384. The brief and the thesis files (Requirements 4.1, 5.1)
   - **384a. RED:**
