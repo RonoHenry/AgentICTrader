@@ -66,3 +66,17 @@ def test_the_scorecard_scores_the_brain_and_the_agreement(tmp_path):
     assert (t["calls"], t["hits"]) == (2, 2)
     assert t["brain"] == {"calls": 3, "final": 3, "hits": 2, "hit_rate": 2 / 3}
     assert t["agree"] == {"calls": 1, "final": 1, "hits": 1, "hit_rate": 1.0}
+
+
+def test_the_hands_differ_from_the_context_variant_only_in_their_thesis_file():
+    from agent.context_calls import REPO
+    from algo_backtester.config import load_run_config
+    from algo_mind.brief import AGREE_THESES, BRAIN_THESES
+
+    focus = REPO / "config" / "backtests" / "focus.toml"
+    context = load_run_config(focus, "fresh_near_gap_context")
+    for variant, file in (("fresh_near_gap_brain", BRAIN_THESES), ("fresh_near_gap_agree", AGREE_THESES)):
+        hands = load_run_config(focus, variant)
+        assert (REPO / hands.strategy.thesis_file).resolve() == file.resolve()
+        assert hands.strategy.model_dump(exclude={"thesis_file"}) == context.strategy.model_dump(exclude={"thesis_file"})
+        assert hands.management == context.management

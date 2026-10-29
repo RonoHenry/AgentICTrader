@@ -58,8 +58,12 @@
     - **The thesis reader's cache key** now includes the file's identity. In-place same-size rewrites could serve stale content, and task 351's test was flaky for that reason.
     - Tests: `test_algo_mind_context.py` (3).
 
-- [ ] 386. The hands (Requirements 5.2-5.3)
+- [x] 386. The hands (Requirements 5.2-5.3)
   - `fresh_near_gap_brain` and `fresh_near_gap_agree`, and their paper agents.
+  - **Done 2026-10-29.**
+    - Both differ from `fresh_near_gap_context` only in their thesis file (test: `test_the_hands_differ_from_the_context_variant_only_in_their_thesis_file`).
+    - Their records (`data/paper_trades_fresh_near_gap_brain.json`, `..._agree.json`) join the scorecard's agents.
+    - The two paper agents started 2026-10-29 on the controls' eight markets. With the brain's first calls dated 2 November, they order nothing before then.
 
 - [ ] 387. The bench and the third look (Requirements 6, 7.3)
   - The random-walk false-alarm rate and the planted effect's detection rate at H-Y's sample sizes; the brain's calls on the readable weeks of 2026.

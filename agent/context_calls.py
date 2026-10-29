@@ -27,8 +27,11 @@ __all__ = ["CALLS_FILE", "PAPER_FILES", "SIDES", "THESIS_FILE", "Call", "Context
 REPO = Path(__file__).resolve().parents[1]
 CALLS_FILE = REPO / "data" / "journal" / "context" / "calls.json"
 THESIS_FILE = REPO / "data" / "research" / "theses" / "context_theses.json"
-#: The paper agents the scorecard compares (Requirement 32.6): the context agent and the two controls.
+#: The paper agents the scorecard compares (Requirement 32.6; algo-mind 5.3): the trader's context, Algo Mind's
+#: brain and the two agreeing, against the two controls.
 PAPER_FILES = {"context": REPO / "data" / "paper_trades_fresh_near_gap_context.json",
+               "brain": REPO / "data" / "paper_trades_fresh_near_gap_brain.json",
+               "agree": REPO / "data" / "paper_trades_fresh_near_gap_agree.json",
                "partial": REPO / "data" / "paper_trades_fresh_near_gap_partial.json",
                "control": REPO / "data" / "paper_trades_fresh_near_gap.json"}
 SIDES = ("BULLISH", "BEARISH", "NONE")

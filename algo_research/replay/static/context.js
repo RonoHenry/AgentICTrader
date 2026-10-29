@@ -158,15 +158,16 @@
     let html = `<p><b>You: ${t.hits}/${t.final}</b> finished calls closed on their side (${rate}; the costs need ${Math.round(be[0] * 100)}–${Math.round(be[1] * 100)}%).
       Delivered ${t.delivered}, invalidated ${t.invalidated}, of ${t.calls} with a side.<br>
       <b>Brain: ${t.brain.hits}/${t.brain.final}</b> (${pct(t.brain)}) · <b>you and the brain agreeing: ${t.agree.hits}/${t.agree.final}</b> (${pct(t.agree)}).<br>
-      Paper R on your called markets: context ${r(t.agents.context)}, partial ${r(t.agents.partial)}, control ${r(t.agents.control)}.</p>`;
+      Paper R on your called markets: ${Object.entries(t.agents).map(([k, v]) => `${k} ${r(v)}`).join(", ")}.</p>`;
+    const agents = Object.keys(t.agents);
     const yes = (h, final) => (h == null ? "—" : `${h ? '<span class="up">yes</span>' : '<span class="down">no</span>'}${final ? "" : ' <span class="muted">(so far)</span>'}`);
     for (const w of d.weeks) {
       html += `<h3 style="margin-top:14px">Week of ${esc(w.week)}</h3><table class="calls"><thead><tr><th>Market</th><th>Your call</th>
         <th class="num">Week open → close</th><th>Closed your way</th><th>Brain</th><th>Closed its way</th><th>Context</th><th class="num">Walk odds</th>
-        <th>Context agent</th><th>Partial</th><th>Control</th></tr></thead><tbody>`;
+        ${agents.map((a) => `<th>${esc(a[0].toUpperCase() + a.slice(1))}</th>`).join("")}</tr></thead><tbody>`;
       for (const x of w.rows) {
         const c = x.call, b = x.brain;
-        if (x.error) { html += `<tr><td><b>${x.market}</b></td><td colspan="10" class="msg err">${esc(x.error)}</td></tr>`; continue; }
+        if (x.error) { html += `<tr><td><b>${x.market}</b></td><td colspan="${7 + agents.length}" class="msg err">${esc(x.error)}</td></tr>`; continue; }
         const ctx = x.outcome ? `${x.outcome} ${when(x.at)}` : "—";
         const mine = c ? `${side(c.side)}${c.side !== "NONE" ? ` <span class="muted">${fmt(c.draw)} / ${fmt(c.protected)}</span>` : ""}${c.late ? '<span class="tag late">late</span>' : ""}` : '<span class="muted">—</span>';
         const brain = b ? `${side(b.call)}${b.p == null ? "" : ` <span class="muted">${Math.round(b.p * 100)}%</span>`}` : '<span class="muted">—</span>';
@@ -174,7 +175,7 @@
           <td class="num">${fmt(x.week_open)} → ${fmt(x.week_close)}</td><td>${yes(x.hit, x.final)}</td>
           <td>${brain}</td><td>${yes(b ? b.hit : null, x.final)}</td><td>${esc(ctx)}</td>
           <td class="num">${x.walk == null ? "—" : Math.round(x.walk * 100) + "%"}</td>
-          <td>${r(x.agents.context)}</td><td>${r(x.agents.partial)}</td><td>${r(x.agents.control)}</td></tr>`;
+          ${agents.map((a) => `<td>${r(x.agents[a])}</td>`).join("")}</tr>`;
       }
       html += "</tbody></table>";
     }

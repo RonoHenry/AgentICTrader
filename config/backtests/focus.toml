@@ -153,3 +153,28 @@ strategy.thesis_file = "data/research/theses/context_theses.json"
 strategy.min_stop_spreads = 10.0
 management.partial_r = 3.0
 management.partial_fraction = 0.3333333333333333
+
+# Algo Mind's hands (algo-mind Requirement 5): the context variant trading the brain's weekly side (its brief's
+# calls, no draw: the side holds for the week), and the side where the trader and the brain agree (the trader's draw
+# and protected swing). Briefs and calls write the thesis files.
+[variants.fresh_near_gap_brain]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.bias_mode = "THESIS"
+strategy.thesis_file = "data/research/theses/brain_theses.json"
+strategy.min_stop_spreads = 10.0
+management.partial_r = 3.0
+management.partial_fraction = 0.3333333333333333
+
+[variants.fresh_near_gap_agree]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.bias_mode = "THESIS"
+strategy.thesis_file = "data/research/theses/agree_theses.json"
+strategy.min_stop_spreads = 10.0
+management.partial_r = 3.0
+management.partial_fraction = 0.3333333333333333
