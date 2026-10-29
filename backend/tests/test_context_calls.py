@@ -78,3 +78,77 @@ def test_the_context_variant_trades_only_inside_the_calls():
     same = {"bias_mode", "thesis_file", "min_stop_spreads"}
     assert {k: v for k, v in focus.strategy.model_dump().items() if k not in same} == \
            {k: v for k, v in partial.strategy.model_dump().items() if k not in same}
+
+
+# ── the scorecard (Requirement 32.6, task 381) ──
+WEEK_OPEN = datetime(2026, 11, 1, 22, tzinfo=UTC)                          # Sunday 17:00 New York (EST)
+DAYS = [(100, 101, 99, 100.5), (100.5, 103, 98, 102), (102, 105.5, 101, 104), (104, 104.5, 102, 103),
+        (103, 104, 102.5, 103.5)]                                           # Monday to Friday: open, high, low, close
+
+
+def week_bars(days=DAYS):
+    """Hourly bars from the week's open: each trading day flat at its open, its low at 05:00, its high at 10:00
+    (hours from 17:00 New York), and its close in the last hour."""
+    import pandas as pd
+    from datetime import timedelta
+
+    rows = []
+    for d, (o, h, lo, c) in enumerate(days):
+        for k in range(24):
+            t = WEEK_OPEN + timedelta(days=d, hours=k)
+            close = c if k == 23 else o
+            rows.append((t, o, h if k == 10 else max(o, close), lo if k == 5 else min(o, close), close))
+    return pd.DataFrame(rows, columns=["time", "open", "high", "low", "close"])
+
+
+def test_a_call_is_scored_on_its_weeks_close_and_its_contexts_first_end():
+    from agent.context_calls import score_call
+
+    after = datetime(2026, 11, 7, tzinfo=UTC)
+    call = Call("EURUSD", "2026-11-02", "BULLISH", draw=105, protected=95, made_at="2026-10-31T12:00:00+00:00")
+    s = score_call(call, week_bars(), after)
+    assert (s["week_open"], s["week_close"], s["hit"], s["final"]) == (100, 103.5, True, True)
+    assert s["outcome"] == "delivered" and s["at"].startswith("2026-11-04T08:00")      # Wednesday, hour 10
+    assert s["walk"] == 0.5
+    tight = Call("EURUSD", "2026-11-02", "BULLISH", draw=105, protected=99.5, made_at="2026-10-31T12:00:00+00:00")
+    wick = score_call(tight, week_bars(), after)                       # Tuesday's low 98 is a wick: no end
+    assert wick["outcome"] == "delivered"
+    closed = list(DAYS)
+    closed[1] = (100.5, 103, 98, 99)                                   # Tuesday closes at 99, below 99.5
+    broken = score_call(tight, week_bars(closed), after)
+    assert broken["outcome"] == "invalidated" and broken["at"].startswith("2026-11-03T22:00")   # Tuesday 17:00 EST
+    running = score_call(call, week_bars()[:30], datetime(2026, 11, 3, 4, tzinfo=UTC))
+    assert running["final"] is False and running["outcome"] == "open" and running["hit"] is True
+
+
+def test_the_scorecard_sets_the_context_agent_against_the_controls(tmp_path):
+    from agent.context_calls import paper_r
+    from algo_research.replay.context import BREAK_EVEN, ContextApp
+
+    def trades(*rows):
+        return [{"instrument": i, "placed_at": t, "filled_at": t if r is not None else None, "net_r": r}
+                for i, t, r in rows]
+
+    (tmp_path / "context.json").write_text(json.dumps(trades(("EURUSD", "2026-11-03T08:00:00+00:00", 2.5))))
+    (tmp_path / "control.json").write_text(json.dumps(trades(
+        ("EURUSD", "2026-11-02T09:00:00+00:00", -1.0), ("EURUSD", "2026-11-05T14:00:00+00:00", 0.5),
+        ("EURUSD", "2026-11-05T15:00:00+00:00", None), ("GBPUSD", "2026-11-05T14:00:00+00:00", -1.0),
+        ("EURUSD", "2026-11-09T14:00:00+00:00", -1.0))))
+    assert paper_r(tmp_path / "control.json", "EURUSD", WEEK_OPEN, datetime(2026, 11, 6, 22, tzinfo=UTC)) == (2, -0.5)
+    app = ContextApp(tmp_path / "calls.json", tmp_path / "theses.json", clock=lambda: datetime(2026, 11, 7, tzinfo=UTC),
+                     bars=lambda inst, a, b: week_bars(),
+                     paper={"context": tmp_path / "context.json", "partial": tmp_path / "none.json",
+                            "control": tmp_path / "control.json"})
+    book = app.book()
+    book.put(Call("EURUSD", "2026-11-02", "BULLISH", 105, 95, made_at="2026-10-31T12:00:00+00:00"))
+    book.put(Call("GBPUSD", "2026-11-02", "NONE", made_at="2026-10-31T12:00:00+00:00"))
+    book.put(Call("US500", "2026-11-09", "BEARISH", 7600, 7900, made_at="2026-11-06T12:00:00+00:00"))   # not open
+    card = app.scorecard()
+    assert [w["week"] for w in card["weeks"]] == ["2026-11-02"]
+    assert [r["call"]["instrument"] for r in card["weeks"][0]["rows"]] == ["EURUSD", "GBPUSD"]
+    t = card["totals"]
+    assert (t["calls"], t["final"], t["hits"], t["hit_rate"], t["delivered"]) == (1, 1, 1, 1.0, 1)
+    assert t["agents"] == {"context": {"n": 1, "r": 2.5}, "partial": {"n": 0, "r": 0.0}, "control": {"n": 2, "r": -0.5}}
+    assert t["break_even"] == BREAK_EVEN
+    with pytest.raises(LookupError):
+        ContextApp(tmp_path / "calls.json", tmp_path / "theses.json").scorecard()

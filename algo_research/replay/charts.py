@@ -175,6 +175,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.charts.watchlist_for(self._query()))
         elif path == "/api/context":
             self._answer(lambda: self.charts.context.view(self._query()))
+        elif path == "/api/context/scorecard":
+            self._answer(lambda: self.charts.context.scorecard(self._query()))
         elif path.startswith("/api/watch/"):
             self.app = self.charts.watch
             watch_mod._Handler.do_GET(self)
@@ -228,8 +230,11 @@ def serve(config: Path, port: int = 8765, browser: bool = True, instrument: str 
         q = watch.live_source().quote(instrument)
         return None if q is None else (q[1] + q[2]) / 2
 
+    def bars(instrument: str, start, end):                             # the terminal's M15, for the scorecard
+        return watch.live_source().rates(instrument, Timeframe.M15, start, end)
+
     charts = ChartsApp(snapshot, journal_root or JOURNAL_DIR, research.slices.explore, watch, default=instrument,
-                       order=research.instruments, context=ContextApp(quote=quote))
+                       order=research.instruments, context=ContextApp(quote=quote, bars=bars))
     server = make_charts_server(charts, port=port)
     url = f"http://127.0.0.1:{server.server_address[1]}{page}"
     print(f"charts at {url}: You (the blind replay) at /, Engine (the watch) at /engine, Context at /context. "

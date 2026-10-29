@@ -105,3 +105,46 @@
   $("weeks").onchange = (e) => load(e.target.value);
   load(new URLSearchParams(location.search).get("week"));
 })();
+
+// The scorecard (Requirement 32.6): every called week, its close against the call, the context's outcome, and the
+// paper agents' R in that market and week: the context agent against the two controls.
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const esc = (t) => String(t == null ? "" : t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const digits = (x) => (x < 10 ? 5 : x < 500 ? 3 : x < 5000 ? 2 : 1);
+  const fmt = (x) => (x == null ? "—" : Number(x).toFixed(digits(Math.abs(x))));
+  const r = (a) => (a && a.n ? `<span class="${a.r >= 0 ? "up" : "down"}">${a.r >= 0 ? "+" : ""}${a.r.toFixed(2)}R</span> <span class="muted">(${a.n})</span>` : '<span class="muted">—</span>');
+  const when = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false }) : "");
+  const side = (s) => (s === "BULLISH" ? '<span class="up">Bullish</span>' : s === "BEARISH" ? '<span class="down">Bearish</span>' : "None");
+
+  async function load() {
+    const box = $("score");
+    const res = await fetch("/api/context/scorecard");
+    const d = await res.json();
+    if (!res.ok) { box.innerHTML = `<span class="muted">${esc(d.error)}</span>`; return; }
+    if (!d.weeks.length) { box.innerHTML = '<span class="muted">No week with calls has opened yet.</span>'; return; }
+    const t = d.totals, be = t.break_even;
+    const rate = t.hit_rate == null ? "—" : `${Math.round(t.hit_rate * 100)}%`;
+    let html = `<p><b>${t.hits}/${t.final}</b> finished calls closed on their side (${rate}; the costs need ${Math.round(be[0] * 100)}–${Math.round(be[1] * 100)}%).
+      Delivered ${t.delivered}, invalidated ${t.invalidated}, of ${t.calls} with a side.
+      Paper R on the called markets: context ${r(t.agents.context)}, partial ${r(t.agents.partial)}, control ${r(t.agents.control)}.</p>`;
+    for (const w of d.weeks) {
+      html += `<h3 style="margin-top:14px">Week of ${esc(w.week)}</h3><table class="calls"><thead><tr><th>Market</th><th>Call</th>
+        <th class="num">Week open → close</th><th>Closed its way</th><th>Context</th><th class="num">Walk odds</th>
+        <th>Context agent</th><th>Partial</th><th>Control</th></tr></thead><tbody>`;
+      for (const x of w.rows) {
+        const c = x.call;
+        if (x.error) { html += `<tr><td><b>${c.instrument}</b></td><td colspan="8" class="msg err">${esc(x.error)}</td></tr>`; continue; }
+        const hit = x.hit == null ? "—" : `${x.hit ? '<span class="up">yes</span>' : '<span class="down">no</span>'}${x.final ? "" : ' <span class="muted">(so far)</span>'}`;
+        const ctx = x.outcome ? `${x.outcome} ${when(x.at)}` : "—";
+        html += `<tr><td><b>${c.instrument}</b></td><td>${side(c.side)}${c.side !== "NONE" ? ` <span class="muted">${fmt(c.draw)} / ${fmt(c.protected)}</span>` : ""}${c.late ? '<span class="tag late">late</span>' : ""}</td>
+          <td class="num">${fmt(x.week_open)} → ${fmt(x.week_close)}</td><td>${hit}</td><td>${esc(ctx)}</td>
+          <td class="num">${x.walk == null ? "—" : Math.round(x.walk * 100) + "%"}</td>
+          <td>${r(x.agents.context)}</td><td>${r(x.agents.partial)}</td><td>${r(x.agents.control)}</td></tr>`;
+      }
+      html += "</tbody></table>";
+    }
+    box.innerHTML = html;
+  }
+  window.ContextScore = { load };
+})();

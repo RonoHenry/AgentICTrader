@@ -680,7 +680,9 @@ def test_a_day_without_a_thesis_orders_nothing(tmp_path):
 
 # ── the trader's weekly context ends at its draw or a close beyond its protected swing (context-engine Req 32.3) ──
 def _context(tmp_path, **entry):
-    path = tmp_path / "context.json"
+    # A file per entry: the thesis reader caches by modification time and size, which two quick same-size writes
+    # to one file can share.
+    path = tmp_path / f"context-{len(list(tmp_path.glob('context-*.json')))}.json"
     entry = {"side": "BULLISH", "draw": 1.1030, "protected": 1.0980, "since": "2026-01-11T22:00:00+00:00", **entry}
     path.write_text(json.dumps({"EURUSD": {"2026-01-14": entry}}), encoding="utf-8")
     return str(path)

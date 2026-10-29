@@ -194,6 +194,9 @@ def test_the_context_page_keeps_a_call_per_market_and_week_and_writes_the_thesis
         this_week = get("/api/context?week=2026-10-26")
         assert this_week["open"] and "2026-10-26" in this_week["weeks"]
         assert post({"week": "2026-10-26", "instrument": "US500", "side": "NONE"})["call"]["late"]
+        with pytest.raises(urllib.error.HTTPError) as err:
+            get("/api/context/scorecard")                                    # no terminal: nothing to score on
+        assert err.value.code == 409
         for bad in ({"week": "2026-11-02", "instrument": "EURUSD", "side": "BULLISH", "draw": 1.09, "protected": 1.12},
                     {"week": "2026-11-02", "instrument": "BTCUSDT", "side": "NONE"},
                     {"week": "2026-11-03", "instrument": "EURUSD", "side": "NONE"}):

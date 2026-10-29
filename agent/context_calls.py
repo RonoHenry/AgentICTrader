@@ -21,12 +21,16 @@ from pathlib import Path
 from typing import Iterable, Optional
 from zoneinfo import ZoneInfo
 
-__all__ = ["CALLS_FILE", "SIDES", "THESIS_FILE", "Call", "ContextBook", "thesis_table", "trading_dates",
-           "week_monday", "week_open"]
+__all__ = ["CALLS_FILE", "PAPER_FILES", "SIDES", "THESIS_FILE", "Call", "ContextBook", "paper_r", "score_call",
+           "thesis_table", "trading_dates", "week_close", "week_monday", "week_open"]
 
 REPO = Path(__file__).resolve().parents[1]
 CALLS_FILE = REPO / "data" / "journal" / "context" / "calls.json"
 THESIS_FILE = REPO / "data" / "research" / "theses" / "context_theses.json"
+#: The paper agents the scorecard compares (Requirement 32.6): the context agent and the two controls.
+PAPER_FILES = {"context": REPO / "data" / "paper_trades_fresh_near_gap_context.json",
+               "partial": REPO / "data" / "paper_trades_fresh_near_gap_partial.json",
+               "control": REPO / "data" / "paper_trades_fresh_near_gap.json"}
 SIDES = ("BULLISH", "BEARISH", "NONE")
 _NY = ZoneInfo("America/New_York")
 
@@ -41,6 +45,11 @@ def week_monday(t: datetime) -> date:
 def week_open(monday: date) -> datetime:
     """When the week of ``monday`` opens: the Sunday before, at 17:00 New York (in UTC)."""
     return datetime.combine(monday - timedelta(days=1), time(17), _NY).astimezone(timezone.utc)
+
+
+def week_close(monday: date) -> datetime:
+    """When the week of ``monday`` closes: Friday at 17:00 New York (clocks change on Sundays before the open)."""
+    return week_open(monday) + timedelta(days=5)
 
 
 def trading_dates(monday: date) -> list[str]:
@@ -108,6 +117,67 @@ def thesis_table(calls: Iterable[Call]) -> dict:
         for day in trading_dates(date.fromisoformat(call.week)):
             table.setdefault(call.instrument, {})[day] = entry
     return table
+
+
+def score_call(call: Call, bars, now: datetime) -> dict:
+    """One call scored on its week's bars (Requirement 32.6): ``bars`` is a DataFrame of ``time`` (UTC), open, high,
+    low and close covering the week. It gives:
+    - the week's open and its close (the last close so far while the week runs), and whether it closed on the call's
+      side;
+    - the context's outcome from ``since``: delivered (the draw traded), invalidated (a New York D1 close beyond the
+      protected swing) or open, the first of them and when;
+    - a random walk's chance of reaching the draw before the protected swing from the price at ``since``."""
+    import pandas as pd
+
+    opens, closes = call.opens, week_close(date.fromisoformat(call.week))
+    t = pd.to_datetime(bars["time"], utc=True) if len(bars) else pd.Series([], dtype="datetime64[ns, UTC]")
+    week = bars[(t >= opens) & (t < closes)]
+    out = {"final": now >= closes, "week_open": None, "week_close": None, "hit": None, "outcome": None, "at": None,
+           "start_price": None, "walk": None}
+    if week.empty:
+        return out
+    out["week_open"], out["week_close"] = float(week["open"].iloc[0]), float(week["close"].iloc[-1])
+    if call.side == "NONE":
+        return out
+    s = 1 if call.side == "BULLISH" else -1
+    out["hit"] = (out["week_close"] - out["week_open"]) * s > 0
+    since = datetime.fromisoformat(call.since)
+    tw = t[week.index]
+    path = week[tw >= since]
+    if path.empty:
+        return out
+    p0 = float(path["open"].iloc[0])
+    out["start_price"] = p0
+    span = (call.draw - call.protected) * s
+    out["walk"] = min(1.0, max(0.0, (p0 - call.protected) * s / span))
+    reached = path[(path["high"] >= call.draw) if s > 0 else (path["low"] <= call.draw)]
+    delivered = pd.Timestamp(t[reached.index[0]]) if len(reached) else None
+    day = (t[path.index].dt.tz_convert(_NY) + pd.Timedelta(hours=7)).dt.date
+    invalidated = None
+    for d, bars_of_day in path.groupby(day.to_numpy(), sort=True):
+        end = datetime.combine(d, time(17), _NY).astimezone(timezone.utc)
+        c = float(bars_of_day["close"].iloc[-1])
+        if end <= now and (c - call.protected) * s < 0:
+            invalidated = pd.Timestamp(end)
+            break
+    if delivered is not None and (invalidated is None or delivered < invalidated):
+        out["outcome"], out["at"] = "delivered", delivered.isoformat()
+    elif invalidated is not None:
+        out["outcome"], out["at"] = "invalidated", invalidated.isoformat()
+    else:
+        out["outcome"] = "expired" if out["final"] else "open"
+    return out
+
+
+def paper_r(path: Path, instrument: str, start: datetime, end: datetime) -> tuple[int, float]:
+    """A paper agent's filled trades in ``instrument`` placed in [start, end): how many, and their R net."""
+    p = Path(path)
+    if not p.exists():
+        return 0, 0.0
+    picked = [t for t in json.loads(p.read_text(encoding="utf-8"))
+              if t.get("instrument") == instrument and t.get("filled_at") and t.get("net_r") is not None
+              and start <= datetime.fromisoformat(t["placed_at"]) < end]
+    return len(picked), round(sum(float(t["net_r"]) for t in picked), 3)
 
 
 def _write(path: Path, data) -> None:

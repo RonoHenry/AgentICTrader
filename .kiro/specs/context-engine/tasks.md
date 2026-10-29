@@ -478,8 +478,13 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
     - Its agent started 2026-10-29 beside the two controls; DXY is called and scored but not traded, as in the controls.
   - **Validates: Requirement 32.5**
 
-- [ ] 381. The weekly scorecard (Requirement 32.6)
+- [x] 381. The weekly scorecard (Requirement 32.6)
   - `GET /api/context/scorecard` and the page's table: each called week and market, scored on the terminal's bars and the paper agents' records.
+  - **Done 2026-10-29.**
+    - `agent.context_calls.score_call` scores a call on its week's M15 bars from the terminal: its open and close, whether it closed on the call's side, the context's first end and a random walk's odds from `since`.
+    - `paper_r` gives each paper agent's R in that market and week. `ContextApp.scorecard` totals the finished calls' hit rate against `BREAK_EVEN` (57-60%).
+    - Tests: `test_a_call_is_scored_on_its_weeks_close_and_its_contexts_first_end` and `test_the_scorecard_sets_the_context_agent_against_the_controls`.
+    - The order-intent context tests write a thesis file per entry. The reader caches by modification time and size, which two quick same-size writes can share.
   - **Validates: Requirement 32.6**
 
 ---
