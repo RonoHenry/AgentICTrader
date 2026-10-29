@@ -36,12 +36,17 @@
     - The last closed FX day closes at the last price.
     - Tests: `test_algo_mind_senses.py` (3), including live = training on mid-month and month-turn weeks, and nothing read from the week on.
 
-- [ ] 384. The brief and the thesis files (Requirements 4.1, 5.1)
+- [x] 384. The brief and the thesis files (Requirements 4.1, 5.1)
   - **384a. RED:**
     - a brief holds every market's state, probability, call, analogs and provisional flag;
     - it writes the brain's thesis file with its calls for every trading date of the week;
     - the agreement's file holds only the markets where the trader and the brain agree, with the trader's levels.
   - **384b. GREEN:** `algo_mind/brief.py`; `python -m algo_mind brief --week`.
+  - **Done 2026-10-29.**
+    - Tests: `test_algo_mind_brief.py` (2).
+    - The first real brief, for the week of 2026-11-02, was made Thursday 29 Oct and is provisional (last day 28 Oct).
+      - **Calls:** DXY, EURUSD, GBPUSD, US500, US30 and GER40 BULLISH; XAUUSD BEARISH; US100 and UK100 NONE.
+      - DXY and the euro and pound all up is the brain reading each market alone. It needs re-running after Friday's close.
 
 - [ ] 385. The brain on the context page (Requirements 4.2-4.3)
   - The brain's call, probability and the analogs' up share beside the trader's call. The scorecard scores the brain and the agreement too.

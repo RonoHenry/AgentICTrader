@@ -45,8 +45,21 @@ def main() -> None:
         print(f"{m['version']}: {m['weeks']:,} weeks {m['train_start']} to {m['train_end']} (exclusive), "
               f"{len(m['markets'])} markets; thirds at {brain.lo:.4f} / {brain.hi:.4f}; commit {m['commit']}")
     elif args.command == "brief":
+        import json
+
+        from agent.context_calls import ContextBook
         from algo_mind.brief import write_brief
-        print(write_brief(pd.Timestamp(args.week), args.version))
+        path = write_brief(pd.Timestamp(args.week), args.version, book=ContextBook())
+        brief = json.loads(path.read_text(encoding="utf-8"))
+        print(f"Week of {brief['week']}, brain {brief['version']} (thirds {brief['thresholds'][0]:.4f} / "
+              f"{brief['thresholds'][1]:.4f}), made {brief['made_at']}:")
+        for r in brief["rows"]:
+            memory = r.get("analogs") or {}
+            share = memory.get("share_up")
+            print(f"  {r['market']:7} {r['call']:8} p={r['p'] if r['p'] is not None else '–'}"
+                  f"  analogs up {'–' if share is None else f'{share:.0%}'}"
+                  f"  last day {r.get('last_day')}{'  PROVISIONAL' if r['provisional'] else ''}")
+        print(path)
 
 
 if __name__ == "__main__":
