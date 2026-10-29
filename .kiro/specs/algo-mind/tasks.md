@@ -12,13 +12,17 @@
 
 ## Tasks
 
-- [ ] 382. The brain and its versions (Requirement 2)
+- [x] 382. The brain and its versions (Requirement 2)
   - **382a. RED:**
     - a version fitted twice on the same rows gives the same probabilities;
     - its thresholds are its training probabilities' thirds;
     - its meta holds the window, features, settings, thresholds and commit;
     - a loaded version predicts as the fitted one.
   - **382b. GREEN:** `algo_mind/brain.py`; `python -m algo_mind fit` fits v1 on Yahoo's weeks before 2023-01-01.
+  - **Done 2026-10-29.**
+    - v1: 13,092 weeks, 1981-04-06 to 2022, nine markets, thirds at 0.4812 and 0.5187.
+    - The states are cached at `data/algo_mind/states_to_2022.parquet`.
+    - Tests: `test_algo_mind_brain.py` (2).
 
 - [ ] 383. The live senses and memory (Requirements 1.2-1.3, 3)
   - **383a. RED:**
