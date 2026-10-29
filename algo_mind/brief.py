@@ -57,7 +57,7 @@ def write_agree_theses(book: ContextBook, briefs: Path = BRIEFS, out: Path = AGR
     return Path(out)
 
 
-def write_brief(monday: pd.Timestamp, version: str = "v1", now: Optional[datetime] = None,
+def write_brief(monday: pd.Timestamp, version: Optional[str] = None, now: Optional[datetime] = None,
                 markets: tuple[str, ...] = MARKETS, fetcher: Callable[[str, datetime], dict] = None,
                 root: Optional[Path] = None, name: Optional[str] = None,
                 book: Optional[ContextBook] = None) -> Path:
@@ -67,6 +67,9 @@ def write_brief(monday: pd.Timestamp, version: str = "v1", now: Optional[datetim
     fetcher = fetcher or (lambda m, t: fetch_live(m, t))
     models, briefs = (Path(root) / "models", Path(root) / "briefs") if root else (MODELS, BRIEFS)
     brain_out = Path(root) / "brain_theses.json" if root else BRAIN_THESES
+    if version is None:                                       # the version in use, by the ledger (Requirement 7.2)
+        from algo_mind.ledger import Ledger
+        version = Ledger(models=models).in_use()
     brain = load_version(version, models)
     monday = pd.Timestamp(monday).normalize()
     rows = []
