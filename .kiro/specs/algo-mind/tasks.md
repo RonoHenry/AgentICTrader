@@ -65,8 +65,19 @@
     - Their records (`data/paper_trades_fresh_near_gap_brain.json`, `..._agree.json`) join the scorecard's agents.
     - The two paper agents started 2026-10-29 on the controls' eight markets. With the brain's first calls dated 2 November, they order nothing before then.
 
-- [ ] 387. The bench and the third look (Requirements 6, 7.3)
+- [x] 387. The bench and the third look (Requirements 6, 7.3)
   - The random-walk false-alarm rate and the planted effect's detection rate at H-Y's sample sizes; the brain's calls on the readable weeks of 2026.
+  - **Done 2026-10-29** (`algo_mind/bench.py`, tests `test_algo_mind_bench.py` (2)).
+    - **Random walks** (each market's dates, volatility and day ranges, no drift), 20 runs: the judged thirds averaged +0.27 pts (sd 1.31).
+      - None reached H-Y's +2.9, and 1 in 20 passed H-Y's rule.
+      - The walks move independently, while real markets move together and have fat tails, so the real chance spread is wider.
+    - **A planted 5-point lean** (up in the bottom third of the 26-week range, down in the top third), 10 runs: +4.59 pts (sd 0.98), and every run passed.
+      - Its absolute hit rate was only 53-55%, so a real, detectable weekly lean of 5 points still falls short of the 57-60% the trades need.
+    - **Third look** (brain v1 on the 261 whole weeks its live senses read, 2026-04-06 to 2026-10-19): thirds +0.2 pts [−9.0, +9.2] (174 calls), every week +0.9 [−5.8, +7.8]. Too few weeks to tell.
 
-- [ ] 388. The learning ledger (Requirement 7.1-7.2)
+- [x] 388. The learning ledger (Requirement 7.1-7.2)
   - A refit is a candidate; it's judged on the weeks after it against the version in use, and every refit and judgement is logged.
+  - **Done 2026-10-29** (`algo_mind/ledger.py`, tests `test_algo_mind_ledger.py` (2)).
+    - `python -m algo_mind refit --version vN` fits a candidate on the history before 2023 plus the live weeks since 2025.
+    - `python -m algo_mind judge --candidate vN` compares it with the version in use, on the weeks after its window (at least 150 calls each). It adopts, keeps or waits.
+    - The brief uses the version in use. The ledger opens with v1's fit and adoption.
