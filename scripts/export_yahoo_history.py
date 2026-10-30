@@ -28,19 +28,29 @@ FIRST = "1980-01-01"
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--end", default="2023-01-01", help="exclusive; the test window starts here")
-    parser.add_argument("--name", default="yahoo-daily-to-2022")
+    parser.add_argument("--name", default=None, help="default: yahoo-daily-to-2022 (nine), yahoo-broad-to-2022")
+    parser.add_argument("--universe", choices=["nine", "broad"], default="nine",
+                        help="broad: the markets beyond the nine (algo_research/universe.py, H-AA)")
     args = parser.parse_args()
+    symbols = SYMBOLS
+    if args.universe == "broad":
+        from algo_research.universe import BROAD as symbols
+    name = args.name or ("yahoo-broad-to-2022" if args.universe == "broad" else "yahoo-daily-to-2022")
     now = datetime.now(timezone.utc)
-    raw = REPO / "data" / "research" / "external" / f"yahoo-{now:%Y-%m-%d}"
-    out = REPO / "data" / "research" / "snapshots" / args.name
+    raw = REPO / "data" / "research" / "external" / f"yahoo-{args.universe}-{now:%Y-%m-%d}"
+    out = REPO / "data" / "research" / "snapshots" / name
     raw.mkdir(parents=True, exist_ok=True)
     out.mkdir(parents=True, exist_ok=True)
     start = datetime.fromisoformat(FIRST).replace(tzinfo=timezone.utc)
     end = datetime.fromisoformat(args.end).replace(tzinfo=timezone.utc)
     manifest = {"source": "Yahoo Finance chart API v8, interval 1d", "period": [FIRST, f"{args.end} exclusive"],
                 "fetched": now.isoformat(timespec="seconds"), "markets": {}}
-    for market, symbol in SYMBOLS.items():
-        data = fetch(symbol, start, end)
+    for market, symbol in symbols.items():
+        try:
+            data = fetch(symbol, start, end)
+        except Exception as e:                       # a symbol Yahoo doesn't serve is left out, and said so
+            print(market, symbol, "failed:", e, flush=True)
+            continue
         (raw / f"{market}.json").write_text(json.dumps(data), encoding="utf-8")
         frame = bars(data, args.end)
         frame.to_parquet(out / f"{market}_D1.parquet", index=False)

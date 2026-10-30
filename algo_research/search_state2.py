@@ -211,13 +211,13 @@ def widen(tables: dict[str, pd.DataFrame], macro: pd.DataFrame) -> pd.DataFrame:
         columns={"W1_body": "dxy_w1_body", "W1_pos": "dxy_w1_pos", "MN1_pd": "dxy_mn1_pd"})
     parts = []
     for market, t in tables.items():
-        partner, apart = PARTNER[market]
+        partner, apart = PARTNER.get(market, (None, False))     # H-AA's added markets have no partner
         p = get(partner)[["week", "took_hi", "took_lo", "mn_took_hi", "mn_took_lo", "w1_ret"]].add_prefix("p_")
         x = t.merge(dxy, on="week", how="left").merge(p, left_on="week", right_on="p_week", how="left")
         x["smt_w1"] = _smt(x["took_hi"], x["took_lo"], x["p_took_hi"].fillna(-1), x["p_took_lo"].fillna(-1), apart)
         x["smt_mn1"] = _smt(x["mn_took_hi"], x["mn_took_lo"], x["p_mn_took_hi"].fillna(-1),
                             x["p_mn_took_lo"].fillna(-1), apart)
-        x["rs_w1"] = x["w1_ret"] - np.where(apart, -1, 1) * x["p_w1_ret"].fillna(0)
+        x["rs_w1"] = (x["w1_ret"] - np.where(apart, -1, 1) * x["p_w1_ret"].fillna(0)) if partner else 0.0
         parts.append(x)
     t = pd.concat(parts, ignore_index=True).merge(macro, on="week", how="left")
     fill = {c: 0.0 for c in INTERMARKET + MACRO}

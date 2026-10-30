@@ -42,8 +42,9 @@ def bars(data: dict, end: str) -> pd.DataFrame:
     res = data["chart"]["result"][0]
     q = res["indicators"]["quote"][0]
     t = pd.to_datetime(res["timestamp"], unit="s", utc=True)
-    frame = pd.DataFrame({"time": t, "date": t.tz_convert(res["meta"]["exchangeTimezoneName"]).normalize()
-                          .tz_localize(None), **{k: q[k] for k in ("open", "high", "low", "close")}})
+    # the local wall time, then its day: a midnight skipped by a clock change (Brazil's) can't break it
+    frame = pd.DataFrame({"time": t, "date": t.tz_convert(res["meta"]["exchangeTimezoneName"]).tz_localize(None)
+                          .normalize(), **{k: q[k] for k in ("open", "high", "low", "close")}})
     frame = frame.dropna(subset=["open", "high", "low", "close"])
     return frame[frame["date"] < end].drop_duplicates("date", keep="last").reset_index(drop=True)
 
