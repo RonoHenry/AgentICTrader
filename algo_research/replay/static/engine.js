@@ -26,7 +26,7 @@ const TOOLS = [
   { type: "short", icon: "▼", title: "Short position: entry, stop, target (Alt+S)", key: "s" },
 ];
 const LAYERS = [["fractal", "Fractal + POI"], ["modelA", "Model A"], ["modelAFramed", "Model A: unswept C1s"], ["arrays", "Arrays"], ["pools", "Pools"],
-                ["profile", "Day bias & draw"], ["trend", "Trend"], ["chain", "Chain & stack"], ["crt", "CRT (H-N)"], ["sequence", "Setup"], ["candidates", "Candidates"],
+                ["profile", "Day bias & draw"], ["trend", "Trend"], ["chain", "Chain & stack"], ["crt", "CRT (H-N)"], ["sweep", "Sweep M1 (2R)"], ["sequence", "Setup"], ["candidates", "Candidates"],
                 ["orders", "Orders & trades"]];
 // The trader's trend (context-engine Requirement 23): the frames it is read on.
 const TREND_TFS = ["H1", "H4", "D1"];
@@ -41,6 +41,7 @@ const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, jo
             trendTf: Prefs.get("watch.trendTf", "H1"), trend: { rows: [], withheld: false, at: null },
             chain: { rows: [], withheld: false, at: null, smt: "" },
             crt: { rows: [], withheld: false, at: null, summary: null, reached: 0, develop: "" }, crtTarget: Prefs.get("watch.crtTarget", "5"), crtFilter: Prefs.get("watch.crtFilter", "all"),
+            sweep: { rows: [], withheld: false, at: null, summary: null, tested: "" },
             speed: 1, digits: 5, layers: Prefs.get("watch.layers", { arrays: true, pools: true, profile: true, sequence: true, orders: true }),
             arrayMode: Prefs.get("watch.arrayMode", "interval"), arrayVis: Prefs.get("watch.arrayVis", {}) };
 // The chart timeframes each array timeframe shows on by default (Requirement 14.3); the trader can change them.
@@ -52,6 +53,7 @@ if (S.layers.modelA === undefined) S.layers.modelA = true;      // new in 2026-1
 if (S.layers.fractal === undefined) S.layers.fractal = true;    // new in 2026-10-19: the trader's indicator
 if (S.layers.chain === undefined) S.layers.chain = true;        // new in 2026-10-24: the chain and the stack
 if (S.layers.crt === undefined) S.layers.crt = true;            // new in 2026-10-27: H-N, the trader's M15 CRT
+if (S.layers.sweep === undefined) S.layers.sweep = true;        // new in 2026-10-30: the M1 sweep model, 2R, no bias
 
 // ── the chart ─────────────────────────────────────────────────────────────
 const chart = LightweightCharts.createChart($("chart"), {
@@ -330,6 +332,7 @@ function paintEngine(ctx, size) {
   if (S.layers.trend) paintTrend(ctx, size, pal, text);
   if (S.layers.chain) paintChain(ctx, size, pal, text, line);
   if (S.layers.crt) paintCrt(ctx, size, pal, text, line);
+  if (S.layers.sweep) paintSweep(ctx, size, pal, text, line);
   ctx.restore();
 }
 // The trader's trend (context-engine Requirement 23): a strip along the chart's foot, one cell per closed candle of
@@ -470,6 +473,55 @@ function crtCard() {
     <div class="muted">C2 sweeps C1's M15 high or low and closes back inside; market at C3's first M1 bar; the stop beyond C2's wick;
       a third off at 3R and the rest to the fill on the 4R and 5R targets; out by 17:00 New York. Drawn at the menu's target.</div>
     <div class="hint">The test: ${esc(S.crt.develop)}.</div></div>`;
+}
+// The M1 sweep model without a bias (algo_research/sweep_m1.py, 2026-10-30): an M1 sweep of the day's M5 swings, a CISD
+// within 20 minutes, market at the next M1 open, the stop at the extreme, 2R. Each pool taken runs dashed from its swing
+// to the sweep, a dot marks the extreme and a short dotted line the CISD level; red is the risk, green the 2R target;
+// a dot marks the exit and the result follows it.
+function paintSweep(ctx, size, pal, text, line) {
+  if (S.sweep.withheld) { text("Sweep M1: hidden until you reveal", 6, 54, pal.muted); return; }
+  const W = size.width;
+  const kinds = { target: pal.good, stop: pal.bad, close: pal.muted };
+  for (const r of S.sweep.rows) {
+    const long = r.side > 0, legs = r.legs, end = r.net != null && legs.length ? legs[legs.length - 1].at : S.t;
+    const x0 = X(r.entry), x1 = Math.max(X(end), x0 + 4), xs = X(r.sweep), xe = X(r.extreme_at), xc = X(r.cisd);
+    if (!isFinite(x0) || !isFinite(x1) || x1 < 0 || x0 > W) continue;
+    const ey = Y(r.fill), sy = Y(r.stop), ty = Y(r.fill + (long ? 2 : -2) * r.risk);
+    if (!isFinite(ey) || !isFinite(sy)) continue;
+    ctx.fillStyle = rgba(hexOf(pal.bad), 0.10); ctx.fillRect(x0, Math.min(ey, sy), x1 - x0, Math.abs(sy - ey));
+    ctx.fillStyle = rgba(hexOf(pal.good), 0.07); ctx.fillRect(x0, Math.min(ey, ty), x1 - x0, Math.abs(ty - ey));
+    line(x0, ey, x1, ey, long ? pal.up : pal.bad, [], 1.5);
+    for (const p of r.pools) {
+      const xp = X(p.at);
+      if (isFinite(xp) && isFinite(xs)) line(xp, Y(p.price), xs, Y(p.price), pal.muted, [3, 3], 1);
+    }
+    if (isFinite(xe)) { ctx.fillStyle = long ? pal.up : pal.bad; ctx.beginPath(); ctx.arc(xe, Y(r.extreme), 3, 0, 2 * Math.PI); ctx.fill(); }
+    if (isFinite(xe) && isFinite(xc)) line(xe, Y(r.level), xc, Y(r.level), long ? pal.up : pal.bad, [1, 2], 1);
+    for (const leg of legs) {
+      ctx.fillStyle = kinds[leg.kind] || pal.muted; ctx.beginPath(); ctx.arc(X(leg.at), Y(leg.price), 3, 0, 2 * Math.PI); ctx.fill();
+    }
+    if (r.net != null) {
+      const ly = legs.length ? Y(legs[legs.length - 1].price) : ey, good = r.net > 0;
+      text(`${good ? "+" : ""}${r.net.toFixed(2)}R`, x1 + 4, ly + 4, good ? pal.good : r.net < 0 ? pal.bad : pal.muted);
+    }
+  }
+}
+async function loadSweep() {
+  if (!S.status || !S.layers.sweep) { S.sweep = { rows: [], withheld: false, at: null, summary: null, tested: "" }; return; }
+  const key = `${Math.floor(S.t / 60)}|${!!(S.state && S.state.withheld)}`;   // its exits move by the minute
+  if (S.sweep.at === key) return;
+  const got = await api(`/api/watch/sweep?t=${S.t}`);
+  S.sweep = { rows: got.rows || [], withheld: !!got.withheld, at: key, summary: got.summary || null, tested: got.tested || "" };
+}
+function sweepCard() {
+  if (S.sweep.withheld) return `<div class="card"><b>Sweep M1 (2R)</b><div class="muted">Hidden: this session is blind.</div></div>`;
+  const rows = S.sweep.rows, m = S.sweep.summary || { closed: 0, total: 0, wins: 0, mirror: 0, longs: 0 };
+  const signed = (v) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}R`;
+  return `<div class="card"><b>Sweep M1 (2R)</b>: ${rows.length} trade(s) so far in this session, ${m.longs} long and ${rows.length - m.longs} short.
+    <div>${m.closed} closed: <b>${signed(m.total)}</b>, ${m.wins} reached 2R · the mirror (same minute, same stop, other side) ${signed(m.mirror)}</div>
+    <div class="muted">No bias: every M1 sweep of the day's M5 swings that closes back through the run into it (CISD) within
+      20 minutes; market at the next M1 open, the stop at the sweep's extreme, out at 2R or the stop, or by 17:00 New York.</div>
+    <div class="hint">The test: ${esc(S.sweep.tested)}.</div></div>`;
 }
 // The chain and the stack at the latest D1 close, in words: each frame's read, the links and the thirteen votes.
 const VOTE_NAMES = { "own-MN1": "MN1 own", "own-W1": "W1 own", "own-D1": "D1 own", "H-K": "chain", profile: "candle profile",
@@ -750,7 +802,7 @@ async function loadBars(fit) {
 }
 async function loadState() {
   S.state = (await api(`/api/watch/state?t=${S.t}`)).state;
-  await loadModelA(); await loadTrend(); await loadChain(); await loadCrt();
+  await loadModelA(); await loadTrend(); await loadChain(); await loadCrt(); await loadSweep();
   await fractal.tick();
   renderFractal();
   Shell.refresh("t=" + S.t);
@@ -776,7 +828,7 @@ async function advance(dt) {
     const got = (await api(`/api/watch/bars?tf=${S.tf}&until=${S.t}&since=${last ? last.time : S.t - 86400}`)).bars;
     try { for (const b of got) put(b); } catch (e) { await loadBars(false); }
     if (Math.floor(S.t / 900) !== Math.floor(before / 900)) await loadState();
-    else { await loadModelA(); await loadTrend(); await loadChain(); await loadCrt(); await fractal.tick(); renderFractal(); renderEngine(); renderLog(); refresh(); }
+    else { await loadModelA(); await loadTrend(); await loadChain(); await loadCrt(); await loadSweep(); await fractal.tick(); renderFractal(); renderEngine(); renderLog(); refresh(); }
     await noculus.tick();                               // the trader's own trades settle to the clock too
     renderHeader();
   } finally { S.busy = false; }
@@ -857,7 +909,7 @@ function buildLayers() {
     c.type = "checkbox"; c.checked = !!S.layers[key];
     c.onchange = () => act(async () => { S.layers[key] = c.checked; Prefs.set("watch.layers", S.layers); S.maAt = null;
                                          fractal.setOn(S.layers.fractal); await fractal.tick(); renderFractal();
-                                         await loadModelA(); await loadTrend(); await loadChain(); await loadCrt(); renderEngine(); renderLog(); refresh(); });
+                                         await loadModelA(); await loadTrend(); await loadChain(); await loadCrt(); await loadSweep(); renderEngine(); renderLog(); refresh(); });
     l.append(c, " " + name); box.append(l);
     if (key === "fractal") {
       const gear = document.createElement("button");
@@ -869,13 +921,13 @@ function buildLayers() {
   const ma = document.createElement("select");
   ma.id = "maSet"; ma.title = "Which of your frame sets Model A reads";
   ma.innerHTML = MA_SETS.map(([v, t]) => `<option value="${v}" ${S.maSet === v ? "selected" : ""}>${t}</option>`).join("");
-  ma.onchange = () => act(async () => { S.maSet = ma.value; Prefs.set("watch.maSet", ma.value); S.maAt = null; await loadModelA(); await loadTrend(); await loadChain(); await loadCrt(); renderEngine(); renderLog(); refresh(); });
+  ma.onchange = () => act(async () => { S.maSet = ma.value; Prefs.set("watch.maSet", ma.value); S.maAt = null; await loadModelA(); await loadTrend(); await loadChain(); await loadCrt(); await loadSweep(); renderEngine(); renderLog(); refresh(); });
   box.append(ma);
   const tr = document.createElement("select");
   tr.id = "trendTf"; tr.title = "The frame your trend is read on (the Trend layer)";
   tr.innerHTML = TREND_TFS.map((v) => `<option value="${v}" ${S.trendTf === v ? "selected" : ""}>trend: ${v}</option>`).join("");
   tr.onchange = () => act(async () => { S.trendTf = tr.value; Prefs.set("watch.trendTf", tr.value); S.trend.at = null;
-                                        await loadTrend(); await loadChain(); await loadCrt(); refresh(); });
+                                        await loadTrend(); await loadChain(); await loadCrt(); await loadSweep(); refresh(); });
   box.append(tr);
   const ct = document.createElement("select");
   ct.id = "crtTarget"; ct.title = "The target the CRT (H-N) layer draws";
@@ -987,6 +1039,7 @@ function renderEngine() {
   }
   if (S.layers.chain) html += chainCard();
   if (S.layers.crt) html += crtCard();
+  if (S.layers.sweep) html += sweepCard();
   const open = S.journal.find((r) => r.filled_at != null && r.filled_at <= S.t && (r.closed_at == null || r.closed_at > S.t));
   if (open) {
     const m = (S.status && S.status.management) || {}, partialDone = open.partial_at != null && open.partial_at <= S.t;
