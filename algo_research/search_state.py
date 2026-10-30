@@ -188,7 +188,8 @@ def _weights(t: pd.DataFrame) -> np.ndarray:
     return w
 
 
-def fit_and_call(fit: pd.DataFrame, judged: pd.DataFrame, kind: str = "gbm") -> tuple[pd.DataFrame, pd.DataFrame, object]:
+def fit_and_call(fit: pd.DataFrame, judged: pd.DataFrame, kind: str = "gbm",
+                 features: tuple = FEATURES) -> tuple[pd.DataFrame, pd.DataFrame, object]:
     """The model fitted on ``fit`` (weeks with a direction), its probabilities and calls on both: up at or above the
     fitted probabilities' 67th percentile, down at or below the 33rd."""
     from sklearn.ensemble import HistGradientBoostingClassifier
@@ -198,7 +199,7 @@ def fit_and_call(fit: pd.DataFrame, judged: pd.DataFrame, kind: str = "gbm") -> 
     from sklearn.tree import DecisionTreeClassifier
 
     fit = fit[fit["up"] != 0].reset_index(drop=True)
-    x, y, w = fit[list(FEATURES)].to_numpy(float), (fit["up"] > 0).astype(int).to_numpy(), _weights(fit)
+    x, y, w = fit[list(features)].to_numpy(float), (fit["up"] > 0).astype(int).to_numpy(), _weights(fit)
     if kind == "gbm":
         model = HistGradientBoostingClassifier(**MODEL)
         model.fit(x, y, sample_weight=w)
@@ -212,7 +213,7 @@ def fit_and_call(fit: pd.DataFrame, judged: pd.DataFrame, kind: str = "gbm") -> 
     lo, hi = np.quantile(p_fit, [1 / 3, 2 / 3])
 
     def calls(t: pd.DataFrame) -> pd.DataFrame:
-        p = model.predict_proba(t[list(FEATURES)].to_numpy(float))[:, 1]
+        p = model.predict_proba(t[list(features)].to_numpy(float))[:, 1]
         call = np.where(p >= hi, 1, np.where(p <= lo, -1, 0))
         return t.assign(p=p, call=call, every=np.where(p >= 0.5, 1, -1))
 
