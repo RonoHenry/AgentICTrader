@@ -19,7 +19,7 @@ import pandas as pd
 
 from algo_research.search_state import FEATURES, FRAMES, FX, _Frame, build_frames, week_state
 
-__all__ = ["LIVE", "LIVE_FROM", "SYMBOLS", "bars", "fetch", "fetch_live", "live_days", "state_at"]
+__all__ = ["LIVE", "LIVE_FROM", "SYMBOLS", "bars", "fetch", "fetch_live", "live_days", "live_macro", "state_at"]
 
 REPO = Path(__file__).resolve().parents[1]
 LIVE = REPO / "data" / "algo_mind" / "live"
@@ -55,6 +55,20 @@ def fetch_live(market: str, now: Optional[datetime] = None, root: Path = LIVE) -
     root.mkdir(parents=True, exist_ok=True)
     (root / f"{market}.json").write_text(json.dumps(data), encoding="utf-8")
     return data
+
+
+def live_macro(now: Optional[datetime] = None, root: Path = LIVE, fetcher=None) -> Path:
+    """The macro and risk series (H-Z: the 10-year yield, the 3-month bill, the VIX) from 2025-01-01, their days
+    closed before today, kept as parquet in ``root`` the way ``search_state2.macro_table`` reads them."""
+    from algo_research.search_state2 import MACRO_SYMBOLS
+
+    now = now or datetime.now(timezone.utc)
+    fetcher = fetcher or fetch
+    root.mkdir(parents=True, exist_ok=True)
+    for name, symbol in MACRO_SYMBOLS.items():
+        d = bars(fetcher(symbol, LIVE_FROM, now), now.date().isoformat())
+        d.to_parquet(root / f"{name}_D1.parquet", index=False)
+    return root
 
 
 def live_days(data: dict, market: str, today: date) -> pd.DataFrame:

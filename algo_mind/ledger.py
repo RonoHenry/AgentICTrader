@@ -46,6 +46,19 @@ class Ledger:
         adopted = [e["version"] for e in self.entries() if e["action"] == "adopt"]
         return adopted[-1] if adopted else FIRST
 
+    def candidates(self) -> list[str]:
+        """Fitted versions not in use whose latest judgement didn't keep the version in use over them."""
+        current, verdict = self.in_use(), {}
+        fitted = []
+        for e in self.entries():
+            if e["action"] == "fit" and e["version"] not in fitted:
+                fitted.append(e["version"])
+            if e["action"] == "judge":
+                name = e.get("candidate_version") or e.get("candidate")
+                if isinstance(name, str):                    # the first v2 judgement logged only its score here
+                    verdict[name] = e["verdict"]
+        return [v for v in fitted if v != current and verdict.get(v) != "keep" and (self.models / v).is_dir()]
+
     def judge(self, candidate: str, states: pd.DataFrame, min_calls: int = 150) -> dict:
         """Judge ``candidate`` against the version in use on ``states``' weeks after the candidate's training window
         (states with a direction), log it, and adopt it if it does better there."""
@@ -53,7 +66,7 @@ class Ledger:
         cand, used = load_version(candidate, self.models), load_version(current, self.models)
         start = pd.Timestamp(cand.meta["train_end"])
         later = states[(states["week"] >= start) & (states["up"] != 0)].reset_index(drop=True)
-        result = {"candidate": candidate, "in_use_version": current, "weeks_from": str(start.date()),
+        result = {"candidate_version": candidate, "in_use_version": current, "weeks_from": str(start.date()),
                   "weeks": len(later)}
         scores = {}
         for name, brain in (("candidate", cand), ("in_use", used)):

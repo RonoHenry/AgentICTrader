@@ -21,9 +21,9 @@ import pandas as pd
 from agent.context_calls import ContextBook, _write, thesis_table, trading_dates
 from algo_mind.brain import MODELS, load_version
 from algo_mind.memory import analogs
-from algo_mind.sources import fetch_live, live_days, state_at
+from algo_mind.sources import LIVE, fetch_live, live_days, live_macro
+from algo_research.search_state2 import macro_table, own_state2_at, widen
 from algo_research.search_d1 import MARKETS
-from algo_research.search_state import FEATURES
 
 __all__ = ["AGREE_THESES", "BRAIN_THESES", "BRIEFS", "SIDES", "write_agree_theses", "write_brief"]
 
@@ -57,38 +57,67 @@ def write_agree_theses(book: ContextBook, briefs: Path = BRIEFS, out: Path = AGR
     return Path(out)
 
 
+def week_states(monday: pd.Timestamp, now: datetime, fetcher: Callable, macro_fetcher: Optional[Callable] = None,
+                live_root: Path = LIVE) -> tuple[dict, dict, dict]:
+    """Every market's widened state at the open of the week of ``monday`` (H-Z's: it holds H-Y's too), read from
+    the live senses, with whether each is provisional and each market's days."""
+    days_by, own, provisional = {}, {}, {}
+    for m in MARKETS:
+        try:
+            days_by[m] = live_days(fetcher(m, now), m, now.date())
+        except Exception:                                     # a market the feed can't give is left out
+            days_by[m] = pd.DataFrame(columns=["date", "open", "high", "low", "close"])
+        row, prov = own_state2_at(m, days_by[m], monday) if len(days_by[m]) else (None, True)
+        provisional[m] = prov
+        if row is not None:
+            own[m] = row
+    live_macro(now, live_root, macro_fetcher)
+    wide = widen({m: pd.DataFrame([own[m]]) for m in own}, macro_table(live_root)) if own else pd.DataFrame()
+    return {r["market"]: r for r in wide.to_dict("records")}, provisional, days_by
+
+
 def write_brief(monday: pd.Timestamp, version: Optional[str] = None, now: Optional[datetime] = None,
                 markets: tuple[str, ...] = MARKETS, fetcher: Callable[[str, datetime], dict] = None,
                 root: Optional[Path] = None, name: Optional[str] = None,
-                book: Optional[ContextBook] = None) -> Path:
-    """The brief for the week of ``monday``, and the thesis files. ``root`` holds the models, briefs and thesis
-    files together (tests); by default they are Algo Mind's and the research theses' folders."""
+                book: Optional[ContextBook] = None, candidates: Optional[tuple] = None,
+                macro_fetcher: Optional[Callable] = None) -> Path:
+    """The brief for the week of ``monday``: the version in use decides the calls, the candidates' calls ride
+    beside them; and the thesis files. ``root`` holds the models, briefs, live bars and thesis files together
+    (tests); by default they are Algo Mind's and the research theses' folders."""
+    from algo_mind.ledger import Ledger
+
     now = now or datetime.now(timezone.utc)
     fetcher = fetcher or (lambda m, t: fetch_live(m, t))
     models, briefs = (Path(root) / "models", Path(root) / "briefs") if root else (MODELS, BRIEFS)
+    live_root = Path(root) / "live" if root else LIVE
     brain_out = Path(root) / "brain_theses.json" if root else BRAIN_THESES
-    if version is None:                                       # the version in use, by the ledger (Requirement 7.2)
-        from algo_mind.ledger import Ledger
-        version = Ledger(models=models).in_use()
+    ledger = Ledger(Path(root) / "ledger.jsonl", models) if root else Ledger(models=models)
+    version = version or ledger.in_use()
     brain = load_version(version, models)
+    others = {v: load_version(v, models) for v in (ledger.candidates() if candidates is None else candidates)
+              if v != version}
     monday = pd.Timestamp(monday).normalize()
+    states, provisional, days_by = week_states(monday, now, fetcher, macro_fetcher, live_root)
     rows = []
     for market in markets:
-        days = live_days(fetcher(market, now), market, now.date())
-        state, provisional = state_at(market, days, monday)
+        state = states.get(market)
         if state is None:
             rows.append({"market": market, "call": "NONE", "p": None, "provisional": True,
                          "note": "not enough history for the state"})
             continue
-        called = brain.call(pd.DataFrame([state])).iloc[0]
-        memory = analogs(brain.train, state)
+        frame = pd.DataFrame([state])
+        called = brain.call(frame).iloc[0]
+        memory = analogs(brain.train, state, features=brain.features)
+        days = days_by[market]
         rows.append({"market": market, "p": round(float(called["p"]), 4), "call": SIDES[int(called["call"])],
-                     "provisional": provisional, "price": float(state["open"]),
+                     "provisional": provisional[market], "price": float(state["open"]),
                      "last_day": str(pd.Timestamp(days["date"].iat[-1]).date()) if len(days) else None,
                      "analogs": {"k": memory["k"], "share_up": memory["share_up"], "weeks": memory["weeks"][:5]},
-                     "state": {f: round(float(state[f]), 4) for f in FEATURES}})
+                     "state": {f: round(float(state[f]), 4) for f in brain.features},
+                     "candidates": {v: {"p": round(float(c["p"]), 4), "call": SIDES[int(c["call"])]}
+                                    for v, b in others.items() for c in [b.call(frame).iloc[0]]}})
     brief = {"week": monday.date().isoformat(), "version": version, "thresholds": [brain.lo, brain.hi],
-             "made_at": now.isoformat(timespec="seconds"), "rows": rows}
+             "candidates": sorted(others), "made_at": now.isoformat(timespec="seconds"), "rows": rows}
     briefs.mkdir(parents=True, exist_ok=True)
     path = briefs / f"{name or monday.date().isoformat()}.json"
     path.write_text(json.dumps(brief, indent=1), encoding="utf-8")

@@ -45,7 +45,8 @@
     const agree = mine && mine !== "NONE" && b.call !== "NONE" ? (mine === b.call ? ' <span class="tag" title="you agree">✓ agree</span>' : ' <span class="tag late" title="you differ">≠</span>') : "";
     const p = b.p == null ? "" : ` <span class="muted">${Math.round(b.p * 100)}%</span>`;
     const mem = b.share_up == null ? "" : `<div class="muted" style="font-size:11px">similar weeks up ${Math.round(b.share_up * 100)}%</div>`;
-    return s + p + agree + mem;
+    const other = Object.entries(b.candidates || {}).map(([v, c]) => `<div class="muted" style="font-size:11px">${esc(v)}: ${c.call === "NONE" ? "none" : c.call.toLowerCase()}${c.p == null ? "" : " " + Math.round(c.p * 100) + "%"}</div>`).join("");
+    return s + p + agree + mem + other;
   }
 
   function render() {
@@ -58,7 +59,7 @@
     $("weeks").innerHTML = d.weeks.map((w) => `<option value="${w}" ${w === d.week ? "selected" : ""}>${w === d.default ? "next · " : ""}${weekLabel(w)}</option>`).join("");
     const b = d.brain;
     $("brainState").innerHTML = b
-      ? `brain ${esc(b.version)} · made ${new Date(b.made_at).toLocaleString(undefined, NY)} New York${b.provisional ? ' · <span class="tag late">provisional: rerun after Friday’s close</span>' : ""}`
+      ? `brain ${esc(b.version)}${b.candidates && b.candidates.length ? ` (beside it: ${b.candidates.map(esc).join(", ")})` : ""} · made ${new Date(b.made_at).toLocaleString(undefined, NY)} New York${b.provisional ? ' · <span class="tag late">provisional: rerun after Friday’s close</span>' : ""}`
       : '<span class="muted">no brief for this week yet</span>';
     const notes = [...(b ? b.notes.map((n) => "Brain: " + n) : []), ...d.notes.map((n) => "Your calls: " + n)];
     $("notes").innerHTML = notes.map((n) => `<div class="msg warn">${esc(n)}</div>`).join("");

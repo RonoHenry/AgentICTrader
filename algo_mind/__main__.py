@@ -21,6 +21,7 @@ from algo_research.search_state import load, state_table
 
 ROOT = Path(__file__).resolve().parents[1] / "data" / "algo_mind"
 HISTORY = ROOT / "states_to_2022.parquet"
+HISTORY2 = ROOT / "states2_to_2022.parquet"
 
 
 def history_states(refresh: bool = False) -> pd.DataFrame:
@@ -33,12 +34,39 @@ def history_states(refresh: bool = False) -> pd.DataFrame:
     return table
 
 
+def history_states2(refresh: bool = False) -> pd.DataFrame:
+    """Every market's widened weekly states (H-Z) from Yahoo's history, cached."""
+    from algo_research.search_state2 import macro_table, state_table2, widen
+    if HISTORY2.exists() and not refresh:
+        return pd.read_parquet(HISTORY2)
+    table = widen({m: state_table2(m, load(m)) for m in MARKETS}, macro_table())
+    HISTORY2.parent.mkdir(parents=True, exist_ok=True)
+    table.to_parquet(HISTORY2, index=False)
+    return table
+
+
+def live_states2(now=None) -> pd.DataFrame:
+    """Every market's whole weeks read by the live senses since 2025, widened, with their outcomes."""
+    from datetime import datetime, timezone
+
+    from algo_mind.sources import LIVE, fetch_live, live_days, live_macro
+    from algo_research.search_state2 import macro_table, state_table2, widen
+    now = now or datetime.now(timezone.utc)
+    tables = {}
+    for m in MARKETS:
+        t = state_table2(m, live_days(fetch_live(m, now), m, now.date()))
+        tables[m] = t[t["week"] + pd.Timedelta(days=5) <= pd.Timestamp(now.date())]
+    live_macro(now, LIVE)
+    return widen(tables, macro_table(LIVE))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m algo_mind", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     fit = sub.add_parser("fit", help="fit a version of the brain on every week before 2023-01-01")
     fit.add_argument("--version", default="v1")
     fit.add_argument("--refresh", action="store_true", help="rebuild the cached states")
+    fit.add_argument("--widened", action="store_true", help="H-Z's widened state (structure, intermarket, macro)")
     brief = sub.add_parser("brief", help="the week's brief and thesis files")
     brief.add_argument("--week", required=True, help="the week's Monday, YYYY-MM-DD")
     brief.add_argument("--version", default=None, help="default: the version in use (the ledger's)")
@@ -64,10 +92,9 @@ def main() -> None:
               f"passing H-Y's rule: {out['passes'].mean():.0%} of {len(out)} runs")
         return
     if args.command in ("refit", "judge"):
-        from algo_mind.bench import live_states
         from algo_mind.ledger import Ledger
         ledger = Ledger()
-        states = pd.concat([history_states(), live_states()], ignore_index=True)
+        states = pd.concat([history_states2(), live_states2()], ignore_index=True)
         if args.command == "refit":
             end = states["week"].max() + pd.Timedelta(days=7)
             brain = fit_version(states, end, args.version, MODELS)
@@ -79,8 +106,15 @@ def main() -> None:
             print(json.dumps(v, indent=1, default=str))
         return
     if args.command == "third-look":
-        from algo_mind.bench import third_look
-        r = third_look(args.version)
+        import numpy as np
+
+        from algo_mind.brain import load_version
+        from algo_research.search_state import judge as judge_calls
+        t = live_states2()
+        called = load_version(args.version).call(t)
+        called = called.assign(every=np.where(called["p"] >= 0.5, 1, -1))
+        r = {"weeks": len(t), "first": str(t["week"].min().date()), "last": str(t["week"].max().date()),
+             "thirds": judge_calls(called), "every": judge_calls(called, "every")}
         for name in ("thirds", "every"):
             x = r[name]
             print(f"{name}: {x['calls']} calls, hit {x['hit']:.1%} vs drift {x['base']:.1%}, excess "
@@ -89,9 +123,15 @@ def main() -> None:
         print(f"{r['weeks']} weeks, {r['first']} to {r['last']}")
         return
     if args.command == "fit":
-        table = history_states(args.refresh)
-        brain = fit_version(table, FIT_END, args.version, MODELS)
+        from algo_mind.ledger import Ledger
+        if args.widened:
+            from algo_research.search_state2 import FEATURES as WIDE
+            brain = fit_version(history_states2(args.refresh), FIT_END, args.version, MODELS, WIDE)
+        else:
+            brain = fit_version(history_states(args.refresh), FIT_END, args.version, MODELS)
         m = brain.meta
+        Ledger().log("fit", version=m["version"], train_end=m["train_end"], weeks=m["weeks"],
+                     features=len(m["features"]))
         print(f"{m['version']}: {m['weeks']:,} weeks {m['train_start']} to {m['train_end']} (exclusive), "
               f"{len(m['markets'])} markets; thirds at {brain.lo:.4f} / {brain.hi:.4f}; commit {m['commit']}")
     elif args.command == "brief":

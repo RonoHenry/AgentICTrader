@@ -15,14 +15,15 @@ __all__ = ["K", "analogs"]
 K = 20
 
 
-def analogs(train: pd.DataFrame, state: dict, k: int = K) -> dict:
-    """The ``k`` training weeks nearest to ``state``: their market, week, direction and distance, and the share that
-    closed up."""
-    x = train[list(FEATURES)].to_numpy(float)
+def analogs(train: pd.DataFrame, state: dict, k: int = K, features=None) -> dict:
+    """The ``k`` training weeks nearest to ``state`` on ``features`` (H-Y's by default): their market, week,
+    direction and distance, and the share that closed up."""
+    features = list(features or FEATURES)
+    x = train[features].to_numpy(float)
     mu, sd = x.mean(axis=0), x.std(axis=0)
     sd[sd == 0] = 1.0
     z = (x - mu) / sd
-    s = (np.array([float(state[f]) for f in FEATURES]) - mu) / sd
+    s = (np.array([float(state[f]) for f in features]) - mu) / sd
     dist = np.sqrt(((z - s) ** 2).sum(axis=1))
     near = np.argsort(dist, kind="stable")[:k]
     rows = train.iloc[near]

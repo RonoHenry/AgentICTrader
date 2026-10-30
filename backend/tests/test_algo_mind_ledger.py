@@ -36,6 +36,8 @@ def test_the_version_in_use_is_v1_until_a_candidate_wins_on_later_weeks(tmp_path
     assert ledger.in_use() == "v2"
     entries = ledger.entries()
     assert [e["action"] for e in entries] == ["fit", "fit", "judge", "adopt"]
+    assert entries[2]["candidate_version"] == "v2" and entries[2]["verdict"] == "adopt"
+    assert ledger.candidates() == ["v1"]                     # v2 in use: v1 rides beside it
 
 
 def test_a_candidate_that_doesnt_win_or_hasnt_enough_weeks_is_not_adopted(tmp_path):

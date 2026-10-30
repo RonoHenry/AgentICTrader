@@ -81,3 +81,24 @@
     - `python -m algo_mind refit --version vN` fits a candidate on the history before 2023 plus the live weeks since 2025.
     - `python -m algo_mind judge --candidate vN` compares it with the version in use, on the weeks after its window (at least 150 calls each). It adopts, keeps or waits.
     - The brief uses the version in use. The ledger opens with v1's fit and adoption.
+
+- [x] 389. Brain v2: the widened state (H-Z), a candidate judged by the ledger (Requirements 1, 2, 7)
+  - **H-Z** (`algo_research/search_state2.py`) widens H-Y's state with five groups:
+    - **structure:** breaks, CISDs, order blocks' mean thresholds and inversion FVGs on MN1, W1 and D1;
+    - **anchors:** the month's and the quarter's open;
+    - **regime:** the weekly range's percentile and the efficiency ratio;
+    - **intermarket:** the dollar's state, and SMT and relative strength against a partner;
+    - **macro:** the 10-year yield, the 10-year-minus-3-month curve and the VIX, from Yahoo to 2023. FRED didn't answer.
+  - **Development:** +3.4 pts [+0.1, +6.8], 9/9 markets, +0.5 over v1's inputs. **It passes**, the first of 25 tries. The test-window run waits for the trader.
+  - **Built:**
+    - a version keeps its own inputs (`Brain.features`), and memory reads them;
+    - `own_state2_at` is the same widened state live (tested equal to the table);
+    - `live_macro` reads the yields and the VIX from 2025;
+    - the brief reads all nine markets and macro once, and puts the in-use version's calls beside the candidates';
+    - `Ledger.candidates`;
+    - `python -m algo_mind fit --widened`;
+    - judge and third-look read the live widened weeks;
+    - the context page shows the candidate's call under the brain's.
+  - **v2 fitted on 13,092 weeks before 2023** (thirds 0.4768 and 0.5270). The ledger judged it against v1 on the 261 unseen weeks of 2026: v2 +2.5 pts (172 calls) against v1 +0.2 (174), so **v2 was adopted**. The intervals are about ±9 pts.
+  - **Fixed:** the ledger's judgement line had its candidate's name overwritten by its score. It's now `candidate_version`, and the first line is read as it was.
+

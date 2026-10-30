@@ -42,9 +42,13 @@ class Brain:
     meta: dict
     train: pd.DataFrame = field(repr=False)
 
+    @property
+    def features(self) -> list:
+        return list(self.meta.get("features", FEATURES))
+
     def probability(self, states: pd.DataFrame) -> np.ndarray:
-        """The probability of an up week for each state."""
-        return self.model.predict_proba(states[list(FEATURES)].to_numpy(float))[:, 1]
+        """The probability of an up week for each state, from the version's own inputs."""
+        return self.model.predict_proba(states[self.features].to_numpy(float))[:, 1]
 
     def call(self, states: pd.DataFrame) -> pd.DataFrame:
         """``states`` with ``p`` and ``call``: +1 in the training probabilities' top third, -1 in the bottom, 0
@@ -61,21 +65,23 @@ def _commit() -> str:
         return ""
 
 
-def fit_version(table: pd.DataFrame, end: pd.Timestamp = FIT_END, version: str = "v1", root: Path = MODELS) -> Brain:
-    """Fit the brain on ``table``'s weeks before ``end`` with a direction, and keep it as ``version``."""
+def fit_version(table: pd.DataFrame, end: pd.Timestamp = FIT_END, version: str = "v1", root: Path = MODELS,
+                features: tuple = FEATURES) -> Brain:
+    """Fit the brain on ``table``'s weeks before ``end`` with a direction, on ``features`` (H-Y's by default; H-Z's
+    widened state for v2), and keep it as ``version``."""
     from sklearn.ensemble import HistGradientBoostingClassifier
 
     fit = table[(table["week"] < end) & (table["up"] != 0)].reset_index(drop=True)
-    x, y = fit[list(FEATURES)].to_numpy(float), (fit["up"] > 0).astype(int).to_numpy()
+    x, y = fit[list(features)].to_numpy(float), (fit["up"] > 0).astype(int).to_numpy()
     model = HistGradientBoostingClassifier(**MODEL)
     model.fit(x, y, sample_weight=_weights(fit))
     p = model.predict_proba(x)[:, 1]
     lo, hi = (float(v) for v in np.quantile(p, [1 / 3, 2 / 3]))
     meta = {"version": version, "train_start": str(fit["week"].min().date()), "train_end": str(pd.Timestamp(end).date()),
-            "weeks": len(fit), "markets": sorted(fit["market"].unique()), "features": list(FEATURES),
+            "weeks": len(fit), "markets": sorted(fit["market"].unique()), "features": list(features),
             "settings": MODEL, "thresholds": [lo, hi], "commit": _commit(),
             "fitted_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-    train = fit[["market", "week", "up", *FEATURES]]
+    train = fit[["market", "week", "up", *features]]
     out = Path(root) / version
     out.mkdir(parents=True, exist_ok=True)
     (out / "model.pkl").write_bytes(pickle.dumps(model))

@@ -95,8 +95,9 @@ class ContextApp:
         if b is None:
             return None
         rows = {r["market"]: {"call": r.get("call"), "p": r.get("p"), "provisional": r.get("provisional"),
-                              "share_up": (r.get("analogs") or {}).get("share_up")} for r in b["rows"]}
-        return {"version": b["version"], "made_at": b["made_at"], "rows": rows,
+                              "share_up": (r.get("analogs") or {}).get("share_up"),
+                              "candidates": r.get("candidates") or {}} for r in b["rows"]}
+        return {"version": b["version"], "made_at": b["made_at"], "rows": rows, "candidates": b.get("candidates", []),
                 "provisional": any(bool(r["provisional"]) for r in rows.values()),
                 "notes": coherence({m: r["call"] for m, r in rows.items()})}
 

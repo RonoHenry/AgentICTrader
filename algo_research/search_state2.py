@@ -203,12 +203,16 @@ def macro_table(root=YAHOO) -> pd.DataFrame:
 
 def widen(tables: dict[str, pd.DataFrame], macro: pd.DataFrame) -> pd.DataFrame:
     """The markets' own widened states joined with the dollar's, their partner's and the macro state, by week."""
-    dxy = tables["DXY"][["week", "W1_body", "W1_pos", "MN1_pd"]].rename(
+    need = ["week", "took_hi", "took_lo", "mn_took_hi", "mn_took_lo", "w1_ret", "W1_body", "W1_pos", "MN1_pd"]
+    blank = pd.DataFrame({c: pd.Series(dtype="datetime64[ns]" if c == "week" else float) for c in need})
+    tables = {m: t for m, t in tables.items() if len(t)}
+    get = lambda m: tables.get(m, blank)                                    # noqa: E731  (a market missing live)
+    dxy = get("DXY")[["week", "W1_body", "W1_pos", "MN1_pd"]].rename(
         columns={"W1_body": "dxy_w1_body", "W1_pos": "dxy_w1_pos", "MN1_pd": "dxy_mn1_pd"})
     parts = []
     for market, t in tables.items():
         partner, apart = PARTNER[market]
-        p = tables[partner][["week", "took_hi", "took_lo", "mn_took_hi", "mn_took_lo", "w1_ret"]].add_prefix("p_")
+        p = get(partner)[["week", "took_hi", "took_lo", "mn_took_hi", "mn_took_lo", "w1_ret"]].add_prefix("p_")
         x = t.merge(dxy, on="week", how="left").merge(p, left_on="week", right_on="p_week", how="left")
         x["smt_w1"] = _smt(x["took_hi"], x["took_lo"], x["p_took_hi"].fillna(-1), x["p_took_lo"].fillna(-1), apart)
         x["smt_mn1"] = _smt(x["mn_took_hi"], x["mn_took_lo"], x["p_mn_took_hi"].fillna(-1),

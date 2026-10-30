@@ -34,7 +34,8 @@ def test_the_brain_sits_beside_the_traders_call_and_the_agreement_is_written(tmp
     a.call({"week": "2026-11-02", "instrument": "US500", "side": "BULLISH", "draw": 7900, "protected": 7600})
     v = a.view({"week": "2026-11-02"})
     rows = {r["instrument"]: r for r in v["rows"]}
-    assert rows["EURUSD"]["brain"] == {"call": "BULLISH", "p": 0.54, "provisional": False, "share_up": 0.45}
+    assert rows["EURUSD"]["brain"] == {"call": "BULLISH", "p": 0.54, "provisional": False, "share_up": 0.45,
+                                       "candidates": {}}
     assert rows["GBPUSD"]["brain"] is None and rows["EURUSD"]["call"]["side"] == "BULLISH"
     assert "DXY and EURUSD both bullish: they usually move apart" in v["brain"]["notes"]
     agree = json.loads((tmp_path / "agree.json").read_text(encoding="utf-8"))
