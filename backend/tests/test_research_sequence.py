@@ -82,6 +82,7 @@ def test_a_sell_read_is_the_mirror_of_the_buy_read(gbpusd):
     for key in ("sweep", "fill", "low_at", "judas_high_at", "draw_dev"):
         assert sell.facts[key] == buy.facts[key]
     assert "BEARISH" in sell.render() and "sell limit" in sell.render()
+    assert "took the 2026 Q2 high -1.31395" in sell.render()
 
 
 def _frame(rows) -> pd.DataFrame:

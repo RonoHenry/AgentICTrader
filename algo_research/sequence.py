@@ -275,9 +275,9 @@ def _turns(m: Market, as_of: int) -> list[dict]:
 
 
 def _signed(turn: dict, side: int) -> dict:
-    """A turn's prices back on the real side."""
-    out = dict(turn, side=side, low=side * turn["low"], erl=[(n, side * x) for n, x in turn["erl"]],
-               level=side * turn["cisd"]["level"])
+    """A turn's prices back on the real side, a sell turn's pools named as the highs they are."""
+    erl = [(n if side > 0 else n.replace(" low", " high"), side * x) for n, x in turn["erl"]]
+    out = dict(turn, side=side, low=side * turn["low"], erl=erl, level=side * turn["cisd"]["level"])
     if turn["draw"]:
         out["draw"] = dict(turn["draw"], near=side * turn["draw"]["near"], far=side * turn["draw"]["far"],
                            ce=side * turn["draw"]["ce"])
