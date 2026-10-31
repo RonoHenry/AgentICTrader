@@ -1080,7 +1080,7 @@ function renderEngine() {
       ${mine ? `<div class="hint">Saved: ${esc(mine.pick === "none" ? "no trade" : mine.pick === "other" ? "another array" : "#" + (mine.picked ? mine.picked.rank : "?"))}.</div>` : ""}</div>`;
   }
   const bias = Object.entries(st.bias || {}).map(([tf, b]) => `${tf} ${b.direction === "BULLISH" ? "▲" : b.direction === "BEARISH" ? "▼" : "–"}`).join(" · ");
-  html += `<div class="hint">Price against each open: ${bias}. Showing ${st.arrays.length} unfilled arrays, ${st.pools.length} untaken pools and ${(st.levels || []).length} levels near price.</div>`;
+  html += `<div class="hint">Price against each open: ${bias}. Showing ${st.arrays.length} unfilled arrays, ${st.pools.length} untaken pools and ${(st.levels || []).length} levels near price.${st.inside ? ` Price is inside ${st.inside.BULLISH} buy and ${st.inside.BEARISH} sell levels (the strongest two of each are drawn).` : ""}</div>`;
   box.innerHTML = html;
   for (const div of box.querySelectorAll(".cand")) {
     div.onmouseenter = () => { S.hl = div.dataset.id; refresh(); };

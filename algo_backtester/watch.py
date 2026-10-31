@@ -104,8 +104,8 @@ KEPT_SESSIONS = 3
 PICKS = REPO_ROOT / "data" / "journal" / "watch_picks.jsonl"
 _CALENDAR = StrategyCalendar()
 _ARRAYS_SHOWN, _POOLS_SHOWN, _CANDIDATES_SHOWN = 80, 50, 30
-#: The levels drawn on each side beyond price, nearest first; those price (or the setup's wick) is in are drawn too.
-_LEVELS_AHEAD = 3
+#: The levels drawn on each side: the strongest price (or the setup's wick) is in, and the next ones beyond price.
+_LEVELS_IN, _LEVELS_AHEAD = 2, 3
 #: Model A on the chart (context-engine Requirement 17): the trader's frame sets, and how long an ended instance
 #: that reached the manipulation stays drawn (one F candle).
 MODEL_A_SETS = ("model_d1", "model_h4")
@@ -680,17 +680,20 @@ class WatchSession:
         # or the setup's protected wick is in, and the next ones beyond price on each side.
         found = engine_levels(lm.pd_arrays, view, t, lm.liquidity_levels) if price is not None else []
         wick = seq.protected_swing.wick if seq is not None else None
-        out_levels = []
+        out_levels, inside = [], {}
         for side, below in ((BiasDirection.BULLISH, True), (BiasDirection.BEARISH, False)):
             mine = [x for x in found if x.side == side]
-            here = [x for x in mine if x.holds(price) or (wick is not None and seq.direction == side and x.holds(wick))]
-            ahead = sorted((x for x in mine if x not in here and (x.high < price if below else x.low > price)),
+            holding = [x for x in mine if x.holds(price) or (wick is not None and seq.direction == side and x.holds(wick))]
+            inside[side.value] = sum(1 for x in mine if x.holds(price))
+            here = sorted(holding, key=lambda x: (-x.score, x.high - x.low))[:_LEVELS_IN]
+            ahead = sorted((x for x in mine if x not in holding and (x.high < price if below else x.low > price)),
                            key=lambda x: abs(price - (x.high if below else x.low)))[:_LEVELS_AHEAD]
             out_levels += [{"side": x.side.value, "low": x.low, "high": x.high, "arrays": list(x.arrays),
                             "discount": list(x.discount), "pools": list(x.pools), "score": x.score,
                             "formed": wall(x.formed_at), "here": x in here} for x in here + ahead]
         return {"price": price, "arrays": out_arrays, "pools": pools[:_POOLS_SHOWN], "profile": profile, "sequence": sequence,
-                "grade": grade, "bias": bias, "levels": out_levels, "candidates": self._candidates(seen, seq, t)}
+                "grade": grade, "bias": bias, "levels": out_levels, "inside": inside,
+                "candidates": self._candidates(seen, seq, t)}
 
     @staticmethod
     def _candidates(seen, chosen_sequence, t: datetime) -> dict:
