@@ -819,3 +819,32 @@ The trader (2026-10-29): "a trade with context beats a trade that was basically 
    - **the paper agents:** the R net of the trades placed in the week by the context agent and by each control.
 
    Its totals SHALL give the hit rate of the week's close against the 57-60% the costs need.
+
+### Requirement 33: The Trader's Sequence
+
+**User Story:** As the trader, I want the engine to read a market-day the way I do, top-down, time first and then price, so that it takes the one setup my narrative allows instead of every setup that shows.
+
+The rules come from the trader's Backtest Diary for GBPUSD, Thursday 29 Oct 2026, and their answers of 31 Oct 2026. New York time throughout.
+
+#### Acceptance Criteria
+
+1. **The soup.** A TURTLE SOUP on any frame SHALL be two candles, named by the first: C2 trades beyond C1's low (high) and closes back inside C1. It SHALL be valid once the frame below confirms a CISD: a close beyond the open of the run of opposite candles that delivered C2's extreme. A candle of the trade's colour, or a doji (a body under a tenth of its range), ends the run.
+2. **The narrative.** THE side SHALL come from the latest valid W1 soup:
+   - its C2 falls in the month's first two weeks;
+   - its extreme took an untaken low (high) of the last four quarters or three months (external range liquidity);
+   - a D1 CISD confirmed it by C2's close.
+
+   Its draw SHALL be the nearest W1 gap beyond C2's close whose CE price hasn't reached (internal range liquidity), else a D1 one. The side SHALL end when price reaches the draw's CE (delivered) or a D1 candle closes beyond C2's extreme (invalidated; a wick beyond it is liquidation). A soup against a live side SHALL be ignored as manipulation.
+3. **The setup.** A DAY SHALL be C3 only after a D1 soup on the side whose C2 falls on Monday to Wednesday, whose extreme lies inside a key level, and whose H4 or H1 CISD confirmed by C2's close. A key level is a D1 or W1 gap of the side, an inverted gap of the other side, or an opening gap (NDOG, NWOG) of the last ten trading days.
+4. **C3.** Q1 (18:00-00:00) SHALL set the range. In Q2 (00:00-06:00) price SHALL take Q1's extreme against the side (the Judas swing), and an M5 CISD before 12:00 SHALL confirm it.
+   - The limit SHALL go at the open of the run's last candle (the order block), when that is in discount (premium) of the leg from the Judas extreme.
+   - It is good until 12:00.
+   - Its stop is the Judas extreme.
+5. **The targets.** THE read SHALL list the Judas swing's deviations (−1, −2, −2.5, −4 and −4.5, from the last M5 swing before the extreme). For each it SHALL give the pools and gaps within a fifth of a deviation and the distance in average daily ranges, and it SHALL mark the deviation in confluence with the narrative's draw.
+6. **The acceptance test.** ON the trader's GBPUSD long of Thursday 29 Oct 2026, the reader SHALL find, from the bars closed at each step:
+   - their narrative: the Q2 low taken, and the September W1 gap as the draw;
+   - their soup: Tuesday-Wednesday, into the D1 inverted gap and the 16 Oct NDOG;
+   - their H4 and H1 CISD runs;
+   - their order block (1.33030, filled 09:18) and their stop (1.32956);
+   - their target: the −4 deviation at the W1 gap's edge.
+7. **Frozen per sample.** THE reader SHALL be committed before each new sample of the trader's is read, and the committed version reads each sample first. Changes a sample prompts SHALL come after that read, as a new version.
