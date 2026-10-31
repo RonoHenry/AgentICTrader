@@ -848,3 +848,26 @@ The rules come from the trader's Backtest Diary for GBPUSD, Thursday 29 Oct 2026
    - their order block (1.33030, filled 09:18) and their stop (1.32956);
    - their target: the −4 deviation at the W1 gap's edge.
 7. **Frozen per sample.** THE reader SHALL be committed before each new sample of the trader's is read, and the committed version reads each sample first. Changes a sample prompts SHALL come after that read, as a new version.
+
+### Requirement 34: Where the Engine Waits
+
+**User Story:** As the trader, I want the engine to know where it would act before price gets there, and to look for a trigger only once price is at one of those levels, in time, so that it stops firing before price reaches any point of interest.
+
+The trader's blueprint of 31 Oct 2026: a move is the characteristics that line up at a price (discount, a PD array, liquidity and time), not a fixed sequence of events.
+
+#### Acceptance Criteria
+
+1. **A level.** A LEVEL to buy from SHALL be an unfilled PD array of the side on H4, D1 or W1 (an FVG, an inverted FVG, an order block, a breaker or a balanced price range):
+   - at most one D1 average range tall;
+   - with its CE under the equilibrium of the D1 or the W1 dealing range.
+
+   A level to sell from is the mirror. The side's other arrays that overlap a level are stacked on it.
+2. **Its score.** A level's score SHALL count each frame with an array in it, each range it is in discount (premium) of, and liquidity resting inside it or within a tenth of the D1 average range beyond it.
+3. **The gate.** UNDER `require_level`, a setup SHALL be refused as `NOT_AT_LEVEL` unless all four line up:
+   - its protected wick is inside a level of its side (the array, in discount or premium);
+   - the pool it raided is at that level (the liquidity);
+   - the raid came in Q2-Q3, 00:00-12:00 New York (the time).
+
+   The refusal SHALL name the nearest level, or the level the raid missed.
+4. **The variant.** THE configuration SHALL have `fresh_near_gap_levels`: the partial strategy behind the gate, with nothing else changed.
+5. **The chart.** NOCULUS SHALL draw the levels the gate reads at each close: those price or the setup's wick is in, and the next three beyond price on each side, each with its arrays, ranges, liquidity and score.

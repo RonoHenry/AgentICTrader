@@ -154,6 +154,18 @@ strategy.min_stop_spreads = 10.0
 management.partial_r = 3.0
 management.partial_fraction = 0.3333333333333333
 
+# Where the engine waits (context-engine Requirement 34): the partial strategy, its setups kept only when the raid
+# was in Q2-Q3 (00:00-12:00 New York) and the protected wick sits inside a level of its side (an H4, D1 or W1 array in
+# discount, or premium, of the D1 or W1 range). The trader's blueprint of 2026-10-31: the level first, then the trigger.
+[variants.fresh_near_gap_levels]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.require_level = true
+management.partial_r = 3.0
+management.partial_fraction = 0.3333333333333333
+
 # Algo Mind's hands (algo-mind Requirement 5): the context variant trading the brain's weekly side (its brief's
 # calls, no draw: the side holds for the week), and the side where the trader and the brain agree (the trader's draw
 # and protected swing). Briefs and calls write the thesis files.

@@ -25,7 +25,7 @@ const TOOLS = [
   { type: "long", icon: "▲", title: "Long position: entry, stop, target (Alt+L)", key: "l" },
   { type: "short", icon: "▼", title: "Short position: entry, stop, target (Alt+S)", key: "s" },
 ];
-const LAYERS = [["fractal", "Fractal + POI"], ["modelA", "Model A"], ["modelAFramed", "Model A: unswept C1s"], ["arrays", "Arrays"], ["pools", "Pools"],
+const LAYERS = [["fractal", "Fractal + POI"], ["modelA", "Model A"], ["modelAFramed", "Model A: unswept C1s"], ["arrays", "Arrays"], ["pools", "Pools"], ["levels", "Levels (where it waits)"],
                 ["profile", "Day bias & draw"], ["trend", "Trend"], ["chain", "Chain & stack"], ["crt", "CRT (H-N)"], ["sweep", "Sweep M1 (2R)"], ["sequence", "Setup"], ["candidates", "Candidates"],
                 ["orders", "Orders & trades"]];
 // The trader's trend (context-engine Requirement 23): the frames it is read on.
@@ -54,6 +54,7 @@ if (S.layers.fractal === undefined) S.layers.fractal = true;    // new in 2026-1
 if (S.layers.chain === undefined) S.layers.chain = true;        // new in 2026-10-24: the chain and the stack
 if (S.layers.crt === undefined) S.layers.crt = true;            // new in 2026-10-27: H-N, the trader's M15 CRT
 if (S.layers.sweep === undefined) S.layers.sweep = true;        // new in 2026-10-30: the M1 sweep model, 2R, no bias
+if (S.layers.levels === undefined) S.layers.levels = true;      // new in 2026-10-31: where the engine waits
 
 // ── the chart ─────────────────────────────────────────────────────────────
 const chart = LightweightCharts.createChart($("chart"), {
@@ -197,6 +198,20 @@ function paintEngine(ctx, size) {
         const c = p.side === "BSL" ? pal.warn : pal.accent;
         line(x1, y, W, y, c, [6, 4]);
         text(`${p.source.replace("_", " ")} ${p.tf}`, W - 4, y - 1, c, "right");
+      }
+    }
+    if (S.layers.levels && st.levels) {   // where the engine waits (context-engine Req 34): the level, then the trigger
+      for (const lv of st.levels) {
+        const x1 = Math.max(X(lv.formed), -10), y1 = Y(lv.high), y2 = Y(lv.low);
+        if (!isFinite(y1) || !isFinite(y2)) continue;
+        const buy = lv.side === "BULLISH", c = buy ? pal.up : pal.bad, hex = c.startsWith("#") ? c : "#888888";
+        const top = Math.min(y1, y2), h = Math.max(Math.abs(y2 - y1), 1);
+        ctx.fillStyle = rgba(hex, Math.min(0.05 + 0.03 * lv.score, 0.22)); ctx.fillRect(x1, top, W - x1, h);
+        ctx.strokeStyle = rgba(hex, 0.9); ctx.lineWidth = lv.here ? 2.5 : 1.5; ctx.setLineDash(lv.here ? [] : [6, 3]);   // price is in it: solid
+        ctx.strokeRect(x1, top, W - x1, h);
+        ctx.setLineDash([]);
+        const why = `${lv.arrays.join(" + ")} · ${lv.discount.join("/")} ${buy ? "discount" : "premium"}${lv.pools.length ? " · " + lv.pools.join(", ") : ""}`;
+        text(`${buy ? "▲ BUY" : "▼ SELL"} LEVEL ${lv.score} · ${why}`, W - 4, buy ? top + h + 11 : top - 1, c, "right");
       }
     }
     if (S.layers.profile && st.profile) {
@@ -1065,7 +1080,7 @@ function renderEngine() {
       ${mine ? `<div class="hint">Saved: ${esc(mine.pick === "none" ? "no trade" : mine.pick === "other" ? "another array" : "#" + (mine.picked ? mine.picked.rank : "?"))}.</div>` : ""}</div>`;
   }
   const bias = Object.entries(st.bias || {}).map(([tf, b]) => `${tf} ${b.direction === "BULLISH" ? "▲" : b.direction === "BEARISH" ? "▼" : "–"}`).join(" · ");
-  html += `<div class="hint">Price against each open: ${bias}. Showing ${st.arrays.length} unfilled arrays and ${st.pools.length} untaken pools near price.</div>`;
+  html += `<div class="hint">Price against each open: ${bias}. Showing ${st.arrays.length} unfilled arrays, ${st.pools.length} untaken pools and ${(st.levels || []).length} levels near price.</div>`;
   box.innerHTML = html;
   for (const div of box.querySelectorAll(".cand")) {
     div.onmouseenter = () => { S.hl = div.dataset.id; refresh(); };

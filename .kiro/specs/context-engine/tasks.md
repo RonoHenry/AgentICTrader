@@ -509,6 +509,27 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
   - A Noculus layer: the narrative's turn, draw and protected swing; the D1 soup and its key levels; the child CISD runs; C3's Q1 range, Judas swing, M5 CISD, order block and deviations. The trader judges the reader's reads visually, day by day.
   - **Validates: Requirement 33.1-33.5**
 
+- [x] 392. Where the engine waits: the levels, the gate and the layer (Requirement 34)
+  - What was built:
+    - `liquidity_engine/context/levels.py` (`levels`, `Level`, `in_window`);
+    - `StrategyConfig.require_level` and `order_intent._level_rule` (`NOT_AT_LEVEL`);
+    - `[variants.fresh_near_gap_levels]`;
+    - the watch state's `levels` and engine.js's Levels layer.
+  - Editing `agent/order_intent.py` changes `ENGINE_SOURCES`, so Phase A recomputes on the next backtest.
+  - **Done 2026-10-31.**
+    - **Last week on the terminal's bars** (26-30 Oct, 8 markets, the engine read once per M15 close for both): the control placed 9 orders (4 long, 5 short), 5 filled, −5.2R. Behind the gate, 5 orders (1 long, 4 short), 3 filled, −3.1R.
+      - Refused: the XAUUSD long, the EURUSD short, and both UK100 longs (one raided at 12:15).
+      - Kept: GBPUSD's PDH short of Thu 29 (a D1 order block in D1 premium, on the trader's bullish day), GER40's two shorts, and UK100's Fri 30 short.
+      - One week: no evidence.
+    - **The engine holds dozens of unfilled H4/D1 arrays per side** (about 30 sell levels above GBPUSD on Thu 29). Location alone, on both sides, is weak: the side decides which levels count.
+    - **The first version merged overlapping arrays,** which chained into a 300-pip level. Each array is its own level now.
+    - **Tests:**
+      - `test_context_levels.py`;
+      - `test_backtest_order_intent.py`: the gate's four parts and the variant;
+      - `test_backtest_watch.py`: the state's levels;
+      - `test_backtest_strategy_config.py`: the field in the fingerprint.
+  - **Validates: Requirement 34.1-34.5**
+
 ---
 
 ## Task Dependency Graph

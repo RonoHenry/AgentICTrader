@@ -40,6 +40,7 @@ from liquidity_engine.models import (
     Timeframe,
 )
 from tests.test_liquidity_engine_perf import FIXTURES, _load
+from tests.test_context_levels import ranged_view
 from tests.test_liquidity_grader import full_liquidity_map, make_level, make_pdarray, make_sequence
 
 GOLDEN_MESSAGE = Path(__file__).parent / "fixtures" / "backtester" / "order_intent" / "EURUSD_M5_message.json"
@@ -432,6 +433,61 @@ def _htf(tf=Timeframe.H4, direction=BULL, low=1.0980, high=1.0995, filled=False)
 def test_htf_poi_needs_the_wick_inside_an_unfilled_h4_or_d1_array(arrays, expected):
     cfg = policy(require_htf_poi=True)
     assert reason(decide(_policy_map(profile=_profile(), pd_arrays=arrays), cfg)) == expected
+
+
+def _raid_at(lm, ny_hour: int = 8, pool: float = 1.0991):
+    """The map with its setup's raid of a pool at ``pool`` at ``ny_hour`` New York on AS_OF's date (the levels'
+    window is 00:00-12:00)."""
+    seq = lm.setup_sequence
+    raid = datetime(2026, 1, 14, ny_hour, tzinfo=ZoneInfo("America/New_York")).astimezone(timezone.utc)
+    taken = seq.raid.pool.model_copy(update={"price": pool})
+    return lm.model_copy(update={"setup_sequence": seq.model_copy(
+        update={"raid": seq.raid.model_copy(update={"raided_at": raid, "pool": taken})})})
+
+
+def _level_view(d1=(1.0950, 1.1050), w1=(1.0900, 1.1100)):
+    """D1 and W1 ranges with their equilibrium at 1.1000 (context-engine Requirement 34), and the M5 close."""
+    return {**ranged_view(d1, w1, AS_OF, "EURUSD"), Timeframe.M5: _view()[Timeframe.M5]}
+
+
+@pytest.mark.parametrize("arrays, expected", [
+    ([_htf()], "ORDER"),                    # the wick (1.0989) inside an H4 bullish FVG in discount of both ranges
+    ([_htf(Timeframe.D1)], "ORDER"),
+    ([_htf(Timeframe.W1)], "ORDER"),        # a W1 array makes a level, unlike the HTF POI
+    ([_htf(Timeframe.H1)], "NOT_AT_LEVEL"),  # an H1 array doesn't
+    ([_htf(filled=True)], "NOT_AT_LEVEL"),
+    ([_htf(direction=BEAR)], "NOT_AT_LEVEL"),
+    ([_htf(low=1.0990, high=1.0995)], "NOT_AT_LEVEL"),   # the wick is below it
+    ([], "NOT_AT_LEVEL"),
+])
+def test_the_level_gate_needs_the_wick_inside_a_level_of_its_side(arrays, expected):
+    lm = _raid_at(_policy_map(profile=_profile(), pd_arrays=arrays))
+    assert reason(build_order_intent(lm, _level_view(), "EURUSD", AS_OF, policy(require_level=True))) == expected
+
+
+def test_the_level_gate_reads_discount_and_the_window():
+    cfg = policy(require_level=True)
+    lm = _policy_map(profile=_profile(), pd_arrays=[_htf()])
+    # In premium of both ranges (D1 1.0900-1.1000, W1 1.0850-1.1050) the same array is no level to buy from.
+    premium = build_order_intent(_raid_at(lm), _level_view((1.0900, 1.1000), (1.0850, 1.1050)), "EURUSD", AS_OF, cfg)
+    assert reason(premium) == "NOT_AT_LEVEL" and "inside no BULLISH level" in premium.detail
+    late = build_order_intent(_raid_at(lm, 13), _level_view(), "EURUSD", AS_OF, cfg)
+    assert reason(late) == "NOT_AT_LEVEL" and "outside the levels' window" in late.detail
+    # The raid must have swept liquidity at the level: inside it, or within a tenth of the D1 average range under
+    # it (the range is 27 pips here, so 2.7). A pool 2 pips under the level is at it; one 4 pips under isn't.
+    assert reason(build_order_intent(_raid_at(lm, pool=1.0978), _level_view(), "EURUSD", AS_OF, cfg)) == "ORDER"
+    away = build_order_intent(_raid_at(lm, pool=1.0976), _level_view(), "EURUSD", AS_OF, cfg)
+    assert reason(away) == "NOT_AT_LEVEL" and "is not at the BULLISH level" in away.detail
+    assert reason(build_order_intent(_raid_at(lm, 13), _level_view(), "EURUSD", AS_OF, policy())) == "ORDER"   # off
+
+
+def test_the_levels_variant_is_the_partial_strategy_with_the_level_gate():
+    from algo_backtester.config import REPO_ROOT, load_run_config
+    focus = REPO_ROOT / "config" / "backtests" / "focus.toml"
+    levels, partial = load_run_config(focus, "fresh_near_gap_levels"), load_run_config(focus, "fresh_near_gap_partial")
+    assert levels.strategy.require_level and not partial.strategy.require_level
+    assert levels.management == partial.management
+    assert levels.strategy.model_copy(update={"require_level": False}) == partial.strategy
 
 
 def test_policy_checks_in_order_before_the_stop_and_targets():

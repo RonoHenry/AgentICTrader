@@ -85,6 +85,7 @@ def test_a_session_replays_the_engine_at_each_close(session):
     assert state["decision"] is None or state["decision"]["t"] == state["t"]
     assert all(p["known"] <= state["t"] for p in state["pools"])
     assert all(a["formed"] <= state["t"] for a in state["arrays"])
+    assert all(x["formed"] <= state["t"] and x["low"] < x["high"] for x in state["levels"])   # where it waits (CE Req 34)
     assert session.state_at(status["start"] - 2 * 86400) is None          # before the run window
 
 

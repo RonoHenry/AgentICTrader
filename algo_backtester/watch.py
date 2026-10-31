@@ -79,6 +79,7 @@ from algo_research.snapshot import SNAPSHOTS_DIR
 from algo_research.atlas.arrays import fvgs, order_blocks
 from algo_research.trend import SIGNALS as TREND_SIGNALS, call_outcome, trend_signals
 from liquidity_engine import LiquidityMappingEngine
+from liquidity_engine.context.levels import levels as engine_levels
 from liquidity_engine.grader.sequence import SetupSequenceDetector, _EntryWindow
 from liquidity_engine.grader.setup_grader import _ENTRY_ELIGIBLE_TIMEFRAMES
 from liquidity_engine.models import BiasDirection, PDArray, SetupSequence, Timeframe
@@ -103,6 +104,8 @@ KEPT_SESSIONS = 3
 PICKS = REPO_ROOT / "data" / "journal" / "watch_picks.jsonl"
 _CALENDAR = StrategyCalendar()
 _ARRAYS_SHOWN, _POOLS_SHOWN, _CANDIDATES_SHOWN = 80, 50, 30
+#: The levels drawn on each side beyond price, nearest first; those price (or the setup's wick) is in are drawn too.
+_LEVELS_AHEAD = 3
 #: Model A on the chart (context-engine Requirement 17): the trader's frame sets, and how long an ended instance
 #: that reached the manipulation stays drawn (one F candle).
 MODEL_A_SETS = ("model_d1", "model_h4")
@@ -673,8 +676,21 @@ class WatchSession:
                            "In a killzone": g.time_window_aligned}}
         bias = {tf: {"direction": b.direction.value, "open": b.reference_open} for tf, b in lm.htf_bias.items()
                 if tf in ("W1", "D1", "H4", "H1")}
+        # Where the engine waits (context-engine Requirement 34), as the gate reads it at this close: the levels price
+        # or the setup's protected wick is in, and the next ones beyond price on each side.
+        found = engine_levels(lm.pd_arrays, view, t, lm.liquidity_levels) if price is not None else []
+        wick = seq.protected_swing.wick if seq is not None else None
+        out_levels = []
+        for side, below in ((BiasDirection.BULLISH, True), (BiasDirection.BEARISH, False)):
+            mine = [x for x in found if x.side == side]
+            here = [x for x in mine if x.holds(price) or (wick is not None and seq.direction == side and x.holds(wick))]
+            ahead = sorted((x for x in mine if x not in here and (x.high < price if below else x.low > price)),
+                           key=lambda x: abs(price - (x.high if below else x.low)))[:_LEVELS_AHEAD]
+            out_levels += [{"side": x.side.value, "low": x.low, "high": x.high, "arrays": list(x.arrays),
+                            "discount": list(x.discount), "pools": list(x.pools), "score": x.score,
+                            "formed": wall(x.formed_at), "here": x in here} for x in here + ahead]
         return {"price": price, "arrays": out_arrays, "pools": pools[:_POOLS_SHOWN], "profile": profile, "sequence": sequence,
-                "grade": grade, "bias": bias, "candidates": self._candidates(seen, seq, t)}
+                "grade": grade, "bias": bias, "levels": out_levels, "candidates": self._candidates(seen, seq, t)}
 
     @staticmethod
     def _candidates(seen, chosen_sequence, t: datetime) -> dict:
