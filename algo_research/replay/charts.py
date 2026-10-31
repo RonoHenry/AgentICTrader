@@ -3,7 +3,8 @@
     python -m algo_research.replay [--instrument XAUUSD] [--port 8765] [--config config/backtests/base.toml]
 
 One server for both modes of the chart: **You** at ``/`` (the blind replay, Requirements 10-12) and **Engine**
-at ``/engine`` (the engine watch, algo-backtester Requirement 15). Each instrument of the research snapshot has
+at ``/engine`` (the engine watch, algo-backtester Requirement 15). **Context** at ``/context`` keeps the trader's
+weekly calls (context-engine Requirement 32.4). Each instrument of the research snapshot has
 its own blind journal, opened when its tab is first chosen; the replay's API takes ``?inst=``. The watchlist
 gives every instrument's last price and change as of a time the page names (the You mode: its day's revealed
 time, read here, never later), so it can't show what the chart hasn't reached.
@@ -13,6 +14,7 @@ routes to them and adds what they share: the instrument list and the watchlist.
 """
 from __future__ import annotations
 
+import json
 import threading
 import webbrowser
 from datetime import date, timedelta
@@ -25,6 +27,7 @@ import pandas as pd
 
 from algo_backtester import watch as watch_mod
 from algo_research.replay.bars import ReplayBars
+from algo_research.replay.context import ContextApp
 from liquidity_engine.models import Timeframe
 from algo_research.replay.journal import Journal, ReplayError
 from algo_research.replay.server import (FILES, STATIC, ReplayApp, static_file,
@@ -33,7 +36,8 @@ from algo_research.replay.server import (FILES, STATIC, ReplayApp, static_file,
 __all__ = ["ChartsApp", "make_charts_server", "serve"]
 
 #: Every page and script of both modes.
-PAGES = {"/": "index.html", "/index.html": "index.html", "/you": "index.html", "/engine": "engine.html"}
+PAGES = {"/": "index.html", "/index.html": "index.html", "/you": "index.html", "/engine": "engine.html",
+         "/context": "context.html"}
 ALL_FILES = {**FILES, **watch_mod.FILES, "shell.js": "text/javascript; charset=utf-8"}
 _DAY, _DAY_OPEN = 86400, 61200
 
@@ -42,8 +46,9 @@ class ChartsApp:
     """The instruments, a blind journal per instrument (opened on first use), the engine watch and the watchlist."""
 
     def __init__(self, snapshot: Path, journal_root: Path, slice_: tuple[date, date], watch: watch_mod.WatchApp,
-                 default: str = "XAUUSD", order: Sequence[str] = ()) -> None:
+                 default: str = "XAUUSD", order: Sequence[str] = (), context: Optional[ContextApp] = None) -> None:
         self.snapshot, self.journal_root, self.slice, self.watch = Path(snapshot), Path(journal_root), slice_, watch
+        self.context = context or ContextApp()
         held = sorted(p.name.split("_")[0] for p in self.snapshot.glob("*_M1.parquet"))
         # The tabs in the research order (algo-research Requirement 22.5), then anything else the snapshot holds.
         self.instruments = [i for i in dict.fromkeys(o.upper() for o in order) if i in held] + \
@@ -168,6 +173,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.charts.blind(self._query()))
         elif path == "/api/watchlist":
             self._answer(lambda: self.charts.watchlist_for(self._query()))
+        elif path == "/api/context":
+            self._answer(lambda: self.charts.context.view(self._query()))
+        elif path == "/api/context/scorecard":
+            self._answer(lambda: self.charts.context.scorecard(self._query()))
         elif path.startswith("/api/watch/"):
             self.app = self.charts.watch
             watch_mod._Handler.do_GET(self)
@@ -181,6 +190,20 @@ class _Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/watch/"):
             self.app = self.charts.watch
             watch_mod._Handler.do_POST(self)
+        elif path == "/api/context/call":
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            except ValueError as exc:
+                self._send(400, {"error": str(exc)})
+                return
+            self._answer(lambda: self.charts.context.call(body))
+        elif path == "/api/context/brief":
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            except ValueError as exc:
+                self._send(400, {"error": str(exc)})
+                return
+            self._answer(lambda: self.charts.context.run_brain(body))
         else:
             self._with_replay(_ReplayHandler.do_POST)
 
@@ -210,11 +233,18 @@ def serve(config: Path, port: int = 8765, browser: bool = True, instrument: str 
     snapshot = SNAPSHOTS_DIR / research.snapshot
     watch = watch_mod.WatchApp(Path(config), snapshot, research.slices.explore, picks=picks,
                                live=watch_mod.live_feed(Path(config)), periods=watch_mod.noculus_periods(research))
+    def quote(instrument: str) -> Optional[float]:                     # the terminal's mid, when it answers
+        q = watch.live_source().quote(instrument)
+        return None if q is None else (q[1] + q[2]) / 2
+
+    def bars(instrument: str, start, end):                             # the terminal's M15, for the scorecard
+        return watch.live_source().rates(instrument, Timeframe.M15, start, end)
+
     charts = ChartsApp(snapshot, journal_root or JOURNAL_DIR, research.slices.explore, watch, default=instrument,
-                       order=research.instruments)
+                       order=research.instruments, context=ContextApp(quote=quote, bars=bars))
     server = make_charts_server(charts, port=port)
     url = f"http://127.0.0.1:{server.server_address[1]}{page}"
-    print(f"charts at {url}: You (the blind replay) at /, Engine (the watch) at /engine. "
+    print(f"charts at {url}: You (the blind replay) at /, Engine (the watch) at /engine, Context at /context. "
           f"Instruments: {', '.join(charts.instruments)}. Ctrl+C stops.")
     if browser:
         webbrowser.open(url)

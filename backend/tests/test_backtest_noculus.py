@@ -1082,6 +1082,27 @@ def test_the_crt_layer_is_withheld_while_blind_and_shows_only_what_the_clock_has
     json.dumps(later)
 
 
+# ── the M1 sweep model without a bias at 2R (the Sweep M1 layer, 2026-10-30) ──
+def test_the_sweep_layer_is_withheld_while_blind_and_shows_only_what_the_clock_has_seen(blind, session):  # noqa: F811
+    clock = wall(session.start) + 8 * 3600
+    shown = session.sweep({"t": clock})
+    assert not shown["withheld"] and shown["rows"]
+    assert {r["side"] for r in shown["rows"]} == {-1, 1}                            # no bias: both sides
+    for r in shown["rows"]:
+        long = r["side"] > 0
+        assert r["sweep"] <= r["extreme_at"] < r["cisd"] < r["entry"] <= clock
+        assert r["cisd"] - r["extreme_at"] <= 20 * 60
+        assert (r["stop"] < r["fill"]) if long else (r["stop"] > r["fill"])
+        assert all((r["extreme"] < p["price"]) if long else (r["extreme"] > p["price"]) for p in r["pools"])
+        assert all(leg["at"] <= clock for leg in r["legs"])
+        assert r["net"] is None or (r["legs"] and r["legs"][-1]["at"] <= clock and r["net"] <= 2 + 1e-9)
+    assert shown["summary"]["closed"] == sum(r["net"] is not None for r in shown["rows"])
+    assert blind.sweep({"t": clock}) == {"withheld": True, "rows": []}
+    later = session.sweep({"t": wall(session.end)})
+    assert len(later["rows"]) >= len(shown["rows"]) and later["summary"]["closed"] >= shown["summary"]["closed"]
+    json.dumps(later)
+
+
 # ── the periods a session may start in (2026-10-28) ──────────────────────────────
 def test_sessions_start_in_any_open_period_on_its_own_snapshot_and_not_between(setup, tmp_path):  # noqa: F811
     from datetime import date

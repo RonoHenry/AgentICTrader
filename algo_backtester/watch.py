@@ -65,6 +65,7 @@ from algo_research.chain_view import ChainView, trading_days
 from algo_research.search_crt import m15_from_m1, session_trades
 from algo_research.search_crt_context import WARMUP as CRT_WARMUP
 from algo_research.search_crt_context import Context as CrtContext
+from algo_research.sweep_m1 import session_trades as sweep_trades
 from algo_research.config import load_research_config, trading_date_open
 from algo_research.fractal_poi import FractalPOI, FractalSettings, partners_for, warmup_days
 from algo_research.fractal_poi import defaults as fractal_defaults
@@ -78,6 +79,7 @@ from algo_research.snapshot import SNAPSHOTS_DIR
 from algo_research.atlas.arrays import fvgs, order_blocks
 from algo_research.trend import SIGNALS as TREND_SIGNALS, call_outcome, trend_signals
 from liquidity_engine import LiquidityMappingEngine
+from liquidity_engine.context.levels import levels as engine_levels
 from liquidity_engine.grader.sequence import SetupSequenceDetector, _EntryWindow
 from liquidity_engine.grader.setup_grader import _ENTRY_ELIGIBLE_TIMEFRAMES
 from liquidity_engine.models import BiasDirection, PDArray, SetupSequence, Timeframe
@@ -102,6 +104,8 @@ KEPT_SESSIONS = 3
 PICKS = REPO_ROOT / "data" / "journal" / "watch_picks.jsonl"
 _CALENDAR = StrategyCalendar()
 _ARRAYS_SHOWN, _POOLS_SHOWN, _CANDIDATES_SHOWN = 80, 50, 30
+#: The levels drawn on each side: the strongest price (or the setup's wick) is in, and the next ones beyond price.
+_LEVELS_IN, _LEVELS_AHEAD = 2, 3
 #: Model A on the chart (context-engine Requirement 17): the trader's frame sets, and how long an ended instance
 #: that reached the manipulation stays drawn (one F candle).
 MODEL_A_SETS = ("model_d1", "model_h4")
@@ -258,6 +262,8 @@ class WatchSession:
         self._chain_lock = threading.Lock()
         self._crt: Optional[tuple[int, list[dict]]] = None      # (M1 bars read, H-N's trades on them)
         self._crt_lock = threading.Lock()
+        self._sweep: Optional[tuple[int, list[dict]]] = None    # (M1 bars read, the M1 sweep model's trades on them)
+        self._sweep_lock = threading.Lock()
 
     # ── preparing ───────────────────────────────────────────────────────────
     def prepare(self) -> None:
@@ -670,8 +676,24 @@ class WatchSession:
                            "In a killzone": g.time_window_aligned}}
         bias = {tf: {"direction": b.direction.value, "open": b.reference_open} for tf, b in lm.htf_bias.items()
                 if tf in ("W1", "D1", "H4", "H1")}
+        # Where the engine waits (context-engine Requirement 34), as the gate reads it at this close: the levels price
+        # or the setup's protected wick is in, and the next ones beyond price on each side.
+        found = engine_levels(lm.pd_arrays, view, t, lm.liquidity_levels) if price is not None else []
+        wick = seq.protected_swing.wick if seq is not None else None
+        out_levels, inside = [], {}
+        for side, below in ((BiasDirection.BULLISH, True), (BiasDirection.BEARISH, False)):
+            mine = [x for x in found if x.side == side]
+            holding = [x for x in mine if x.holds(price) or (wick is not None and seq.direction == side and x.holds(wick))]
+            inside[side.value] = sum(1 for x in mine if x.holds(price))
+            here = sorted(holding, key=lambda x: (-x.score, x.high - x.low))[:_LEVELS_IN]
+            ahead = sorted((x for x in mine if x not in holding and (x.high < price if below else x.low > price)),
+                           key=lambda x: abs(price - (x.high if below else x.low)))[:_LEVELS_AHEAD]
+            out_levels += [{"side": x.side.value, "low": x.low, "high": x.high, "arrays": list(x.arrays),
+                            "discount": list(x.discount), "pools": list(x.pools), "score": x.score,
+                            "formed": wall(x.formed_at), "here": x in here} for x in here + ahead]
         return {"price": price, "arrays": out_arrays, "pools": pools[:_POOLS_SHOWN], "profile": profile, "sequence": sequence,
-                "grade": grade, "bias": bias, "candidates": self._candidates(seen, seq, t)}
+                "grade": grade, "bias": bias, "levels": out_levels, "inside": inside,
+                "candidates": self._candidates(seen, seq, t)}
 
     @staticmethod
     def _candidates(seen, chosen_sequence, t: datetime) -> dict:
@@ -936,6 +958,49 @@ class WatchSession:
         return {"withheld": False, "rows": rows, "summary": summary, "reached_3r": sum(reached),
                 "develop": "2021-07 to 2022, nine markets: every CRT -0.21R a trade at 3R, 4R and 5R (H-N); "
                            "H-O's filter -0.17R; at a gap -0.16R net, +0.10R better than the other side"}
+
+    # ── the M1 sweep model without a bias, 2R (2026-10-30) ─────────────────────
+    def sweep(self, q: dict) -> dict:
+        """The M1 sweep model's trades (``algo_research.sweep_m1.session_trades``) on the session's own M1 and spreads,
+        those entered by the clock ``t``: the pools swept, the extreme, the CISD, the fill, the stop and the exits at 2R
+        taken by the clock. A trade's result, and its mirror's, shows once its exit is in the past. Nothing while the
+        session is blind."""
+        clock = min(int(q["t"]), wall(self.end))
+        if self.withheld:
+            return {"withheld": True, "rows": []}
+        with self._sweep_lock:
+            n = len(self.frame.m1)
+            if self._sweep is None or self._sweep[0] != n:
+                m1 = pd.DataFrame({"time": self.frame.m1["time"].reset_index(drop=True),
+                                   **{k: self.frame.arrays[k] for k in ("open", "high", "low", "close", "spread")}})
+                found = sweep_trades(m1)
+                for tr in found:                              # in the chart's wall seconds, once
+                    for key in ("sweep", "extreme_at", "cisd", "entry", "day_end"):
+                        tr[key] = wall(tr[key])
+                    tr["pools"] = [dict(x, at=wall(x["at"])) for x in tr["pools"]]
+                    tr["legs"] = [dict(leg, at=wall(leg["at"])) for leg in tr["legs"]]
+                self._sweep = (n, found)
+            found = self._sweep[1]
+        since, until = wall(self.start), wall(self.end)
+        data_end = int(self.path["time"][-1]) + 60 if len(self.path["time"]) else since
+        rows = []
+        for tr in found:
+            if not since <= tr["entry"] < until or tr["entry"] > clock:
+                continue
+            legs = tr["legs"]
+            cut = legs[-1]["kind"] == "close" and data_end < tr["day_end"]      # the bars stop before the day closes
+            done = not cut and legs[-1]["at"] <= clock
+            rows.append({**{k: tr[k] for k in ("side", "sweep", "extreme_at", "cisd", "entry", "extreme", "level",
+                                               "pools", "fill", "stop", "risk")},
+                         "legs": [leg for leg in legs if leg["at"] <= clock and not (cut and leg["kind"] == "close")],
+                         "net": tr["net"] if done else None, "mirror": tr["mirror"] if done else None})
+        nets = [r["net"] for r in rows if r["net"] is not None]
+        mirrors = [r["mirror"] for r in rows if r["net"] is not None and r["mirror"] is not None]
+        summary = {"closed": len(nets), "total": round(sum(nets), 2), "wins": sum(v >= 2 - 1e-9 for v in nets),
+                   "mirror": round(sum(mirrors), 2), "longs": sum(r["side"] > 0 for r in rows)}
+        return {"withheld": False, "rows": rows, "summary": summary,
+                "tested": "2021-07 to 2022, nine markets, 113,945 trades: -0.23R a trade net (+0.03R gross), 2R reached "
+                          "24%; the mirror -0.24R. 2025 H1: -0.17R net, the mirror -0.17R"}
 
     def _m1(self, instrument: str, days: int) -> pd.DataFrame:
         """The session's M1 (the snapshot's or the terminal's) for ``instrument`` from ``days`` before the session to
@@ -1213,6 +1278,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.app.need().chain(q))
         elif url.path == "/api/watch/crt":
             self._answer(lambda: self.app.need().crt(q))
+        elif url.path == "/api/watch/sweep":
+            self._answer(lambda: self.app.need().sweep(q))
         elif url.path == "/api/watch/noculus/trend_calls":
             self._answer(lambda: self.app.need().trend_calls(q))
         elif url.path == "/api/watch/fractal-defaults":

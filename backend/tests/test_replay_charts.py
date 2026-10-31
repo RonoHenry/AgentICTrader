@@ -155,3 +155,55 @@ def test_static_refuses_anything_outside_the_folder():
     for name in ("../config/backtests/base.toml", "..\\..\\.env", "sub/app.js", "", None, ".env",
                  "../../algo_backtester/watch.py", "nothing_here.js", "app.js.bak"):
         assert static_file(name) is None, f"{name!r} must not be served"
+
+
+# ── the trader's weekly context on Noculus (context-engine Requirement 32.4, task 379) ──
+def test_the_context_page_keeps_a_call_per_market_and_week_and_writes_the_thesis_file(charts, tmp_path):
+    from datetime import datetime, timezone
+
+    from algo_research.replay.context import MARKETS, ContextApp
+
+    thursday = datetime(2026, 10, 29, 12, tzinfo=timezone.utc)
+    charts.context = ContextApp(tmp_path / "calls.json", tmp_path / "theses.json",
+                                quote=lambda inst: {"EURUSD": 1.1}[inst], clock=lambda: thursday,
+                                briefs=tmp_path / "briefs", agree=tmp_path / "agree.json")
+    server = make_charts_server(charts, port=0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    get = lambda path: json.loads(urllib.request.urlopen(base + path, timeout=30).read())  # noqa: E731
+
+    def post(body):
+        req = urllib.request.Request(base + "/api/context/call", method="POST",
+                                     headers={"Content-Type": "application/json"}, data=json.dumps(body).encode())
+        return json.loads(urllib.request.urlopen(req, timeout=30).read())
+
+    try:
+        page = urllib.request.urlopen(base + "/context", timeout=30).read()
+        assert b"context.js" in page and urllib.request.urlopen(base + "/static/context.js", timeout=30).read()
+        view = get("/api/context")
+        assert (view["week"], view["default"], view["open"]) == ("2026-11-02", "2026-11-02", False)
+        assert [r["instrument"] for r in view["rows"]] == list(MARKETS)
+        prices = {r["instrument"]: r["price"] for r in view["rows"]}
+        assert prices["EURUSD"] == 1.1 and prices["XAUUSD"] is None              # the quote failed: no price
+        saved = post({"week": "2026-11-02", "instrument": "eurusd", "side": "BULLISH", "draw": "1.12",
+                      "protected": "1.09", "note": "W1 turtle soup"})["call"]
+        assert (saved["instrument"], saved["draw"], saved["late"]) == ("EURUSD", 1.12, False)
+        theses = json.loads((tmp_path / "theses.json").read_text(encoding="utf-8"))
+        assert theses["EURUSD"]["2026-11-06"]["side"] == "BULLISH"
+        row = next(r for r in get("/api/context?week=2026-11-02")["rows"] if r["instrument"] == "EURUSD")
+        assert row["call"]["note"] == "W1 turtle soup"
+        this_week = get("/api/context?week=2026-10-26")
+        assert this_week["open"] and "2026-10-26" in this_week["weeks"]
+        assert post({"week": "2026-10-26", "instrument": "US500", "side": "NONE"})["call"]["late"]
+        with pytest.raises(urllib.error.HTTPError) as err:
+            get("/api/context/scorecard")                                    # no terminal: nothing to score on
+        assert err.value.code == 409
+        for bad in ({"week": "2026-11-02", "instrument": "EURUSD", "side": "BULLISH", "draw": 1.09, "protected": 1.12},
+                    {"week": "2026-11-02", "instrument": "BTCUSDT", "side": "NONE"},
+                    {"week": "2026-11-03", "instrument": "EURUSD", "side": "NONE"}):
+            with pytest.raises(urllib.error.HTTPError) as err:
+                post(bad)
+            assert err.value.code == 400
+    finally:
+        server.shutdown()
+        server.server_close()

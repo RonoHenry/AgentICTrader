@@ -775,3 +775,99 @@ H-K, H-L and H-M failed on 2018-2022. The trader asked to see the chain's reads 
    - whether H-O keeps it.
 
    This SHALL come through the search's own `algo_research.search_crt_context`, read on a month of the session's M1. A menu SHALL show every trade, only those at a gap, or only H-O's, with the card's totals for what is shown.
+
+## Update 2026-10-29: The Trader's Weekly Context
+
+Every mechanical side tried on the search's unread years came out at a random walk from the same close:
+- the chain (H-K) and the stack (H-M);
+- the turtle soup with the trader's raid, pool and discount (H-U);
+- the side kept by the frames above, with the flip after delivery (H-V).
+
+Meanwhile H-N's trades take both sides on 97% of market-days, and the losing side pays for the winning one. Sorted by the week's own close against its open, a hindsight upper bound, the trades on that side made +0.18R before costs and the others −0.07R. With stops of ten spreads or more, the week's side made +0.16R (3R) and +0.19R (5R) after costs. Called right 57-60% of the time, one weekly side clears the costs.
+
+The trader (2026-10-29): "a trade with context beats a trade that was basically just Model A showing". They will call the context of all nine markets each week. The engine executes only inside it.
+
+### Requirement 32: The Trader's Weekly Context
+
+**User Story:** As the trader, I want to give each market's context once a week (the side, the draw and the protected swing) and have the engine trade only inside it, so that its execution follows my read instead of every setup that shows.
+
+#### Acceptance Criteria
+
+1. **A call.** A CALL SHALL be one market's context for one trading week (Sunday 17:00 to Friday 17:00 New York):
+   - the side: BULLISH, BEARISH or NONE;
+   - the draw;
+   - the protected swing (a bullish call's protected swing is below its draw, and a bearish call's above);
+   - an optional note;
+   - the time it was made.
+
+   A call made after its week opened is kept but marked late. The calls are journal data: local and git-ignored.
+2. **The thesis file.** THE calls SHALL write the engine's thesis file (market-narrative Requirement 17), one entry per trading date of the week: the side, the draw, the protected swing and `since`, the later of the week's open and the call's time.
+3. **When a context ends.** UNDER `bias_mode = THESIS`, a setup against the entry's side is refused as before (`AGAINST_THESIS`), and a date with no entry as before (`NO_THESIS`). When an entry carries a draw, the context ends:
+   - **delivered:** once price has traded at the draw since `since`, refused as `THESIS_DELIVERED`;
+   - **invalidated:** once a D1 candle has closed beyond the protected swing since `since`, refused as `THESIS_INVALIDATED`. A wick beyond it is liquidation and does not end the context.
+
+   A plain side entry keeps its old meaning.
+4. **The page.** NOCULUS SHALL have a context page:
+   - for a chosen week (by default the next to open), the nine markets with their last price when the terminal is connected;
+   - each market's call, with its side, draw and protected swing checked on entry;
+   - saving a call rewrites the thesis file.
+5. **The variant.** THE configuration SHALL have a variant that trades the partial strategy only inside the calls: `bias_mode = THESIS` on the calls' thesis file, with stops of at least ten typical spreads. A paper agent SHALL run it on the control agents' markets, beside them.
+6. **The scorecard.** A SCORECARD SHALL give, for each called week and market:
+   - **the call:** side, draw and protected swing, and whether it was late;
+   - **the week:** its open and close, and whether it closed on the call's side;
+   - **the context:** delivered, invalidated or still open, and when, with a random walk's chance of reaching the draw before the protected swing from the price at `since`;
+   - **the paper agents:** the R net of the trades placed in the week by the context agent and by each control.
+
+   Its totals SHALL give the hit rate of the week's close against the 57-60% the costs need.
+
+### Requirement 33: The Trader's Sequence
+
+**User Story:** As the trader, I want the engine to read a market-day the way I do, top-down, time first and then price, so that it takes the one setup my narrative allows instead of every setup that shows.
+
+The rules come from the trader's Backtest Diary for GBPUSD, Thursday 29 Oct 2026, and their answers of 31 Oct 2026. New York time throughout.
+
+#### Acceptance Criteria
+
+1. **The soup.** A TURTLE SOUP on any frame SHALL be two candles, named by the first: C2 trades beyond C1's low (high) and closes back inside C1. It SHALL be valid once the frame below confirms a CISD: a close beyond the open of the run of opposite candles that delivered C2's extreme. A candle of the trade's colour, or a doji (a body under a tenth of its range), ends the run.
+2. **The narrative.** THE side SHALL come from the latest valid W1 soup:
+   - its C2 falls in the month's first two weeks;
+   - its extreme took an untaken low (high) of the last four quarters or three months (external range liquidity);
+   - a D1 CISD confirmed it by C2's close.
+
+   Its draw SHALL be the nearest W1 gap beyond C2's close whose CE price hasn't reached (internal range liquidity), else a D1 one. The side SHALL end when price reaches the draw's CE (delivered) or a D1 candle closes beyond C2's extreme (invalidated; a wick beyond it is liquidation). A soup against a live side SHALL be ignored as manipulation.
+3. **The setup.** A DAY SHALL be C3 only after a D1 soup on the side whose C2 falls on Monday to Wednesday, whose extreme lies inside a key level, and whose H4 or H1 CISD confirmed by C2's close. A key level is a D1 or W1 gap of the side, an inverted gap of the other side, or an opening gap (NDOG, NWOG) of the last ten trading days.
+4. **C3.** Q1 (18:00-00:00) SHALL set the range. In Q2 (00:00-06:00) price SHALL take Q1's extreme against the side (the Judas swing), and an M5 CISD before 12:00 SHALL confirm it.
+   - The limit SHALL go at the open of the run's last candle (the order block), when that is in discount (premium) of the leg from the Judas extreme.
+   - It is good until 12:00.
+   - Its stop is the Judas extreme.
+5. **The targets.** THE read SHALL list the Judas swing's deviations (−1, −2, −2.5, −4 and −4.5, from the last M5 swing before the extreme). For each it SHALL give the pools and gaps within a fifth of a deviation and the distance in average daily ranges, and it SHALL mark the deviation in confluence with the narrative's draw.
+6. **The acceptance test.** ON the trader's GBPUSD long of Thursday 29 Oct 2026, the reader SHALL find, from the bars closed at each step:
+   - their narrative: the Q2 low taken, and the September W1 gap as the draw;
+   - their soup: Tuesday-Wednesday, into the D1 inverted gap and the 16 Oct NDOG;
+   - their H4 and H1 CISD runs;
+   - their order block (1.33030, filled 09:18) and their stop (1.32956);
+   - their target: the −4 deviation at the W1 gap's edge.
+7. **Frozen per sample.** THE reader SHALL be committed before each new sample of the trader's is read, and the committed version reads each sample first. Changes a sample prompts SHALL come after that read, as a new version.
+
+### Requirement 34: Where the Engine Waits
+
+**User Story:** As the trader, I want the engine to know where it would act before price gets there, and to look for a trigger only once price is at one of those levels, in time, so that it stops firing before price reaches any point of interest.
+
+The trader's blueprint of 31 Oct 2026: a move is the characteristics that line up at a price (discount, a PD array, liquidity and time), not a fixed sequence of events.
+
+#### Acceptance Criteria
+
+1. **A level.** A LEVEL to buy from SHALL be an unfilled PD array of the side on H4, D1 or W1 (an FVG, an inverted FVG, an order block, a breaker or a balanced price range):
+   - at most one D1 average range tall;
+   - with its CE under the equilibrium of the D1 or the W1 dealing range.
+
+   A level to sell from is the mirror. The side's other arrays that overlap a level are stacked on it.
+2. **Its score.** A level's score SHALL count each frame with an array in it, each range it is in discount (premium) of, and liquidity resting inside it or within a tenth of the D1 average range beyond it.
+3. **The gate.** UNDER `require_level`, a setup SHALL be refused as `NOT_AT_LEVEL` unless all four line up:
+   - its protected wick is inside a level of its side (the array, in discount or premium);
+   - the pool it raided is at that level (the liquidity);
+   - the raid came in Q2-Q3, 00:00-12:00 New York (the time).
+
+   The refusal SHALL name the nearest level, or the level the raid missed.
+4. **The variant.** THE configuration SHALL have `fresh_near_gap_levels`: the partial strategy behind the gate, with nothing else changed.
+5. **The chart.** NOCULUS SHALL draw the levels the gate reads at each close: those price or the setup's wick is in, and the next three beyond price on each side, each with its arrays, ranges, liquidity and score.

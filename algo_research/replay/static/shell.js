@@ -36,7 +36,7 @@
       if (bar) {
         const q = this.inst ? `?inst=${encodeURIComponent(this.inst)}` : "";
         bar.innerHTML = `<span class="modes" title="Who is reading the chart">
-            <a href="/${q}" class="${this.mode === "you" ? "on" : ""}">You</a><a href="/engine${q}" class="${this.mode === "engine" ? "on" : ""}">Engine</a></span>` +
+            <a href="/${q}" class="${this.mode === "you" ? "on" : ""}">You</a><a href="/engine${q}" class="${this.mode === "engine" ? "on" : ""}">Engine</a><a href="/context">Context</a></span>` +
           this.instruments.map((i) => {
             const r = this.rows[i] || {};
             const cls = r.change == null ? "" : r.change >= 0 ? "up" : "down";
