@@ -550,8 +550,31 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
     - Tests: `test_algo_mind_dis.py` (6).
   - **Validates: Requirement 35.1, 35.2, 35.5**
 
-- [ ] 395. The directional state in shadow on /context (Requirement 35.3, 35.4)
+- [x] 395. The directional state in shadow on /context (Requirement 35.3, 35.4)
   - Each week, each market's records from the reader, the trader's call and the brain, side by side, scored by the existing scorecard.
+  - The trader asked (2026-11-02) to see how the choice is made before a trade. So the page also shows, per market:
+    - the reader's record and its evidence;
+    - why each of the last four W1 candles did or didn't turn the narrative;
+    - each day's read up to its verdict.
+  - **Done 2026-11-02.**
+    - **What was built:**
+      - `algo_mind/dis.py`: `terminal_market` (reader v0's D1 and W1 from the terminal's H1, New York days, a forming day or week left out) and `week_checks` (the turn's four tests, up to the first each W1 candle fails, both sides).
+      - `algo_mind/shadow.py` (`read_market`, `write_shadow`; `python -m algo_mind shadow --week`), writing `data/algo_mind/dis/<week>.json`: the record at the week's open and at the last D1 close since, the last sides, the weeks checked, and `sequence.read_day` for every trading date opened. H1 for 1,100 days.
+      - `ContextApp.shadow`/`run_reader`, `POST /api/context/reader`. The scorecard scores the side each week opened with, as it scores the brain.
+      - The page: a Reader column, Run the reader, and "How the reader chose", one card per market (the side, the weeks checked, each day).
+    - Nothing in the engine reads the file (35.4). The trader's call and the brain sit beside it as before; they aren't converted into the record's form.
+    - **Weeks of 26 Oct and 2 Nov 2026 on the terminal's bars:**
+      - GBPUSD is BULLISH since Fri 16 Oct. It ordered once, Thu 29 Oct (buy 1.33030, filled 09:18), the trader's trade.
+      - The other eight markets have no side:
+        - XAUUSD's of 9 Oct was invalidated on 22 Oct;
+        - UK100's last was invalidated on 27 Jul;
+        - the rest were delivered between Jun 2024 and Sep 2026.
+      - The last four weeks give no new turn: weeks 3 and 4 of October fall outside the C2 window, and most other candles weren't soups.
+      - The next possible turn is a C2 in the week of 2 or 9 Nov.
+    - **Tests:**
+      - `test_algo_mind_shadow.py` (5): the cut frames; the week checks against `_turns` over the whole fixture; the week of 26 Oct; the day not yet opened; a market the broker doesn't carry.
+      - `test_algo_mind_context.py` (2 more): the record beside the call and the button; the scorecard's reader.
+      - The context tests now give the shadow folder too, so a real file can't leak in.
   - **Validates: Requirement 35.3, 35.4**
 
 ---

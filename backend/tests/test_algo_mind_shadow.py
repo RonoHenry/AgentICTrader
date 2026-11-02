@@ -1,0 +1,105 @@
+"""
+Tests for algo_mind/shadow.py and the live parts of algo_mind/dis.py — the directional state in shadow on the
+context page (context-engine Requirement 35.3-35.4, task 395).
+
+On the Exness GBPUSD fixture (H1 for 2026, M1 for 26-30 Oct): the terminal's frames leave out a forming day and
+week; the week checks say "turn" exactly where reader v0 finds one; and the week of 26 Oct opens BULLISH on the
+trader's narrative, with Thursday's read ending in the trader's order.
+"""
+from __future__ import annotations
+
+from datetime import date, datetime, timezone
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from algo_mind.dis import reader_turns, terminal_market, week_checks
+from algo_mind.shadow import last_close, read_market, write_shadow
+from algo_research.sequence import NY
+
+FIXTURES = Path(__file__).parent / "fixtures" / "research" / "sequence"
+UTC = timezone.utc
+
+
+def _bars(name: str) -> pd.DataFrame:
+    b = pd.read_csv(FIXTURES / name)
+    b["time"] = pd.to_datetime(b["time"], utc=True)
+    return b
+
+
+@pytest.fixture(scope="module")
+def gbpusd():
+    return _bars("GBPUSDm_H1_2026-01-01_2026-10-30.csv.gz"), _bars("GBPUSDm_M1_2026-10-26_2026-10-30.csv.gz")
+
+
+def _ny(wall: str) -> datetime:
+    return pd.Timestamp(wall, tz=NY).tz_convert("UTC").to_pydatetime()
+
+
+def test_the_terminal_frames_leave_out_the_forming_day_and_week(gbpusd):
+    h1, _ = gbpusd
+    m = terminal_market(h1, int(pd.Timestamp(_ny("2026-10-28 10:00")).value))
+    assert pd.Timestamp(m.hist["D1"]["date"].iloc[-1]) == pd.Timestamp("2026-10-27")     # Wed 28 is forming
+    assert pd.Timestamp(m.hist["W1"]["monday"].iloc[-1]) == pd.Timestamp("2026-10-19")   # so is the week of 26
+    assert last_close(_ny("2026-10-28 10:00")) == _ny("2026-10-27 17:00")
+    assert last_close(_ny("2026-10-28 17:00")) == _ny("2026-10-28 17:00")
+
+
+def test_the_week_checks_say_turn_exactly_where_the_reader_finds_one(gbpusd):
+    h1, _ = gbpusd
+    m = terminal_market(h1, int(pd.Timestamp(_ny("2026-10-30 17:00")).value))
+    turns = {(t["t"], t["side"]) for t in reader_turns(m)}
+    w1 = m.hist["W1"]
+    checks = week_checks(m, n=len(w1))
+    closes = dict(zip(w1["monday"].dt.strftime("%Y-%m-%d"), w1["t_close"]))
+    said = {(int(closes[c["week"]]), s) for c in checks for s, name in ((1, "BULLISH"), (-1, "BEARISH"))
+            if c[name]["turn"]}
+    assert said == turns and turns
+    oct12 = next(c for c in checks if c["week"] == "2026-10-12")["BULLISH"]
+    assert [s[0] for s in oct12["steps"]] == ["soup", "C2 window", "external pool", "D1 CISD"]
+    assert oct12["turn"] and "2026 Q2 low" in oct12["steps"][2][2]
+    oct19 = next(c for c in checks if c["week"] == "2026-10-19")
+    assert not oct19["BULLISH"]["turn"] and not oct19["BEARISH"]["turn"]
+
+
+def test_the_shadow_week_opens_on_the_traders_narrative_and_reads_thursdays_order(gbpusd):
+    h1, m1 = gbpusd
+    s = read_market("GBPUSD", h1, m1, date(2026, 10, 26), _ny("2026-10-30 18:00"))
+    assert (s["open"]["side"], s["open"]["state"]) == ("BULLISH", "ACTIVE")
+    assert s["open"]["draw"]["name"].startswith("W1 gap 07 Sep-21 Sep")
+    assert s["now"]["side"] == "BULLISH" and s["as_of"] == _ny("2026-10-30 17:00").isoformat()
+    assert s["spans"][-1]["reason"] == "live" and s["spans"][-1]["side"] == "BULLISH"
+    reads = {r["day"]: r for r in s["reads"]}
+    assert list(reads) == ["2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"]
+    thu = reads["2026-10-29"]
+    assert thu["order"] and thu["verdict"].startswith("ORDER filled 09:18: buy 1.33030")
+    assert thu["steps"][0][0] == "narrative" and not thu["so_far"]
+    assert reads["2026-10-26"]["verdict"].startswith("NO TRADE") and not reads["2026-10-26"]["order"]
+
+
+def test_a_day_not_yet_opened_isnt_read_and_the_running_one_is_so_far(gbpusd):
+    h1, m1 = gbpusd
+    now = _ny("2026-10-28 03:00")
+    s = read_market("GBPUSD", h1[h1["time"] < now], m1[m1["time"] < now], date(2026, 10, 26), now)
+    assert [r["day"] for r in s["reads"]] == ["2026-10-26", "2026-10-27", "2026-10-28"]
+    assert [r["so_far"] for r in s["reads"]] == [False, False, True]
+
+
+def test_the_shadow_file_keeps_a_market_the_broker_doesnt_carry(gbpusd, tmp_path):
+    h1, m1 = gbpusd
+
+    def rates(inst, tf, start, end):
+        if inst != "GBPUSD":
+            return pd.DataFrame(columns=["time", "open", "high", "low", "close"])
+        b = h1 if tf.value == "H1" else m1
+        return b[(b["time"] >= pd.Timestamp(start)) & (b["time"] < pd.Timestamp(end))]
+
+    path = write_shadow(date(2026, 10, 26), rates, now=_ny("2026-10-30 18:00"), markets=("GBPUSD", "DXY"),
+                        folder=tmp_path)
+    import json
+    out = json.loads(path.read_text(encoding="utf-8"))
+    rows = {r["market"]: r for r in out["rows"]}
+    assert out["week"] == "2026-10-26" and out["source"] == "reader"
+    assert rows["GBPUSD"]["open"]["side"] == "BULLISH"
+    assert "no H1" in rows["DXY"]["error"]

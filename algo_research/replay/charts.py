@@ -4,7 +4,8 @@
 
 One server for both modes of the chart: **You** at ``/`` (the blind replay, Requirements 10-12) and **Engine**
 at ``/engine`` (the engine watch, algo-backtester Requirement 15). **Context** at ``/context`` keeps the trader's
-weekly calls (context-engine Requirement 32.4). Each instrument of the research snapshot has
+weekly calls (context-engine Requirement 32.4) beside the brain's and the reader's (Requirement 35.4). Each
+instrument of the research snapshot has
 its own blind journal, opened when its tab is first chosen; the replay's API takes ``?inst=``. The watchlist
 gives every instrument's last price and change as of a time the page names (the You mode: its day's revealed
 time, read here, never later), so it can't show what the chart hasn't reached.
@@ -197,13 +198,14 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": str(exc)})
                 return
             self._answer(lambda: self.charts.context.call(body))
-        elif path == "/api/context/brief":
+        elif path in ("/api/context/brief", "/api/context/reader"):
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             except ValueError as exc:
                 self._send(400, {"error": str(exc)})
                 return
-            self._answer(lambda: self.charts.context.run_brain(body))
+            run = self.charts.context.run_brain if path.endswith("brief") else self.charts.context.run_reader
+            self._answer(lambda: run(body))
         else:
             self._with_replay(_ReplayHandler.do_POST)
 
@@ -240,8 +242,13 @@ def serve(config: Path, port: int = 8765, browser: bool = True, instrument: str 
     def bars(instrument: str, start, end):                             # the terminal's M15, for the scorecard
         return watch.live_source().rates(instrument, Timeframe.M15, start, end)
 
+    def shadow(monday: date):                                          # the reader on the terminal's H1 and M1
+        from algo_mind.shadow import write_shadow
+        return write_shadow(monday, watch.live_source().rates)
+
     charts = ChartsApp(snapshot, journal_root or JOURNAL_DIR, research.slices.explore, watch, default=instrument,
-                       order=research.instruments, context=ContextApp(quote=quote, bars=bars))
+                       order=research.instruments,
+                       context=ContextApp(quote=quote, bars=bars, shadow_writer=shadow))
     server = make_charts_server(charts, port=port)
     url = f"http://127.0.0.1:{server.server_address[1]}{page}"
     print(f"charts at {url}: You (the blind replay) at /, Engine (the watch) at /engine, Context at /context. "

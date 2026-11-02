@@ -24,8 +24,57 @@ def app(tmp_path, clock, **kw):
     briefs = tmp_path / "briefs"
     briefs.mkdir(exist_ok=True)
     (briefs / "2026-11-02.json").write_text(json.dumps(BRIEF), encoding="utf-8")
+    kw.setdefault("shadows", tmp_path / "dis")
     return ContextApp(tmp_path / "calls.json", tmp_path / "theses.json", clock=lambda: clock, briefs=briefs,
                       agree=tmp_path / "agree.json", **kw)
+
+
+def _record(side: str, state: str) -> dict:
+    return {"side": side, "state": state, "since": None, "draw": None, "protected": None, "evidence": [],
+            "ignored": [], "invalidation": "", "ended": None}
+
+
+#: The directional state in shadow (context-engine Requirement 35.4, task 395): reader v0's records of a week.
+SHADOW = {"week": "2026-11-02", "source": "reader", "version": "v0-fe84645", "made_at": "2026-11-02T08:00:00+00:00",
+          "rows": [{"market": "EURUSD", "open": _record("BEARISH", "ACTIVE"), "now": _record("BEARISH", "ACTIVE"),
+                    "spans": [], "weeks": [], "reads": []},
+                   {"market": "GBPUSD", "open": _record("NONE", "UNDETERMINED"),
+                    "now": _record("NONE", "UNDETERMINED"), "spans": [], "weeks": [], "reads": []},
+                   {"market": "DXY", "error": "the broker gives no H1 bars for it"}]}
+
+
+def _shadow(tmp_path):
+    (tmp_path / "dis").mkdir(exist_ok=True)
+    (tmp_path / "dis" / "2026-11-02.json").write_text(json.dumps(SHADOW), encoding="utf-8")
+
+
+def test_the_readers_record_sits_beside_the_call_and_its_button_reads_again(tmp_path):
+    _shadow(tmp_path)
+    made = []
+    a = app(tmp_path, datetime(2026, 11, 2, 9, tzinfo=UTC), shadow_writer=made.append)
+    v = a.view({"week": "2026-11-02"})
+    rows = {r["instrument"]: r for r in v["rows"]}
+    assert v["reader"] == {"source": "reader", "version": "v0-fe84645", "made_at": "2026-11-02T08:00:00+00:00"}
+    assert rows["EURUSD"]["reader"]["open"]["side"] == "BEARISH" and rows["XAUUSD"]["reader"] is None
+    assert "error" in rows["DXY"]["reader"]
+    assert a.run_reader({"week": "2026-11-02"})["reader"]["version"] == "v0-fe84645"
+    assert [m.isoformat() for m in made] == ["2026-11-02"]
+    assert a.view({"week": "2026-10-26"})["reader"] is None
+    import pytest
+    with pytest.raises(LookupError):                         # no terminal: nothing to read with
+        app(tmp_path, datetime(2026, 11, 2, 9, tzinfo=UTC)).run_reader({"week": "2026-11-02"})
+
+
+def test_the_scorecard_scores_the_side_the_week_opened_with(tmp_path):
+    _shadow(tmp_path)
+    a = app(tmp_path, datetime(2026, 11, 7, tzinfo=UTC), bars=lambda inst, s, e: week_bars(),
+            paper={"context": tmp_path / "none.json"})
+    card = a.scorecard()
+    rows = {r["market"]: r for r in card["weeks"][0]["rows"]}
+    assert rows["EURUSD"]["reader"] == {"call": "BEARISH", "state": "ACTIVE", "hit": False}   # the week went up
+    assert rows["US500"]["reader"] is None                    # the brain's market; the reader has no record of it
+    assert "GBPUSD" not in rows                               # no side from anyone
+    assert card["totals"]["reader"] == {"calls": 1, "final": 1, "hits": 0, "hit_rate": 0.0}
 
 
 def test_the_brain_sits_beside_the_traders_call_and_the_agreement_is_written(tmp_path):

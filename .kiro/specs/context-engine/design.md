@@ -441,4 +441,10 @@ algo_research/search_narrative.py # H-AE: the reader's states over Yahoo's daily
 - **`daily_market(days)`** turns daily bars (the source's dates, weeks Monday to Friday, Sunday merged into Monday) into the frames reader v0 reads (`hist["D1"]`, `hist["W1"]`), so the frozen `sequence._turns`, `_signed` and `_end` run unchanged on 28 years. The 17:00 New York day becomes the source's day, as in Amendment 1.
 - **`states(market, source)`** replays a source's turns in time order through Requirement 35.2's machine. It returns the timeline of records: set, replaced, ignored, delivered, invalidated. `state_at(timeline, t)` gives the record live at t.
 - **The reader's turns are causal:** each uses only the candles closed by its own W1 close (its external lows before its week opened, its draw from gaps formed by then). So one pass over the whole history gives the same turns as a pass at every week.
+- **In shadow (task 395):** `algo_mind/shadow.py` reads each market from the terminal's H1 (1,100 days) and M1. `dis.terminal_market` builds the reader's frames from closed candles only. The file holds:
+  - the record at the week's open and at the last D1 close;
+  - `dis.week_checks`: the turn's tests on the last four W1 candles;
+  - `sequence.read_day` for each trading date opened.
+
+  The context page shows it beside the trader's call and the brain, and the scorecard scores the side the week opened with. Nothing in the engine reads it.
 - **H-AE's control:** for each call, every other W1 close of the same market in the window, run as the same race (the same side, the draw and the protected swing at the same distances in 20-day average ranges, a touch to deliver, a D1 close to invalidate, a day that does both counted as failed). Its held share is the call's expected value. This takes out drift, distance and the asymmetry between a touch and a close.

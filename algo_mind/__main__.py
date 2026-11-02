@@ -6,6 +6,7 @@
     python -m algo_mind judge --candidate v2        # judged on the weeks after its window
     python -m algo_mind bench --runs 20 [--plant 0.05]
     python -m algo_mind third-look
+    python -m algo_mind shadow --week 2026-11-02    # the directional state in shadow, from the terminal
 """
 from __future__ import annotations
 
@@ -81,7 +82,31 @@ def main() -> None:
     bench.add_argument("--workers", type=int, default=4)
     look = sub.add_parser("third-look", help="the brain's calls on the readable weeks since 2025 (information)")
     look.add_argument("--version", default="v1")
+    shadow = sub.add_parser("shadow", help="the directional state in shadow: reader v0 on the terminal's bars")
+    shadow.add_argument("--week", required=True, help="the week's Monday, YYYY-MM-DD")
+    shadow.add_argument("--config", default="config/backtests/focus.toml", help="its profile names the terminal")
     args = parser.parse_args()
+    if args.command == "shadow":
+        from datetime import date
+
+        from algo_backtester.watch import live_feed
+        from algo_mind.shadow import write_shadow
+        feed = live_feed(Path(args.config))
+        if feed is None:
+            raise SystemExit(f"{args.config}: its profile is not an MT5 broker's")
+        path = write_shadow(date.fromisoformat(args.week), feed().rates)
+        out = json.loads(path.read_text(encoding="utf-8"))
+        print(f"Week of {out['week']}, {out['source']} {out['version']}, made {out['made_at']}:")
+        for r in out["rows"]:
+            if "error" in r:
+                print(f"  {r['market']:7} {r['error']}")
+                continue
+            o, n = r["open"], r["now"]
+            orders = [x["day"] for x in r["reads"] if x["order"]]
+            print(f"  {r['market']:7} open {o['side']:8} {o['state']:12} now {n['side']:8}"
+                  f"  orders {', '.join(orders) or '-'}")
+        print(path)
+        return
     if args.command == "bench":
         from algo_mind.bench import H_Y_EXCESS, bench as run_bench
         out = run_bench(args.runs, args.plant, args.workers)

@@ -8,6 +8,10 @@ called week on the terminal's M15 bars and the paper agents' records (Requiremen
 Algo Mind (algo-mind Requirements 4.2-4.3, 5.1): the view carries the week's brief beside the trader's calls,
 ``POST /api/context/brief`` makes the brief again, saving a call rewrites the agreement's thesis file, and the
 scorecard scores the brain's calls and the agreement as it scores the trader's.
+
+The directional state in shadow (context-engine Requirement 35.3-35.4): the view carries reader v0's record per
+market (``algo_mind.shadow``) with how it was reached, ``POST /api/context/reader`` reads the markets again, and the
+scorecard scores the side each week opened with. Nothing in the engine reads it.
 """
 from __future__ import annotations
 
@@ -29,6 +33,7 @@ __all__ = ["BREAK_EVEN", "MARKETS", "ContextApp", "coherence", "default_week"]
 MARKETS = ("DXY", "XAUUSD", "EURUSD", "GBPUSD", "US100", "US500", "US30", "GER40", "UK100")
 REPO = Path(__file__).resolve().parents[2]
 BRIEFS = REPO / "data" / "algo_mind" / "briefs"
+SHADOWS = REPO / "data" / "algo_mind" / "dis"
 AGREE_THESES = REPO / "data" / "research" / "theses" / "agree_theses.json"
 
 
@@ -69,10 +74,12 @@ class ContextApp:
                  clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
                  bars: Optional[Callable[[str, datetime, datetime], "pd.DataFrame"]] = None,
                  paper: Optional[dict[str, Path]] = None, briefs: Path = BRIEFS, agree: Path = AGREE_THESES,
-                 brief_writer: Optional[Callable[[date, ContextBook], Path]] = None) -> None:
+                 brief_writer: Optional[Callable[[date, ContextBook], Path]] = None, shadows: Path = SHADOWS,
+                 shadow_writer: Optional[Callable[[date], Path]] = None) -> None:
         self.calls_path, self.theses_path, self.quote, self.clock = Path(calls), Path(theses), quote, clock
         self.bars, self.paper = bars, dict(PAPER_FILES if paper is None else paper)
         self.briefs, self.agree, self.brief_writer = Path(briefs), Path(agree), brief_writer
+        self.shadows, self.shadow_writer = Path(shadows), shadow_writer
 
     def book(self) -> ContextBook:
         return ContextBook(self.calls_path, self.theses_path)
@@ -101,6 +108,11 @@ class ContextApp:
                 "provisional": any(bool(r["provisional"]) for r in rows.values()),
                 "notes": coherence({m: r["call"] for m, r in rows.items()})}
 
+    def shadow(self, week: str) -> Optional[dict]:
+        """The directional state's shadow for the week of ``week`` (its Monday), or None."""
+        path = self.shadows / f"{week}.json"
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
     def view(self, q: dict) -> dict:
         now = self.clock()
         default = default_week(now)
@@ -111,12 +123,26 @@ class ContextApp:
         calls = book.week(monday)
         called = sorted({c.week for c in book.calls()} | {default.isoformat(), monday.isoformat()})
         brain = self._brain(monday.isoformat())
+        shadow = self.shadow(monday.isoformat())
+        reader = {r["market"]: r for r in shadow["rows"]} if shadow else {}
         return {"week": monday.isoformat(), "opens": week_open(monday).isoformat(), "default": default.isoformat(),
                 "open": now >= week_open(monday), "now": now.isoformat(timespec="seconds"), "weeks": called,
                 "brain": brain, "notes": coherence({m: c.side for m, c in calls.items()}),
+                "reader": None if shadow is None else {k: shadow[k] for k in ("source", "version", "made_at")},
                 "rows": [{"instrument": m, "price": self._price(m),
                           "call": _row(calls[m]) if m in calls else None,
-                          "brain": brain["rows"].get(m) if brain else None} for m in MARKETS]}
+                          "brain": brain["rows"].get(m) if brain else None,
+                          "reader": reader.get(m)} for m in MARKETS]}
+
+    def run_reader(self, body: dict) -> dict:
+        """Read the markets again for the week (the directional state in shadow), then the view."""
+        monday = date.fromisoformat(str(body.get("week", "")))
+        if monday.weekday() != 0:
+            raise ValueError(f"week: a Monday, not {monday}")
+        if self.shadow_writer is None:
+            raise LookupError("the reader needs the broker's terminal: this server has none")
+        self.shadow_writer(monday)
+        return self.view({"week": monday.isoformat()})
 
     def run_brain(self, body: dict) -> dict:
         """Make the week's brief again (Algo Mind), then the view."""
@@ -159,18 +185,21 @@ class ContextApp:
         for call in self.book().calls():
             by_week.setdefault(call.week, {})[call.instrument] = call
         briefs = {p.stem: self.brief(p.stem) for p in sorted(self.briefs.glob("????-??-??.json"))}
+        shadows = {p.stem: self.shadow(p.stem) for p in sorted(self.shadows.glob("????-??-??.json"))}
         weeks: dict = {}
-        for week in sorted(set(by_week) | set(briefs)):
+        for week in sorted(set(by_week) | set(briefs) | set(shadows)):
             monday = date.fromisoformat(week)
             start, end = week_open(monday), week_close(monday)
             if start > now:
                 continue                                        # not opened yet: nothing to score
             calls = by_week.get(week, {})
             brain = {r["market"]: r for r in (briefs.get(week) or {"rows": []})["rows"]}
+            reader = {r["market"]: r for r in (shadows.get(week) or {"rows": []})["rows"] if "open" in r}
             for market in MARKETS:
                 call, b = calls.get(market), brain.get(market)
                 brain_side = (b or {}).get("call")
-                if call is None and brain_side not in ("BULLISH", "BEARISH"):
+                reader_side = reader[market]["open"]["side"] if market in reader else None
+                if call is None and not {brain_side, reader_side} & {"BULLISH", "BEARISH"}:
                     continue
                 row = {"market": market, "call": _row(call) if call else None}
                 try:
@@ -185,22 +214,29 @@ class ContextApp:
                                 "walk": None})
                 row["agents"] = {name: dict(zip(("n", "r"), paper_r(path, market, start, end)))
                                  for name, path in self.paper.items()}
-                side = {"BULLISH": 1, "BEARISH": -1}.get(brain_side or "")
                 moved = row["week_open"] is not None and row["week_close"] != row["week_open"]
+
+                def closed_its_way(called: Optional[str]) -> Optional[bool]:
+                    side = {"BULLISH": 1, "BEARISH": -1}.get(called or "")
+                    return ((row["week_close"] - row["week_open"]) * side > 0) if side and moved else None
+
                 row["brain"] = None if b is None else {
                     "call": brain_side, "p": b.get("p"), "provisional": b.get("provisional"),
-                    "hit": ((row["week_close"] - row["week_open"]) * side > 0) if side and moved else None}
+                    "hit": closed_its_way(brain_side)}
+                row["reader"] = None if market not in reader else {
+                    "call": reader_side, "state": reader[market]["open"]["state"], "hit": closed_its_way(reader_side)}
                 weeks.setdefault(week, []).append(row)
         rows = [r for rs in weeks.values() for r in rs if "error" not in r]
         trader = [r for r in rows if r["call"] and r["call"]["side"] != "NONE"]
         final = [r for r in trader if r["final"] and r["hit"] is not None]
 
-        def rate(picked: list) -> dict:
-            done = [r for r in picked if r["final"] and r["brain"]["hit"] is not None]
-            hits = sum(r["brain"]["hit"] for r in done)
+        def rate(picked: list, who: str = "brain") -> dict:
+            done = [r for r in picked if r["final"] and r[who]["hit"] is not None]
+            hits = sum(r[who]["hit"] for r in done)
             return {"calls": len(picked), "final": len(done), "hits": hits,
                     "hit_rate": hits / len(done) if done else None}
 
+        reader_called = [r for r in rows if r["reader"] and r["reader"]["call"] in ("BULLISH", "BEARISH")]
         brain_called = [r for r in rows if r["brain"] and r["brain"]["call"] in ("BULLISH", "BEARISH")]
         agreeing = [r for r in brain_called if r["call"] and r["call"]["side"] == r["brain"]["call"]]
         totals = {"calls": len(trader), "final": len(final), "hits": sum(r["hit"] for r in final),
@@ -208,6 +244,7 @@ class ContextApp:
                   "delivered": sum(r["outcome"] == "delivered" for r in trader),
                   "invalidated": sum(r["outcome"] == "invalidated" for r in trader),
                   "break_even": BREAK_EVEN, "brain": rate(brain_called), "agree": rate(agreeing),
+                  "reader": rate(reader_called, "reader"),
                   "agents": {name: {"n": sum(r["agents"][name]["n"] for r in trader),
                                     "r": round(sum(r["agents"][name]["r"] for r in trader), 3)}
                              for name in self.paper}}

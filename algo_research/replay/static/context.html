@@ -24,14 +24,33 @@
   section.score { margin-top: 26px; }
   section.score h3 { font-size: 14px; margin: 0 0 6px; }
   .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
-  @media (max-width: 760px) { table.calls input[type=number] { width: 90px; } table.calls .hide-s { display: none; } }
+  section.reader { margin-top: 26px; }
+  section.reader > h3 { font-size: 14px; margin: 0 0 4px; }
+  details.rd { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; }
+  details.rd > summary { cursor: pointer; padding: 8px 10px; font-size: 13px; }
+  details.rd .rb { padding: 0 12px 12px; font-size: 13px; }
+  details.rd h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 14px 0 6px; }
+  details.rd ul.ev { margin: 4px 0 4px 18px; padding: 0; }
+  details.rd .spans { font-size: 12px; margin-top: 6px; }
+  table.wk td { vertical-align: top; font-size: 12px; }
+  ol.chain { list-style: none; margin: 2px 0 0; padding: 0; }
+  ol.chain li { margin: 1px 0; } ol.chain li.no { color: var(--muted); }
+  ol.chain .mk { display: inline-block; width: 14px; } ol.chain li.ok .mk { color: var(--good); } ol.chain li.no .mk { color: var(--bad); }
+  b.ok { color: var(--good); }
+  .read { border-top: 1px solid var(--line); padding: 8px 0 4px; }
+  .read dl { display: grid; grid-template-columns: 84px 1fr; gap: 2px 10px; margin: 6px 0 0; font-size: 12px; }
+  .read dt { color: var(--muted); } .read dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .verdict { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--chip); }
+  .verdict.order { color: var(--good); font-weight: 650; } .verdict.none { color: var(--muted); }
+  @media (max-width: 760px) { table.calls input[type=number] { width: 90px; } table.calls .hide-s { display: none; }
+    .read dl { grid-template-columns: 1fr; } .read dt { margin-top: 4px; } }
 </style>
 </head>
 <body>
 <div id="shell"><span class="modes" title="Who is reading the chart"><a href="/">You</a><a href="/engine">Engine</a><a href="/context" class="on">Context</a></span></div>
 <header>
   <h1>Noculus · Context</h1>
-  <span class="muted">Your weekly call per market, beside Algo Mind's: the engine trades only the given side, until the draw trades or a D1 candle closes beyond the protected swing.</span>
+  <span class="muted">Your weekly call per market, beside Algo Mind's and the reader's: the engine trades only your given side, until the draw trades or a D1 candle closes beyond the protected swing.</span>
 </header>
 <main class="ctx">
   <div class="weekbar">
@@ -46,13 +65,22 @@
     <button class="boxed" id="runBrain" title="Read the nine markets now and make this week's brief again">Run the brain</button>
     <span id="brainState" class="muted"></span>
   </div>
+  <div class="weekbar">
+    <button class="boxed" id="runReader" title="Read the nine markets on the terminal's bars: the side, the weeks checked and each day's read">Run the reader</button>
+    <span id="readerState" class="muted"></span>
+  </div>
   <div id="notes"></div>
   <table class="calls">
-    <thead><tr><th>Market</th><th class="num">Last</th><th>Brain</th><th>Your side</th><th class="num">Draw</th><th class="num">Protected swing</th>
+    <thead><tr><th>Market</th><th class="num">Last</th><th>Brain</th><th>Reader</th><th>Your side</th><th class="num">Draw</th><th class="num">Protected swing</th>
       <th class="hide-s">Note</th><th></th><th>Saved</th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
   <p class="hint">A bullish call's protected swing is below its draw; a bearish one's above. A call made after the week opens is kept but marked late, and counts from when it was made. Every version is kept.</p>
+  <section class="reader">
+    <h3>How the reader chose (in shadow: the engine doesn't read it)</h3>
+    <p class="hint">The order it decides in. 1: the side, from the weeks: a W1 turtle soup whose C2 (in the month's first two weeks) took an external pool, with a D1 CISD by its close; held until price reaches its draw's CE or a D1 candle closes beyond its protected swing. No side, no trade. 2 and 3, each day on the side only: a D1 soup with its C2 Monday to Wednesday, in a key level, with an H4 or H1 CISD; then C3: the Q1 range, the Q2 Judas swing, an M5 CISD before 12:00, and the order block in discount. The first rule a day fails is its verdict.</p>
+    <div id="reader" class="muted">—</div>
+  </section>
   <section class="score">
     <h3>Scorecard</h3>
     <div id="score" class="muted">—</div>
