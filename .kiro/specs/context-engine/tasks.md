@@ -530,6 +530,25 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
       - `test_backtest_strategy_config.py`: the field in the fingerprint.
   - **Validates: Requirement 34.1-34.5**
 
+- [x] 393. H-AE registered: the trader's narrative held as the side (Requirement 35.5)
+  - The hypothesis, its window, its control, its two cells and its pass rule appended to `docs/research/SEARCH_2018_2024.md` and committed before any outcome is computed.
+  - **Done 2026-11-02**, in the commit that adds Requirement 35. Only call counts were looked at before it (none yet).
+  - **Validates: Requirement 35.5**
+
+- [ ] 394. The directional state over history, and H-AE's run (Requirement 35.1, 35.2, 35.5)
+  - **394a. RED**:
+    - on the Exness GBPUSD fixture's bars rebuilt as daily candles, the reader's state on Mon 26 Oct 2026 is BULLISH, set by the W1 soup that took the 2026 Q2 low, with the September W1 gap as its draw;
+    - on hand-made turns, a same-side turn replaces the live one, an opposite one is ignored while the side lives, and after a delivery or an invalidation the state is UNDETERMINED until the next turn;
+    - a state at t is unchanged when the bars after t are cut;
+    - the race counts a day that both delivers and invalidates as failed, and the control's distances scale with the 20-day average range.
+  - **394b. GREEN**: `algo_mind/dis.py` (`DirectionalState`, `daily_market`, `states`, `state_at`) and `algo_research/search_narrative.py` (H-AE).
+  - **394c.** The development run, logged in the search log with the tries count.
+  - **Validates: Requirement 35.1, 35.2, 35.5**
+
+- [ ] 395. The directional state in shadow on /context (Requirement 35.3, 35.4)
+  - Each week, each market's records from the reader, the trader's call and the brain, side by side, scored by the existing scorecard.
+  - **Validates: Requirement 35.3, 35.4**
+
 ---
 
 ## Task Dependency Graph

@@ -871,3 +871,50 @@ The trader's blueprint of 31 Oct 2026: a move is the characteristics that line u
    The refusal SHALL name the nearest level, or the level the raid missed.
 4. **The variant.** THE configuration SHALL have `fresh_near_gap_levels`: the partial strategy behind the gate, with nothing else changed.
 5. **The chart.** NOCULUS SHALL draw the levels the gate reads at each close: those price or the setup's wick is in, and the next three beyond price on each side, each with its arrays, ranges, liquidity and score.
+
+---
+
+## Update 2026-11-02: The Directional State (AlgoMindDIS)
+
+The trader wrote a target architecture for the engine's direction, AlgoMindDIS. Its core idea is that the side is a held, explainable state, not a signal re-read at every close. A side is set by evidence, kept until it is delivered or invalidated, and "no side" is allowed. Setups are qualified against it, in shadow first.
+
+Two ways to fill that state were put to the trader:
+- **A:** a weighted sum of generic evidence (structure, liquidity, premium/discount, PD arrays, delivery).
+- **B:** rules that carry the trader's own read.
+
+They chose B (2026-11-02). Every input to A has tested at a random walk from the same close as a direction source (H-K, H-M, H-Q to H-V, the trend, the draw on liquidity, valuation). The learned combination of the same inputs (brain v2) walked forward at +0.7 points over 1995-2022. B's rules are reader v0's narrative (Requirement 33.2): the turn, its draw, its protected swing and its end.
+
+### Requirement 35: The Directional State
+
+**User Story:** As the trader, I want the engine to hold one side per market, with the evidence that set it, its draw and what would prove it wrong, and to say "no side" otherwise, so that setups are judged against a narrative instead of being re-read at every close.
+
+#### Acceptance Criteria
+
+1. **The record.** A DIRECTIONAL STATE SHALL be one market's side at a time t, from one source:
+   - the source and its version;
+   - the side: BULLISH, BEARISH or NONE;
+   - the state: ACTIVE, DELIVERED, INVALIDATED or UNDETERMINED;
+   - `since`, the close that set it;
+   - the draw (name and level) and the protected swing;
+   - the evidence that set it, each item with its time (for the reader: the W1 soup, the external pool it took, the D1 CISD);
+   - the turns against it that were ignored (manipulation);
+   - the invalidation condition in words, and when it ended and why.
+2. **The state machine.** THE side SHALL be held from the turn that set it until it is delivered or invalidated:
+   - **delivered:** price trades at the draw's CE;
+   - **invalidated:** a D1 candle closes beyond the protected swing (a wick is liquidation).
+
+   A turn on the live side replaces it, with its own draw and protected swing. A turn against the live side is recorded as ignored and changes nothing. After an end, the state is UNDETERMINED until the next turn. The state at t SHALL use only candles closed by t, and the same bars SHALL always give the same states.
+3. **The sources.** THE record SHALL be filled the same way from any source:
+   - the reader's narrative (Requirement 33.2, frozen at fe84645);
+   - the trader's weekly calls (Requirement 32);
+   - the brain's weekly side (algo-mind).
+
+   Each source is scored by the same rules (35.5).
+4. **Shadow first.** NOTHING in the engine SHALL read the record until a source has passed its test. The /context page SHALL show each source's record beside the trader's call.
+5. **The test.** THE reader's states SHALL be measured over the long daily history (1996-2022) as H-AE, registered in the search log before it runs:
+   - the narrative's draw reached before its invalidation, against matched random starts;
+   - the weeks opened under a live side, closed on it, against drift;
+   - how often a side is live.
+6. **Open decisions, kept as settings.** The trader hasn't yet answered two questions. Each is a setting with reader v0's default, changed only as a new version:
+   - **External liquidity:** the lows (highs) of the last four quarters and three months (default), or any untaken W1 swing.
+   - **After delivery:** UNDETERMINED until the next turn (default), or the opposite external pool as the next draw.

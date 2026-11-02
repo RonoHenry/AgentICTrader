@@ -426,3 +426,19 @@ algo_backtester/watch.py           # the Engine chart's Model A layer (Requireme
 - Property 1 (frame invariance) covers the reader: relabelled candles, the same states.
 - Property 2 (only the past) covers it: truncating the bars after t leaves every state up to t unchanged.
 - **Property 10: the sequence holds.** Every instance starts FRAMED. MANIPULATED precedes REJECTED and DISPLACED; the displacement may come inside C2, before its close. ENTERED follows both. No state follows the instance's end.
+
+---
+
+## Update 2026-11-02: The Directional State (Requirement 35)
+
+### Components
+
+```
+algo_mind/dis.py                  # the record (DirectionalState) and the state machine over a source's turns
+algo_research/search_narrative.py # H-AE: the reader's states over Yahoo's daily history, scored
+```
+
+- **`daily_market(days)`** turns daily bars (the source's dates, weeks Monday to Friday, Sunday merged into Monday) into the frames reader v0 reads (`hist["D1"]`, `hist["W1"]`), so the frozen `sequence._turns`, `_signed` and `_end` run unchanged on 28 years. The 17:00 New York day becomes the source's day, as in Amendment 1.
+- **`states(market, source)`** replays a source's turns in time order through Requirement 35.2's machine. It returns the timeline of records: set, replaced, ignored, delivered, invalidated. `state_at(timeline, t)` gives the record live at t.
+- **The reader's turns are causal:** each uses only the candles closed by its own W1 close (its external lows before its week opened, its draw from gaps formed by then). So one pass over the whole history gives the same turns as a pass at every week.
+- **H-AE's control:** for each call, every other W1 close of the same market in the window, run as the same race (the same side, the draw and the protected swing at the same distances in 20-day average ranges, a touch to deliver, a D1 close to invalidate, a day that does both counted as failed). Its held share is the call's expected value. This takes out drift, distance and the asymmetry between a touch and a close.
