@@ -577,6 +577,24 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
       - The context tests now give the shadow folder too, so a real file can't leak in.
   - **Validates: Requirement 35.3, 35.4**
 
+
+- [x] 396. Blind weekly calls (Requirement 36)
+  - **396a. RED** — on hand-made daily bars:
+    - the charts fall in the window, in a fixed order, and none is shown twice;
+    - a chart's bars end at its Friday's close, its dates are 56 years later on the same weekdays, its last close is 1000, and the market isn't named;
+    - a call's levels are checked against the last close, and the real prices are kept;
+    - the score: the next week's close on the side, the race (a day both delivering and invalidating fails), drift and the control;
+    - the reveal is refused before the call is saved;
+    - recognised charts and NONE calls stay out of the hit totals.
+  - **396b. GREEN** — `algo_research/replay/weekly.py` (`WeeklyApp`), `/weekly` with `static/weekly.html` and `weekly.js`, and the routes in `charts.py`.
+  - **Done 2026-11-02.**
+    - 8,617 charts across the nine markets. The page knows a chart only by its number: the first test caught the market and date in the id, and it was made opaque. MN1 is capped at 180 months so the history's depth is the same for every market where it can be. A market whose history starts later (gold from 2010, FX from 2003) still shows a shorter history on its early charts.
+    - Calls go to `data/journal/weekly_blind/calls.jsonl`. Reader v0's timelines are built in the background when the order is first read (about 6 s a market), so the reveal doesn't wait.
+    - Keys: B / S / N side, M / W / D frame, L line, Enter save, → next. After a side, the next two chart clicks set the draw, then the protected swing.
+    - Checked in headless Edge (puppeteer-core): the blind chart, two clicks setting the levels, the save, the reveal at the top of the panel with the next eight weeks greyed on D1, the totals and the next chart, with no page errors.
+    - Tests: `test_research_replay_weekly.py` (4).
+  - **Validates: Requirement 36.1-36.6**
+
 ---
 
 ## Task Dependency Graph

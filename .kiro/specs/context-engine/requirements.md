@@ -918,3 +918,48 @@ They chose B (2026-11-02). Every input to A has tested at a random walk from the
 6. **Open decisions, kept as settings.** The trader hasn't yet answered two questions. Each is a setting with reader v0's default, changed only as a new version:
    - **External liquidity:** the lows (highs) of the last four quarters and three months (default), or any untaken W1 swing.
    - **After delivery:** UNDETERMINED until the next turn (default), or the opposite external pool as the next draw.
+
+---
+
+## Update 2026-11-02b: Blind Weekly Calls
+
+H-AE failed: reader v0's narrative, held over 1996-2022, reached its draw no more often than random starts, and the weeks under it closed on its side 51.5% of the time against 51.1% drift. The rules were one hindsight sample, coded. What hasn't been measured is the trader's own read: no weekly calls are logged. Live weeks give a handful of sides a week, so about 300 calls (the number that tells 57% from drift, ±5.7 points) would take most of a year.
+
+The trader agreed (2026-11-02) to call history blind instead: a random market and week from years nobody has read with these rules, the call made with the same record as Requirement 35, scored at once by H-AE's race. Reader v0 is diffed against the trader's calls, not against the market. If the calls clear the bar, the edge is in the read and the engine executes inside it; if they sit at drift, direction is nobody's edge here.
+
+### Requirement 36: Blind Weekly Calls
+
+**User Story:** As the trader, I want to call many past weeks quickly without knowing which market or year they are, and see each scored at once, so that I learn whether my weekly read beats drift before the engine relies on it.
+
+#### Acceptance Criteria
+
+1. **The charts.** A CHART SHALL be one market and one week of the long daily history (Yahoo, the nine markets): its Friday from 1996 (and the market's 53rd week) to 2017. 2018-2022 is the search's development window and 2023-2024 is unread. The order is fixed by a seed, and each pair is shown once.
+2. **Blind.** THE page SHALL show MN1, W1 and D1 up to that Friday's close, and nothing after it until the call is saved:
+   - the market is hidden;
+   - dates are moved 56 years later, which keeps weekdays, months and leap years;
+   - prices are scaled so the last close is 1000.
+3. **The call.** A CALL SHALL be:
+   - the side, BULLISH, BEARISH or NONE;
+   - the draw and the protected swing (a bullish call's protected swing below the last close and its draw above, a bearish one's the mirror);
+   - confidence from 1 to 3;
+   - the evidence, from a fixed list of tags, and a note;
+   - "I recognise this chart", which leaves it out of the totals;
+   - the time it took.
+
+   Calls are journal data: local and git-ignored. The real prices are kept beside the scaled ones.
+4. **The score, at save.**
+   - **The week:** the next week closed beyond its open on the call's side, against the market's share of such weeks over 1996-2017.
+   - **The race:** H-AE's, from the Friday close. Held when a D1 candle trades at the draw before one closes beyond the protected swing (a day doing both fails), against H-AE's matched control and a random walk's odds.
+   - **The days** it took to end.
+5. **The reveal.** AFTER the save the page SHALL show:
+   - the market and the real dates;
+   - the next eight weeks of D1 on the chart;
+   - the score;
+   - reader v0's state at that close (Requirement 35) beside the call.
+6. **The totals.** THE page SHALL total the calls with a side, leaving out recognised charts:
+   - the week's hit against drift and the race against its control, each with an interval over the calls;
+   - each by confidence and by market;
+   - agreement with the reader where it had a side;
+   - the hit against the 57-60% the trades need.
+
+   The bar is judged at 300 calls.

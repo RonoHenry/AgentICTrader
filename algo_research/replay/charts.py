@@ -4,7 +4,8 @@
 
 One server for both modes of the chart: **You** at ``/`` (the blind replay, Requirements 10-12) and **Engine**
 at ``/engine`` (the engine watch, algo-backtester Requirement 15). **Context** at ``/context`` keeps the trader's
-weekly calls (context-engine Requirement 32.4) beside the brain's and the reader's (Requirement 35.4). Each
+weekly calls (context-engine Requirement 32.4) beside the brain's and the reader's (Requirement 35.4). **Weekly**
+at ``/weekly`` is the blind weekly calls on the long daily history (Requirement 36). Each
 instrument of the research snapshot has
 its own blind journal, opened when its tab is first chosen; the replay's API takes ``?inst=``. The watchlist
 gives every instrument's last price and change as of a time the page names (the You mode: its day's revealed
@@ -29,6 +30,7 @@ import pandas as pd
 from algo_backtester import watch as watch_mod
 from algo_research.replay.bars import ReplayBars
 from algo_research.replay.context import ContextApp
+from algo_research.replay.weekly import WeeklyApp
 from liquidity_engine.models import Timeframe
 from algo_research.replay.journal import Journal, ReplayError
 from algo_research.replay.server import (FILES, STATIC, ReplayApp, static_file,
@@ -38,7 +40,7 @@ __all__ = ["ChartsApp", "make_charts_server", "serve"]
 
 #: Every page and script of both modes.
 PAGES = {"/": "index.html", "/index.html": "index.html", "/you": "index.html", "/engine": "engine.html",
-         "/context": "context.html"}
+         "/context": "context.html", "/weekly": "weekly.html"}
 ALL_FILES = {**FILES, **watch_mod.FILES, "shell.js": "text/javascript; charset=utf-8"}
 _DAY, _DAY_OPEN = 86400, 61200
 
@@ -47,9 +49,11 @@ class ChartsApp:
     """The instruments, a blind journal per instrument (opened on first use), the engine watch and the watchlist."""
 
     def __init__(self, snapshot: Path, journal_root: Path, slice_: tuple[date, date], watch: watch_mod.WatchApp,
-                 default: str = "XAUUSD", order: Sequence[str] = (), context: Optional[ContextApp] = None) -> None:
+                 default: str = "XAUUSD", order: Sequence[str] = (), context: Optional[ContextApp] = None,
+                 weekly: Optional[WeeklyApp] = None) -> None:
         self.snapshot, self.journal_root, self.slice, self.watch = Path(snapshot), Path(journal_root), slice_, watch
         self.context = context or ContextApp()
+        self.weekly = weekly or WeeklyApp(Path(journal_root).parent / "weekly_blind")
         held = sorted(p.name.split("_")[0] for p in self.snapshot.glob("*_M1.parquet"))
         # The tabs in the research order (algo-research Requirement 22.5), then anything else the snapshot holds.
         self.instruments = [i for i in dict.fromkeys(o.upper() for o in order) if i in held] + \
@@ -178,6 +182,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.charts.context.view(self._query()))
         elif path == "/api/context/scorecard":
             self._answer(lambda: self.charts.context.scorecard(self._query()))
+        elif path == "/api/weekly/chart":
+            self._answer(lambda: self.charts.weekly.chart(self._query()))
+        elif path == "/api/weekly/reveal":
+            self._answer(lambda: self.charts.weekly.reveal(self._query()))
+        elif path == "/api/weekly/summary":
+            self._answer(self.charts.weekly.summary)
         elif path.startswith("/api/watch/"):
             self.app = self.charts.watch
             watch_mod._Handler.do_GET(self)
@@ -198,6 +208,13 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": str(exc)})
                 return
             self._answer(lambda: self.charts.context.call(body))
+        elif path == "/api/weekly/call":
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            except ValueError as exc:
+                self._send(400, {"error": str(exc)})
+                return
+            self._answer(lambda: self.charts.weekly.call(body))
         elif path in ("/api/context/brief", "/api/context/reader"):
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
@@ -251,7 +268,7 @@ def serve(config: Path, port: int = 8765, browser: bool = True, instrument: str 
                        context=ContextApp(quote=quote, bars=bars, shadow_writer=shadow))
     server = make_charts_server(charts, port=port)
     url = f"http://127.0.0.1:{server.server_address[1]}{page}"
-    print(f"charts at {url}: You (the blind replay) at /, Engine (the watch) at /engine, Context at /context. "
+    print(f"charts at {url}: You (the blind replay) at /, Engine (the watch) at /engine, Context at /context, Weekly (blind calls) at /weekly. "
           f"Instruments: {', '.join(charts.instruments)}. Ctrl+C stops.")
     if browser:
         webbrowser.open(url)
