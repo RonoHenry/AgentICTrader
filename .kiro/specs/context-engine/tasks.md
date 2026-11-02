@@ -535,7 +535,7 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
   - **Done 2026-11-02**, in the commit that adds Requirement 35. Only call counts were looked at before it (none yet).
   - **Validates: Requirement 35.5**
 
-- [ ] 394. The directional state over history, and H-AE's run (Requirement 35.1, 35.2, 35.5)
+- [x] 394. The directional state over history, and H-AE's run (Requirement 35.1, 35.2, 35.5)
   - **394a. RED**:
     - on the Exness GBPUSD fixture's bars rebuilt as daily candles, the reader's state on Mon 26 Oct 2026 is BULLISH, set by the W1 soup that took the 2026 Q2 low, with the September W1 gap as its draw;
     - on hand-made turns, a same-side turn replaces the live one, an opposite one is ignored while the side lives, and after a delivery or an invalidation the state is UNDETERMINED until the next turn;
@@ -543,6 +543,11 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
     - the race counts a day that both delivers and invalidates as failed, and the control's distances scale with the 20-day average range.
   - **394b. GREEN**: `algo_mind/dis.py` (`DirectionalState`, `daily_market`, `states`, `state_at`) and `algo_research/search_narrative.py` (H-AE).
   - **394c.** The development run, logged in the search log with the tries count.
+  - **Done 2026-11-02.**
+    - `algo_mind/dis.py`: `DirectionalState` (with `to_json`), `Span`, `daily_market`, `reader_turns`, `states`, `state_at`. Reader v0's `_turns`, `_signed` and `_end` run unchanged on the daily frames.
+    - `algo_research/search_narrative.py`: `race`, `control_share`, `market_tables`, `judge`. The companions change one of reader v0's defaults by patching the module during the call; `sequence.py` is not edited.
+    - **H-AE fails:** cell 1 −2.6 [−10.9, +5.3] on 196 calls, cell 2 +0.4 [−3.0, +3.7] on 1,368 weeks (hit 51.5%). A side is live in 12.5% of market-weeks. Neither open-question variant changes it.
+    - Tests: `test_algo_mind_dis.py` (6).
   - **Validates: Requirement 35.1, 35.2, 35.5**
 
 - [ ] 395. The directional state in shadow on /context (Requirement 35.3, 35.4)
