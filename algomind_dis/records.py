@@ -118,6 +118,7 @@ class DeliveryState:
     state: str
     since: Optional[int]
     evidence: Tuple[str, ...]
+    direction: str = "NEUTRAL"           # the side delivered, or the side a TRANSITIONAL read turns to
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,7 @@ class Evidence:
     valid: bool
     depends_on: Tuple[str, ...]
     text: str
+    scope: str = ""                      # EXTERNAL for a swept external pool: the state machine's challenge reads it
 
 
 @dataclass(frozen=True)

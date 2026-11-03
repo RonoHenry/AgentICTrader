@@ -74,14 +74,28 @@
     - Tests: `test_algomind_dis_delivery.py` (6).
   - **Validates: Requirement 7.1-7.2, 8.1-8.4**
 
-- [ ] 403. Phase 3: evidence, synthesis, narrative and the timeframe hierarchy (Requirements 9, 10, 11)
+- [x] 403. Phase 3: evidence, synthesis, narrative and the timeframe hierarchy (Requirements 9, 10, 11)
   - **403a. RED:**
     - correlation control (a duplicated source event changes nothing);
     - the weights add to 1;
     - the scores on scenario bars;
     - lower-timeframe evidence classified as retracement, internal delivery or developing reversal;
     - the narrative's text comes from its record.
-  - **403b. GREEN:** `evidence.py`, `narrative.py`.
+  - **403b. GREEN:** `observe.py` (every analyzer at one close, with the replay's `prepare`), `evidence.py`, `narrative.py`.
+  - **Done 2026-11-03.**
+    - **The items (v1):**
+      - structure per frame;
+      - pools swept and closed back (at their type's weight);
+      - the SWING range's zone (deep 1.0, plain 0.5);
+      - arrays that count (0.5, +0.25 displaced, +0.25 after a sweep);
+      - delivery (1.0, or 0.5 transitional);
+      - time and volatility as neutral context.
+    - **Correlation (§9.3):** an item's source is the candle that caused it. One displacement candle's BOS and CISD are one movement and count once, as its most significant item; a later retest of its FVG is a new event. Each frame then counts once per category and side.
+      - On the test bars this takes the bullish story from 0.65 to 0.50 (structure 0.25, discount 0.10, the FVG's retest 0.15), against 0.075 from a bearish FVG still valid in premium.
+    - Lower frames are classified (retracement, internal delivery, developing reversal) and never scored.
+    - The narrative's text is `render` of its own record; the draw is the side's most significant live objective.
+    - Two records gained a defaulted field: `DeliveryState.direction`, `Evidence.scope`.
+    - Tests: `test_algomind_dis_evidence.py` (5).
   - **Validates: Requirement 9.1-9.5, 10.1-10.2, 11.1-11.2**
 
 - [ ] 404. Phase 4: the state machine and the timeline (Requirements 12, 14)

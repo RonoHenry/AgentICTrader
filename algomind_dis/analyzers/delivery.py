@@ -101,7 +101,7 @@ def delivery(c: Candles, s: Settings = V1, seqs: Optional[Sequence[Seq]] = None,
         side, extreme, beyond = word[q.side]
         return DeliveryState(c.tf, "TRANSITIONAL", int(c.end[q.sweep]),
                              (f"{side}-side swept to {_p(q.extreme)} and a {q.side.lower()} displacement",
-                              f"no close {beyond} {_p(q.level)} (the CISD) yet"))
+                              f"no close {beyond} {_p(q.level)} (the CISD) yet"), q.side)
     labels = label_phases(c.o, c.h, c.l, c.c) if labels is None else labels
     if n <= len(labels) and labels[n - 1] == CONSOLIDATION:
         return DeliveryState(c.tf, "CONSOLIDATION", int(c.end[n - 1]), ("a tight box (algo_research.phases)",))
@@ -111,5 +111,5 @@ def delivery(c: Candles, s: Settings = V1, seqs: Optional[Sequence[Seq]] = None,
                              (f"{side}-side swept to {_p(ongoing.extreme)}",
                               f"a {ongoing.side.lower()} displacement and a close {beyond} {_p(ongoing.level)} "
                               f"(the CISD)",
-                              f"held while no close is beyond {_p(ongoing.extreme)}"))
+                              f"held while no close is beyond {_p(ongoing.extreme)}"), ongoing.side)
     return DeliveryState(c.tf, "UNCONFIRMED", None, ("no complete sweep, displacement and CISD in force",))
