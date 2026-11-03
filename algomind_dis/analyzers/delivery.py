@@ -77,7 +77,7 @@ def _p(x: float) -> str:
 
 
 def delivery(c: Candles, s: Settings = V1, seqs: Optional[Sequence[Seq]] = None,
-             labels: Optional[np.ndarray] = None) -> DeliveryState:
+             labels: Optional[np.ndarray] = None, disp: Optional[np.ndarray] = None) -> DeliveryState:
     n = len(c)
     if n == 0:
         return DeliveryState(c.tf, "UNCONFIRMED", None, ("no closed candle",))
@@ -91,7 +91,7 @@ def delivery(c: Candles, s: Settings = V1, seqs: Optional[Sequence[Seq]] = None,
         beyond = (after < latest.extreme) if latest.side == "BULLISH" else (after > latest.extreme)
         if not beyond.any():
             ongoing = latest
-    disp = displacements(c, s)
+    disp = displacements(c, s) if disp is None else disp[:n]
     pending = [q for q in seqs if not (0 <= q.confirm < n)
                and (latest is None or q.sweep > latest.confirm)
                and bool((disp[q.sweep:n] == (1 if q.side == "BULLISH" else -1)).any())]

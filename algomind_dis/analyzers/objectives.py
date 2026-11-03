@@ -15,6 +15,7 @@ no longer listed.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence
 
 import numpy as np
@@ -25,7 +26,7 @@ from liquidity_engine.context.frame_state import LIQUIDITY_BAND, Candles, Object
 from liquidity_engine.context.measures import average_range
 from liquidity_engine.models import BiasDirection
 
-__all__ = ["LIVE", "adr", "objectives", "primary_objective", "ranked"]
+__all__ = ["LIVE", "ObjectiveTable", "adr", "objective_table", "objectives", "primary_objective", "ranked"]
 
 LIVE = ("IDENTIFIED", "APPROACHING")
 _TEMPORAL = {"PDH", "PDL", "PWH", "PWL", "PMH", "PML"}
@@ -80,10 +81,55 @@ def _equal(found: list[Objective], c: Candles) -> set[int]:
     return out
 
 
+@dataclass(frozen=True)
+class ObjectiveTable:
+    """A frame's swing and gap objectives over its full history (the replay's): each one's index in the frame when
+    it is known, and the index on the full D1 path of the candle that first took it (-1: never)."""
+    groups: tuple                                   # (objectives, known, taken) for highs, lows and gaps
+
+
+def objective_table(c: Candles, path: Candles) -> ObjectiveTable:
+    found = _objectives(c, previous=False)
+    groups = []
+    for source in ("SWING_HIGH", "SWING_LOW", "FVG"):
+        xs = [x for x in found if x.source == source]
+        at = np.searchsorted(c.end, np.array([x.formed_at for x in xs], dtype=np.int64), "left")
+        known = at + (0 if source == "FVG" else 2)               # a swing is known two candles on (lookback 2)
+        taken = [_taken(path, x) for x in xs]
+        groups.append((xs, known.astype(np.int64), np.array([-1 if k is None else k for k in taken], np.int64)))
+    return ObjectiveTable(tuple(groups))
+
+
+def _found(c: Candles, path: Candles, table: Optional[ObjectiveTable]) -> tuple[list, list]:
+    """``frame_state._objectives(c, previous=True)`` and each one's taken index on ``path``; from the table, the
+    entries known by the cut's last candle, in the same order."""
+    if table is None:
+        found = list(_objectives(c, previous=True))
+        return found, [_taken(path, x) for x in found]
+    n, m = len(c), len(path)
+    (hx, hk, ht), (lx, lk, lt), (gx, gk, gt) = table.groups
+    last = Candles(c.tf, c.t[-1:], c.end[-1:], c.o[-1:], c.h[-1:], c.l[-1:], c.c[-1:])
+    previous = list(_objectives(last, previous=True))           # one candle: only its high and low
+    found: list = []
+    taken: list = []
+    for xs, known, tk in ((hx, hk, ht), (lx, lk, lt)):
+        k = int(np.searchsorted(known, n - 1, "right"))
+        found += xs[:k]
+        taken += [int(v) if 0 <= v < m else None for v in tk[:k]]
+    found += previous
+    taken += [_taken(path, x) for x in previous]
+    k = int(np.searchsorted(gk, n - 1, "right"))
+    found += gx[:k]
+    taken += [int(v) if 0 <= v < m else None for v in gt[:k]]
+    return found, taken
+
+
 def objectives(market: str, frames: Mapping[str, Candles], price: float,
                ranges_by_tf: Mapping[str, Sequence[DealingRange]], s: Settings = V1,
-               path: Optional[Candles] = None) -> tuple[LiquidityObjective, ...]:
-    """Every frame's live objectives, and those swept or mitigated in the last ``sweep_window`` candles of ``path``."""
+               path: Optional[Candles] = None,
+               tables: Optional[Mapping[str, ObjectiveTable]] = None) -> tuple[LiquidityObjective, ...]:
+    """Every frame's live objectives, and those swept or mitigated in the last ``sweep_window`` candles of ``path``.
+    The replay passes each frame's ``objective_table``; the result is the same."""
     d1 = frames["D1"]
     path = d1 if path is None else path
     daily = adr(d1, s)
@@ -93,8 +139,11 @@ def objectives(market: str, frames: Mapping[str, Candles], price: float,
         if not len(c):
             continue
         rng = next((r for r in ranges_by_tf.get(tf, ()) if r.kind == "SWING"), None)
-        found = list(_objectives(c, previous=True)) + (_range_extremes(c, rng) if rng is not None else [])
-        taken = [_taken(path, x) for x in found]
+        found, taken = _found(c, path, tables.get(tf) if tables else None)
+        if rng is not None:
+            extremes = _range_extremes(c, rng)
+            found += extremes
+            taken += [_taken(path, x) for x in extremes]
         live = [x if k is None else None for x, k in zip(found, taken)]
         equal = _equal([x for x in live if x is not None], c)
         live_idx = [i for i, x in enumerate(live) if x is not None]

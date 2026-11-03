@@ -16,6 +16,7 @@ frame's arrays once (``raw``); each array is dated, so the ones formed by a cut'
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional, Sequence
 
 import numpy as np
@@ -27,7 +28,7 @@ from algomind_dis.settings import V1, Settings
 from liquidity_engine.context.frame_state import Candles, _Array, _arrays
 from liquidity_engine.models import BiasDirection
 
-__all__ = ["arrays", "counts", "reacting"]
+__all__ = ["ArrayTable", "array_table", "arrays", "counts", "in_play", "reacting"]
 
 _SIDE_ZONES = {"BULLISH": ("DISCOUNT", "DEEP_DISCOUNT"), "BEARISH": ("PREMIUM", "DEEP_PREMIUM")}
 
@@ -74,6 +75,78 @@ def arrays(market: str, c: Candles, price: float, rng: Optional[DealingRange], w
             rng.id if rng is not None else None, zone(rng.position(near), s) if rng is not None else None,
             bool((disp[made] == sign).any()), bool((under if bullish else over)[before].any()),
             a.direction.value == w1_direction, mitigated, invalidated is None, invalidated))
+    return tuple(out)
+
+
+_NEVER = np.iinfo(np.int64).max
+
+
+@dataclass(frozen=True)
+class ArrayTable:
+    """A frame's arrays over its full history (the replay's): each one's forming index, the first later close
+    beyond its far edge and the first later trade into its near edge (``_NEVER``: none), and its two
+    formation-time flags. Each reads only candles up to its own index, so a cut reads its entries below n."""
+    raw: list
+    k: np.ndarray
+    low: np.ndarray
+    high: np.ndarray
+    bullish: np.ndarray
+    formed: np.ndarray
+    breach: np.ndarray
+    touch: np.ndarray
+    displaced: np.ndarray
+    swept: np.ndarray
+
+
+def array_table(c: Candles, s: Settings = V1) -> ArrayTable:
+    raw = _arrays(c)
+    n = len(c)
+    disp = displacements(c, s)
+    under, over = _swept(c)
+    rows = []
+    for a in raw:
+        k = int(np.searchsorted(c.end, a.formed_at, "left"))
+        bullish = a.direction == BiasDirection.BULLISH
+        later = slice(k + 1, n)
+        b = np.flatnonzero(c.c[later] < a.low if bullish else c.c[later] > a.high)
+        near = a.high if bullish else a.low
+        t = np.flatnonzero(c.l[later] <= near if bullish else c.h[later] >= near)
+        sign = 1 if bullish else -1
+        rows.append((k, a.low, a.high, bullish, a.formed_at, k + 1 + int(b[0]) if len(b) else _NEVER,
+                     k + 1 + int(t[0]) if len(t) else _NEVER, bool((disp[max(0, k - 2):k + 1] == sign).any()),
+                     bool((under if bullish else over)[max(0, k - s.sweep_window):k + 1].any())))
+    cols = list(zip(*rows)) if rows else [()] * 9
+    types = (np.int64, float, float, bool, np.int64, np.int64, np.int64, bool, bool)
+    return ArrayTable(raw, *(np.array(col, dtype=dt) for col, dt in zip(cols, types)))
+
+
+def in_play(market: str, c: Candles, price: float, rng: Optional[DealingRange], w1_direction: str,
+            table: ArrayTable, s: Settings = V1) -> tuple[ArrayContext, ...]:
+    """``tuple(a for a in arrays(...) if reacting(a, c))``, read from the table (the replay's)."""
+    n = len(c)
+    if not n or not len(table.k):
+        return ()
+    keep = (table.k <= n - 1) & ~((table.breach < n) & (table.breach < n - s.sweep_window))
+    inside = (table.low <= price) & (price <= table.high)
+    above, below = price > table.high, price < table.low
+    j = np.arange(max(0, n - s.sweep_window), n)
+    after = c.t[j][None, :] >= table.formed[:, None]
+    hit = np.where(table.bullish[:, None], c.l[j][None, :] <= table.high[:, None],
+                   c.h[j][None, :] >= table.low[:, None])
+    touched = (after & hit).any(axis=1)
+    play = inside | (touched & np.where(table.bullish, above, below))
+    out = []
+    for i in np.flatnonzero(keep & play):
+        a = table.raw[i]
+        near = a.high if table.bullish[i] else a.low
+        breach = int(table.breach[i])
+        out.append(ArrayContext(
+            make_id(market, c.tf, a.kind, a.direction.value, a.formed_at, a.low, a.high), market, c.tf, a.kind,
+            a.direction.value, float(a.low), float(a.high), int(a.formed_at),
+            "INSIDE" if inside[i] else "ABOVE" if above[i] else "BELOW", rng.id if rng is not None else None,
+            zone(rng.position(near), s) if rng is not None else None, bool(table.displaced[i]),
+            bool(table.swept[i]), a.direction.value == w1_direction, bool(table.touch[i] < n), breach >= n,
+            int(c.end[breach]) if breach < n else None))
     return tuple(out)
 
 

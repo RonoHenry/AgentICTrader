@@ -21,11 +21,16 @@ from algomind_dis.analyzers.structure import LOOKBACK
 from algomind_dis.records import DealingRange, PricePosition, make_id
 from algomind_dis.settings import V1, Settings
 from liquidity_engine.context.frame_state import Candles, dealing_range
+from liquidity_engine.context.frame_state import DealingRange as _EngineRange
 
 __all__ = ["displacement_range", "displacements", "position", "previous_range", "primary", "ranges", "swing_range",
            "zone"]
 
 _PREVIOUS = {"MN1": "PMH/PML", "W1": "PWH/PWL", "D1": "PDH/PDL"}
+
+
+def _DR(high: float, low: float, low_at: int, high_at: int) -> _EngineRange:
+    return _EngineRange(low, high, low_at, high_at)
 
 
 def zone(p: float, s: Settings = V1) -> str:
@@ -57,8 +62,22 @@ def _first_close_beyond(c: Candles, start: int, above: Optional[float], below: O
     return int(c.end[start + k[0]]) if len(k) else None
 
 
-def swing_range(market: str, c: Candles) -> Optional[DealingRange]:
-    rng = dealing_range(c.h, c.l, len(c))
+def _dealing_range(c: Candles, swing_idx: Optional[tuple[np.ndarray, np.ndarray]]):
+    """``frame_state.dealing_range``; with the full frame's swing indices (the replay's), the same range read from
+    the swings confirmed in the cut (index <= n - 3) without detecting them again."""
+    if swing_idx is None:
+        return dealing_range(c.h, c.l, len(c))
+    n = len(c)
+    highs, lows = (a[a <= n - 1 - LOOKBACK] for a in swing_idx)
+    if not len(highs) or not len(lows):
+        return None
+    i_h, i_l = int(highs[-1]), int(lows[-1])
+    return _DR(float(c.h[i_h:n].max()), float(c.l[i_l:n].min()), i_l, i_h)
+
+
+def swing_range(market: str, c: Candles,
+                swing_idx: Optional[tuple[np.ndarray, np.ndarray]] = None) -> Optional[DealingRange]:
+    rng = _dealing_range(c, swing_idx)
     if rng is None:
         return None
     later = max(rng.low_at, rng.high_at)
@@ -95,8 +114,9 @@ def displacements(c: Candles, s: Settings = V1) -> np.ndarray:
     return np.where(big, np.sign(c.c - c.o), 0).astype(int)
 
 
-def displacement_range(market: str, c: Candles, s: Settings = V1) -> Optional[DealingRange]:
-    d = displacements(c, s)
+def displacement_range(market: str, c: Candles, s: Settings = V1,
+                       disp: Optional[np.ndarray] = None) -> Optional[DealingRange]:
+    d = displacements(c, s) if disp is None else disp[:len(c)]
     k = np.flatnonzero(d)
     if not len(k):
         return None
@@ -116,10 +136,12 @@ def displacement_range(market: str, c: Candles, s: Settings = V1) -> Optional[De
                         broke is None, broke, f"a {c.tf} close {word} {origin:.6g}")
 
 
-def ranges(market: str, c: Candles, s: Settings = V1) -> tuple[DealingRange, ...]:
-    """The frame's ranges that exist: SWING, PREVIOUS, DISPLACEMENT."""
-    return tuple(r for r in (swing_range(market, c), previous_range(market, c), displacement_range(market, c, s))
-                 if r is not None)
+def ranges(market: str, c: Candles, s: Settings = V1, swing_idx=None,
+           disp: Optional[np.ndarray] = None) -> tuple[DealingRange, ...]:
+    """The frame's ranges that exist: SWING, PREVIOUS, DISPLACEMENT (the replay passes the full frame's swing
+    indices and displacements; the result is the same)."""
+    return tuple(r for r in (swing_range(market, c, swing_idx), previous_range(market, c),
+                             displacement_range(market, c, s, disp)) if r is not None)
 
 
 def primary(by_tf: Mapping[str, Sequence[DealingRange]], question: str) -> Optional[DealingRange]:
