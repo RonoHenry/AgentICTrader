@@ -226,7 +226,7 @@
       Delivered ${t.delivered}, invalidated ${t.invalidated}, of ${t.calls} with a side.<br>
       Paper R on your called markets: ${Object.entries(t.agents).map(([k, v]) => `${k} ${r(v)}`).join(", ")}.<br>
       <b>AlgoMindDIS: ${t.reader.hits}/${t.reader.final}</b> (${pct(t.reader)}; on the side each week opened with).
-      Paper R on its markets: ${Object.entries(t.reader.agents).map(([k, v]) => `${k} ${r(v)}`).join(", ")}.</p>`;
+      Paper R on its markets: ${Object.entries(t.reader.agents || {}).map(([k, v]) => `${k} ${r(v)}`).join(", ")}.</p>`;
     const agents = Object.keys(t.agents);
     const yes = (h, final) => (h == null ? "—" : `${h ? '<span class="up">yes</span>' : '<span class="down">no</span>'}${final ? "" : ' <span class="muted">(so far)</span>'}`);
     for (const w of d.weeks) {
