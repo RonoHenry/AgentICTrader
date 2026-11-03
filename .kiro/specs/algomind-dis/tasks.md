@@ -58,7 +58,7 @@
     - Tests: `test_algomind_dis_objectives.py` (4), including the mirror and the replay's precomputed arrays.
   - **Validates: Requirement 5.1-5.4, 6.1-6.3**
 
-- [ ] 402. Phase 2c: delivery, time and volatility (Requirements 7, 8)
+- [x] 402. Phase 2c: delivery, time and volatility (Requirements 7, 8)
   - **402a. RED:**
     - sweep → displacement → CISD gives BULLISH_DELIVERY, and a close under the run's low ends it;
     - a sweep and displacement without a CISD gives TRANSITIONAL;
@@ -66,6 +66,12 @@
     - New York time across the clocks' change;
     - news carries no direction.
   - **402b. GREEN:** `analyzers/delivery.py`, `analyzers/context.py`.
+  - **Done 2026-11-03.**
+    - Delivery reuses reader v0's `sequence.cisd` (the run's open as the level, on mirrored bars for the sell side) and `phases.label_phases`.
+    - **Order of the states:** TRANSITIONAL (a fresh sweep and displacement without a CISD, against the delivery or with none) before CONSOLIDATION (the current box) before the ongoing delivery. A consolidating market reads CONSOLIDATION, and its earlier sequence is still in the evidence.
+    - The sequences and labels are computed once on the full frame for the replay; a cut's read equals the full frame's up to it (tested at every cut).
+    - Time is read in New York through `zoneinfo`; scheduled news is a list of names with no direction field.
+    - Tests: `test_algomind_dis_delivery.py` (6).
   - **Validates: Requirement 7.1-7.2, 8.1-8.4**
 
 - [ ] 403. Phase 3: evidence, synthesis, narrative and the timeframe hierarchy (Requirements 9, 10, 11)
