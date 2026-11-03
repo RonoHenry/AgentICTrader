@@ -27,7 +27,7 @@
     - Tests: `test_algomind_dis_records.py` (4).
   - **Validates: Requirement 2.1-2.3, 8.1**
 
-- [ ] 400. Phase 2a: structure, ranges and premium/discount (Requirements 3, 4)
+- [x] 400. Phase 2a: structure, ranges and premium/discount (Requirements 3, 4)
   - **400a. RED** on hand-made bars:
     - swings are known only from their confirming close;
     - a BOS and an MSS fire at the right closes;
@@ -35,6 +35,10 @@
     - the zones' bounds hold;
     - mirrored bars give mirrored results.
   - **400b. GREEN:** `analyzers/structure.py`, `analyzers/ranges.py`.
+  - **Done 2026-11-03.**
+    - Structure reuses `measures.swing_highs/lows`. Each swing breaks once; a break is a BOS with the structure or from none, an MSS against it. Events read only candles to their own close, so the full frame's events filtered by time equal a recomputation at every close (tested at every cut). The replay computes them once.
+    - Ranges: SWING reuses `frame_state.dealing_range` as the engine reads it (stretched), and is marked invalid from the first close beyond an anchor's own price. PREVIOUS is the last candle. DISPLACEMENT is the latest big-body candle's leg; a newer displacement replaces it.
+    - Tests: `test_algomind_dis_structure.py` (6), including the mirror.
   - **Validates: Requirement 3.1-3.2, 4.1-4.4**
 
 - [ ] 401. Phase 2b: objectives and PD array context (Requirements 5, 6)
