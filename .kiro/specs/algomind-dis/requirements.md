@@ -125,11 +125,13 @@ That is one source in AlgoMindDIS's container, not this specification. This spec
    - **EXTERNAL:** each SWING range's high and low, and untaken MN1 and W1 swing highs and lows beyond them;
    - **INTERNAL:** untaken swings inside the range, relative equal highs and lows, and unfilled gaps at their near edge;
    - **TEMPORAL:** the previous day's, week's and month's high and low. The sessions' (Asia, London, New York) are added on H1 when it is present.
-2. STATUS:
+2. STATUS, in the engine's terms (a pool is swept, a gap is filled):
    - IDENTIFIED once known;
    - APPROACHING within 0.5 ADR;
-   - SWEPT once a candle trades beyond it, keeping whether that candle closed back inside;
-   - INVALIDATED once its range is replaced.
+   - SWEPT once a candle trades beyond a pool, keeping whether that candle closed back inside;
+   - MITIGATED once a candle trades into a gap's near edge.
+
+   Objectives are read afresh at each close: one taken more than 3 candles ago, or whose range is replaced, is no longer listed (INVALIDATED is never stored).
 3. SIGNIFICANCE SHALL be the timeframe's weight × the type's weight (EXTERNAL 1.0, TEMPORAL 0.8, INTERNAL 0.6), raised by 0.25 for equal highs or lows. It is never set by distance.
 4. THE ranking per side SHALL be by significance, then by distance. The primary objective of a side is the first. The output is the ranked list, never a single prediction (§5.4).
 

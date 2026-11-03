@@ -41,7 +41,7 @@
     - Tests: `test_algomind_dis_structure.py` (6), including the mirror.
   - **Validates: Requirement 3.1-3.2, 4.1-4.4**
 
-- [ ] 401. Phase 2b: objectives and PD array context (Requirements 5, 6)
+- [x] 401. Phase 2b: objectives and PD array context (Requirements 5, 6)
   - **401a. RED:**
     - the typing (external, internal, temporal);
     - the status changes (approaching, swept with close-back, invalidated);
@@ -49,6 +49,13 @@
     - an array's nine evaluations;
     - an FVG alone gives no evidence.
   - **401b. GREEN:** `analyzers/objectives.py`, `analyzers/arrays.py`.
+  - **Done 2026-11-03.**
+    - Objectives reuse `frame_state._objectives` (swings, previous candle, gaps) plus each SWING range's high and low.
+      - **Statuses** in the engine's terms: a pool SWEPT (with whether the candle closed back), a gap MITIGATED. Anything taken more than three candles ago is consumed and dropped (Requirement 5.2 amended: INVALIDATED is never stored).
+      - **Ranking:** by significance, then by distance. On the test bars the nearer PDH ranks below the range high.
+    - Arrays reuse `frame_state._arrays`, with §6.2's evaluations. A swept pool is followed on the finest frame given.
+    - Requirement 6.3 (`counts`): a bullish array counts only valid, in discount, and with price in it or just off it.
+    - Tests: `test_algomind_dis_objectives.py` (4), including the mirror and the replay's precomputed arrays.
   - **Validates: Requirement 5.1-5.4, 6.1-6.3**
 
 - [ ] 402. Phase 2c: delivery, time and volatility (Requirements 7, 8)
