@@ -165,6 +165,23 @@
     - **The history:** the broker's H1 from the terminal, about four years cut at the session's end, as the chart's New York trading days (`frames.ny_daily`). The session's own M1 (from Nov 2021) gives the monthly frame about 13 candles and almost no sides; the layer falls back to it, and says so, when the terminal is closed.
     - **Code:** `algomind_dis/view.py` (`ChartView`), `WatchSession.dis` and `/api/watch/dis`, `engine.js` (`paintDis`, `disCard`). Tests: `test_algomind_dis_view.py` (2).
     - **2022 on the terminal's bars, the sides set:** GBPUSD 3, EURUSD 2, XAUUSD 1, US500 3, US100 6, GER40 6, UK100 5, US30 8. For example, GBPUSD set BEARISH at the 21 Jul 2022 close (bearish 0.51 against 0.15; draw the MN1 swing low 1.14118 and protected level 1.26662, each about 5 ADR away), unresolved on 1 Aug.
+  - **The trader's PD arrays (2026-11-03).**
+    - **The fault, in the trader's words:** "what the engine is computing as a breaker is not a breaker at all."
+    - **The example:** on GBPUSD D1, v1 counted a "bearish breaker" at 1.19336-1.22075.
+      - That was the engine's default rule: 14 June 2022 alone (the last down candle before a 1.5 ATR up candle, wick to wick), closed under on 6 July.
+      - By the trader's rule the down run of 8-14 June opened at 1.25877, and no close got back above it before 6 July. So there was no order block, and nothing could fail into a breaker.
+    - **The cause:** v1 read the array layer (`frame_state._arrays`), which still runs the engine's default rule. The trader's 2026-10-28 rule existed only as the order layer's opt-in `ob_rule = "cisd"`. The Phase 0 audit missed it.
+    - **The fix:** `liquidity_engine/context/blocks.py` (`delivery_blocks`) is the trader's rule on arrays, matching their Fractal + POI script's `FindCISDLevel`:
+      - the CISD run, dojis skipped, the first open as the level;
+      - the bodies as the zone, with the MT at their midpoint;
+      - high probability = took the swing and left a gap;
+      - a close through inverts the OB into a breaker;
+      - a close back through ends the breaker (the trader's answer, 2026-11-03), also added to the order layer's `cisd` rule.
+    - **Tests:** `test_context_blocks.py` (7):
+      - exact parity with `PDArrayDetector(ob_rule="cisd")` on four random walks with dojis;
+      - the June 2022 case;
+      - the breaker's end.
+    - **Settings:** `array_rule` ("engine" for V1, unchanged as H-AF ran; "cisd" for V2). The chart layer now shows V2, labelled untested.
   - **If v1 passed H-AF:** DIS_ENFORCED writes the paper agent's thesis file in place of reader v0's, after the trader's go.
   - **If not:** v1 stays in shadow, and the trader chooses the next version's change. **(v1 failed, 2026-11-03.)**
   - **Validates: Requirement 14.3, 16.1-16.4**

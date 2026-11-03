@@ -16,22 +16,23 @@ from typing import Optional
 
 import numpy as np
 
-from algomind_dis import VERSION
 from algomind_dis.analyzers.arrays import counts
 from algomind_dis.analyzers.objectives import ranked
 from algomind_dis.evidence import SCORED, counted, gather, htf_scores, scores
 from algomind_dis.frames import Frames
 from algomind_dis.narrative import draw_text, narrative
 from algomind_dis.observe import observe, prepare
-from algomind_dis.settings import V1, Settings
+from algomind_dis.settings import V1, V2, Settings
 from algomind_dis.state import Timeline, run
 
 __all__ = ["ChartView", "HAF", "to_wall"]
 
 _SHIFT = 7 * 3600
 #: What H-AF found (search log, 2026-11-03), shown beside the layer.
-HAF = ("Tested 1996-2022 (H-AF, failed): its sides reached their draw 12.4% of the time, random starts at the same "
-       "distances 12.4%; weeks under a side closed on it 52.8% against 49.9% drift. Shown to watch, not to trade.")
+HAF = ("v1 was tested 1996-2022 (H-AF, failed): its sides reached their draw 12.4% of the time, random starts at the "
+       "same distances 12.4%; weeks under a side closed on it 52.8% against 49.9% drift. v1 read the engine's arrays; "
+       "v2 reads yours (the CISD run's bodies, breakers ended by a close back through) and is untested. Shown to "
+       "watch, not to trade.")
 
 
 def to_wall(t: Optional[int]) -> Optional[int]:
@@ -117,7 +118,7 @@ class ChartView:
             return [{"tf": o.tf, "source": o.source, "price": o.price, "kind": o.kind, "status": o.status,
                      "significance": round(o.significance, 3), "text": draw_text(o)} for o in ranked(obs.objectives, side)[:3]]
 
-        out = {"close": to_wall(t), "version": VERSION, "state": state, "side": row["side"],
+        out = {"close": to_wall(t), "version": self.s.version, "state": state, "side": row["side"],
                "since": to_wall(row["since"]) if row["since"] is not None and np.isfinite(row["since"]) else None,
                "draw": _num(row["draw"]), "protected": _num(row["protected"]), "closes": int(row["closes"]),
                "bullish": sc.bullish, "bearish": sc.bearish, "htf": list(htf),

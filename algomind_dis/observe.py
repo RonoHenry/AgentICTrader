@@ -16,7 +16,7 @@ from typing import Callable, Iterable, Mapping, Optional
 import numpy as np
 
 from algo_research.phases import label_phases
-from algomind_dis.analyzers.arrays import ArrayTable, array_table, arrays, in_play, reacting
+from algomind_dis.analyzers.arrays import ArrayTable, array_table, arrays, in_play, raw_arrays, reacting
 from algomind_dis.analyzers.context import TimeContext, VolatilityContext, time_context, volatility_context
 from algomind_dis.analyzers.delivery import Seq, delivery, sequences
 from algomind_dis.analyzers.objectives import ObjectiveTable, objective_table, objectives
@@ -55,7 +55,7 @@ def prepare(market: str, full: Mapping[str, Candles], s: Settings = V1) -> dict[
             continue
         idx = (np.array(swing_highs(c.h, LOOKBACK), dtype=np.int64),
                np.array(swing_lows(c.l, LOOKBACK), dtype=np.int64))
-        out[tf] = Prepared(events(market, c), _arrays(c), sequences(c, s), label_phases(c.o, c.h, c.l, c.c), idx,
+        out[tf] = Prepared(events(market, c), raw_arrays(c, s), sequences(c, s), label_phases(c.o, c.h, c.l, c.c), idx,
                            displacements(c, s), objective_table(c, path), array_table(c, s))
     return out
 

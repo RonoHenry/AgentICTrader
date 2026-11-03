@@ -946,6 +946,7 @@ class WatchSession:
         warm-up (the monthly frame's ranges need them), and its reads at each close. Rebuilt when a new trading day
         starts; a close reads only the candles closed by it."""
         from algomind_dis.frames import from_daily
+        from algomind_dis.settings import V2
         from algomind_dis.view import ChartView
         end, size = wall(self.end), seconds_of("D1")
         day = (end + 7 * 3600) // size
@@ -954,7 +955,7 @@ class WatchSession:
                 daily, source = self._dis_daily()
                 history = {"source": source, "from": str(pd.Timestamp(daily["date"].iloc[0]).date()) if len(daily)
                            else None, "days": int(len(daily))}
-                self._dis = (day, ChartView(self.instrument, from_daily(self.instrument, daily)), history)
+                self._dis = (day, ChartView(self.instrument, from_daily(self.instrument, daily), V2), history)
             return self._dis[1], self._dis[2]
 
     def dis(self, q: dict) -> dict:

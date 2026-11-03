@@ -325,12 +325,18 @@ class PDArrayDetector:
                 )
                 obs.append(ob)
                 levels.append(self._make_cisd_level(candles[first].open, direction, tf, formed_at))
-                for candle in candles[through + 1:]:              # the close beyond the bodies inverts it
+                for k in range(through + 1, len(candles)):          # the close beyond the bodies inverts it
+                    candle = candles[k]
                     if (candle.close < bottom) if bullish else (candle.close > top):
                         ob.is_filled, ob.filled_at = True, candle.timestamp
                         breaker = self._make_pdarray(PDArrayType.BREAKER, flipped, tf, top, bottom,
                                                      candle.timestamp, source_ob_id=ob.array_id)
                         breaker.structure_confirmed = self._structure_confirmed(candle, flipped, structure_events)
+                        # a close back through the breaker ends it (the trader, 2026-11-03)
+                        back = next((x for x in candles[k + 1:] if ((x.close > top) if bullish else (x.close < bottom))),
+                                    None)
+                        if back is not None:
+                            breaker.is_filled, breaker.filled_at = True, back.timestamp
                         breakers.append(breaker)
                         break
         return obs, breakers, levels

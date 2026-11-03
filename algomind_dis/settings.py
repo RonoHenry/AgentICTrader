@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict
 
-__all__ = ["Settings", "V1"]
+__all__ = ["Settings", "V1", "V2"]
 
 
 @dataclass(frozen=True)
@@ -44,6 +44,12 @@ class Settings:
     validity_closes: int = 20
     #: §13.3: a frame with no close for longer than this on a weekday is stale.
     stale_days: int = 3
+    #: Which PD arrays it reads: "engine" (``frame_state._arrays``: the last opposite candle before a 1.5 ATR candle,
+    #: wick to wick; v1, as H-AF ran) or "cisd" (the trader's: ``liquidity_engine.context.blocks``, the CISD run's
+    #: bodies, a close through inverting it into a breaker, a close back through ending that).
+    array_rule: str = "engine"
 
 
 V1 = Settings()
+#: v1 with the trader's order blocks and breakers (2026-11-03). Untested: a test of it is a new registration.
+V2 = Settings(version="v2", array_rule="cisd")

@@ -25,12 +25,30 @@ from algomind_dis.analyzers.ranges import displacements, zone
 from algomind_dis.analyzers.structure import LOOKBACK, swings
 from algomind_dis.records import ArrayContext, DealingRange, make_id
 from algomind_dis.settings import V1, Settings
+from liquidity_engine.context.blocks import delivery_blocks
 from liquidity_engine.context.frame_state import Candles, _Array, _arrays
+from liquidity_engine.context.measures import bearish_fvgs, mirror
 from liquidity_engine.models import BiasDirection
 
-__all__ = ["ArrayTable", "array_table", "arrays", "counts", "in_play", "reacting"]
+__all__ = ["ArrayTable", "array_table", "arrays", "counts", "in_play", "raw_arrays", "reacting"]
 
 _SIDE_ZONES = {"BULLISH": ("DISCOUNT", "DEEP_DISCOUNT"), "BEARISH": ("PREMIUM", "DEEP_PREMIUM")}
+
+
+def raw_arrays(c: Candles, s: Settings = V1) -> list:
+    """The frame's arrays by ``s.array_rule``: the engine's (``frame_state._arrays``), or the trader's order blocks
+    and breakers (``blocks.delivery_blocks``, each dated by the close that made it) with the fair value gaps as their
+    script draws them (the gap between candle one's high and candle three's low)."""
+    if s.array_rule == "engine":
+        return _arrays(c)
+    out = [_Array(b.direction, b.kind, c.tf, b.low, b.high, int(c.end[b.formed]))
+           for b in delivery_blocks(c.o, c.h, c.l, c.c)]
+    for k, lo, hi in bearish_fvgs(c.h, c.l, 0, len(c)):
+        out.append(_Array(BiasDirection.BEARISH, "FVG", c.tf, lo, hi, int(c.end[k])))
+    mo, mh, ml, mc = mirror(c.o, c.h, c.l, c.c)
+    for k, lo, hi in bearish_fvgs(mh, ml, 0, len(c)):
+        out.append(_Array(BiasDirection.BULLISH, "FVG", c.tf, -hi, -lo, int(c.end[k])))
+    return out
 
 
 def _swept(c: Candles) -> tuple[np.ndarray, np.ndarray]:
@@ -51,7 +69,7 @@ def arrays(market: str, c: Candles, price: float, rng: Optional[DealingRange], w
     if not n:
         return ()
     last = int(c.end[-1])
-    found = [a for a in (_arrays(c) if raw is None else raw) if a.formed_at <= last]
+    found = [a for a in (raw_arrays(c, s) if raw is None else raw) if a.formed_at <= last]
     disp = displacements(c, s)
     under, over = _swept(c)
     out = []
@@ -99,7 +117,7 @@ class ArrayTable:
 
 
 def array_table(c: Candles, s: Settings = V1) -> ArrayTable:
-    raw = _arrays(c)
+    raw = raw_arrays(c, s)
     n = len(c)
     disp = displacements(c, s)
     under, over = _swept(c)

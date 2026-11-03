@@ -486,7 +486,7 @@ function paintDis(ctx, size, pal, text, line) {
   const lead = n.side === "BEARISH" ? n.bearish - n.bullish : n.bullish - n.bearish;
   const head = held ? `${n.state === "TRANSITIONAL" ? "TRANSITIONAL (" + n.side + " challenged)" : n.side} since ${fmtTime(n.since)}`
                     : n.state;
-  text(`AlgoMindDIS v1: ${head} · bullish ${n.bullish.toFixed(2)} / bearish ${n.bearish.toFixed(2)} · a side needs ${n.bar.score.toFixed(2)} leading by ${n.bar.lead.toFixed(2)}${held ? " (lead now " + lead.toFixed(2) + ")" : ""}`,
+  text(`AlgoMindDIS ${n.version}: ${head} · bullish ${n.bullish.toFixed(2)} / bearish ${n.bearish.toFixed(2)} · a side needs ${n.bar.score.toFixed(2)} leading by ${n.bar.lead.toFixed(2)}${held ? " (lead now " + lead.toFixed(2) + ")" : ""}`,
        6, y - 3, held ? c : pal.muted);
 }
 async function loadDis() {
