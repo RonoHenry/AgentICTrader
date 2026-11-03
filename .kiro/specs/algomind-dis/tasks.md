@@ -139,9 +139,16 @@
     - Tests: `test_algomind_dis_scenarios.py` (7), `test_algomind_dis_contract.py` (3).
   - **Validates: Requirement 13.1-13.3, 17.1**
 
-- [ ] 406. Phase 6: H-AF, the historical evaluation (Requirement 15)
+- [x] 406. Phase 6: H-AF, the historical evaluation (Requirement 15)
   - The replay over 1996-2022, the two cells with H-AE's scorer, state quality, the regime split and the two baselines. Run once.
   - The result goes into the search log (one try) and this task's notes, whatever it is.
+  - **Done 2026-11-03: H-AF fails** (try 30; the search log has the tables).
+    - **Cell 1:** 12.4% held against a matched control of 12.4%, +0.0 [−3.1, +3.5], 509 calls.
+    - **Cell 2:** 52.8% against 49.9% drift, +2.9 [−1.6, +7.1], 716 weeks, 5/9 markets.
+    - **The races are lopsided:** the draw is a median 14 ADR away, the protected level 0.7. v1 sets sides deep in a range's discount (or premium), and its draw is the most significant (far) objective.
+    - **Of 517 sides:** 307 invalidated, 103 unresolved challenges, 94 expired, 12 delivered.
+    - Each category alone is at drift. The simple W1-trend baseline: −1.1.
+    - Outputs: `data/research/search/haf_{calls,weeks,states,transitions}_develop.parquet`, `haf_report_develop.md`.
   - **Validates: Requirement 15.1-15.4**
 
 - [ ] 407. Phases 5b and 7: the live shadow and controlled activation (Requirements 14.3, 16)
@@ -150,5 +157,5 @@
     - /context shows v1 beside reader v0 and the trader's call;
     - the paper agents' setups are qualified after the fact from their records (no engine change).
   - **If v1 passed H-AF:** DIS_ENFORCED writes the paper agent's thesis file in place of reader v0's, after the trader's go.
-  - **If not:** v1 stays in shadow, and the trader chooses the next version's change.
+  - **If not:** v1 stays in shadow, and the trader chooses the next version's change. **(v1 failed, 2026-11-03.)**
   - **Validates: Requirement 14.3, 16.1-16.4**
