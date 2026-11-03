@@ -199,7 +199,9 @@ def run(market: str, frames: Frames, s: Settings = V1,
         rows.append({"t": t, "state": new.state, "side": new.side, "since": new.since, "draw": new.draw,
                      "protected": new.protected, "closes": new.closes, "bullish": sc.bullish,
                      "bearish": sc.bearish, "htf_bullish": x.htf_bullish, "htf_bearish": x.htf_bearish,
-                     "ended": new.ended[0] if new.ended and new.ended[1] == t else None})
+                     "ended": new.ended[0] if new.ended and new.ended[1] == t else None,
+                     **{f"{c}_b": v[0] for c, v in sc.by_category.items()},
+                     **{f"{c}_s": v[1] for c, v in sc.by_category.items()}})
         held = new
         if progress is not None:
             progress(i + 1, len(closes))
