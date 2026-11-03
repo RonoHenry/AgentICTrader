@@ -5,13 +5,10 @@ price when the broker's terminal answers, and each market's call. ``POST /api/co
 (``agent.context_calls``), which rewrites the engine's thesis file. ``GET /api/context/scorecard`` scores every
 called week on the terminal's M15 bars and the paper agents' records (Requirement 32.6).
 
-Algo Mind (algo-mind Requirements 4.2-4.3, 5.1): the view carries the week's brief beside the trader's calls,
-``POST /api/context/brief`` makes the brief again, saving a call rewrites the agreement's thesis file, and the
-scorecard scores the brain's calls and the agreement as it scores the trader's.
-
-The directional state in shadow (context-engine Requirement 35.3-35.4): the view carries reader v0's record per
-market (``algo_mind.shadow``) with how it was reached, ``POST /api/context/reader`` reads the markets again, and the
-scorecard scores the side each week opened with. Nothing in the engine reads it.
+Algo Mind is AlgoMindDIS (context-engine Requirement 35; since 2026-11-03, task 397, the brain is retired): the view
+carries reader v0's record per market (``algo_mind.shadow``) with how it was reached, ``POST /api/context/reader``
+reads the markets again and rewrites its thesis file (the ``dis`` paper agent's), and the scorecard scores the side
+each week opened with.
 """
 from __future__ import annotations
 
@@ -32,9 +29,7 @@ __all__ = ["BREAK_EVEN", "MARKETS", "ContextApp", "coherence", "default_week"]
 #: The markets the trader calls each week (2026-10-29: "all nine").
 MARKETS = ("DXY", "XAUUSD", "EURUSD", "GBPUSD", "US100", "US500", "US30", "GER40", "UK100")
 REPO = Path(__file__).resolve().parents[2]
-BRIEFS = REPO / "data" / "algo_mind" / "briefs"
 SHADOWS = REPO / "data" / "algo_mind" / "dis"
-AGREE_THESES = REPO / "data" / "research" / "theses" / "agree_theses.json"
 
 
 def coherence(calls: dict) -> list:
@@ -73,12 +68,10 @@ class ContextApp:
                  quote: Optional[Callable[[str], Optional[float]]] = None,
                  clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
                  bars: Optional[Callable[[str, datetime, datetime], "pd.DataFrame"]] = None,
-                 paper: Optional[dict[str, Path]] = None, briefs: Path = BRIEFS, agree: Path = AGREE_THESES,
-                 brief_writer: Optional[Callable[[date, ContextBook], Path]] = None, shadows: Path = SHADOWS,
+                 paper: Optional[dict[str, Path]] = None, shadows: Path = SHADOWS,
                  shadow_writer: Optional[Callable[[date], Path]] = None) -> None:
         self.calls_path, self.theses_path, self.quote, self.clock = Path(calls), Path(theses), quote, clock
         self.bars, self.paper = bars, dict(PAPER_FILES if paper is None else paper)
-        self.briefs, self.agree, self.brief_writer = Path(briefs), Path(agree), brief_writer
         self.shadows, self.shadow_writer = Path(shadows), shadow_writer
 
     def book(self) -> ContextBook:
@@ -91,22 +84,6 @@ class ContextApp:
             return self.quote(instrument)
         except Exception:                                       # the page works without the terminal
             return None
-
-    def brief(self, week: str) -> Optional[dict]:
-        """Algo Mind's brief for the week of ``week`` (its Monday), or None."""
-        path = self.briefs / f"{week}.json"
-        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
-
-    def _brain(self, week: str) -> Optional[dict]:
-        b = self.brief(week)
-        if b is None:
-            return None
-        rows = {r["market"]: {"call": r.get("call"), "p": r.get("p"), "provisional": r.get("provisional"),
-                              "share_up": (r.get("analogs") or {}).get("share_up"),
-                              "candidates": r.get("candidates") or {}} for r in b["rows"]}
-        return {"version": b["version"], "made_at": b["made_at"], "rows": rows, "candidates": b.get("candidates", []),
-                "provisional": any(bool(r["provisional"]) for r in rows.values()),
-                "notes": coherence({m: r["call"] for m, r in rows.items()})}
 
     def shadow(self, week: str) -> Optional[dict]:
         """The directional state's shadow for the week of ``week`` (its Monday), or None."""
@@ -122,20 +99,18 @@ class ContextApp:
         book = self.book()
         calls = book.week(monday)
         called = sorted({c.week for c in book.calls()} | {default.isoformat(), monday.isoformat()})
-        brain = self._brain(monday.isoformat())
         shadow = self.shadow(monday.isoformat())
         reader = {r["market"]: r for r in shadow["rows"]} if shadow else {}
         return {"week": monday.isoformat(), "opens": week_open(monday).isoformat(), "default": default.isoformat(),
                 "open": now >= week_open(monday), "now": now.isoformat(timespec="seconds"), "weeks": called,
-                "brain": brain, "notes": coherence({m: c.side for m, c in calls.items()}),
+                "notes": coherence({m: c.side for m, c in calls.items()}),
                 "reader": None if shadow is None else {k: shadow[k] for k in ("source", "version", "made_at")},
                 "rows": [{"instrument": m, "price": self._price(m),
                           "call": _row(calls[m]) if m in calls else None,
-                          "brain": brain["rows"].get(m) if brain else None,
                           "reader": reader.get(m)} for m in MARKETS]}
 
     def run_reader(self, body: dict) -> dict:
-        """Read the markets again for the week (the directional state in shadow), then the view."""
+        """Read the markets again for the week (AlgoMindDIS, which rewrites its thesis file), then the view."""
         monday = date.fromisoformat(str(body.get("week", "")))
         if monday.weekday() != 0:
             raise ValueError(f"week: a Monday, not {monday}")
@@ -143,24 +118,6 @@ class ContextApp:
             raise LookupError("the reader needs the broker's terminal: this server has none")
         self.shadow_writer(monday)
         return self.view({"week": monday.isoformat()})
-
-    def run_brain(self, body: dict) -> dict:
-        """Make the week's brief again (Algo Mind), then the view."""
-        monday = date.fromisoformat(str(body.get("week", "")))
-        if monday.weekday() != 0:
-            raise ValueError(f"week: a Monday, not {monday}")
-        writer = self.brief_writer
-        if writer is None:
-            from algo_mind.brief import write_brief
-
-            def writer(m, book):
-                return write_brief(pd.Timestamp(m), book=book)
-        writer(monday, self.book())
-        return self.view({"week": monday.isoformat()})
-
-    def _write_agree(self, book: ContextBook) -> None:
-        from algo_mind.brief import write_agree_theses
-        write_agree_theses(book, self.briefs, self.agree)
 
     def call(self, body: dict) -> dict:
         instrument = str(body.get("instrument", "")).upper()
@@ -170,36 +127,32 @@ class ContextApp:
         call = Call(instrument, str(body.get("week", "")), str(body.get("side", "")), num(body.get("draw")),
                     num(body.get("protected")), str(body.get("note", "")).strip(),
                     self.clock().isoformat(timespec="seconds"))
-        book = self.book()
-        book.put(call)
-        self._write_agree(book)
+        self.book().put(call)
         return {"call": _row(call)}
 
     def scorecard(self, q: Optional[dict] = None) -> dict:
-        """Every opened week with the trader's calls or the brain's brief, each market scored (Requirement 32.6;
-        algo-mind 4.3), with the totals against BREAK_EVEN for the trader, the brain and the two agreeing."""
+        """Every opened week with the trader's calls or AlgoMindDIS's read, each market scored (Requirement 32.6),
+        with the totals against BREAK_EVEN for the trader and AlgoMindDIS (on the side each week opened with), and
+        each paper agent's R on each one's markets."""
         if self.bars is None:
             raise LookupError("the scorecard needs the broker's terminal: this server has none")
         now = self.clock()
         by_week: dict = {}
         for call in self.book().calls():
             by_week.setdefault(call.week, {})[call.instrument] = call
-        briefs = {p.stem: self.brief(p.stem) for p in sorted(self.briefs.glob("????-??-??.json"))}
         shadows = {p.stem: self.shadow(p.stem) for p in sorted(self.shadows.glob("????-??-??.json"))}
         weeks: dict = {}
-        for week in sorted(set(by_week) | set(briefs) | set(shadows)):
+        for week in sorted(set(by_week) | set(shadows)):
             monday = date.fromisoformat(week)
             start, end = week_open(monday), week_close(monday)
             if start > now:
                 continue                                        # not opened yet: nothing to score
             calls = by_week.get(week, {})
-            brain = {r["market"]: r for r in (briefs.get(week) or {"rows": []})["rows"]}
             reader = {r["market"]: r for r in (shadows.get(week) or {"rows": []})["rows"] if "open" in r}
             for market in MARKETS:
-                call, b = calls.get(market), brain.get(market)
-                brain_side = (b or {}).get("call")
+                call = calls.get(market)
                 reader_side = reader[market]["open"]["side"] if market in reader else None
-                if call is None and not {brain_side, reader_side} & {"BULLISH", "BEARISH"}:
+                if call is None and reader_side not in ("BULLISH", "BEARISH"):
                     continue
                 row = {"market": market, "call": _row(call) if call else None}
                 try:
@@ -220,9 +173,6 @@ class ContextApp:
                     side = {"BULLISH": 1, "BEARISH": -1}.get(called or "")
                     return ((row["week_close"] - row["week_open"]) * side > 0) if side and moved else None
 
-                row["brain"] = None if b is None else {
-                    "call": brain_side, "p": b.get("p"), "provisional": b.get("provisional"),
-                    "hit": closed_its_way(brain_side)}
                 row["reader"] = None if market not in reader else {
                     "call": reader_side, "state": reader[market]["open"]["state"], "hit": closed_its_way(reader_side)}
                 weeks.setdefault(week, []).append(row)
@@ -230,23 +180,19 @@ class ContextApp:
         trader = [r for r in rows if r["call"] and r["call"]["side"] != "NONE"]
         final = [r for r in trader if r["final"] and r["hit"] is not None]
 
-        def rate(picked: list, who: str = "brain") -> dict:
-            done = [r for r in picked if r["final"] and r[who]["hit"] is not None]
-            hits = sum(r[who]["hit"] for r in done)
-            return {"calls": len(picked), "final": len(done), "hits": hits,
-                    "hit_rate": hits / len(done) if done else None}
+        def agents(picked: list) -> dict:
+            return {name: {"n": sum(r["agents"][name]["n"] for r in picked),
+                           "r": round(sum(r["agents"][name]["r"] for r in picked), 3)} for name in self.paper}
 
         reader_called = [r for r in rows if r["reader"] and r["reader"]["call"] in ("BULLISH", "BEARISH")]
-        brain_called = [r for r in rows if r["brain"] and r["brain"]["call"] in ("BULLISH", "BEARISH")]
-        agreeing = [r for r in brain_called if r["call"] and r["call"]["side"] == r["brain"]["call"]]
+        done = [r for r in reader_called if r["final"] and r["reader"]["hit"] is not None]
+        hits = sum(r["reader"]["hit"] for r in done)
+        reader = {"calls": len(reader_called), "final": len(done), "hits": hits,
+                  "hit_rate": hits / len(done) if done else None, "agents": agents(reader_called)}
         totals = {"calls": len(trader), "final": len(final), "hits": sum(r["hit"] for r in final),
                   "hit_rate": (sum(r["hit"] for r in final) / len(final)) if final else None,
                   "delivered": sum(r["outcome"] == "delivered" for r in trader),
                   "invalidated": sum(r["outcome"] == "invalidated" for r in trader),
-                  "break_even": BREAK_EVEN, "brain": rate(brain_called), "agree": rate(agreeing),
-                  "reader": rate(reader_called, "reader"),
-                  "agents": {name: {"n": sum(r["agents"][name]["n"] for r in trader),
-                                    "r": round(sum(r["agents"][name]["r"] for r in trader), 3)}
-                             for name in self.paper}}
+                  "break_even": BREAK_EVEN, "reader": reader, "agents": agents(trader)}
         return {"weeks": [{"week": w, "rows": rs} for w, rs in sorted(weeks.items(), reverse=True)],
                 "totals": totals, "now": now.isoformat(timespec="seconds")}

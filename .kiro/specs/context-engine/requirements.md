@@ -910,7 +910,7 @@ They chose B (2026-11-02). Every input to A has tested at a random walk from the
    - the brain's weekly side (algo-mind).
 
    Each source is scored by the same rules (35.5).
-4. **Shadow first.** NOTHING in the engine SHALL read the record until a source has passed its test. The /context page SHALL show each source's record beside the trader's call.
+4. **Shadow first.** NOTHING in the engine SHALL read the record until a source has passed its test. The /context page SHALL show each source's record beside the trader's call. *(2026-11-03: the trader moved the reader's record to paper, Requirement 37.)*
 5. **The test.** THE reader's states SHALL be measured over the long daily history (1996-2022) as H-AE, registered in the search log before it runs:
    - the narrative's draw reached before its invalidation, against matched random starts;
    - the weeks opened under a live side, closed on it, against drift;
@@ -963,3 +963,30 @@ The trader agreed (2026-11-02) to call history blind instead: a random market an
    - the hit against the 57-60% the trades need.
 
    The bar is judged at 300 calls.
+
+---
+
+## Update 2026-11-03: AlgoMindDIS Is Algo Mind
+
+The trader asked (2026-11-03): "Why don't we take this new approach. Do away with the old one for now." AlgoMindDIS replaces the brain as Algo Mind, on paper. Neither has passed a test: brain v2 walked forward at +0.7 points over 1995-2022, and reader v0's narrative failed H-AE. The change is the trader's choice of which unproven source the engine executes inside, so it can be watched trading. It isn't evidence of an edge, and 35.4's "shadow first" gives way to paper only.
+
+### Requirement 37: AlgoMindDIS on Paper
+
+**User Story:** As the trader, I want the engine to decide the side with AlgoMindDIS before it trades, and the old brain out of the way, so that I can watch the held narrative steer the paper agent.
+
+#### Acceptance Criteria
+
+1. **The thesis file.** EACH read of a week (Requirement 35.4's shadow) SHALL rewrite `data/research/theses/dis_theses.json` from every week read. Every market whose record at the week's open is ACTIVE gets, for each trading date of the week:
+   - its side;
+   - the draw's CE (where the reader calls it delivered);
+   - the protected swing;
+   - `since`, the week's open.
+
+   A side set inside the week is not traded until the next week's open (the reader's turns are set at W1 closes).
+2. **The hands.** A PAPER AGENT (`fresh_near_gap_dis`) SHALL trade the file under `bias_mode = THESIS`. It is the context variant with only its thesis file changed. The engine ends the side as it ends the trader's call: the draw trades, or a D1 candle closes beyond the protected swing.
+3. **The loop.** `python -m algo_mind shadow --loop` SHALL read the week ahead five minutes after every D1 close (17:00 New York): during a week its own, from Friday's close the next one. A read with no market (the terminal down) SHALL leave the files as they were and retry in ten minutes.
+4. **The brain retired.**
+   - The brain's and the agreement's variants and paper agents SHALL be removed.
+   - /context SHALL no longer show or run the brain.
+   - Its code, briefs and ledger stay, so it can come back as a version.
+5. **The page.** /context SHALL show AlgoMindDIS as Algo Mind beside the trader's call. Its button reads the markets again and rewrites the thesis file. The scorecard SHALL total AlgoMindDIS's side against the week's close and give the paper agents' R on its markets as well as on the trader's.

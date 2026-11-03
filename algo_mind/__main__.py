@@ -6,7 +6,11 @@
     python -m algo_mind judge --candidate v2        # judged on the weeks after its window
     python -m algo_mind bench --runs 20 [--plant 0.05]
     python -m algo_mind third-look
-    python -m algo_mind shadow --week 2026-11-02    # the directional state in shadow, from the terminal
+    python -m algo_mind shadow --week 2026-11-02    # AlgoMindDIS's read of the week and its thesis file
+    python -m algo_mind shadow --loop               # the same after every D1 close, for the week ahead
+
+Since 2026-11-03 (task 397) AlgoMindDIS is Algo Mind: its thesis file is the one a paper agent trades. The brain's
+commands (fit, brief, refit, judge, bench, third-look) are kept but nothing trades from them.
 """
 from __future__ import annotations
 
@@ -61,6 +65,52 @@ def live_states2(now=None) -> pd.DataFrame:
     return widen(tables, macro_table(LIVE))
 
 
+def _shadow_once(monday, feed) -> None:
+    from algo_mind.shadow import DIS_THESES, write_shadow
+    path = write_shadow(monday, feed().rates, theses=DIS_THESES)
+    out = json.loads(path.read_text(encoding="utf-8"))
+    print(f"Week of {out['week']}, {out['source']} {out['version']}, made {out['made_at']}:")
+    for r in out["rows"]:
+        if "error" in r:
+            print(f"  {r['market']:7} {r['error']}")
+            continue
+        o, n = r["open"], r["now"]
+        orders = [x["day"] for x in r["reads"] if x["order"]]
+        print(f"  {r['market']:7} open {o['side']:8} {o['state']:12} now {n['side']:8}"
+              f"  orders {', '.join(orders) or '-'}")
+    print(path, "and", DIS_THESES, flush=True)
+
+
+def next_read(now):
+    """When the loop reads next: five minutes after the next D1 close (17:00 New York) after ``now``."""
+    from algo_research.sequence import NY
+    ny = pd.Timestamp(now).tz_convert(NY)
+    for k in range(3):
+        t = (ny.normalize() + pd.Timedelta(days=k)).replace(hour=17, minute=5)
+        if t > ny:
+            return t.tz_convert("UTC").to_pydatetime()
+    raise AssertionError("a D1 close within three days")
+
+
+def _shadow_loop(feed) -> None:
+    """Read the week ahead now and after every D1 close: during a week its own, from Friday's close the next one,
+    so its thesis is written before it opens. A failed read is tried again in ten minutes."""
+    import time
+    from datetime import datetime, timedelta, timezone
+
+    from agent.context_calls import week_monday
+    while True:
+        now = datetime.now(timezone.utc)
+        try:
+            _shadow_once(week_monday(now), feed)
+            wake = next_read(now)
+        except Exception as exc:                                # the terminal down: the files stay as they were
+            print(f"{now:%Y-%m-%d %H:%M} UTC: {exc}; again in ten minutes", flush=True)
+            wake = now + timedelta(minutes=10)
+        print(f"next read {wake:%Y-%m-%d %H:%M} UTC", flush=True)
+        time.sleep(max(1.0, (wake - datetime.now(timezone.utc)).total_seconds()))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m algo_mind", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -82,30 +132,23 @@ def main() -> None:
     bench.add_argument("--workers", type=int, default=4)
     look = sub.add_parser("third-look", help="the brain's calls on the readable weeks since 2025 (information)")
     look.add_argument("--version", default="v1")
-    shadow = sub.add_parser("shadow", help="the directional state in shadow: reader v0 on the terminal's bars")
-    shadow.add_argument("--week", required=True, help="the week's Monday, YYYY-MM-DD")
+    shadow = sub.add_parser("shadow", help="AlgoMindDIS: reader v0 on the terminal's bars, and its thesis file")
+    when = shadow.add_mutually_exclusive_group(required=True)
+    when.add_argument("--week", help="the week's Monday, YYYY-MM-DD")
+    when.add_argument("--loop", action="store_true", help="read the week ahead after every D1 close")
     shadow.add_argument("--config", default="config/backtests/focus.toml", help="its profile names the terminal")
     args = parser.parse_args()
     if args.command == "shadow":
         from datetime import date
 
         from algo_backtester.watch import live_feed
-        from algo_mind.shadow import write_shadow
         feed = live_feed(Path(args.config))
         if feed is None:
             raise SystemExit(f"{args.config}: its profile is not an MT5 broker's")
-        path = write_shadow(date.fromisoformat(args.week), feed().rates)
-        out = json.loads(path.read_text(encoding="utf-8"))
-        print(f"Week of {out['week']}, {out['source']} {out['version']}, made {out['made_at']}:")
-        for r in out["rows"]:
-            if "error" in r:
-                print(f"  {r['market']:7} {r['error']}")
-                continue
-            o, n = r["open"], r["now"]
-            orders = [x["day"] for x in r["reads"] if x["order"]]
-            print(f"  {r['market']:7} open {o['side']:8} {o['state']:12} now {n['side']:8}"
-                  f"  orders {', '.join(orders) or '-'}")
-        print(path)
+        if args.loop:
+            _shadow_loop(feed)
+        else:
+            _shadow_once(date.fromisoformat(args.week), feed)
         return
     if args.command == "bench":
         from algo_mind.bench import H_Y_EXCESS, bench as run_bench

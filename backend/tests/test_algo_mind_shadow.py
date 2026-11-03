@@ -15,7 +15,7 @@ import pandas as pd
 import pytest
 
 from algo_mind.dis import reader_turns, terminal_market, week_checks
-from algo_mind.shadow import last_close, read_market, write_shadow
+from algo_mind.shadow import last_close, read_market, thesis_table, write_shadow
 from algo_research.sequence import NY
 
 FIXTURES = Path(__file__).parent / "fixtures" / "research" / "sequence"
@@ -96,10 +96,47 @@ def test_the_shadow_file_keeps_a_market_the_broker_doesnt_carry(gbpusd, tmp_path
         return b[(b["time"] >= pd.Timestamp(start)) & (b["time"] < pd.Timestamp(end))]
 
     path = write_shadow(date(2026, 10, 26), rates, now=_ny("2026-10-30 18:00"), markets=("GBPUSD", "DXY"),
-                        folder=tmp_path)
+                        folder=tmp_path / "dis", theses=tmp_path / "dis_theses.json")
     import json
     out = json.loads(path.read_text(encoding="utf-8"))
     rows = {r["market"]: r for r in out["rows"]}
     assert out["week"] == "2026-10-26" and out["source"] == "reader"
     assert rows["GBPUSD"]["open"]["side"] == "BULLISH"
     assert "no H1" in rows["DXY"]["error"]
+    # AlgoMindDIS's thesis file (task 397): the side the week opened with, its draw's CE and protected swing
+    theses = json.loads((tmp_path / "dis_theses.json").read_text(encoding="utf-8"))
+    assert list(theses) == ["GBPUSD"] and list(theses["GBPUSD"]) == [f"2026-10-{d}" for d in range(26, 31)]
+    entry = theses["GBPUSD"]["2026-10-29"]
+    assert entry == {"side": "BULLISH", "draw": pytest.approx(rows["GBPUSD"]["open"]["draw"]["ce"]),
+                     "protected": pytest.approx(1.31364), "since": _ny("2026-10-25 17:00").isoformat(),
+                     "source": "reader v0-fe84645"}
+    with pytest.raises(LookupError, match="no market read"):     # the terminal down: the week's file stays
+        write_shadow(date(2026, 10, 26), lambda *a: None, now=_ny("2026-10-30 18:00"), markets=("GBPUSD",),
+                     folder=tmp_path / "dis", theses=tmp_path / "dis_theses.json")
+    assert json.loads(path.read_text(encoding="utf-8")) == out
+
+
+def test_the_thesis_file_holds_only_sides_live_at_the_weeks_open(tmp_path):
+    import json
+
+    def record(side, state, draw=None, protected=None):
+        return {"side": side, "state": state, "draw": draw, "protected": protected}
+
+    gap = {"name": "D1 gap", "near": 101.0, "far": 103.0, "ce": 102.0}
+    (tmp_path / "2026-11-02.json").write_text(json.dumps({"week": "2026-11-02", "source": "reader", "version": "v0",
+        "rows": [{"market": "US500", "open": record("BEARISH", "ACTIVE", gap, 110.0)},
+                 {"market": "EURUSD", "open": record("NONE", "UNDETERMINED"),
+                  "now": record("BEARISH", "ACTIVE", gap, 110.0)},          # set inside the week: not traded
+                 {"market": "DXY", "error": "no H1"}]}), encoding="utf-8")
+    assert thesis_table(tmp_path) == {"US500": {d: {"side": "BEARISH", "draw": 102.0, "protected": 110.0,
+                                                    "since": "2026-11-01T22:00:00+00:00", "source": "reader v0"}
+                                                for d in ("2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05",
+                                                          "2026-11-06")}}
+
+
+def test_the_loop_reads_five_minutes_after_each_d1_close_in_new_york_time():
+    from algo_mind.__main__ import next_read
+    assert next_read(_ny("2026-10-30 16:00")) == _ny("2026-10-30 17:05")
+    assert next_read(_ny("2026-10-30 17:05")) == _ny("2026-10-31 17:05")
+    assert next_read(_ny("2026-10-31 18:00")) == _ny("2026-11-01 17:05")        # the clocks change that Sunday
+    assert next_read(_ny("2026-10-31 18:00")).hour == 22                           # 17:05 EST is 22:05 UTC

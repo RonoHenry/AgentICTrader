@@ -1,6 +1,7 @@
-// The context page (context-engine Requirement 32.4): the trader's weekly call per market. Saving a call rewrites
-// the engine's thesis file; the engine then trades only that side until the draw trades or a D1 candle closes beyond
-// the protected swing.
+// The context page (context-engine Requirement 32.4): the trader's weekly call per market, beside AlgoMindDIS's
+// (Requirement 35; task 397: the brain is retired). Saving a call rewrites the context agent's thesis file, reading
+// the markets rewrites AlgoMindDIS's (the dis agent's); each agent then trades only its side until the draw trades
+// or a D1 candle closes beyond the protected swing.
 "use strict";
 
 (function () {
@@ -37,20 +38,8 @@
     return null;
   }
 
-  // The brain's call (Algo Mind): its side, its probability of an up week and the share of its 20 nearest past weeks
-  // that went up, with whether it agrees with the trader's saved side.
-  function brainCell(b, mine) {
-    if (!b) return '<span class="muted">—</span>';
-    const s = b.call === "BULLISH" ? '<span class="up">Bullish</span>' : b.call === "BEARISH" ? '<span class="down">Bearish</span>' : '<span class="muted">None</span>';
-    const agree = mine && mine !== "NONE" && b.call !== "NONE" ? (mine === b.call ? ' <span class="tag" title="you agree">✓ agree</span>' : ' <span class="tag late" title="you differ">≠</span>') : "";
-    const p = b.p == null ? "" : ` <span class="muted">${Math.round(b.p * 100)}%</span>`;
-    const mem = b.share_up == null ? "" : `<div class="muted" style="font-size:11px">similar weeks up ${Math.round(b.share_up * 100)}%</div>`;
-    const other = Object.entries(b.candidates || {}).map(([v, c]) => `<div class="muted" style="font-size:11px">${esc(v)}: ${c.call === "NONE" ? "none" : c.call.toLowerCase()}${c.p == null ? "" : " " + Math.round(c.p * 100) + "%"}</div>`).join("");
-    return s + p + agree + mem + other;
-  }
-
-  // The reader (the directional state in shadow, Requirement 35.4): the side the week opened with, how it was
-  // reached, the weeks checked for a turn, and each day's read up to its verdict.
+  // AlgoMindDIS (reader v0, Requirement 35): the side the week opened with, how it was reached, the weeks checked
+  // for a turn, and each day's read up to its verdict.
   const NYD = { timeZone: "America/New_York", weekday: "short", day: "2-digit", month: "short" };
   const day = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, NYD) : "—");
   const dateOf = (d, opts) => new Date(d + "T12:00:00Z").toLocaleDateString(undefined, { timeZone: "UTC", ...opts });
@@ -123,10 +112,10 @@
   function renderReader(d) {
     const rd = d.reader;
     $("readerState").innerHTML = rd
-      ? `reader ${esc(rd.version)} · made ${new Date(rd.made_at).toLocaleString(undefined, NY)} New York`
-      : '<span class="muted">the reader hasn’t read this week yet</span>';
+      ? `AlgoMindDIS (${esc(rd.source)} ${esc(rd.version)}) · made ${new Date(rd.made_at).toLocaleString(undefined, NY)} New York`
+      : '<span class="muted">AlgoMindDIS hasn’t read this week yet</span>';
     $("reader").innerHTML = rd ? d.rows.map((r) => (r.reader ? readerCard(r.reader) : "")).join("")
-      : '<span class="muted">Run the reader to see how it chose: the terminal’s bars, nine markets.</span>';
+      : '<span class="muted">Run AlgoMind to see how it chose: the terminal’s bars, nine markets.</span>';
   }
 
   function render() {
@@ -138,11 +127,7 @@
     if (d.open) { state.className = "pill open"; state.textContent = `opened ${opens.toLocaleString(undefined, NY)} New York · calls now are late`; }
     else { state.className = "pill ahead"; state.textContent = `opens ${opens.toLocaleString(undefined, NY)} New York · in ${until(opens - now)}`; }
     $("weeks").innerHTML = d.weeks.map((w) => `<option value="${w}" ${w === d.week ? "selected" : ""}>${w === d.default ? "next · " : ""}${weekLabel(w)}</option>`).join("");
-    const b = d.brain;
-    $("brainState").innerHTML = b
-      ? `brain ${esc(b.version)}${b.candidates && b.candidates.length ? ` (beside it: ${b.candidates.map(esc).join(", ")})` : ""} · made ${new Date(b.made_at).toLocaleString(undefined, NY)} New York${b.provisional ? ' · <span class="tag late">provisional: rerun after Friday’s close</span>' : ""}`
-      : '<span class="muted">no brief for this week yet</span>';
-    const notes = [...(b ? b.notes.map((n) => "Brain: " + n) : []), ...d.notes.map((n) => "Your calls: " + n)];
+    const notes = d.notes.map((n) => "Your calls: " + n);
     $("notes").innerHTML = notes.map((n) => `<div class="msg warn">${esc(n)}</div>`).join("");
     $("rows").innerHTML = d.rows.map((r) => {
       const c = r.call || {};
@@ -150,7 +135,6 @@
       return `<tr data-inst="${r.instrument}">
         <td><b>${r.instrument}</b></td>
         <td class="num">${fmt(r.price)}</td>
-        <td class="brain">${brainCell(r.brain, c.side)}</td>
         <td>${readerCell(r.reader)}</td>
         <td><select class="side ${esc(c.side || "")}">${["", "BULLISH", "BEARISH", "NONE"].map((s) => `<option value="${s}" ${s === (c.side || "") ? "selected" : ""}>${s ? s[0] + s.slice(1).toLowerCase() : "—"}</option>`).join("")}</select></td>
         <td class="num"><input type="number" step="any" class="draw" value="${c.draw ?? ""}"></td>
@@ -188,7 +172,6 @@
       if (!r.ok) { msg.className = "msg err"; msg.textContent = out.error || "Not saved."; return; }
       row.call = out.call;
       tr.querySelector(".saved").innerHTML = `${new Date(out.call.made_at).toLocaleString(undefined, NY)}${out.call.late ? '<span class="tag late">late</span>' : ""}<div class="msg ok">saved</div>`;
-      tr.querySelector(".brain").innerHTML = brainCell(row.brain, out.call.side);
     };
   }
 
@@ -202,16 +185,6 @@
     if (window.ContextScore) window.ContextScore.load();
   }
 
-  $("runBrain").onclick = async () => {
-    const btn = $("runBrain");
-    btn.disabled = true; btn.textContent = "Reading the markets…";
-    try {
-      const r = await fetch("/api/context/brief", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ week: S.week }) });
-      const d = await r.json();
-      if (!r.ok) { $("brainState").innerHTML = `<span class="msg err">${esc(d.error)}</span>`; return; }
-      S.data = d; render();
-    } finally { btn.disabled = false; btn.textContent = "Run the brain"; }
-  };
   $("runReader").onclick = async () => {
     const btn = $("runReader");
     btn.disabled = true; btn.textContent = "Reading the terminal…";
@@ -221,7 +194,7 @@
       if (!r.ok) { $("readerState").innerHTML = `<span class="msg err">${esc(d.error)}</span>`; return; }
       S.data = d; render();
       if (window.ContextScore) window.ContextScore.load();
-    } finally { btn.disabled = false; btn.textContent = "Run the reader"; }
+    } finally { btn.disabled = false; btn.textContent = "Run AlgoMind"; }
   };
   $("prev").onclick = () => load(shift(S.week, -7));
   $("next").onclick = () => load(shift(S.week, 7));
@@ -229,8 +202,8 @@
   load(new URLSearchParams(location.search).get("week"));
 })();
 
-// The scorecard (Requirement 32.6): every called week, its close against the call, the context's outcome, and the
-// paper agents' R in that market and week: the context agent against the two controls.
+// The scorecard (Requirement 32.6): every called week, its close against the call and AlgoMindDIS's side, the
+// context's outcome, and the paper agents' R in that market and week: the context and dis agents against the controls.
 (function () {
   const $ = (id) => document.getElementById(id);
   const esc = (t) => String(t == null ? "" : t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -251,24 +224,22 @@
     const pct = (x) => (x.hit_rate == null ? "—" : `${Math.round(x.hit_rate * 100)}%`);
     let html = `<p><b>You: ${t.hits}/${t.final}</b> finished calls closed on their side (${rate}; the costs need ${Math.round(be[0] * 100)}–${Math.round(be[1] * 100)}%).
       Delivered ${t.delivered}, invalidated ${t.invalidated}, of ${t.calls} with a side.<br>
-      <b>Brain: ${t.brain.hits}/${t.brain.final}</b> (${pct(t.brain)}) · <b>you and the brain agreeing: ${t.agree.hits}/${t.agree.final}</b> (${pct(t.agree)})
-      · <b>reader: ${t.reader.hits}/${t.reader.final}</b> (${pct(t.reader)}; on the side each week opened with).<br>
-      Paper R on your called markets: ${Object.entries(t.agents).map(([k, v]) => `${k} ${r(v)}`).join(", ")}.</p>`;
+      Paper R on your called markets: ${Object.entries(t.agents).map(([k, v]) => `${k} ${r(v)}`).join(", ")}.<br>
+      <b>AlgoMindDIS: ${t.reader.hits}/${t.reader.final}</b> (${pct(t.reader)}; on the side each week opened with).
+      Paper R on its markets: ${Object.entries(t.reader.agents).map(([k, v]) => `${k} ${r(v)}`).join(", ")}.</p>`;
     const agents = Object.keys(t.agents);
     const yes = (h, final) => (h == null ? "—" : `${h ? '<span class="up">yes</span>' : '<span class="down">no</span>'}${final ? "" : ' <span class="muted">(so far)</span>'}`);
     for (const w of d.weeks) {
       html += `<h3 style="margin-top:14px">Week of ${esc(w.week)}</h3><table class="calls"><thead><tr><th>Market</th><th>Your call</th>
-        <th class="num">Week open → close</th><th>Closed your way</th><th>Brain</th><th>Closed its way</th><th>Reader</th><th>Closed its way</th><th>Context</th><th class="num">Walk odds</th>
+        <th class="num">Week open → close</th><th>Closed your way</th><th>AlgoMind</th><th>Closed its way</th><th>Context</th><th class="num">Walk odds</th>
         ${agents.map((a) => `<th>${esc(a[0].toUpperCase() + a.slice(1))}</th>`).join("")}</tr></thead><tbody>`;
       for (const x of w.rows) {
-        const c = x.call, b = x.brain, rd = x.reader;
-        if (x.error) { html += `<tr><td><b>${x.market}</b></td><td colspan="${9 + agents.length}" class="msg err">${esc(x.error)}</td></tr>`; continue; }
+        const c = x.call, rd = x.reader;
+        if (x.error) { html += `<tr><td><b>${x.market}</b></td><td colspan="${7 + agents.length}" class="msg err">${esc(x.error)}</td></tr>`; continue; }
         const ctx = x.outcome ? `${x.outcome} ${when(x.at)}` : "—";
         const mine = c ? `${side(c.side)}${c.side !== "NONE" ? ` <span class="muted">${fmt(c.draw)} / ${fmt(c.protected)}</span>` : ""}${c.late ? '<span class="tag late">late</span>' : ""}` : '<span class="muted">—</span>';
-        const brain = b ? `${side(b.call)}${b.p == null ? "" : ` <span class="muted">${Math.round(b.p * 100)}%</span>`}` : '<span class="muted">—</span>';
         html += `<tr><td><b>${x.market}</b></td><td>${mine}</td>
           <td class="num">${fmt(x.week_open)} → ${fmt(x.week_close)}</td><td>${yes(x.hit, x.final)}</td>
-          <td>${brain}</td><td>${yes(b ? b.hit : null, x.final)}</td>
           <td>${rd ? side(rd.call) : '<span class="muted">—</span>'}</td><td>${yes(rd ? rd.hit : null, x.final)}</td><td>${esc(ctx)}</td>
           <td class="num">${x.walk == null ? "—" : Math.round(x.walk * 100) + "%"}</td>
           ${agents.map((a) => `<td>${r(x.agents[a])}</td>`).join("")}</tr>`;

@@ -7,10 +7,13 @@ For each market and week, from the broker's terminal (``data/algo_mind/dis/<week
 - the reader's read of each trading date opened so far: the narrative, the D1 setup, C3's execution, and its
   verdict (ORDER, or NO TRADE and the first rule that refused).
 
-Nothing in the engine reads it (35.4). Each record reads only candles closed by its time, so the same bars give
-the same file whenever it is made.
+Since 2026-11-03 (task 397: the trader, "do away with the old one for now") AlgoMindDIS replaces the brain as
+Algo Mind: ``thesis_table`` turns every week's record at the open into a thesis file
+(``data/research/theses/dis_theses.json``) that the ``fresh_near_gap_dis`` paper agent trades. Each record reads
+only candles closed by its time, so the same bars give the same file whenever it is made.
 
     python -m algo_mind shadow --week 2026-11-02
+    python -m algo_mind shadow --loop               # the week's read and the thesis file after every D1 close
 """
 from __future__ import annotations
 
@@ -22,15 +25,16 @@ from typing import Callable, Optional
 import numpy as np
 import pandas as pd
 
-from agent.context_calls import trading_dates, week_close, week_open
+from agent.context_calls import _write, trading_dates, week_close, week_open
 from algo_mind.dis import SOURCE, VERSION, reader_turns, state_at, states, terminal_market, week_checks
 from algo_research import sequence as seq
 from liquidity_engine.models import Timeframe
 
-__all__ = ["HISTORY", "MARKETS", "SHADOWS", "read_market", "write_shadow"]
+__all__ = ["DIS_THESES", "HISTORY", "MARKETS", "SHADOWS", "read_market", "thesis_table", "write_shadow"]
 
 REPO = Path(__file__).resolve().parents[1]
 SHADOWS = REPO / "data" / "algo_mind" / "dis"
+DIS_THESES = REPO / "data" / "research" / "theses" / "dis_theses.json"
 #: The context page's markets (algo_research.replay.context.MARKETS).
 MARKETS = ("DXY", "XAUUSD", "EURUSD", "GBPUSD", "US100", "US500", "US30", "GER40", "UK100")
 #: The H1 each market is read with: a side set two years ago still needs its year of external lows before it.
@@ -89,8 +93,10 @@ def read_market(market: str, h1: pd.DataFrame, m1: pd.DataFrame, monday: date, n
 
 def write_shadow(monday: date, rates: Callable[[str, Timeframe, datetime, datetime], pd.DataFrame],
                  now: Optional[datetime] = None, markets: tuple[str, ...] = MARKETS,
-                 folder: Path = SHADOWS) -> Path:
-    """Every market's shadow for the week of ``monday`` from ``rates`` (the terminal), as ``<folder>/<week>.json``."""
+                 folder: Path = SHADOWS, theses: Optional[Path] = None) -> Path:
+    """Every market's shadow for the week of ``monday`` from ``rates`` (the terminal), as ``<folder>/<week>.json``,
+    and with ``theses`` the thesis file of every week in ``folder``. With no market read (the terminal down) it
+    raises and leaves the week's file as it was."""
     now = now or datetime.now(timezone.utc)
     rows = []
     for market in markets:
@@ -105,13 +111,37 @@ def write_shadow(monday: date, rates: Callable[[str, Timeframe, datetime, dateti
             rows.append(read_market(market, h1, m1, monday, now))
         except Exception as exc:                                # one market failing leaves the rest
             rows.append({"market": market, "error": str(exc)})
+    if all("error" in r for r in rows):
+        raise LookupError(f"no market read: {rows[0]['error'] if rows else 'none asked'}")
     out = {"week": monday.isoformat(), "source": SOURCE, "version": VERSION,
            "made_at": now.isoformat(timespec="seconds"), "rows": rows}
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{monday.isoformat()}.json"
     path.write_text(json.dumps(out, indent=1, default=str), encoding="utf-8")
+    if theses is not None:
+        _write(Path(theses), thesis_table(folder))
     return path
+
+
+def thesis_table(folder: Path = SHADOWS) -> dict:
+    """AlgoMindDIS's thesis file (task 397) from every week read in ``folder``: {market: {trading date: {side, draw,
+    protected, since, source}}} for each market whose record at the week's open holds a side. The draw is its CE
+    (where the reader calls it delivered), and ``since`` the week's open. The engine ends it as it ends the trader's
+    call (``agent.order_intent``): the draw trades, or a D1 candle closes beyond the protected swing."""
+    table: dict = {}
+    for path in sorted(Path(folder).glob("????-??-??.json")):
+        out = json.loads(path.read_text(encoding="utf-8"))
+        monday = date.fromisoformat(out["week"])
+        for r in out["rows"]:
+            o = r.get("open") or {}
+            if o.get("state") != "ACTIVE" or o.get("side") not in ("BULLISH", "BEARISH") or not o.get("draw"):
+                continue
+            entry = {"side": o["side"], "draw": float(o["draw"]["ce"]), "protected": float(o["protected"]),
+                     "since": week_open(monday).isoformat(), "source": f"{out['source']} {out['version']}"}
+            for day in trading_dates(monday):
+                table.setdefault(r["market"], {})[day] = entry
+    return table
 
 
 def _closed(frame: Optional[pd.DataFrame], step: timedelta, now: datetime) -> pd.DataFrame:

@@ -7,6 +7,7 @@
 - **Numbering:** tasks continue the platform sequence from **382**.
 - **TDD:** every code task follows RED → GREEN → REFACTOR. Tests live in `backend/tests/test_algo_mind_*.py`.
 - **Paper only:** nothing here places a live order.
+- **Retired 2026-11-03** (context-engine task 397). At the trader's request AlgoMindDIS replaced the brain as Algo Mind. The brain's and the agreement's paper agents were stopped, and /context no longer shows the brain. The code, briefs and ledger are kept.
 
 ---
 

@@ -166,27 +166,17 @@ strategy.require_level = true
 management.partial_r = 3.0
 management.partial_fraction = 0.3333333333333333
 
-# Algo Mind's hands (algo-mind Requirement 5): the context variant trading the brain's weekly side (its brief's
-# calls, no draw: the side holds for the week), and the side where the trader and the brain agree (the trader's draw
-# and protected swing). Briefs and calls write the thesis files.
-[variants.fresh_near_gap_brain]
+# Algo Mind's hands: the context variant trading AlgoMindDIS's side (context-engine Requirement 35, task 397: it
+# replaces the brain's and the agreement's variants, 2026-11-03). Its thesis file comes from the week's read
+# (python -m algo_mind shadow): the side held at the week's open, until its draw's CE trades or a D1 candle closes
+# beyond its protected swing.
+[variants.fresh_near_gap_dis]
 strategy.raid_window = "H4"
 strategy.max_stop_atr = 1.0
 strategy.target_mode = "NEAREST"
 strategy.fvg_zone = "gap"
 strategy.bias_mode = "THESIS"
-strategy.thesis_file = "data/research/theses/brain_theses.json"
-strategy.min_stop_spreads = 10.0
-management.partial_r = 3.0
-management.partial_fraction = 0.3333333333333333
-
-[variants.fresh_near_gap_agree]
-strategy.raid_window = "H4"
-strategy.max_stop_atr = 1.0
-strategy.target_mode = "NEAREST"
-strategy.fvg_zone = "gap"
-strategy.bias_mode = "THESIS"
-strategy.thesis_file = "data/research/theses/agree_theses.json"
+strategy.thesis_file = "data/research/theses/dis_theses.json"
 strategy.min_stop_spreads = 10.0
 management.partial_r = 3.0
 management.partial_fraction = 0.3333333333333333

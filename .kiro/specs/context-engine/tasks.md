@@ -595,6 +595,30 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
     - Tests: `test_research_replay_weekly.py` (4).
   - **Validates: Requirement 36.1-36.6**
 
+
+- [x] 397. AlgoMindDIS is Algo Mind: its thesis file, its paper agent, the brain retired (Requirement 37)
+  - **397a. RED:**
+    - the thesis file holds only sides live at the week's open (the draw's CE, the protected swing, `since` the open), and the GBPUSD fixture's week of 26 Oct gives its BULLISH entry for each trading date;
+    - a read with no market raises and leaves the week's file;
+    - the loop wakes five minutes after each D1 close in New York time, across the clocks' change;
+    - the dis variant differs from the context variant only in its thesis file, and the brain's variants are gone;
+    - /context has no brain, a saved call writes no agreement file, and the scorecard gives AlgoMindDIS's totals with the agents' R on its markets.
+  - **397b. GREEN:**
+    - `algo_mind/shadow.py`: `thesis_table`, `DIS_THESES`, and `write_shadow(..., theses=)`.
+    - `algo_mind/__main__.py`: `shadow --loop` and `next_read`.
+    - `[variants.fresh_near_gap_dis]` in `focus.toml` replaces `fresh_near_gap_brain` and `fresh_near_gap_agree`, and `PAPER_FILES` follows.
+    - `ContextApp` loses the brief, `run_brain` and the agreement; `/api/context/brief` is gone; the page loses the Brain column, its button and its totals.
+  - **Done 2026-11-03.**
+    - **The processes (paper only):**
+      - The brain and agree paper agents were stopped. Neither had an open order: the brain's last, an XAUUSD buy on 2 Nov, expired unfilled.
+      - The `fresh_near_gap_dis` agent started on the controls' eight markets, and the read loop beside it.
+    - **The first read (Tue 3 Nov 07:13 UTC):**
+      - GBPUSD opened the week BULLISH (draw: the W1 gap of 07-21 Sep, CE 1.34401; protected 1.31364). It was delivered at Monday's close, so the engine sees the draw already traded and orders nothing.
+      - The other eight markets have no side.
+      - So the dis agent trades nothing until a new turn, at the earliest a C2 closing on Fri 6 or Fri 13 Nov.
+    - **Tests:** `test_algo_mind_shadow.py` (2 new, 1 extended); `test_algo_mind_context.py` rewritten (4); `test_context_calls.py` and `test_replay_charts.py` lose the brain's arguments.
+  - **Validates: Requirement 37.1-37.5**
+
 ---
 
 ## Task Dependency Graph

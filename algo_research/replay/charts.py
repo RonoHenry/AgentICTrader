@@ -4,7 +4,7 @@
 
 One server for both modes of the chart: **You** at ``/`` (the blind replay, Requirements 10-12) and **Engine**
 at ``/engine`` (the engine watch, algo-backtester Requirement 15). **Context** at ``/context`` keeps the trader's
-weekly calls (context-engine Requirement 32.4) beside the brain's and the reader's (Requirement 35.4). **Weekly**
+weekly calls (context-engine Requirement 32.4) beside AlgoMindDIS's (Requirement 35, task 397). **Weekly**
 at ``/weekly`` is the blind weekly calls on the long daily history (Requirement 36). Each
 instrument of the research snapshot has
 its own blind journal, opened when its tab is first chosen; the replay's API takes ``?inst=``. The watchlist
@@ -215,14 +215,13 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": str(exc)})
                 return
             self._answer(lambda: self.charts.weekly.call(body))
-        elif path in ("/api/context/brief", "/api/context/reader"):
+        elif path == "/api/context/reader":
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             except ValueError as exc:
                 self._send(400, {"error": str(exc)})
                 return
-            run = self.charts.context.run_brain if path.endswith("brief") else self.charts.context.run_reader
-            self._answer(lambda: run(body))
+            self._answer(lambda: self.charts.context.run_reader(body))
         else:
             self._with_replay(_ReplayHandler.do_POST)
 
@@ -259,9 +258,9 @@ def serve(config: Path, port: int = 8765, browser: bool = True, instrument: str 
     def bars(instrument: str, start, end):                             # the terminal's M15, for the scorecard
         return watch.live_source().rates(instrument, Timeframe.M15, start, end)
 
-    def shadow(monday: date):                                          # the reader on the terminal's H1 and M1
-        from algo_mind.shadow import write_shadow
-        return write_shadow(monday, watch.live_source().rates)
+    def shadow(monday: date):                                          # AlgoMindDIS on the terminal's H1 and M1
+        from algo_mind.shadow import DIS_THESES, write_shadow
+        return write_shadow(monday, watch.live_source().rates, theses=DIS_THESES)
 
     charts = ChartsApp(snapshot, journal_root or JOURNAL_DIR, research.slices.explore, watch, default=instrument,
                        order=research.instruments,
