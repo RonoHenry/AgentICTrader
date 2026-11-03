@@ -118,26 +118,37 @@
       - The replay's prepared reads equal fresh reads at sampled closes.
   - **Validates: Requirement 12.1-12.6, 14.1-14.2, 14.4**
 
-- [ ] 405. Phase 5: the contract, qualification and shadow (Requirements 13, 16.1-16.3, 17)
+- [x] 405. Phase 5a: the contract, qualification and the regression scenarios (Requirements 13, 17)
+  - **Reordered (2026-11-03):** the scenarios and the contract come before H-AF, so a bug they expose is fixed before the one registered look, not after it. The live shadow work (the read, /context, the paper setups' qualification) moves to task 407: it doesn't change v1.
   - **405a. RED:**
-    - the contract's fields and version;
-    - `qualify`'s four outcomes with reasons;
-    - the thesis adapter's file read by `agent.order_intent.theses`;
-    - scenarios A-G;
-    - DIS_DISABLED changes no order.
-  - **405b. GREEN:**
-    - `contract.py`;
-    - `python -m algomind_dis read --week` and `--loop`;
-    - /context shows v1 beside reader v0 and the trader's call;
-    - the paper setups' qualification is recorded.
-  - **Validates: Requirement 13.1-13.3, 16.1-16.3, 17.1**
+    - the contract's fields, version and round trip;
+    - the state mapping (INVALIDATED, EXPIRED, TRANSITIONAL);
+    - `qualify`'s four outcomes with their reasons;
+    - the thesis entry read by `agent.order_intent.theses`;
+    - scenarios A-G.
+  - **405b. GREEN:** `contract.py` (`output`, `Setup`, `qualify`, `thesis_entry`).
+  - **Done 2026-11-03.**
+    - **Scenarios A-G** are daily bars from legs with seeded wicks and noise. The first synthetic bars opened every candle at the last close, which ties the next high with the swing high: no swing ever formed. Real bars don't tie.
+      - A: deep discount, a sweep closing back, a displacement and CISD, a gap in the new leg's discount and its retest. The reads are bullish delivery, the sweep, discount and the array, with the evidence leading bullish while MN1 still falls.
+      - C: the same sequence in a rising market, with every frame's structure bullish.
+      - B and D are A and C mirrored, with mirrored scores.
+      - E: falling H1 bars inside a bullish D1 change no score and classify as a retracement.
+      - F: a four-month box holds no side and reads CONSOLIDATION.
+      - G: a release spike is neutral context, expanding volatility and no side.
+    - **What the scenarios showed about v1:** a single-market textbook case doesn't reach v1's bar to hold a side. C scores 0.33 against 0.19; the bar is 0.5 with a 0.2 lead. The bar is the specification's starting value, registered for H-AF, so it stays. On GBPUSD's real history v1 holds a side at about 11% of closes.
+    - Tests: `test_algomind_dis_scenarios.py` (7), `test_algomind_dis_contract.py` (3).
+  - **Validates: Requirement 13.1-13.3, 17.1**
 
 - [ ] 406. Phase 6: H-AF, the historical evaluation (Requirement 15)
   - The replay over 1996-2022, the two cells with H-AE's scorer, state quality, the regime split and the two baselines. Run once.
   - The result goes into the search log (one try) and this task's notes, whatever it is.
   - **Validates: Requirement 15.1-15.4**
 
-- [ ] 407. Phase 7: controlled activation (Requirement 16.4)
+- [ ] 407. Phases 5b and 7: the live shadow and controlled activation (Requirements 14.3, 16)
+  - **The shadow:**
+    - `python -m algomind_dis read --week` and `--loop`: the terminal's bars, the weekly records and `transitions.jsonl`;
+    - /context shows v1 beside reader v0 and the trader's call;
+    - the paper agents' setups are qualified after the fact from their records (no engine change).
   - **If v1 passed H-AF:** DIS_ENFORCED writes the paper agent's thesis file in place of reader v0's, after the trader's go.
   - **If not:** v1 stays in shadow, and the trader chooses the next version's change.
-  - **Validates: Requirement 16.4**
+  - **Validates: Requirement 14.3, 16.1-16.4**
