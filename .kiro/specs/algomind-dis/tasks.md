@@ -156,6 +156,15 @@
     - `python -m algomind_dis read --week` and `--loop`: the terminal's bars, the weekly records and `transitions.jsonl`;
     - /context shows v1 beside reader v0 and the trader's call;
     - the paper agents' setups are qualified after the fact from their records (no engine change).
+  - **Done so far (2026-11-03): AlgoMindDIS on the Noculus engine chart** (the trader: "I want to visually see AlgoMindDIS at work on Noculus").
+    - **The layer** ("AlgoMindDIS", on by default; hidden while a session is blind):
+      - a strip with one cell per D1 close coloured by state, with a mark where it changed;
+      - while a side is held, its draw (dashed) and protected level (solid), or a tag on the chart's edge with the distance in ADRs when the level is off the chart;
+      - the arrays it counts as evidence, shaded.
+    - **The card:** the scores by category against the bar, each frame's structure, zone and delivery, the supporting and conflicting evidence, the best objectives, the narrative, and the CRT trades in view sorted with, against or without its side, with their R.
+    - **The history:** the broker's H1 from the terminal, about four years cut at the session's end, as the chart's New York trading days (`frames.ny_daily`). The session's own M1 (from Nov 2021) gives the monthly frame about 13 candles and almost no sides; the layer falls back to it, and says so, when the terminal is closed.
+    - **Code:** `algomind_dis/view.py` (`ChartView`), `WatchSession.dis` and `/api/watch/dis`, `engine.js` (`paintDis`, `disCard`). Tests: `test_algomind_dis_view.py` (2).
+    - **2022 on the terminal's bars, the sides set:** GBPUSD 3, EURUSD 2, XAUUSD 1, US500 3, US100 6, GER40 6, UK100 5, US30 8. For example, GBPUSD set BEARISH at the 21 Jul 2022 close (bearish 0.51 against 0.15; draw the MN1 swing low 1.14118 and protected level 1.26662, each about 5 ADR away), unresolved on 1 Aug.
   - **If v1 passed H-AF:** DIS_ENFORCED writes the paper agent's thesis file in place of reader v0's, after the trader's go.
   - **If not:** v1 stays in shadow, and the trader chooses the next version's change. **(v1 failed, 2026-11-03.)**
   - **Validates: Requirement 14.3, 16.1-16.4**

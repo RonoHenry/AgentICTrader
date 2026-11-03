@@ -16,7 +16,7 @@ import pandas as pd
 from algo_mind.dis import daily_market
 from liquidity_engine.context.frame_state import Candles
 
-__all__ = ["Frames", "TIMEFRAMES", "candles", "from_daily", "from_market"]
+__all__ = ["Frames", "TIMEFRAMES", "candles", "from_daily", "from_market", "ny_daily"]
 
 #: Senior first.
 TIMEFRAMES = ("MN1", "W1", "D1")
@@ -78,6 +78,17 @@ def from_market(market: str, hist: Mapping[str, pd.DataFrame]) -> Frames:
     return Frames(market, {"MN1": candles("MN1", _closed_months(_monthly(d1))),
                            "W1": candles("W1", _closed_weeks(hist["W1"])),
                            "D1": candles("D1", d1)})
+
+
+def ny_daily(h1: pd.DataFrame) -> pd.DataFrame:
+    """H1 bars (``time`` UTC, the bar's open) as the chart's trading days: a day runs 17:00 to 17:00 New York and
+    is named by the date it closes on (Sunday evening opens Monday's), as ``chain_view.trading_days`` names them."""
+    t = pd.to_datetime(h1["time"], utc=True)
+    date = (t.dt.tz_convert("America/New_York").dt.tz_localize(None) + pd.Timedelta(hours=7)).dt.normalize()
+    g = h1.assign(_d=date.to_numpy()).sort_values("time").groupby("_d", sort=True)
+    return pd.DataFrame({"date": g["open"].first().index, "open": g["open"].first().to_numpy(float),
+                         "high": g["high"].max().to_numpy(float), "low": g["low"].min().to_numpy(float),
+                         "close": g["close"].last().to_numpy(float)})
 
 
 def from_daily(market: str, days: pd.DataFrame) -> Frames:

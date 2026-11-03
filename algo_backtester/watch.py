@@ -135,6 +135,10 @@ TREND_CALLS = {"BEARISH": -1, "BULLISH": 1, "UNCLEAR": 0}
 #: frame's dealing range needs, and how many D1 candles before the session's first are shown.
 CHAIN_WARMUP_DAYS = 550
 CHAIN_SHOWN_BEFORE = 10
+#: AlgoMindDIS (algomind-dis Requirement 16.3): the D1 history its monthly and weekly ranges need (about four
+#: years), and the D1 closes shown before the session's first.
+DIS_WARMUP_DAYS = 1500
+DIS_SHOWN_BEFORE = 20
 
 
 class SnapshotSource:
@@ -260,6 +264,11 @@ class WatchSession:
         self._trend_lock = threading.Lock()
         self._chain: Optional[tuple] = None                     # (trading day, days, reader, reads by day)
         self._chain_lock = threading.Lock()
+        self._dis: Optional[tuple] = None                       # (trading day, AlgoMindDIS's chart view, history)
+        self._dis_lock = threading.Lock()
+        #: The broker's terminal, when the server has one: ``(instrument, tf, start, end) -> bars``. AlgoMindDIS
+        #: reads its years of H1 for the monthly and weekly frames the session's own M1 is too short for.
+        self.history: Optional[Callable] = None
         self._crt: Optional[tuple[int, list[dict]]] = None      # (M1 bars read, H-N's trades on them)
         self._crt_lock = threading.Lock()
         self._sweep: Optional[tuple[int, list[dict]]] = None    # (M1 bars read, the M1 sweep model's trades on them)
@@ -906,6 +915,62 @@ class WatchSession:
             rows.append(row)
         return {"withheld": False, "smt": "abstains: one market on this chart", "rows": rows}
 
+    # ── AlgoMindDIS v1 (algomind-dis, 2026-11-03) ───────────────────────────────
+    def _dis_daily(self) -> tuple[pd.DataFrame, str]:
+        """The trading days AlgoMindDIS reads, closed by the session's end: the broker's H1 from the terminal for
+        about four years when the server has one (the same broker as the chart's candles; context, never scored),
+        else the session's own M1, which may hold only months."""
+        from algomind_dis.frames import ny_daily
+        if self.history is not None:
+            try:
+                h1 = self.history(self.instrument, Timeframe.H1,
+                                  (self.start - pd.Timedelta(days=DIS_WARMUP_DAYS)).to_pydatetime(),
+                                  self.end.to_pydatetime())
+                if h1 is not None and len(h1):
+                    h1 = h1[pd.to_datetime(h1["time"], utc=True) + pd.Timedelta(hours=1) <= self.end]
+                    days = ny_daily(h1)
+                    return days, "the broker's H1 from the terminal"
+            except Exception:                                   # the terminal closed: the session's own bars
+                pass
+        size, end = seconds_of("D1"), wall(self.end)
+        bars = ReplayBars(self._m1(self.instrument, DIS_WARMUP_DAYS), self.instrument, PriceBasis(instruments=()))
+        rows = bars.as_of("D1", from_wall(end), since=None)
+        rows = rows[np.asarray(rows["time"], dtype=np.int64) + size <= end].reset_index(drop=True)
+        days = trading_days(rows)
+        return (pd.DataFrame({"date": days["time"].dt.tz_localize(None),
+                              **{k: days[k].to_numpy(float) for k in ("open", "high", "low", "close")}}),
+                "the session's M1")
+
+    def _dis_view(self):
+        """AlgoMindDIS v1's timeline over every D1 candle closed by the session's end, from about four years of
+        warm-up (the monthly frame's ranges need them), and its reads at each close. Rebuilt when a new trading day
+        starts; a close reads only the candles closed by it."""
+        from algomind_dis.frames import from_daily
+        from algomind_dis.view import ChartView
+        end, size = wall(self.end), seconds_of("D1")
+        day = (end + 7 * 3600) // size
+        with self._dis_lock:
+            if self._dis is None or self._dis[0] != day:
+                daily, source = self._dis_daily()
+                history = {"source": source, "from": str(pd.Timestamp(daily["date"].iloc[0]).date()) if len(daily)
+                           else None, "days": int(len(daily))}
+                self._dis = (day, ChartView(self.instrument, from_daily(self.instrument, daily)), history)
+            return self._dis[1], self._dis[2]
+
+    def dis(self, q: dict) -> dict:
+        """AlgoMindDIS v1 on the chart up to the clock ``t``: the state at each D1 close of the session (and the
+        twenty before), its changes, and everything it read at the latest close; nothing while the session is blind.
+        It is shown to watch, not to trade: H-AF failed (``algomind_dis.view.HAF``)."""
+        from algomind_dis.view import HAF
+        clock = min(int(q["t"]), wall(self.end))
+        if self.withheld:
+            return {"withheld": True, "rows": []}
+        view, history = self._dis_view()
+        since = wall(self.start) - DIS_SHOWN_BEFORE * seconds_of("D1")
+        k = view.index_at(clock)
+        return {"withheld": False, "rows": view.rows(since, clock), "transitions": view.transitions(since, clock),
+                "now": None if k is None else view.detail(k), "tested": HAF, "history": history}
+
     # ── H-N, the trader's M15 CRT at market on M1 (2026-10-27) ─────────────────
     def crt(self, q: dict) -> dict:
         """H-N's trades (``algo_research.search_crt.session_trades``) on the session's own M1 and spreads, those whose
@@ -1188,6 +1253,8 @@ class WatchApp:
         session = WatchSession(self.config, None if variant == "base" else variant, instrument, day, days, snapshot,
                                studies_root=self.studies_root, blind=blind, live=live)
         session.noculus = self._journal(session)            # an open session's positions are kept too (D39)
+        if self._live_feed is not None:
+            session.history = lambda *a: self.live_source().rates(*a)
         if blind:
             reveal = session.noculus.data.get("reveal")
             if reveal:                                       # the engine was seen once: it can't be un-seen
@@ -1276,6 +1343,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.app.need().trend(q))
         elif url.path == "/api/watch/chain":
             self._answer(lambda: self.app.need().chain(q))
+        elif url.path == "/api/watch/dis":
+            self._answer(lambda: self.app.need().dis(q))
         elif url.path == "/api/watch/crt":
             self._answer(lambda: self.app.need().crt(q))
         elif url.path == "/api/watch/sweep":

@@ -179,8 +179,8 @@ class Timeline:
 
 def run(market: str, frames: Frames, s: Settings = V1,
         calendar: Optional[Callable[[datetime], Iterable[str]]] = None, until: Optional[int] = None,
-        progress: Optional[Callable[[int, int], None]] = None) -> Timeline:
-    prepared = prepare(market, frames.full, s)
+        progress: Optional[Callable[[int, int], None]] = None, prepared: Optional[dict] = None) -> Timeline:
+    prepared = prepare(market, frames.full, s) if prepared is None else prepared
     closes = [int(t) for t in frames.closes("D1") if until is None or t <= until]
     held = Held()
     rows, transitions, narratives = [], [], {}
