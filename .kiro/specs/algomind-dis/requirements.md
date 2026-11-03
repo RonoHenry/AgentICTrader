@@ -244,7 +244,7 @@ That is one source in AlgoMindDIS's container, not this specification. This spec
 
 #### Acceptance Criteria
 
-1. THE states SHALL be UNDETERMINED, BULLISH, BEARISH, NEUTRAL and TRANSITIONAL. The transitions are §10.2's, evaluated at each D1 close only.
+1. THE states SHALL be UNDETERMINED, BULLISH, BEARISH, NEUTRAL and TRANSITIONAL. The transitions are §10.2's, evaluated at each D1 close only. 12.3's ends add the edges §10.2's diagram leaves out (§10.4 names the ends, not the state after them): a side or TRANSITIONAL → UNDETERMINED when invalidated or expired, and any state → UNDETERMINED on stale data.
 2. **Establish:** from UNDETERMINED or NEUTRAL, a side SHALL be set when its score is at least 0.5 and leads the other by at least 0.2. It records:
    - its evidence;
    - its primary objective (the draw);

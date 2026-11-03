@@ -98,15 +98,25 @@
     - Tests: `test_algomind_dis_evidence.py` (5).
   - **Validates: Requirement 9.1-9.5, 10.1-10.2, 11.1-11.2**
 
-- [ ] 404. Phase 4: the state machine and the timeline (Requirements 12, 14)
+- [x] 404. Phase 4: the state machine and the timeline (Requirements 12, 14)
   - **404a. RED:**
     - every transition of §10.2 and none outside it;
     - establish, hold, delivered, invalidated (a close, not a wick), expired, challenged, resolved;
     - no look-ahead and determinism (property tests);
     - the timeline is rebuilt the same after a cut;
     - a stale frame gives UNDETERMINED.
-  - **404b. GREEN:** `state.py`; the weekly records and `transitions.jsonl`.
-  - **Validates: Requirement 12.1-12.6, 14.1-14.4**
+  - **404b. GREEN:** `state.py` (`step`, `inputs_from`, `run`). The weekly records and `transitions.jsonl` are written by the live read (task 405).
+  - **Done 2026-11-03.**
+    - **The order of the ends on a close:** invalidated (a close beyond the protected level), then delivered (the draw traded), then expired (the 20th close), then challenged. A candle that both touches the draw and closes beyond the protected level is invalidated, as the race scores it.
+    - **A side is held only with a live draw on its side and a protected level beyond price.** It reads the W1 range's far extreme, else the D1 one.
+    - **The challenge** is structure and external liquidity alone leading the other way by 0.3, or a D1 break the other way after the side was set. It holds while the D1 structure stays against the side.
+    - **Requirement 12.1:** §10.2's diagram has no edge from a side into UNDETERMINED. The registered ends add BULLISH, BEARISH and TRANSITIONAL → UNDETERMINED (invalidated, expired), and any → UNDETERMINED on stale data (`ALLOWED`).
+    - **Tests:** `test_algomind_dis_state.py` (6).
+      - Each rule on hand-built inputs.
+      - A Hypothesis property: only allowed transitions happen.
+      - The whole pipeline on a 420-day random walk: cutting the bars at day 300 changes no earlier state, and the same bars give the same timeline.
+      - The replay's prepared reads equal fresh reads at sampled closes.
+  - **Validates: Requirement 12.1-12.6, 14.1-14.2, 14.4**
 
 - [ ] 405. Phase 5: the contract, qualification and shadow (Requirements 13, 16.1-16.3, 17)
   - **405a. RED:**
