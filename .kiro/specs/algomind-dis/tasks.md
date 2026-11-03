@@ -17,9 +17,14 @@
   - H-AF registered in `docs/research/SEARCH_2018_2024.md` before any of its code exists, with v1's settings named.
   - **Validates: Requirement 1.1, 15.2**
 
-- [ ] 399. Phase 1: the records and the settings (Requirement 2)
+- [x] 399. Phase 1: the records and the settings (Requirement 2)
   - **399a. RED:** each record round-trips through JSON; the ids are the same for the same content and differ for different content; the settings are frozen and versioned.
   - **399b. GREEN:** `algomind_dis/__init__.py`, `settings.py`, `records.py`, `frames.py`. `frames.py` covers MN1 from D1, closed by t, New York days.
+  - **Done 2026-11-03.**
+    - Eleven frozen records. Times are UTC ns; only the contract carries ISO strings. `to_json`/`from_json` rebuild nested records from their type hints.
+    - `V1` holds exactly H-AF's registered values.
+    - `Frames` drops a week that ends before its Friday and a month that ends before its last business day, so a forming candle is never read as closed.
+    - Tests: `test_algomind_dis_records.py` (4).
   - **Validates: Requirement 2.1-2.3, 8.1**
 
 - [ ] 400. Phase 2a: structure, ranges and premium/discount (Requirements 3, 4)
