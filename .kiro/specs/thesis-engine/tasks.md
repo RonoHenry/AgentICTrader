@@ -125,6 +125,12 @@
   - A paper agent runs the same `step` on the terminal's live M1, through the paper broker. Its source is the /context calls, or AlgoMindDIS in the trader's mode.
   - Its record goes beside the context agent's on the /context scorecard.
   - Stopping and resuming from a saved state (Requirement 2.4, Property 3), moved here from 410.
+  - **Started 2026-11-05** (the trader: "Run the engine please"; H-AG had passed):
+    - `thesis_engine/live.py`, `python -m thesis_engine live [--once] [--every 300]`. Each cycle it reads the /context calls, and for each market with a call live (or ended within a day) reads the terminal's closed M1 (150 days, then only the new minutes) and runs the machine from the start: a restart is a replay. The journal and `status.json` go in `data/research/thesis_engine/live/`.
+    - Paper only: the shared fill model on the terminal's bars, nothing sent to the broker. A market without a call isn't read.
+    - Tests: `test_thesis_engine_live.py` (2), with a fake terminal.
+    - **First run (12:18, 5 Nov 2026): FLAT on all eight markets.** No /context calls were logged, and AlgoMindDIS V2 held no side on any of them.
+  - **Still to do:** the record beside the context agent's on the /context scorecard (14.2); the DIS source (417).
   - **Validates: Requirement 14.1-14.2, 2.4**
 
 - [ ] 417. The DIS source and the activation modes (Requirements 4.3 DIS, 4.6)

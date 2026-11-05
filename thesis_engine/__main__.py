@@ -1,4 +1,4 @@
-"""``python -m thesis_engine replay MARKET --snapshot NAME --source ORACLE`` | ``hag`` | ``scenarios``."""
+"""``python -m thesis_engine replay MARKET --snapshot NAME --source ORACLE`` | ``hag`` | ``scenarios`` | ``live``."""
 from __future__ import annotations
 
 import argparse
@@ -42,9 +42,15 @@ def main() -> None:
     sub.add_parser("hag", help="H-AG on the development window (registered 2026-11-05)")
     sc = sub.add_parser("scenarios", help="the trader's own trades, each with the call they held")
     sc.add_argument("--snapshot", default="mt5-m1-2026-11")
+    lv = sub.add_parser("live", help="on the terminal's live bars with your /context calls, paper only")
+    lv.add_argument("--once", action="store_true", help="one cycle, then stop")
+    lv.add_argument("--every", type=int, default=300, help="seconds between cycles (default 300)")
     args = p.parse_args()
     if args.cmd == "replay":
         _replay(args)
+    elif args.cmd == "live":
+        from thesis_engine.live import main as live
+        live(args.once, args.every)
     elif args.cmd == "scenarios":
         from thesis_engine.scenarios import main as scenarios
         scenarios(args.snapshot)
