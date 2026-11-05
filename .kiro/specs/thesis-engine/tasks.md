@@ -6,6 +6,7 @@
 
 - **Numbering:** tasks continue the platform sequence from **408**.
 - **Order:** the audit and the spec; the thesis; the clock; the book; the machine; the replay; watching it with the trader; H-AG registered, then run; paper only after a pass and the trader's go.
+- **Order changed 2026-11-05:** the trader asked to test the engine first ("test the new engine"), so H-AG (415) runs before the Noculus review (414). V1 is frozen at the defaults for H-AG; a change after the review is V2 and a new registration.
 - **TDD:** every code task follows RED → GREEN → REFACTOR. Tests live in `backend/tests/test_thesis_engine_*.py`.
 - **The development window stays unread:** nothing reads `mt5-m1-develop` before H-AG's registration commit (TE-D14).
 - **Paper only, and later:** nothing here places a live order (Requirement 1.3).
@@ -23,61 +24,55 @@
     - H-AG reports §16.4's baselines beside it.
   - **Validates: Requirement 1.1**
 
-- [ ] 409. Phase 1: the settings, the records and the thesis (Requirements 1.4, 4)
-  - **409a. RED:**
-    - each record round-trips through JSON, and its id is the same for the same content;
-    - V1 is frozen;
-    - the thesis's checks;
-    - each end (DELIVERED, INVALIDATED, EXPIRED, REPLACED), with a wick beyond the protected level that isn't one;
-    - CALL reads `agent.context_calls` and FILE reads the THESIS-mode format;
-    - the completion rule's choices and refusals;
-    - ORACLE and MIRROR are opposite every week, and RANDOM is the same for the same seed;
-    - the DIS source: ACTIVE gives a thesis, TRANSITIONAL arms nothing, and the other states end it (WITHDRAWN), under each activation mode.
-  - **409b. GREEN:** `thesis_engine/__init__.py`, `settings.py`, `records.py` and `thesis.py`.
-  - **Validates: Requirements 1.4, 4.1-4.6**
+- [x] 409. Phase 1: the settings, the records and the thesis (Requirements 1.4, 4)
+  - **Done 2026-11-05** (the trader: "test the new engine"; the tests were written with the code, not before it).
+    - `thesis_engine/__init__.py`, `settings.py` (V1: the defaults put to the trader), `records.py` (Thesis, Level, Hand, Intent, Skip, Transition; ids and JSON are AlgoMindDIS's) and `thesis.py`.
+    - Ends in AlgoMindDIS's order: INVALIDATED (a D1 close), DELIVERED, then `until` (EXPIRED, or WITHDRAWN for a file). REPLACED happens in the machine.
+    - Sources: CALL (`agent.context_calls`), FILE (consecutive dates joined), and ORACLE, MIRROR, RANDOM and W1TREND (the last W1 candle's LE-D15 trend), each completed by the nearest-pool rule.
+    - Tests: `test_thesis_engine_thesis.py` (8).
+  - **Moved to 417:** the DIS source and the activation modes.
+  - **Validates: Requirements 1.4, 4.1-4.5**
 
-- [ ] 410. Phase 2: the clock (Requirement 2)
-  - **410a. RED** on hand-made M1 bars:
-    - D1 from 17:00 for FX and gold, and from 18:00 for the indices;
-    - H4 every four hours from the day's open;
-    - W1 from Sunday's open to Friday's close;
-    - daylight-saving changes;
-    - no candle for a gap;
-    - each candle emitted once at its close, highest frame first;
-    - stop and resume equal an uncut run;
-    - repeated and out-of-order bars are dropped, the forming bar is never read, and stale data is flagged.
-  - **410b. GREEN:** `thesis_engine/clock.py`.
-  - **Validates: Requirement 2.1-2.5**
+- [x] 410. Phase 2: the clock (Requirement 2)
+  - **Done 2026-11-05.** `thesis_engine/clock.py`:
+    - W1, D1, H4, H1 and M5 from M1 on the market's New York calendar (17:00 for FX, gold and DXY; 18:00 for the indices);
+    - a candle exists from its close, and one still forming at the end is left out;
+    - repeated or older bars and leading stand-ins are dropped and counted;
+    - the window (Q2-Q3, Monday to Friday) and the trading day;
+    - the first candle after a silence of more than 15 minutes inside the day is stale.
+    - Tests: `test_thesis_engine_clock.py` (7).
+  - **Moved to 416 (paper):** stopping and resuming from a saved state. The replay reads only the past (Property 1, tested in 413); a saved state matters for a live agent.
+  - **Validates: Requirement 2.1-2.3, 2.5**
 
-- [ ] 411. Phase 3: the book, as of each close (Requirement 3)
-  - **411a. RED:**
-    - at every cut of random walks with dojis, the book equals AlgoMindDIS's analyzers (V2) run on the candles closed by the cut;
-    - each status change (formed, swept or mitigated, invalidated) is recorded once, with its time;
-    - the E frame's swings and down-close runs;
-    - the inverted FVG on hand-made bars, in the array layer's own tests (`liquidity_engine/context`), with every existing output unchanged.
-  - **411b. GREEN:** `thesis_engine/book.py`, and the inverted FVG in the array layer.
+- [x] 411. Phase 3: the book, as of each close (Requirement 3)
+  - **Done 2026-11-05.**
+    - `thesis_engine/book.py`. Each level frame's arrays come from AlgoMindDIS's `array_table` at V2 (the trader's blocks and breakers, FVGs as the gap), with their high-probability grade from `blocks.delivery_blocks`. Swings and SWING ranges are the analyzers'. The E frame's three-candle swings, the pools each candle takes, the previous H1 candle's pool and the CISD come from `blocks.runs`.
+    - `liquidity_engine/context/inversions.py`: inverted FVGs, dated by the close through, ended like any array. Nothing existing calls it.
+    - Tests: `test_thesis_engine_book.py` (7), with the book at random cuts equal to the analyzers run on the cut (Property 4), and the pools and CISD against brute force; `test_context_inversions.py` (3).
   - **Validates: Requirement 3.1-3.5**
 
-- [ ] 412. Phase 4: the machine (Requirements 5-9)
-  - **412a. RED:**
-    - each row of the transition table with its reason, and no other transition (every state against every event kind);
-    - the levels of the side: inside the thesis's range, in discount, at most 1 ADR tall, never the other side's arrays, with the score;
-    - the window;
-    - the hand: the sweep at the level, the CISD within 12 E candles, its failure;
-    - the order: stop, target, the skips (under 10 spreads, under 2R) and the budget;
-    - mirrored bars give the mirrored transitions.
-  - **412b. GREEN:** `thesis_engine/levels.py`, `machine.py` and `orders.py`.
+- [x] 412. Phase 4: the machine (Requirements 5-9)
+  - **Done 2026-11-05.**
+    - `thesis_engine/levels.py`: the side's live arrays between the protected level and the draw, CE in discount (premium) of the D1 or W1 SWING range, at most 1 ADR tall, scored by frames, ranges, resting liquidity and a high-probability block.
+    - `thesis_engine/machine.py`: `TABLE`, `State`, `on_close` and `on_fill`. Every move is checked against the table.
+    - The table gained two rows the requirements lacked: ARMED → THESIS (the level fails or price leaves it while armed) and IN_TRADE → AT_LEVEL (a rejected order).
   - **Validates: Requirements 5.1-5.4, 6.1-6.3, 7.1-7.2, 8.1-8.4, 9.1-9.5**
 
-- [ ] 413. Phase 5: the journal and the replay (Requirements 10, 11)
-  - **413a. RED:**
-    - the loop's order: fills, then closes, highest frame first;
-    - orders act from the next bar, through the shared `FillModel`;
-    - costs follow H-N's spread rule and the broker profile;
-    - the same bars and theses give the same journal byte for byte;
-    - a stopped and resumed run equals an uncut one;
-    - hand-made and October 2026 bars only.
-  - **413b. GREEN:** `thesis_engine/journal.py`, `replay.py` and `__main__.py` (`python -m thesis_engine replay`, with a speed check on one market).
+- [x] 413. Phase 5: the journal and the replay (Requirements 10, 11)
+  - **Done 2026-11-05.**
+    - `thesis_engine/replay.py`: the loop through the shared `FillModel` (an order acts from the next bar). Spreads follow H-N's rule, stop slippage comes from the Exness specs, and the swap-free account charges no commission or swap. A position open at its thesis's `until` is closed at the last bar before it (TIME).
+    - The journal is JSON lines with sorted keys; `python -m thesis_engine replay MARKET --snapshot NAME --source ...` refuses the development window.
+    - Speed: about 1.5 s a run on eight months of gold M1, after a 5 s build of the book.
+    - Tests: `test_thesis_engine_machine.py` (8) on random-walk markets with the hindsight side:
+      - the stages are reached;
+      - every move is in the table (Property 6);
+      - the side is the thesis's, one position at a time (Property 7);
+      - the budget holds (Property 8);
+      - a stop without a gap is −1R;
+      - the same journal twice (Property 2);
+      - only the past (Property 1);
+      - the mirror (Property 5).
+  - **A bug the October 2026 dry run caught:** an intent's own `kind` field overwrote the journal's record type, so intents were invisible and one test passed on an empty list. The discriminator is now `record`, and the test asserts it saw intents.
   - **Validates: Requirements 10.1-10.3, 11.1-11.3**
 
 - [ ] 414. Phase 6: watching it, with the trader (Requirement 12)
@@ -112,7 +107,14 @@
   - Only if H-AG passes and the trader says go.
   - A paper agent runs the same `step` on the terminal's live M1, through the paper broker. Its source is the /context calls, or AlgoMindDIS in the trader's mode.
   - Its record goes beside the context agent's on the /context scorecard.
-  - **Validates: Requirement 14.1-14.2**
+  - Stopping and resuming from a saved state (Requirement 2.4, Property 3), moved here from 410.
+  - **Validates: Requirement 14.1-14.2, 2.4**
+
+- [ ] 417. The DIS source and the activation modes (Requirements 4.3 DIS, 4.6)
+  - Moved from 409.
+  - AlgoMindDIS's timeline as theses: ACTIVE gives a thesis (`thesis_entry`'s side, draw, protected level and since), TRANSITIONAL arms nothing, and the other states end it (WITHDRAWN).
+  - The modes DIS_DISABLED, DIS_SHADOW, DIS_ADVISORY and DIS_ENFORCED.
+  - **Validates: Requirements 4.3, 4.6**
 
 ## Task Dependency Graph
 
