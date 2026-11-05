@@ -23,6 +23,7 @@ def test_the_layer_answers_for_every_source(session):  # noqa: F811
         assert all(m["t"] <= end for m in got["moves"])
         assert got["hindsight"] == (source in ("ORACLE", "MIRROR"))
         assert isinstance(got["any"], bool)
+        assert got["next_trade"] is None and all(tr["placed"] <= end for tr in got["trades"])   # nothing past the end
     start = session.status()["start"]
     first = session.thesis({"t": start, "source": "ORACLE"})
     assert first["next_trade"] is None or first["next_trade"] > start

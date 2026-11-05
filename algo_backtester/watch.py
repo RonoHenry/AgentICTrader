@@ -143,6 +143,10 @@ DIS_SHOWN_BEFORE = 20
 #: session's first day, how long before that the layer shows, and the sources it runs on. The research sources' sides
 #: are hindsight.
 THESIS_WARMUP_DAYS = 150
+#: The week the session ends in is read to its close when the bars hold it, so the research sides (the week's real
+#: side, last week's trend) exist for its last week. A read at any clock still sees only the candles closed by then,
+#: and the layer never draws past the session's end.
+THESIS_AFTER_DAYS = 7
 THESIS_SHOWN_BEFORE = 7 * 86400
 THESIS_SOURCES = ("SCENARIO", "CALL", "ORACLE", "MIRROR", "RANDOM", "W1TREND")
 
@@ -991,7 +995,7 @@ class WatchSession:
             if self._thesis is None or self._thesis[0] != key:
                 frame = self.source._frame(self.instrument)
                 m1 = frame[(frame["time"] >= self.start - pd.Timedelta(days=THESIS_WARMUP_DAYS))
-                           & (frame["time"] < self.end)].reset_index(drop=True)
+                           & (frame["time"] < self.end + pd.Timedelta(days=THESIS_AFTER_DAYS))].reset_index(drop=True)
                 if "spread" not in m1:
                     m1 = m1.assign(spread=self.spec.default_spread if self.spec else 0.0)
                 self._thesis = (key, prepare(self.instrument, m1[["time", "open", "high", "low", "close", "spread"]]),
@@ -1048,7 +1052,7 @@ class WatchSession:
                 continue
             done = tr["closed"] is not None and tr["closed"] <= clock
             trades.append({**tr, **({} if done else {"closed": None, "exit": None, "reason": None, "net_r": None})})
-        ahead = [tr["placed"] for tr in v["trades"] if tr["placed"] > clock]
+        ahead = [tr["placed"] for tr in v["trades"] if clock < tr["placed"] <= wall(self.end)]
         return {"withheld": False, "source": source, "words": v["words"], "hindsight": source in ("ORACLE", "MIRROR"),
                 # whether the source holds a thesis anywhere in the session, and when its next entry comes (the page's
                 # "Next TE trade"); a session is blind or it isn't, so this shows nothing a blind reader hasn't chosen
