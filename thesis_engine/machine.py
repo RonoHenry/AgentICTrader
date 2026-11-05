@@ -15,9 +15,10 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from liquidity_engine.context.measures import average_range
 from thesis_engine.book import Book
 from thesis_engine.clock import in_window, stale, trading_day
-from thesis_engine.levels import levels
+from thesis_engine.levels import levels, rank
 from thesis_engine.records import Hand, Intent, Level, Skip, Thesis, Transition, make_id, to_json
 from thesis_engine.settings import V1, Settings
 from thesis_engine.thesis import end
@@ -75,7 +76,7 @@ class Ctx:
         if key not in self._levels:
             self._levels = {key: levels(th, self.book, t, price, self.s)}      # one thesis at a time
         found = self._levels[key]
-        return sorted(found, key=lambda x: (-x.score, min(abs(price - x.low), abs(price - x.high)), x.array_id))
+        return sorted(found, key=lambda x: rank(x, price, self.s))
 
 
 def _p(x: float) -> str:
@@ -189,6 +190,11 @@ def _stage(st: State, ctx: Ctx, m: int, out: _Out) -> State:
     extreme = min(hand.extreme, float(e.l[m])) if bull else max(hand.extreme, float(e.h[m]))
     hand = replace(hand, extreme=extreme)
     run = book.cisd(m, bull, hand.swept)
+    if run is not None and s.displacement_body > 0:              # V2: the close through must displace
+        reach = average_range(e.h, e.l, m, 20)
+        if not abs(float(e.c[m]) - float(e.o[m])) >= s.displacement_body * reach:
+            out.note("no_displacement", pool=hand.pool, body=abs(float(e.c[m]) - float(e.o[m])), reach=reach)
+            run = None
     if run is not None and m - hand.swept <= s.hand_candles:
         return _order(st, ctx, m, hand, run, out)
     if m - hand.swept >= s.hand_candles:
@@ -207,10 +213,13 @@ def _sweep(st: State, ctx: Ctx, m: int, out: _Out) -> Optional[Hand]:
     e = book.e
     band = s.pool_band_adr * book.adr(int(e.end[m]))
     lo, hi = (lv.low - band, lv.high) if bull else (lv.low, lv.high + band)
-    pools = [(f"the {s.e_frame} swing {'low' if bull else 'high'} {_p(p)}", p) for _, p in book.e_pools_taken(m, bull)]
-    h1 = book.h1_pool_taken(m, bull)
-    if h1 is not None:
-        pools.append((f"the previous H1 {'low' if bull else 'high'} {_p(h1)}", h1))
+    if s.hand_pools == "TRADER":                                     # V2: the trader's liquidity
+        pools = book.trader_pools_taken(m, bull)
+    else:
+        pools = [(f"the {s.e_frame} swing {'low' if bull else 'high'} {_p(p)}", p) for _, p in book.e_pools_taken(m, bull)]
+        h1 = book.h1_pool_taken(m, bull)
+        if h1 is not None:
+            pools.append((f"the previous H1 {'low' if bull else 'high'} {_p(h1)}", h1))
     pools = [(name, p) for name, p in pools if lo <= p <= hi]
     if not pools:
         return None
@@ -225,11 +234,16 @@ def _order(st: State, ctx: Ctx, m: int, hand: Hand, run: Tuple[int, int], out: _
     e = book.e
     t, spread, bull = int(e.end[m]), ctx.typical_spread, th.bullish
     close = float(e.c[m])
-    entry = close + spread if bull else close                       # a buy pays the ask; a sell takes the bid
+    limit = s.entry == "LIMIT_MT"
+    if limit:                                                       # V2: a limit at the run's mean threshold
+        entry = book.run_mt(*run)
+    else:
+        entry = close + spread if bull else close                   # a buy pays the ask; a sell takes the bid
     stop = hand.extreme if bull else hand.extreme + spread          # a short's stop triggers on the ask
     risk = entry - stop if bull else stop - entry
     reward = th.draw - entry if bull else entry - th.draw
-    intent = Intent(ctx.market, th.id, st.level.array_id, th.side, "MARKET", entry, stop, th.draw, t)
+    intent = Intent(ctx.market, th.id, st.level.array_id, th.side, "LIMIT" if limit else "MARKET", entry, stop,
+                    th.draw, t)
     why = (f"{s.e_frame} took {hand.pool}, then closed {_p(close)} {'above' if bull else 'below'} the run's open "
            f"{_p(float(e.o[run[0]]))} (CISD)")
     skip = None
@@ -246,7 +260,8 @@ def _order(st: State, ctx: Ctx, m: int, hand: Hand, run: Tuple[int, int], out: _
         return replace(st, hand=None)
     order_id = make_id(ctx.market, t, th.id, "order")
     out.intents.append(intent)
-    return out.move(st, "IN_TRADE", f"{why}: {'buy' if bull else 'sell'} at market, stop {_p(stop)}, "
+    how = f"limit at the run's MT {_p(entry)}" if limit else "at market"
+    return out.move(st, "IN_TRADE", f"{why}: {'buy' if bull else 'sell'} {how}, stop {_p(stop)}, "
                     f"target {_p(th.draw)} ({reward / risk:.1f}R)", s.e_frame, hand=None, order_id=order_id)
 
 
@@ -260,8 +275,9 @@ def on_fill(st: State, ctx: Ctx, kind: str, t: int, price: Optional[float], r: O
     st = replace(st, order_id=None)
     if st.name != "IN_TRADE":
         return st, out                                                # the thesis ended while the order was open
-    if kind == "REJECTED":
-        return out.move(st, "AT_LEVEL", "rejected: the open was beyond the stop or the target", s.e_frame), out
+    if kind in ("REJECTED", "EXPIRED"):
+        return out.move(st, "AT_LEVEL", "rejected: the open was beyond the stop or the target" if kind == "REJECTED"
+                        else "the limit expired unfilled", s.e_frame), out
     what = {"SL": "stopped", "TP": "the draw traded", "TIME": "time: closed", "END": "the data ended"}.get(kind, kind)
     reason = f"{what} at {_p(price)}" + (f" ({r:+.2f}R)" if r is not None else "")
     spent = st.entries_day >= s.per_day or st.entries_thesis >= s.per_thesis

@@ -20,7 +20,18 @@ from thesis_engine.book import Book
 from thesis_engine.records import Level, Thesis
 from thesis_engine.settings import V1, Settings
 
-__all__ = ["levels"]
+__all__ = ["levels", "rank"]
+
+_FRAME_RANK = {"D1": 3, "H4": 2, "H1": 1}
+
+
+def rank(lv: Level, price: float, s: Settings = V1) -> tuple:
+    """The order levels are taken in: the highest score, then the nearest to ``price``; ties by the array's id (V1)
+    or by the higher frame, the tighter zone and the latest formed (V2), which a mirrored market orders the same."""
+    near = min(abs(price - lv.low), abs(price - lv.high))
+    if s.level_tiebreak == "FRAME":
+        return (-lv.score, near, -_FRAME_RANK.get(lv.tf, 0), lv.high - lv.low, -lv.formed_at, lv.array_id)
+    return (-lv.score, near, lv.array_id)
 
 
 def levels(th: Thesis, book: Book, t: int, price: float, s: Settings = V1) -> List[Level]:
@@ -48,6 +59,8 @@ def levels(th: Thesis, book: Book, t: int, price: float, s: Settings = V1) -> Li
     out = []
     for a, cheap in found:
         frames = sorted({b.tf for b, _ in found if b.low <= a.high and b.high >= a.low})
+        if s.stack_min_frames > 1 and len(frames) < s.stack_min_frames and a.tf != "D1":
+            continue                                                # V2: the stack is a gate
         band = s.pool_band_adr * adr
         lo, hi = (a.low - band, a.high) if bullish else (a.low, a.high + band)
         liquidity = any(((p >= lo) & (p <= hi)).any() for p in pools.values() if len(p))
@@ -55,4 +68,4 @@ def levels(th: Thesis, book: Book, t: int, price: float, s: Settings = V1) -> Li
                    *(("resting liquidity",) if liquidity else ()), *(("high probability",) if a.high_probability else ()))
         score = len(frames) + len(cheap) + int(liquidity) + int(a.high_probability)
         out.append(Level(a.id, a.tf, a.kind, a.side, a.low, a.high, a.formed_at, a.end, score, reasons))
-    return sorted(out, key=lambda x: (-x.score, min(abs(price - x.low), abs(price - x.high)), x.array_id))
+    return sorted(out, key=lambda x: rank(x, price, s))

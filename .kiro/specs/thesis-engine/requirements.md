@@ -337,6 +337,7 @@ V2 makes the hand the trader's own rules: a real pool taken into the level, a di
    - an expired limit isn't an entry: the machine returns to AT_LEVEL, and the budget counts fills only.
 5. **The stack is a gate:** a level counts only when arrays of the side on at least two level frames overlap it, or when it is a D1 array.
 6. **Exits stay V1's:** the stop, the draw, or the thesis's `until`. A partial (a third off at +3R, the rest's stop to the fill) is reported as a companion, not judged.
+7. **Ties between levels** of the same score and distance go to the higher frame (D1, then H4, then H1), then the tighter zone, then the latest formed, so a mirrored market chooses the same level. V1 keeps its order by the array's id. (Added before H-AH ran: the mirror test found it.)
 
 ### Requirement 16: H-AH, V2's conversion test
 

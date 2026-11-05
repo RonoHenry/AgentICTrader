@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 
 from algomind_dis.analyzers.arrays import array_table
 from algomind_dis.analyzers.ranges import swing_range
@@ -158,6 +159,20 @@ class Book:
             self._e_pools[lows] = by_taker
         self._runs = {bullish: {through: (first, last) for first, last, through in runs(e.o, e.c, bullish)}
                       for bullish in (True, False)}
+        # The trading day's Asia range (V2's pools): its candles from the day's open to 00:00 New York, read once
+        # midnight has passed.
+        from thesis_engine.clock import NY, trading_day
+        self._h0 = s.day_open_hour(market)
+        self._e_hour = np.asarray(pd.DatetimeIndex(pd.to_datetime(e.t, utc=True)).tz_convert(NY).hour) if len(e)             else np.zeros(0, dtype=int)
+        self._e_day = trading_day(e.t, market, s) if len(e) else np.zeros(0, dtype=np.int64)
+        self._asia: Dict[int, Tuple[float, float, int]] = {}
+        night = self._e_hour >= self._h0
+        if night.any():
+            g = pd.DataFrame({"d": self._e_day[night], "l": e.l[night], "h": e.h[night]}).groupby("d").agg(
+                l=("l", "min"), h=("h", "max"))
+            for d, row in g.iterrows():
+                midnight = int(pd.Timestamp(int(d)).tz_localize(NY).tz_convert("UTC").value)
+                self._asia[int(d)] = (float(row["l"]), float(row["h"]), midnight)
 
     def n(self, tf: str, t: int) -> int:
         return self.frames[tf].n(t) if tf in self.frames else int(np.searchsorted(self.h1.end, t, "right"))
@@ -186,6 +201,49 @@ class Book:
         untaken = (before >= price).all() if bullish else (before <= price).all()
         now = e.l[m] < price if bullish else e.h[m] > price
         return price if untaken and now else None
+
+    def _first_beyond(self, m: int, price: float, since: int, bullish: bool) -> bool:
+        """Whether E candle m is the first since ``since`` (UTC ns) to trade beyond ``price``."""
+        e = self.e
+        start = int(np.searchsorted(e.t, since, "left"))
+        if start > m:
+            return False
+        before = (e.l if bullish else e.h)[start:m]
+        untaken = bool((before >= price).all()) if bullish else bool((before <= price).all())
+        return untaken and bool(e.l[m] < price if bullish else e.h[m] > price)
+
+    def trader_pools_taken(self, m: int, bullish: bool) -> List[Tuple[str, float]]:
+        """V2's pools (Requirement 15.2) that E candle m is the first to trade beyond since each became known: the
+        previous D1, H4 and H1 extremes, the trading day's Asia range (from 00:00 New York) and the untaken H1 swings
+        (a bullish hand's lows; a bearish one's highs)."""
+        t, side, out = int(self.e.t[m]), ("low" if bullish else "high"), []
+        for tf, name in (("D1", "previous day's"), ("H4", "previous H4"), ("H1", "previous H1")):
+            c = self.frames[tf].c
+            k = int(np.searchsorted(c.end, t, "right")) - 1
+            if k >= 0:
+                price = float(c.l[k] if bullish else c.h[k])
+                if self._first_beyond(m, price, int(c.end[k]), bullish):
+                    out.append((f"the {name} {side} {price:.6g}", price))
+        if len(self._e_hour) and self._e_hour[m] < self._h0:
+            asia = self._asia.get(int(self._e_day[m]))
+            if asia is not None:
+                price = asia[0] if bullish else asia[1]
+                if self._first_beyond(m, price, asia[2], bullish):
+                    out.append((f"the Asia {side} {price:.6g}", price))
+        h1 = self.frames["H1"]
+        n = h1.n(t)
+        if n:
+            for price in sorted(set(float(x) for x in h1.untaken(n, lows=bullish))):
+                if self._first_beyond(m, price, int(h1.c.end[n - 1]), bullish):
+                    out.append((f"the H1 swing {side} {price:.6g}", price))
+        return out
+
+    def run_mt(self, first: int, last: int) -> float:
+        """The mean threshold of E candles first..last's bodies (the trader's order block)."""
+        e = self.e
+        lo = float(np.minimum(e.o[first:last + 1], e.c[first:last + 1]).min())
+        hi = float(np.maximum(e.o[first:last + 1], e.c[first:last + 1]).max())
+        return (lo + hi) / 2
 
     def cisd(self, m: int, bullish: bool, swept: int) -> Optional[Tuple[int, int]]:
         """The run E candle m closes through (a bullish CISD: above the open of a down-close run's first candle),

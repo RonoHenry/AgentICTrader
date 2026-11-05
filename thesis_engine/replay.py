@@ -106,6 +106,14 @@ def _close_at(order: SimOrder, bar: Bar, reason: str) -> None:
     order.exit = bar.close if long_ else bar.close + bar.spread
 
 
+def _limit_expiry(at: int, until: int, s: Settings) -> int:
+    """V2's limit expiry (Requirement 15.4): the window's end (New York), or ``limit_minutes`` after it is placed,
+    whichever is later; never after the thesis's ``until``."""
+    local = pd.Timestamp(at, tz="UTC").tz_convert("America/New_York")
+    end = local.normalize() + pd.Timedelta(hours=s.window[1])
+    return min(max(int(end.tz_convert("UTC").value), at + s.limit_minutes * 60 * 10**9), until)
+
+
 def _journal_step(j: Journal, out) -> None:
     for tr in out.transitions:
         j.add("transition", to_json(tr))
@@ -167,11 +175,11 @@ def run(mk: Market, theses: Sequence[Thesis], s: Settings = V1, slippage: float 
                 break
             for ev in fm.step(order, b):
                 j.add("fill", {"order_id": ev.order_id, "event": ev.kind, "t": _ns(ev.at), "price": ev.price})
-                if ev.kind in ("FILLED", "REJECTED"):
+                if ev.kind in ("FILLED", "REJECTED", "EXPIRED"):
                     st, out = on_fill(st, ctx, ev.kind, _ns(ev.at), ev.price)
                     _journal_step(j, out)
             if order.status == "CLOSED":
-                if order.exit_reason == "INVALID_STOPS":
+                if order.exit_reason in ("INVALID_STOPS", "EXPIRED"):
                     order = None
                 else:
                     finish(b)
@@ -191,10 +199,16 @@ def run(mk: Market, theses: Sequence[Thesis], s: Settings = V1, slippage: float 
         bi = max(bi, k)
         st, out = on_close(st, ctx, m)
         _journal_step(j, out)
+        if order is not None and order.status == "PENDING" and (st.thesis is None or st.thesis.id != order.setup_id):
+            j.add("fill", {"order_id": order.order_id, "event": "CANCELLED", "t": t, "price": None})
+            st, out = on_fill(st, ctx, "CANCELLED", t, None)            # its thesis ended before it filled
+            _journal_step(j, out)
+            order = None
         for intent in out.intents:
-            order = SimOrder(st.order_id, intent.thesis_id, mk.name, "LONG" if intent.side == "BULLISH" else "SHORT",
-                             "MARKET", intent.entry, intent.stop, intent.target, _dt(t))
             order_until, order_spread = thesis_until[intent.thesis_id], mk.typical_spread
+            order = SimOrder(st.order_id, intent.thesis_id, mk.name, "LONG" if intent.side == "BULLISH" else "SHORT",
+                             intent.kind, intent.entry, intent.stop, intent.target, _dt(t),
+                             expires_at=_dt(_limit_expiry(t, order_until, s)) if intent.kind == "LIMIT" else None)
             j.add("intent", {**to_json(intent), "order_id": st.order_id})
     if order is not None:
         walk(last_bar)

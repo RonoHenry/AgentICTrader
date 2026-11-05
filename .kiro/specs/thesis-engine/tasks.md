@@ -144,7 +144,9 @@
   - Requirements 15-16, design.md's update (TE-D18 to TE-D23), and H-AH registered in `docs/research/SEARCH_2018_2024.md` before V2's code exists.
   - **Validates: Requirements 15, 16.1**
 
-- [ ] 419. V2 built (Requirement 15)
+- [x] 419. V2 built (Requirement 15)
+  - Built 2026-11-05: `backend/tests/test_thesis_engine_v2.py`. V1's journals are byte for byte the same on a synthetic walk and on gold's October 2026 month (ORACLE, MIRROR, W1TREND).
+  - The mirror test found V1's tie-break by content id; V2 breaks ties by frame (TE-D24, Requirement 15.7), an amendment to H-AH made before it ran.
   - **419a. RED:**
     - V1's journals are unchanged on the same bars and theses;
     - the trader's pools (PDL, the Asia low, the previous H4 and H1 lows, untaken H1 swing lows) and no M5 swing;
@@ -153,7 +155,7 @@
     - the stack gate;
     - mirrored bars give the mirrored journal.
   - **419b. GREEN:** `settings.V2` and the machine, the levels and the replay reading it.
-  - **Validates: Requirement 15.1-15.6**
+  - **Validates: Requirement 15.1-15.7**
 
 - [ ] 420. H-AH run on development (Requirement 16)
   - The four arms with V2, V1 beside it, the companion with the partial.

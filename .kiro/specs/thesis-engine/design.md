@@ -265,7 +265,7 @@ Each property is a test. "Hypothesis" means a property-based test with the `hypo
 
 ## Update 2026-11-05b: V2 (Requirements 15, 16)
 
-V2 is `thesis_engine.settings.V2`, a copy of V1 with five settings changed. The machine reads them, so V1 runs exactly as it did.
+V2 is `thesis_engine.settings.V2`, a copy of V1 with six settings changed. The machine reads them, so V1 runs exactly as it did.
 
 | Setting | V1 | V2 |
 |---|---|---|
@@ -274,6 +274,7 @@ V2 is `thesis_engine.settings.V2`, a copy of V1 with five settings changed. The 
 | `entry` | `"MARKET"` (at the CISD close) | `"LIMIT_MT"` (the CISD run's bodies' midpoint) |
 | `limit_minutes` | — | `60` (and at least to the window's end) |
 | `stack_min_frames` | `1` | `2` (or a D1 array) |
+| `level_tiebreak` | `"ID"` (the array's content id) | `"FRAME"` (the higher frame, the tighter zone, the latest formed) |
 
 - **TE-D18. The pools are the trader's liquidity,** not M5 swings: the previous day's and the previous H4's and H1's extremes, the Asia range and the H1 swings. These are the pools their manipulation takes (the Judas swing under the Asia low, the London sweep of the previous H4, the news sweep of equal highs).
 - **TE-D19. Displacement** is Model A §10's default: a body of 1.5 times the frame's average range. Without it a 0.1-point close through counted as a CISD.
@@ -281,3 +282,4 @@ V2 is `thesis_engine.settings.V2`, a copy of V1 with five settings changed. The 
 - **TE-D21. Expiry** is the trader's rule of 2026-10-02: a pending limit expires at the end of the killzone, here the window's end, and never sooner than 60 minutes after it is placed.
 - **TE-D22. The stack gate** follows the post-hoc check on H-AG's trades: on the right side, heavy stacks made +0.99R a trade and thin ones +0.59R. That look was on the development data, so H-AH's development run favours V2. Only the test window can confirm it.
 - **TE-D23. Management stays a companion.** The 2026-10-27 replay found that management changes the shape of results, not their sign.
+- **TE-D24. Ties between levels go to the higher frame,** then the tighter zone, then the latest formed. V1 broke ties by the array's content id, a hash that differs in a mirrored market, so V2's mirror test chose another level and diverged. The higher frame first follows the trader's rule that the higher frame outweighs the lower. It was added after H-AH's registration and before its run, and is recorded there as an amendment.
