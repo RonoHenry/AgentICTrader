@@ -26,8 +26,8 @@ const TOOLS = [
   { type: "short", icon: "▼", title: "Short position: entry, stop, target (Alt+S)", key: "s" },
 ];
 const LAYERS = [["fractal", "Fractal + POI"], ["modelA", "Model A"], ["modelAFramed", "Model A: unswept C1s"], ["arrays", "Arrays"], ["pools", "Pools"], ["levels", "Levels (where it waits)"],
-                ["profile", "Day bias & draw"], ["trend", "Trend"], ["chain", "Chain & stack"], ["dis", "AlgoMindDIS"], ["thesis", "Thesis Engine"], ["crt", "CRT (H-N)"], ["sweep", "Sweep M1 (2R)"], ["sequence", "Setup"], ["candidates", "Candidates"],
-                ["orders", "Orders & trades"]];
+                ["profile", "Day bias & draw"], ["trend", "Trend"], ["chain", "Chain & stack"], ["dis", "AlgoMindDIS"], ["thesis", "Thesis Engine (new core)"], ["crt", "CRT (H-N): both sides"], ["sweep", "Sweep M1 2R: both sides"],
+                ["sequence", "Old engine: setup"], ["candidates", "Candidates"], ["orders", "Old engine: orders & trades"]];
 // The trader's trend (context-engine Requirement 23): the frames it is read on.
 const TREND_TFS = ["H1", "H4", "D1"];
 // Model A (context-engine Requirement 17): the trader's frame sets.
