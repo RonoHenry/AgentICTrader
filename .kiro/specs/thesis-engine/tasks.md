@@ -91,7 +91,12 @@
   - **The review:** the trader judges the layer. Changes to the definitions happen here. At the end of the review V1 is frozen (TE-D13).
   - **Validates: Requirement 12.1-12.2**
 
-- [ ] 415. Phase 7: H-AG, registered, then run (Requirement 13)
+- [x] 415. Phase 7: H-AG, registered, then run (Requirement 13)
+  - **Done 2026-11-05: H-AG passes** (registered in b88c70a before it ran).
+    - ORACLE: +0.841R a trade [+0.461, +1.256] on 412 trades, 7 of 8 markets positive (UK100 had none: every M5 stop was under 10 spreads).
+    - Break-even weekly hit rate: 49.4% a trade, 58.3% a week.
+    - MIRROR −0.821, RANDOM −0.072, W1TREND +0.021.
+    - The existing setup engine and AlgoMindDIS V1 as a source, §16.4's other baselines, are not built yet.
   - **415a.** H-AG registered in `docs/research/SEARCH_2018_2024.md` with V1's settings, in its own commit, before anything reads `mt5-m1-develop`.
   - **415b.** The run:
     - ORACLE, MIRROR and RANDOM on the eight traded focus markets, 2021-07-16 to 2022-12-30;
