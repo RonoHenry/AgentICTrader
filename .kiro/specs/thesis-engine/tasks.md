@@ -89,6 +89,18 @@
     - EURUSD 12 Oct and GBPUSD 29 Oct, from a terminal export;
     - the trader is asked for any call their notes don't give.
   - **The review:** the trader judges the layer. Changes to the definitions happen here. At the end of the review V1 is frozen (TE-D13).
+  - **Built 2026-11-05, awaiting the trader's review:**
+    - **The layer:** `WatchSession.thesis` and `/api/watch/thesis` (`algo_backtester/watch.py`), and the "Thesis Engine" layer, card and source menu in `engine.js`. The sources: your calls from your notes, your /context calls, the week's real side, its opposite, a coin flip, or the last W1 trend. Hidden while blind. The journal now records each level's geometry when it is reached.
+    - **The scenarios:** `thesis_engine/scenarios.py` and `python -m thesis_engine scenarios`, on a fresh terminal export (`mt5-m1-2026-11`, M1 from 15 Feb to 5 Nov 2026, nine markets). The six calls, read from the trader's notes and not yet confirmed, sit in their git-ignored journal (`data/journal/thesis_engine/scenarios.json`); the report is local (`data/research/thesis_engine/scenarios.md`).
+    - **First read of the scenarios:**
+      - gold 14 Oct is taken almost as the trader took it (+20.9R);
+      - GBPUSD 29 Oct and US500 14 Oct are entered on an earlier M5 sweep, stopped by the real manipulation, and then the day's budget is spent;
+      - UK100's H1 FVG fails the discount test by a hair;
+      - three draws, set at the trades' targets, are delivered before any level forms.
+    - Tests: `test_thesis_engine_watch.py` (5).
+  - **Open:**
+    - **Noculus can't open October 2026 yet.** Sessions there run the old engine's backtest inside its study's hold-out (from 2026-07-07). Treating the recent months like a live session (D40) is the trader's call.
+    - The calls need the trader's confirmation.
   - **Validates: Requirement 12.1-12.2**
 
 - [x] 415. Phase 7: H-AG, registered, then run (Requirement 13)

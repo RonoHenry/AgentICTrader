@@ -139,6 +139,12 @@ CHAIN_SHOWN_BEFORE = 10
 #: years), and the D1 closes shown before the session's first.
 DIS_WARMUP_DAYS = 1500
 DIS_SHOWN_BEFORE = 20
+#: The Thesis Engine (thesis-engine Requirement 12): the M1 history its D1 and W1 ranges and its ADR need before the
+#: session's first day, how long before that the layer shows, and the sources it runs on. The research sources' sides
+#: are hindsight.
+THESIS_WARMUP_DAYS = 150
+THESIS_SHOWN_BEFORE = 7 * 86400
+THESIS_SOURCES = ("SCENARIO", "CALL", "ORACLE", "MIRROR", "RANDOM", "W1TREND")
 
 
 class SnapshotSource:
@@ -266,6 +272,9 @@ class WatchSession:
         self._chain_lock = threading.Lock()
         self._dis: Optional[tuple] = None                       # (trading day, AlgoMindDIS's chart view, history)
         self._dis_lock = threading.Lock()
+        self._thesis: Optional[tuple] = None                    # (session end, the Thesis Engine's market, runs)
+        self._thesis_lock = threading.Lock()
+        self.spec = None                                        # the instrument's spec, once prepared
         #: The broker's terminal, when the server has one: ``(instrument, tf, start, end) -> bars``. AlgoMindDIS
         #: reads its years of H1 for the monthly and weekly frames the session's own M1 is too short for.
         self.history: Optional[Callable] = None
@@ -346,7 +355,7 @@ class WatchSession:
                            "close": [b.close for b in data.m1]})
         self.bars = ReplayBars(m1, self.instrument, PriceBasis(instruments=()))   # the engine's own prices, unflattened
         # What a pseudo trade is priced on (Requirement 19.2): the same M1 and costs the races use, in wall seconds.
-        spec = specs[self.instrument]
+        spec = self.spec = specs[self.instrument]
         self.frame = frame_from_data(data, spec.default_spread, spec.stop_slippage)
         self.costs = RaceCosts.from_spec(spec, specs.account_ccy)
         self.path = {"time": np.asarray(wall_seconds(self.frame.m1["time"]), dtype=np.int64),
@@ -972,6 +981,81 @@ class WatchSession:
         return {"withheld": False, "rows": view.rows(since, clock), "transitions": view.transitions(since, clock),
                 "now": None if k is None else view.detail(k), "tested": HAF, "history": history}
 
+    # ── the Thesis Engine (thesis-engine Requirement 12, task 414) ─────────────
+    def _thesis_market(self):
+        """The Thesis Engine's market over the session's M1 from THESIS_WARMUP_DAYS before it, built once per session
+        end (a live session's end moves) and shared by every source, with each source's run."""
+        from thesis_engine.replay import prepare
+        with self._thesis_lock:
+            key = str(self.end)
+            if self._thesis is None or self._thesis[0] != key:
+                frame = self.source._frame(self.instrument)
+                m1 = frame[(frame["time"] >= self.start - pd.Timedelta(days=THESIS_WARMUP_DAYS))
+                           & (frame["time"] < self.end)].reset_index(drop=True)
+                if "spread" not in m1:
+                    m1 = m1.assign(spread=self.spec.default_spread if self.spec else 0.0)
+                self._thesis = (key, prepare(self.instrument, m1[["time", "open", "high", "low", "close", "spread"]]),
+                                {})
+            return self._thesis[1], self._thesis[2]
+
+    def _thesis_run(self, source: str) -> dict:
+        from thesis_engine.replay import run
+        from thesis_engine.scenarios import for_market
+        from thesis_engine.thesis import call_theses, research_theses
+        mk, runs = self._thesis_market()
+        with self._thesis_lock:
+            if source not in runs:
+                if source == "SCENARIO":
+                    found = for_market(self.instrument)
+                    theses = [x.thesis() for x in found]
+                    words = ("your calls as read from your notes" + ("" if all(x.confirmed for x in found)
+                                                                       else ", not yet confirmed by you"))
+                elif source == "CALL":
+                    theses, words = call_theses(self.instrument), "your /context calls"
+                else:
+                    theses, _ = research_theses(self.instrument, mk.book, source)
+                    words = {"ORACLE": "the week's real side: hindsight, not a call",
+                             "MIRROR": "the opposite of the week's real side: hindsight",
+                             "RANDOM": "a coin flip each week",
+                             "W1TREND": "the last W1 candle's trend at the week's open"}[source]
+                j = run(mk, theses, slippage=self.spec.stop_slippage if self.spec else 0.0)
+                runs[source] = _thesis_view(j, words, source)
+            return runs[source]
+
+    def thesis(self, q: dict) -> dict:
+        """The Thesis Engine on the session's bars with the source ``source``, up to the clock ``t``: the theses in
+        view, the levels it waited at, each state and why, its sweeps, skips and trades. A trade's exit shows once
+        it is in the past. Nothing while the session is blind."""
+        clock = min(int(q["t"]), wall(self.end))
+        source = str(q.get("source") or "SCENARIO").upper()
+        if source not in THESIS_SOURCES:
+            raise ValueError(f"source: one of {', '.join(THESIS_SOURCES)}")
+        if self.withheld:
+            return {"withheld": True}
+        v = self._thesis_run(source)
+        since = wall(self.start) - THESIS_SHOWN_BEFORE
+        moves = [m for m in v["moves"] if m["t"] <= clock]
+        before = [m for m in moves if m["t"] < since]
+        shown = before[-1:] + [m for m in moves if m["t"] >= since]
+        now = moves[-1] if moves else None
+        live = None
+        if now is not None and now["to"] != "FLAT":
+            live = v["theses"].get(now["thesis_id"])
+        level = v["levels"].get(now["level_id"]) if now is not None and now["to"] in ("AT_LEVEL", "ARMED") else None
+        trades = []
+        for tr in v["trades"]:
+            if tr["placed"] > clock or (tr["closed"] is not None and tr["closed"] < since):
+                continue
+            done = tr["closed"] is not None and tr["closed"] <= clock
+            trades.append({**tr, **({} if done else {"closed": None, "exit": None, "reason": None, "net_r": None})})
+        return {"withheld": False, "source": source, "words": v["words"], "hindsight": source in ("ORACLE", "MIRROR"),
+                "moves": shown, "now": now, "thesis": live, "level": level,
+                "theses": [x for x in v["theses"].values() if x["since"] <= clock and x["until"] >= since],
+                "levels": [v["levels"][m["level_id"]] for m in shown if m["to"] == "AT_LEVEL"
+                           and m["level_id"] in v["levels"]],
+                "sweeps": [x for x in v["sweeps"] if since <= x["t"] <= clock],
+                "skips": [x for x in v["skips"] if since <= x["t"] <= clock], "trades": trades}
+
     # ── H-N, the trader's M15 CRT at market on M1 (2026-10-27) ─────────────────
     def crt(self, q: dict) -> dict:
         """H-N's trades (``algo_research.search_crt.session_trades``) on the session's own M1 and spreads, those whose
@@ -1179,6 +1263,38 @@ def live_feed(config: Path) -> Optional[Callable[[], LiveSource]]:
     return lambda: LiveSource(Terminal(profile), research.instruments)
 
 
+def _thesis_view(j, words: str, source: str) -> dict:
+    """A Thesis Engine journal in the chart's wall seconds, once: its moves, theses, levels, sweeps, skips and trades."""
+    stamps = lambda ns: [int(w) for w in wall_seconds(pd.to_datetime(list(ns), utc=True))] if len(ns) else []  # noqa: E731
+    tr = j.of("transition")
+    walls = stamps([r["t"] for r in tr])
+    moves = [{"t": w, "from": r["frm"], "to": r["to"], "reason": r["reason"], "thesis_id": r["thesis_id"],
+              "level_id": r["level_id"]} for w, r in zip(walls, tr)]
+    th = j.of("thesis")
+    ts = stamps([x for r in th for x in (r["since"], r["until"])])
+    theses = {r["id"]: {"id": r["id"], "side": r["side"], "draw": r["draw"], "protected": r["protected"],
+                        "since": ts[2 * i], "until": ts[2 * i + 1], "note": r["note"], "source": r["source"]}
+              for i, r in enumerate(th)}
+    notes = j.of("note")
+    lv = [r for r in notes if r["note"] == "level"]
+    lw = stamps([r["formed_at"] for r in lv])
+    levels = {r["array_id"]: {"id": r["array_id"], "tf": r["tf"], "kind": r["kind"], "side": r["side"],
+                              "low": r["low"], "high": r["high"], "formed": w, "score": r["score"],
+                              "reasons": r["reasons"]} for w, r in zip(lw, lv)}
+    sw = [r for r in notes if r["note"] == "sweep"]
+    sweeps = [{"t": w, "price": r["price"], "pool": r["pool"]} for w, r in zip(stamps([r["t"] for r in sw]), sw)]
+    sk = j.of("skip")
+    skips = [{"t": w, "reason": r["reason"], "detail": r["detail"]} for w, r in zip(stamps([r["t"] for r in sk]), sk)]
+    out = []
+    for r in j.of("trade"):
+        placed, filled, closed = stamps([r["placed_at"], r["filled_at"] or r["placed_at"], r["closed_at"]])
+        out.append({"placed": placed, "filled": filled, "closed": closed, "direction": r["direction"],
+                    "fill": r["fill"], "stop": r["stop"], "target": r["target"], "exit": r["exit"],
+                    "reason": r["reason"], "net_r": r["net_r"], "risk_spreads": r["risk_spreads"]})
+    return {"words": words, "source": source, "moves": moves, "theses": theses, "levels": levels, "sweeps": sweeps,
+            "skips": skips, "trades": out}
+
+
 def noculus_periods(research) -> list[tuple[date, date, Path]]:
     """The first days a Noculus session may start on, each period with the snapshot that holds it (2026-10-28, the
     trader's choice): the research snapshot's exploration and confirmation slices, up to the study's hold-out, and
@@ -1346,6 +1462,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.app.need().chain(q))
         elif url.path == "/api/watch/dis":
             self._answer(lambda: self.app.need().dis(q))
+        elif url.path == "/api/watch/thesis":
+            self._answer(lambda: self.app.need().thesis(q))
         elif url.path == "/api/watch/crt":
             self._answer(lambda: self.app.need().crt(q))
         elif url.path == "/api/watch/sweep":

@@ -26,7 +26,7 @@ const TOOLS = [
   { type: "short", icon: "▼", title: "Short position: entry, stop, target (Alt+S)", key: "s" },
 ];
 const LAYERS = [["fractal", "Fractal + POI"], ["modelA", "Model A"], ["modelAFramed", "Model A: unswept C1s"], ["arrays", "Arrays"], ["pools", "Pools"], ["levels", "Levels (where it waits)"],
-                ["profile", "Day bias & draw"], ["trend", "Trend"], ["chain", "Chain & stack"], ["dis", "AlgoMindDIS"], ["crt", "CRT (H-N)"], ["sweep", "Sweep M1 (2R)"], ["sequence", "Setup"], ["candidates", "Candidates"],
+                ["profile", "Day bias & draw"], ["trend", "Trend"], ["chain", "Chain & stack"], ["dis", "AlgoMindDIS"], ["thesis", "Thesis Engine"], ["crt", "CRT (H-N)"], ["sweep", "Sweep M1 (2R)"], ["sequence", "Setup"], ["candidates", "Candidates"],
                 ["orders", "Orders & trades"]];
 // The trader's trend (context-engine Requirement 23): the frames it is read on.
 const TREND_TFS = ["H1", "H4", "D1"];
@@ -41,6 +41,7 @@ const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, jo
             trendTf: Prefs.get("watch.trendTf", "H1"), trend: { rows: [], withheld: false, at: null },
             chain: { rows: [], withheld: false, at: null, smt: "" },
             dis: { rows: [], transitions: [], now: null, withheld: false, at: null, tested: "", history: null },
+            thesis: teEmpty(), thesisSource: Prefs.get("watch.thesisSource", "SCENARIO"),
             crt: { rows: [], withheld: false, at: null, summary: null, reached: 0, develop: "" }, crtTarget: Prefs.get("watch.crtTarget", "5"), crtFilter: Prefs.get("watch.crtFilter", "all"),
             sweep: { rows: [], withheld: false, at: null, summary: null, tested: "" },
             speed: 1, digits: 5, layers: Prefs.get("watch.layers", { arrays: true, pools: true, profile: true, sequence: true, orders: true }),
@@ -57,6 +58,7 @@ if (S.layers.crt === undefined) S.layers.crt = true;            // new in 2026-1
 if (S.layers.sweep === undefined) S.layers.sweep = true;        // new in 2026-10-30: the M1 sweep model, 2R, no bias
 if (S.layers.levels === undefined) S.layers.levels = true;      // new in 2026-10-31: where the engine waits
 if (S.layers.dis === undefined) S.layers.dis = true;            // new in 2026-11-03: AlgoMindDIS v1 at work
+if (S.layers.thesis === undefined) S.layers.thesis = true;      // new in 2026-11-05: the Thesis Engine at work
 
 // ── the chart ─────────────────────────────────────────────────────────────
 const chart = LightweightCharts.createChart($("chart"), {
@@ -349,6 +351,7 @@ function paintEngine(ctx, size) {
   if (S.layers.trend) paintTrend(ctx, size, pal, text);
   if (S.layers.chain) paintChain(ctx, size, pal, text, line);
   if (S.layers.dis) paintDis(ctx, size, pal, text, line);
+  if (S.layers.thesis) paintThesis(ctx, size, pal, text, line);
   if (S.layers.crt) paintCrt(ctx, size, pal, text, line);
   if (S.layers.sweep) paintSweep(ctx, size, pal, text, line);
   ctx.restore();
@@ -533,6 +536,102 @@ function disCard() {
     <pre style="white-space:pre-wrap;font:inherit;font-size:12px;margin:6px 0 0">${esc(n.narrative)}</pre>${crt}
     ${d.history ? `<div class="hint">Read from ${esc(d.history.source)}: ${d.history.days} trading days from ${esc(d.history.from)}${d.history.days < 700 ? " (short: the monthly and weekly frames have few candles, so sides are rarer)" : ""}.</div>` : ""}
     <div class="hint">${esc(d.tested)}</div></div>`;
+}
+// The Thesis Engine (thesis-engine Requirement 12): one state machine per market. A strip of its state (grey FLAT, the
+// side's colour while a thesis is held, amber at a level, accent armed, solid in a trade), a mark at each move; the
+// thesis's draw (dashed) and protected level; the levels it waited at (the one in use outlined); ✕ at each sweep;
+// its trades, the exit and R once they are in the past. The menu picks where the side comes from.
+const TE_SOURCES = [["SCENARIO", "Thesis: your calls (from your notes)"], ["CALL", "Thesis: your /context calls"],
+                    ["ORACLE", "Thesis: the week's real side (hindsight)"], ["MIRROR", "Thesis: the opposite side (hindsight)"],
+                    ["RANDOM", "Thesis: a coin flip"], ["W1TREND", "Thesis: the last W1 trend"]];
+const TE_MARK = { FLAT: "○", THESIS: "◇", AT_LEVEL: "▣", ARMED: "◆", IN_TRADE: "●", SPENT: "✓" };
+function teEmpty() {
+  return { withheld: false, at: null, words: "", hindsight: false, moves: [], now: null, thesis: null, level: null,
+           theses: [], levels: [], sweeps: [], skips: [], trades: [] };
+}
+function teColor(state, side, pal) {
+  const s = side === "BULLISH" ? pal.good : side === "BEARISH" ? pal.bad : pal.muted;
+  return state === "FLAT" || state === "SPENT" ? pal.muted : state === "AT_LEVEL" ? pal.warn : state === "ARMED" ? pal.accent : s;
+}
+function paintThesis(ctx, size, pal, text, line) {
+  const H = size.height, W = size.width, y = H - 52, T = S.thesis;
+  if (T.withheld) { text("Thesis Engine: hidden until you reveal", 6, y - 3, pal.muted); return; }
+  const sideOf = (id) => (T.theses.find((x) => x.id === id) || {}).side;
+  for (let i = 0; i < T.moves.length; i++) {
+    const m = T.moves[i], end = i + 1 < T.moves.length ? T.moves[i + 1].t : S.t;
+    const x1 = Math.max(X(m.t), 0), x2 = Math.min(X(end), W);
+    if (!isFinite(x1) || !isFinite(x2) || x2 < 0 || x1 > W) continue;
+    const a = m.to === "FLAT" ? 0.15 : m.to === "THESIS" ? 0.45 : m.to === "SPENT" ? 0.3 : 0.9;
+    ctx.fillStyle = rgba(hexOf(teColor(m.to, sideOf(m.thesis_id), pal)), a);
+    ctx.fillRect(x1, y, Math.max(x2 - x1, 1), 7);
+  }
+  for (const m of T.moves) {
+    const x = X(m.t);
+    if (isFinite(x) && x >= 0 && x <= W) text(TE_MARK[m.to] || "·", x, y - 1, teColor(m.to, sideOf(m.thesis_id), pal), "center");
+  }
+  for (const th of T.theses) {
+    const x0 = Math.max(X(th.since), -10), x1 = Math.min(X(Math.min(th.until, S.t)), W);
+    if (!isFinite(x0) || !isFinite(x1) || x1 < 0) continue;
+    const c = th.side === "BULLISH" ? pal.good : pal.bad, yd = Y(th.draw), yp = Y(th.protected);
+    if (isFinite(yd)) { line(x0, yd, x1, yd, c, [7, 4], 2); text(`TE draw ${fmt(th.draw)}`, Math.max(x0, 0) + 3, yd - 3, c); }
+    if (isFinite(yp)) { line(x0, yp, x1, yp, pal.muted, [], 1.5); text(`TE protected ${fmt(th.protected)} · a D1 close beyond ends it`, Math.max(x0, 0) + 3, yp + 12, pal.muted); }
+  }
+  for (const lv of T.levels) {
+    const x0 = Math.max(X(lv.formed), -10), y1 = Y(lv.high), y2 = Y(lv.low);
+    if (!isFinite(x0) || !isFinite(y1) || !isFinite(y2) || x0 > W) continue;
+    const inUse = T.level && T.level.id === lv.id, c = lv.side === "BULLISH" ? pal.good : pal.bad;
+    const top = Math.min(y1, y2), h = Math.max(Math.abs(y2 - y1), 1);
+    ctx.fillStyle = rgba(hexOf(c), inUse ? 0.18 : 0.06); ctx.fillRect(x0, top, W - x0, h);
+    if (inUse) {
+      ctx.strokeStyle = rgba(hexOf(c), 0.9); ctx.lineWidth = 1; ctx.strokeRect(x0, top, W - x0, h);
+      text(`TE level · ${lv.tf} ${lv.kind} (score ${lv.score})`, Math.max(x0, 0) + 3, top - 2, c);
+    }
+  }
+  for (const s of T.sweeps) {
+    const x = X(s.t), yy = Y(s.price);
+    if (isFinite(x) && isFinite(yy) && x >= 0 && x <= W) text("✕", x, yy + 4, pal.warn, "center");
+  }
+  for (const t of T.trades) {
+    const x0 = X(t.filled), x1 = Math.max(X(t.closed != null ? t.closed : S.t), x0 + 4);
+    if (!isFinite(x0) || !isFinite(x1) || x1 < 0 || x0 > W) continue;
+    const ey = Y(t.fill), sy = Y(t.stop), ty = Y(t.target), long = t.direction === "LONG";
+    if (!isFinite(ey) || !isFinite(sy)) continue;
+    ctx.fillStyle = rgba(hexOf(pal.bad), 0.12); ctx.fillRect(x0, Math.min(ey, sy), x1 - x0, Math.abs(sy - ey));
+    if (isFinite(ty)) { ctx.fillStyle = rgba(hexOf(pal.good), 0.08); ctx.fillRect(x0, Math.min(ey, ty), x1 - x0, Math.abs(ty - ey)); }
+    line(x0, ey, x1, ey, long ? pal.up : pal.bad, [], 1.5);
+    const done = t.closed != null;
+    const s = done ? `TE ${t.direction.toLowerCase()} · ${t.reason} ${t.net_r >= 0 ? "+" : ""}${t.net_r.toFixed(2)}R`
+                   : `TE ${t.direction.toLowerCase()} @ ${fmt(t.fill)} · stop ${fmt(t.stop)} (${t.risk_spreads.toFixed(0)} spreads) · target ${fmt(t.target)}`;
+    text(s, x0 + 4, long ? ey + 22 : ey - 12, done ? (t.net_r > 0 ? pal.good : pal.bad) : pal.ink);
+  }
+  const n = T.now, side = T.thesis && T.thesis.side;
+  const head = n ? `${n.to}${side ? " · " + side.toLowerCase() : ""}: ${n.reason}` : "no move yet";
+  text(`Thesis Engine (${T.words}): ${head}`, 6, y - 3, n && n.to !== "FLAT" ? teColor(n.to, side, pal) : pal.muted);
+}
+async function loadThesis() {
+  if (!S.status || !S.layers.thesis) { S.thesis = teEmpty(); return; }
+  const key = `${Math.floor(S.t / 300)}|${S.thesisSource}|${!!(S.state && S.state.withheld)}`;   // it steps at M5 closes
+  if (S.thesis.at === key) return;
+  const got = await api(`/api/watch/thesis?t=${S.t}&source=${S.thesisSource}`);
+  S.thesis = { ...teEmpty(), ...got, at: key };
+}
+function thesisCard() {
+  const T = S.thesis;
+  if (T.withheld) return `<div class="card"><b>Thesis Engine</b><div class="muted">Hidden: this session is blind.</div></div>`;
+  const n = T.now, th = T.thesis, lv = T.level;
+  const recent = T.moves.slice(-6).reverse().map((m) => `<div class="nmark"><span class="muted">${fmtTime(m.t)}</span> ${esc(m.from)} → <b>${esc(m.to)}</b>: ${esc(m.reason)}</div>`).join("");
+  const done = T.trades.filter((t) => t.net_r != null), sum = done.reduce((a, t) => a + t.net_r, 0);
+  const skips = {};
+  for (const x of T.skips) skips[x.reason] = (skips[x.reason] || 0) + 1;
+  const skipText = Object.entries(skips).map(([k, v]) => `${v} ${k.toLowerCase().replace(/_/g, " ")}`).join(", ") || "none";
+  return `<div class="card"><b>Thesis Engine v1</b> · <span class="muted">${esc(T.words)}</span>
+    ${T.hindsight ? `<div style="color:var(--warn)">Hindsight: this side is known only after the week closed.</div>` : ""}
+    <div><b>${esc(n ? n.to : "FLAT")}</b>${th ? ` · ${esc(th.side.toLowerCase())} since ${fmtTime(th.since)} · draw ${fmt(th.draw)} · protected ${fmt(th.protected)}${th.note ? " · " + esc(th.note) : ""}` : " · no thesis live, so nothing runs"}</div>
+    ${lv ? `<div>Level: ${esc(lv.tf)} ${esc(lv.kind)} ${fmt(lv.low)}–${fmt(lv.high)} (score ${lv.score}: ${esc(lv.reasons.join(", "))})</div>` : ""}
+    <div style="margin-top:4px">${recent || (T.theses.length ? '<span class="muted">No move yet.</span>'
+      : '<span class="muted">This source has no thesis in this session, so the engine stays FLAT. Pick another in the menu: the real side of the week shows what the machine does with a right side.</span>')}</div>
+    <div class="muted" style="margin-top:4px">In view: ${T.trades.length} trade(s), ${done.length} closed (${sum >= 0 ? "+" : ""}${sum.toFixed(2)}R) · ${T.sweeps.length} sweep(s) · skips: ${esc(skipText)}</div>
+    <div class="hint">FLAT → THESIS → AT_LEVEL → ARMED (00:00–12:00 New York) → IN_TRADE → SPENT. The side comes only from the thesis. H-AG: with the week's real side it made +0.84R a trade on 2021-22 (hindsight, not an edge).</div></div>`;
 }
 // H-N, the trader's M15 CRT at market on M1 (context-engine Requirement 31): every trade the rule takes, from C3's
 // open to its last exit (or the clock). C1's swept level runs dashed to the entry and a dot marks C2's wick; red is the
@@ -922,7 +1021,7 @@ async function loadBars(fit) {
 }
 async function loadState() {
   S.state = (await api(`/api/watch/state?t=${S.t}`)).state;
-  await loadModelA(); await loadTrend(); await loadChain(); await loadDis(); await loadCrt(); await loadSweep();
+  await loadModelA(); await loadTrend(); await loadChain(); await loadDis(); await loadThesis(); await loadCrt(); await loadSweep();
   await fractal.tick();
   renderFractal();
   Shell.refresh("t=" + S.t);
@@ -948,7 +1047,7 @@ async function advance(dt) {
     const got = (await api(`/api/watch/bars?tf=${S.tf}&until=${S.t}&since=${last ? last.time : S.t - 86400}`)).bars;
     try { for (const b of got) put(b); } catch (e) { await loadBars(false); }
     if (Math.floor(S.t / 900) !== Math.floor(before / 900)) await loadState();
-    else { await loadModelA(); await loadTrend(); await loadChain(); await loadDis(); await loadCrt(); await loadSweep(); await fractal.tick(); renderFractal(); renderEngine(); renderLog(); refresh(); }
+    else { await loadModelA(); await loadTrend(); await loadChain(); await loadDis(); await loadThesis(); await loadCrt(); await loadSweep(); await fractal.tick(); renderFractal(); renderEngine(); renderLog(); refresh(); }
     await noculus.tick();                               // the trader's own trades settle to the clock too
     renderHeader();
   } finally { S.busy = false; }
@@ -1029,7 +1128,7 @@ function buildLayers() {
     c.type = "checkbox"; c.checked = !!S.layers[key];
     c.onchange = () => act(async () => { S.layers[key] = c.checked; Prefs.set("watch.layers", S.layers); S.maAt = null;
                                          fractal.setOn(S.layers.fractal); await fractal.tick(); renderFractal();
-                                         await loadModelA(); await loadTrend(); await loadChain(); await loadDis(); await loadCrt(); await loadSweep(); renderEngine(); renderLog(); refresh(); });
+                                         await loadModelA(); await loadTrend(); await loadChain(); await loadDis(); await loadThesis(); await loadCrt(); await loadSweep(); renderEngine(); renderLog(); refresh(); });
     l.append(c, " " + name); box.append(l);
     if (key === "fractal") {
       const gear = document.createElement("button");
@@ -1041,13 +1140,13 @@ function buildLayers() {
   const ma = document.createElement("select");
   ma.id = "maSet"; ma.title = "Which of your frame sets Model A reads";
   ma.innerHTML = MA_SETS.map(([v, t]) => `<option value="${v}" ${S.maSet === v ? "selected" : ""}>${t}</option>`).join("");
-  ma.onchange = () => act(async () => { S.maSet = ma.value; Prefs.set("watch.maSet", ma.value); S.maAt = null; await loadModelA(); await loadTrend(); await loadChain(); await loadDis(); await loadCrt(); await loadSweep(); renderEngine(); renderLog(); refresh(); });
+  ma.onchange = () => act(async () => { S.maSet = ma.value; Prefs.set("watch.maSet", ma.value); S.maAt = null; await loadModelA(); await loadTrend(); await loadChain(); await loadDis(); await loadThesis(); await loadCrt(); await loadSweep(); renderEngine(); renderLog(); refresh(); });
   box.append(ma);
   const tr = document.createElement("select");
   tr.id = "trendTf"; tr.title = "The frame your trend is read on (the Trend layer)";
   tr.innerHTML = TREND_TFS.map((v) => `<option value="${v}" ${S.trendTf === v ? "selected" : ""}>trend: ${v}</option>`).join("");
   tr.onchange = () => act(async () => { S.trendTf = tr.value; Prefs.set("watch.trendTf", tr.value); S.trend.at = null;
-                                        await loadTrend(); await loadChain(); await loadDis(); await loadCrt(); await loadSweep(); refresh(); });
+                                        await loadTrend(); await loadChain(); await loadDis(); await loadThesis(); await loadCrt(); await loadSweep(); refresh(); });
   box.append(tr);
   const ct = document.createElement("select");
   ct.id = "crtTarget"; ct.title = "The target the CRT (H-N) layer draws";
@@ -1059,6 +1158,12 @@ function buildLayers() {
   cf.innerHTML = CRT_FILTERS.map(([v, t]) => `<option value="${v}" ${S.crtFilter === v ? "selected" : ""}>${t}</option>`).join("");
   cf.onchange = () => { S.crtFilter = cf.value; Prefs.set("watch.crtFilter", cf.value); renderEngine(); refresh(); };
   box.append(ct, cf);
+  const te = document.createElement("select");
+  te.id = "thesisSource"; te.title = "Where the Thesis Engine's side comes from";
+  te.innerHTML = TE_SOURCES.map(([v, t]) => `<option value="${v}" ${S.thesisSource === v ? "selected" : ""}>${t}</option>`).join("");
+  te.onchange = () => act(async () => { S.thesisSource = te.value; Prefs.set("watch.thesisSource", te.value); S.thesis.at = null;
+                                        await loadThesis(); renderEngine(); refresh(); });
+  box.append(te);
   const sel = document.createElement("select");
   sel.title = "Which of the engine's arrays to draw";
   sel.innerHTML = [["interval", "arrays: by visibility interval"], ["all", "arrays: every one"], ["M15", "arrays: M15 and up"],
@@ -1159,6 +1264,7 @@ function renderEngine() {
   }
   if (S.layers.chain) html += chainCard();
   if (S.layers.dis) html += disCard();
+  if (S.layers.thesis) html += thesisCard();
   if (S.layers.crt) html += crtCard();
   if (S.layers.sweep) html += sweepCard();
   const open = S.journal.find((r) => r.filled_at != null && r.filled_at <= S.t && (r.closed_at == null || r.closed_at > S.t));

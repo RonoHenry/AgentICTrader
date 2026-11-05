@@ -18,7 +18,7 @@ import numpy as np
 from thesis_engine.book import Book
 from thesis_engine.clock import in_window, stale, trading_day
 from thesis_engine.levels import levels
-from thesis_engine.records import Hand, Intent, Level, Skip, Thesis, Transition, make_id
+from thesis_engine.records import Hand, Intent, Level, Skip, Thesis, Transition, make_id, to_json
 from thesis_engine.settings import V1, Settings
 from thesis_engine.thesis import end
 
@@ -103,8 +103,8 @@ class _Out:
                                            None, new.order_id))
         return new
 
-    def note(self, kind: str, **fields) -> None:
-        self.notes.append({"note": kind, "market": self.ctx.market, "t": self.t, **fields})
+    def note(self, what: str, /, **fields) -> None:
+        self.notes.append({**fields, "note": what, "market": self.ctx.market, "t": self.t})
 
 
 def on_close(st: State, ctx: Ctx, m: int) -> Tuple[State, _Out]:
@@ -172,6 +172,7 @@ def _stage(st: State, ctx: Ctx, m: int, out: _Out) -> State:
         hit = [lv for lv in ctx.levels(th, t, price) if e.l[m] <= lv.high and e.h[m] >= lv.low]
         if hit:
             st = out.move(st, "AT_LEVEL", f"at {hit[0].describe()}", s.e_frame, level=hit[0])
+            out.note("level", **to_json(hit[0]))                     # its geometry, for the chart
 
     if st.name == "AT_LEVEL" and ctx.window[m] and not ctx.stale[m]:
         opened = m == 0 or not ctx.window[m - 1]

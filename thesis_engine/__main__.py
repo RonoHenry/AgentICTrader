@@ -1,4 +1,4 @@
-"""``python -m thesis_engine replay MARKET --snapshot NAME --source ORACLE`` | ``python -m thesis_engine hag``."""
+"""``python -m thesis_engine replay MARKET --snapshot NAME --source ORACLE`` | ``hag`` | ``scenarios``."""
 from __future__ import annotations
 
 import argparse
@@ -40,8 +40,16 @@ def main() -> None:
     r.add_argument("--snapshot", default="mt5-m1-2026-10")
     r.add_argument("--source", default="ORACLE", help="ORACLE | MIRROR | RANDOM | W1TREND | CALL | a thesis file")
     sub.add_parser("hag", help="H-AG on the development window (registered 2026-11-05)")
+    sc = sub.add_parser("scenarios", help="the trader's own trades, each with the call they held")
+    sc.add_argument("--snapshot", default="mt5-m1-2026-11")
     args = p.parse_args()
-    _replay(args) if args.cmd == "replay" else hag()
+    if args.cmd == "replay":
+        _replay(args)
+    elif args.cmd == "scenarios":
+        from thesis_engine.scenarios import main as scenarios
+        scenarios(args.snapshot)
+    else:
+        hag()
 
 
 if __name__ == "__main__":
