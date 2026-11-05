@@ -155,8 +155,10 @@ The trader's answer (2026-10-31, "blueprint, not template"): a level is the char
    - AT_LEVEL → THESIS when the level fails (a candle of its own frame closes through its far edge), or price moves away from it by more than one average range of that frame;
    - AT_LEVEL → ARMED when a window opens, or when price reaches the level inside one;
    - ARMED → AT_LEVEL when the window closes with no hand in progress;
+   - ARMED → THESIS when the level fails or price moves away from it, as from AT_LEVEL;
    - ARMED → IN_TRADE when the hand completes and its order passes Requirement 9;
-   - IN_TRADE → SPENT when the order closes or is rejected, or → THESIS instead when the budget allows another entry;
+   - IN_TRADE → SPENT when the order closes, or → THESIS instead when the budget allows another entry;
+   - IN_TRADE → AT_LEVEL when the order is rejected (its open was beyond the stop or the target);
    - SPENT → THESIS at the next trading day's open, when the thesis's budget allows;
    - any state → FLAT when the thesis ends (Requirement 4.2).
 3. THE machine SHALL be one pure function, `step(state, event) → (state, transitions, intents)`, the same in a replay and on paper.

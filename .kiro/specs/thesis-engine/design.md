@@ -123,8 +123,10 @@ All records are frozen dataclasses. Times are UTC nanoseconds, prices floats, an
 | AT_LEVEL | THESIS | the level fails, or price moves away | "an H1 close 1.08550 through the level's far edge 1.08610" |
 | AT_LEVEL | ARMED | the window opens, or price reaches the level inside it; never while a DIS side is TRANSITIONAL or the data is stale | "00:00 New York: Q2 opened" |
 | ARMED | AT_LEVEL | the window closes with no hand in progress, the DIS side turns TRANSITIONAL, or the data goes stale | "12:00 New York: the window closed without a hand" |
+| ARMED | THESIS | the level fails, or price moves away, while armed | "an H1 close 1.08550 through the level's far edge 1.08610" |
 | ARMED | IN_TRADE | the hand completes and the order passes the risk rules | "M5 took the 04:10 swing low 1.08590, then closed above the run's open 1.08630 (CISD): buy at market, stop 1.08560, target 1.09500 (12.6R)" |
 | IN_TRADE | SPENT or THESIS | the order closes or is rejected | "stopped at 1.08560 (−1.0R)" |
+| IN_TRADE | AT_LEVEL | the order is rejected (it opened beyond the stop or the target) | "rejected: the open was beyond the stop or the target" |
 | SPENT | THESIS | a new trading day, with entries left on the thesis | "a new day: 1 of 2 entries left" |
 | any | FLAT | the thesis ends | "delivered: the draw 1.09500 traded at 09:41" |
 
