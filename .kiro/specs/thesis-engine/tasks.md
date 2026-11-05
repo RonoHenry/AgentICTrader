@@ -16,6 +16,11 @@
 - [x] 408. Phase 0: the audit and this spec (Requirement 1)
   - The requirements, the design with the Phase 0 table, and this plan.
   - The decisions for the trader are listed in design.md. Defaults stand until they answer.
+  - **Amended the same day, before any code** (the trader: AlgoMindDIS's specification must hold). The engine is AlgoMindDIS's Setup Engine:
+    - it reads the contract as a source (DIS, with the activation modes);
+    - it detects nothing itself: the book is an as-of view over AlgoMindDIS's analyzers;
+    - it handles the live feed (§13.3);
+    - H-AG reports §16.4's baselines beside it.
   - **Validates: Requirement 1.1**
 
 - [ ] 409. Phase 1: the settings, the records and the thesis (Requirements 1.4, 4)
@@ -26,9 +31,10 @@
     - each end (DELIVERED, INVALIDATED, EXPIRED, REPLACED), with a wick beyond the protected level that isn't one;
     - CALL reads `agent.context_calls` and FILE reads the THESIS-mode format;
     - the completion rule's choices and refusals;
-    - ORACLE and MIRROR are opposite every week, and RANDOM is the same for the same seed.
+    - ORACLE and MIRROR are opposite every week, and RANDOM is the same for the same seed;
+    - the DIS source: ACTIVE gives a thesis, TRANSITIONAL arms nothing, and the other states end it (WITHDRAWN), under each activation mode.
   - **409b. GREEN:** `thesis_engine/__init__.py`, `settings.py`, `records.py` and `thesis.py`.
-  - **Validates: Requirements 1.4, 4.1-4.5**
+  - **Validates: Requirements 1.4, 4.1-4.6**
 
 - [ ] 410. Phase 2: the clock (Requirement 2)
   - **410a. RED** on hand-made M1 bars:
@@ -38,17 +44,19 @@
     - daylight-saving changes;
     - no candle for a gap;
     - each candle emitted once at its close, highest frame first;
-    - stop and resume equal an uncut run.
+    - stop and resume equal an uncut run;
+    - repeated and out-of-order bars are dropped, the forming bar is never read, and stale data is flagged.
   - **410b. GREEN:** `thesis_engine/clock.py`.
-  - **Validates: Requirement 2.1-2.4**
+  - **Validates: Requirement 2.1-2.5**
 
-- [ ] 411. Phase 3: the book (Requirement 3)
+- [ ] 411. Phase 3: the book, as of each close (Requirement 3)
   - **411a. RED:**
-    - each object's life on hand-made bars: pools taken by a wick, FVGs ended and inverted by a close, blocks inverted into breakers, breakers ended, ranges stretched;
-    - at every cut of random walks with dojis, the book equals the batch references: `algo_research.atlas.swings`, the gap rule, `liquidity_engine.context.blocks.delivery_blocks`, and `dealing_range` on the three-candle swing;
-    - stable ids.
-  - **411b. GREEN:** `thesis_engine/book.py`.
-  - **Validates: Requirement 3.1-3.6**
+    - at every cut of random walks with dojis, the book equals AlgoMindDIS's analyzers (V2) run on the candles closed by the cut;
+    - each status change (formed, swept or mitigated, invalidated) is recorded once, with its time;
+    - the E frame's swings and down-close runs;
+    - the inverted FVG on hand-made bars, in the array layer's own tests (`liquidity_engine/context`), with every existing output unchanged.
+  - **411b. GREEN:** `thesis_engine/book.py`, and the inverted FVG in the array layer.
+  - **Validates: Requirement 3.1-3.5**
 
 - [ ] 412. Phase 4: the machine (Requirements 5-9)
   - **412a. RED:**
@@ -92,14 +100,17 @@
   - **415a.** H-AG registered in `docs/research/SEARCH_2018_2024.md` with V1's settings, in its own commit, before anything reads `mt5-m1-develop`.
   - **415b.** The run:
     - ORACLE, MIRROR and RANDOM on the eight traded focus markets, 2021-07-16 to 2022-12-30;
-    - the pass rule, and everything reported beside it.
+    - the pass rule, and everything reported beside it, with AlgoMindDIS §16.4's baselines:
+      - the existing setup engine, without a side and with the same sides;
+      - a simple W1-trend side;
+      - AlgoMindDIS V1 as the source.
 
     The report goes to `docs/research/THESIS_ENGINE_HAG.md`, with a line in the search log.
   - **Validates: Requirement 13.1-13.5**
 
 - [ ] 416. Phase 8: paper with the trader's calls (Requirement 14)
   - Only if H-AG passes and the trader says go.
-  - A paper agent runs the same `step` on the terminal's live M1, with the /context calls as the source, through the paper broker.
+  - A paper agent runs the same `step` on the terminal's live M1, through the paper broker. Its source is the /context calls, or AlgoMindDIS in the trader's mode.
   - Its record goes beside the context agent's on the /context scorecard.
   - **Validates: Requirement 14.1-14.2**
 
@@ -166,6 +177,7 @@ Dependencies are denoted as `prerequisite → dependent`. The trader's answers t
 - Every implementation task follows RED → GREEN → REFACTOR. No production code without a failing test first.
 - Property tests run with `@settings(max_examples=100)` at least. The slow ones are marked `slow`.
 - No new dependencies.
+- AlgoMindDIS's specification (v1.0.0) holds: the engine detects nothing itself (§19.2), takes its side only from a source (§2.5), and changes no existing output (§19.1, §19.8).
 - `liquidity_engine/`, `algo_backtester/` (apart from the layer's route), `agent/` and `algomind_dis/` don't change. The paper agents keep running on the old engine.
 - Nothing reads `mt5-m1-develop` before H-AG's registration commit. Runs go one market at a time (the PC's memory limits).
 - The trader's journal and `docs/research/THESIS_METHOD.md` stay out of the repo.

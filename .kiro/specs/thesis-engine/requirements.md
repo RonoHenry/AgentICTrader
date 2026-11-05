@@ -1,7 +1,6 @@
 # Requirements Document
 
 **Spec**: Thesis Engine (the core engine, rebuilt as a state machine)
-**Asked for**: 2026-11-05. After "is our current Engine a state machine?" (no: `liquidity_engine` is stateless per close) and "how should we have built it?", the trader: "Can we try the second approach (I know we are building everything from scratch...)".
 
 ## Introduction
 
@@ -10,9 +9,14 @@ The liquidity engine reads every close from scratch, finds every setup with the 
 The trader works the other way round: one thesis or none, then the thesis's levels, then time, then the hand at the level, then one shot (thesis first; the blueprint of 2026-10-31; Model A).
 
 The Thesis Engine is that order, built as a new core: a state machine per market, stepped by candle closes.
-- **Direction comes in, never out.** A thesis (side, draw, protected level, valid from and until) arrives through one contract from a source: the trader's /context calls, a thesis file (AlgoMindDIS, reader v0), or, for research only, a hindsight or random side. With no thesis, nothing runs.
+- **Direction comes in, never out.** A thesis (side, draw, protected level, valid from and until) arrives through one contract from a source: the trader's /context calls, AlgoMindDIS's contract, a thesis file (such as reader v0's), or, for research only, a hindsight or random side. With no thesis, nothing runs.
 - **It waits, in stages.** At a level of the thesis's side, inside a time window, it watches the execution frame for the hand: a sweep at the level, then the execution frame's CISD. Then one order.
 - **It remembers.** Each object (pool, array, range, thesis, order) is created once and carries its own life. Each change of state is recorded with its reason.
+
+**Where it sits: the Setup Engine of AlgoMindDIS's architecture.** The trader's AlgoMindDIS specification (v1.0.0, §3, §22) splits the work: the Liquidity Engine detects, AlgoMindDIS holds the direction, the Setup Engine identifies and qualifies the opportunity, and execution and risk follow. The Thesis Engine is that Setup Engine, rebuilt as a state machine, under the specification's rules:
+- it takes its side from AlgoMindDIS's versioned contract (`DirectionalBiasOutput`, §12) or the trader's calls, and never decides one itself (§2.5);
+- it detects nothing itself (§19.2). Pools, arrays, ranges and structure come from AlgoMindDIS's analyzers, which read the engine's detectors. It adds only what happens below the D1 close: the level in play, the time, the hand and the order;
+- it holds a thesis until it is invalidated, delivered, expired or replaced (§10.4), says why at every step (§2.6, §19.7), reads closed candles only (§19.6), replays deterministically (§15, §19.4), runs in shadow before it trades (§18, Phases 5 and 7), and has no learned or generated step in its decisions (§19.10).
 
 **What it isn't: a direction source.** It can't make a wrong side pay. Every test so far puts the information in the side:
 - the setups alone make about 0R, and pay only when the side is known in hindsight (H-N's selection stack with the week's real side: +0.17R [−0.01, +0.35] a trade);
@@ -39,6 +43,7 @@ The trader's answer (2026-10-31, "blueprint, not template"): a level is the char
   - **T**, the thesis's frame (W1 for a weekly call);
   - **L**, the level frames (D1, H4, H1);
   - **E**, the execution frame (M5).
+- **A swing:** a candle beyond its neighbours. How many neighbours (the trader's three candles, or the analyzers' lookback of 2) is a decision for the trader (design.md).
 - **ADR:** the mean D1 range over the last 20 closed days.
 - **Typical spread:** the market's median M1 spread over the run's window.
 - **A level:** where the engine waits, an array of the thesis's side together with what supports it (Requirement 6).
@@ -53,9 +58,10 @@ The trader's answer (2026-10-31, "blueprint, not template"): a level is the char
 #### Acceptance Criteria
 
 1. THE audit (design.md, Phase 0) SHALL list each piece the engine needs, with the existing code it reuses or the reason it is new.
-2. THE engine SHALL live in a new package, `thesis_engine/`. `liquidity_engine/`, `algo_backtester/`, `agent/` and `algomind_dis/` SHALL run unchanged. The only addition outside the package is a Noculus layer.
+2. THE engine SHALL live in a new package, `thesis_engine/`. `liquidity_engine/`, `algo_backtester/`, `agent/` and `algomind_dis/` SHALL run unchanged: none of their outputs changes. The only additions outside the package are the Noculus layer and detection gaps filled in the array layer (`liquidity_engine/context`, Requirement 3.5), which nothing existing calls.
 3. THE engine SHALL NOT place a live order. Paper follows Requirement 14.
 4. Every rule and threshold SHALL sit in one frozen, versioned settings object (V1). A change is a new version and a new registration.
+5. THE engine SHALL NOT detect what the detection layer detects (AlgoMindDIS §19.2: "AlgoMindDIS interprets; the Liquidity Engine detects"). A missing detection is added to the detection layer, and the audit records it.
 
 ### Requirement 2: The clock
 
@@ -67,28 +73,24 @@ The trader's answer (2026-10-31, "blueprint, not template"): a level is the char
 2. Candles that close at the same instant SHALL be emitted from the highest frame down, so each step sees everything closed by then.
 3. A period with no bars SHALL have no candle. Weekend and holiday gaps create none.
 4. THE same bars SHALL give the same events. A run stopped at t and resumed from its saved state SHALL give the same events as an uncut run.
+5. **The live feed** (AlgoMindDIS §13.3):
+   - a bar that repeats one already read, or is older than it, SHALL be dropped and journaled;
+   - an M1 bar SHALL be read only once the next one opens, so a revision of the forming bar is never seen;
+   - no bar for longer than the stale limit (V1: 15 minutes) inside the market's session SHALL make the data stale. Nothing new is armed until bars resume, and an open order is unaffected (AlgoMindDIS Requirement 14.4 treats stale data the same way).
 
-### Requirement 3: The book, objects with a life
+### Requirement 3: The book, what the detectors see as of each close
 
-**User Story:** As the trader, I want pools, arrays and ranges kept as things that form, get touched, get taken or broken, so that the engine knows a level's history the way I do.
+**User Story:** As the trader, I want the engine to see the same pools, arrays and ranges that AlgoMindDIS sees, each with its history, so that the side and the setup are read from one picture.
 
 #### Acceptance Criteria
 
-1. **Pools:**
-   - three-candle swing highs and lows (the trader's swing: a candle beyond both neighbours, known at the third candle's close);
-   - the previous D1, W1 and MN1 highs and lows;
-   - equal highs and lows within 0.1 of the frame's average range.
-
-   A pool is UNTAKEN until a candle trades beyond it (a wick takes it), then TAKEN, with the time.
-2. **Fair value gaps:** the gap only, with its high, low, CE and the time it formed (the trader's FVG). An FVG ends when a candle of its frame closes beyond its far edge, and it inverts into an IFVG of the other side.
-3. **Order blocks and breakers:** the trader's rule (liquidity-engine Requirement 31, `liquidity_engine/context/blocks.py`):
-   - the zone is the CISD run's bodies, with the MT at their midpoint;
-   - a block is high probability when the run took a swing and the move away left a gap;
-   - a close through inverts it into a breaker;
-   - a close back through ends the breaker.
-4. **Dealing ranges,** per frame: from the last three-candle swing low to the last three-candle swing high, stretched to any later extreme. Premium is above 0.55 and discount below 0.45 (CE-D2).
-5. Each object SHALL have a stable id (market, frame, kind, formed at) and record each change of status with its time.
-6. THE book, updated close by close, SHALL equal the batch rules run on the closed candles at every cut (a property test on random walks with dojis).
+1. THE book SHALL take the L frames' (D1, H4, H1) liquidity objectives, PD arrays, dealing ranges and structure from AlgoMindDIS's analyzers (`algomind_dis.analyzers`: objectives, arrays, ranges, structure), at the settings version named in V1. That is V2, whose arrays are the trader's order blocks and breakers (`array_rule = "cisd"`, `liquidity_engine/context/blocks.py`).
+2. THE E frame's swings and down-close runs SHALL come from the functions the analyzers use (`liquidity_engine.context.measures`, `liquidity_engine.context.blocks.runs`).
+3. Each object SHALL keep the analyzer's id and dates. THE book SHALL record each change of status (formed, swept or mitigated, invalidated) with its time, and add nothing to the detection.
+4. THE book at t SHALL equal the analyzers run on the candles closed by t (a property test at every cut, as AlgoMindDIS's own replay is tested).
+5. **Gaps, filled where the detection lives** (AlgoMindDIS Requirement 1.2):
+   - the inverted FVG (an FVG closed through, read as an array of the other side) is not in the array layer AlgoMindDIS reads. It SHALL be added there (`liquidity_engine/context`), not in this package;
+   - the analyzers read swings at the engine's lookback of 2, while the trader's swing is three candles. Which one holds is a decision for the trader (design.md).
 
 ### Requirement 4: The thesis
 
@@ -107,21 +109,32 @@ The trader's answer (2026-10-31, "blueprint, not template"): a level is the char
    - **DELIVERED:** an E candle after `since` trades at or beyond the draw;
    - **INVALIDATED:** a D1 candle closing after `since` closes beyond the protected level (a wick is liquidation);
    - **EXPIRED:** `until` passes;
-   - **REPLACED:** a newer thesis for the market goes live.
+   - **REPLACED:** a newer thesis for the market goes live;
+   - **WITHDRAWN:** the source stops holding it (a FILE date with no entry, or AlgoMindDIS leaving the side).
 
-   These match the THESIS mode's ends (`agent.order_intent._context_ended`).
+   The first three match the THESIS mode's ends (`agent.order_intent._context_ended`) and AlgoMindDIS's (§10.4).
 3. **Sources:**
    - **CALL:** the trader's /context calls (`agent.context_calls`). `since` is the call's and `until` is the week's close.
-   - **FILE:** a thesis file in the THESIS-mode format (`{instrument: {trading date: {side, draw, protected, since}}}`), such as AlgoMindDIS's or reader v0's.
+   - **DIS:** AlgoMindDIS's contract (`DirectionalBiasOutput` 1.0.0), read at each D1 close:
+     - ACTIVE gives a live thesis, with the side, draw, protected level and `since` that `algomind_dis.contract.thesis_entry` writes, held until the side changes or ends;
+     - TRANSITIONAL keeps the thesis live, but nothing new is armed while the side is challenged. An open order is unaffected;
+     - NEUTRAL, UNDETERMINED, INVALIDATED or EXPIRED end the thesis.
+   - **FILE:** a thesis file in the THESIS-mode format (`{instrument: {trading date: {side, draw, protected, since}}}`), such as reader v0's. Consecutive dates with the same entry are one thesis.
    - **ORACLE, MIRROR, RANDOM** (research only, never on paper):
      - the side is the week's real side (the New York W1 close against its open), its opposite, or a seeded coin flip;
      - the draw and the protected level come from the completion rule (4.4);
      - `since` is the week's open and `until` its close.
-4. **The completion rule,** at the week's open, for a bullish side (bearish is the mirror):
-   - **the draw:** the nearest untaken pool above the open and at least 0.5 ADR away: the previous week's high, a D1 three-candle swing high or D1 equal highs;
-   - **the protected level:** the nearest untaken D1 three-candle swing low below the open and at least 0.5 ADR away, else the previous week's low if it is below the open;
+4. **The completion rule,** for the research sources only, at the week's open, for a bullish side (bearish is the mirror):
+   - **the draw:** the nearest untaken pool above the open and at least 0.5 ADR away: the previous week's high, a D1 swing high or D1 equal highs;
+   - **the protected level:** the nearest untaken D1 swing low below the open and at least 0.5 ADR away, else the previous week's low if it is below the open;
    - **no thesis that week** when either is missing or more than 5 ADR away (counted).
+
+   For CALL, DIS and FILE the draw and the protected level are the source's. The nearest pool isn't automatically the draw (AlgoMindDIS §5.4). The rule takes it here only because H-AF's far draws made every race lopsided.
 5. One thesis SHALL be live per market at a time.
+6. **Activation** (AlgoMindDIS §18, Phase 7): the DIS source SHALL run in the mode the trader sets.
+   - DIS_DISABLED reads no DIS thesis;
+   - DIS_SHADOW and DIS_ADVISORY journal everything and place no order;
+   - DIS_ENFORCED places paper orders, and only for an AlgoMindDIS version that has passed its own test.
 
 ### Requirement 5: The state machine
 
@@ -185,7 +198,7 @@ The trader's answer (2026-10-31, "blueprint, not template"): a level is the char
 
 #### Acceptance Criteria
 
-1. **The sweep** (bullish; bearish is the mirror): while ARMED, an E candle trades below an untaken pool at the level. The pool is an E three-candle swing low or the previous H1 candle's low, inside the level or within 0.1 ADR below it. The sweep's extreme is the lowest low from that candle until the CISD.
+1. **The sweep** (bullish; bearish is the mirror): while ARMED, an E candle trades below an untaken pool at the level. The pool is an E swing low or the previous H1 candle's low, inside the level or within 0.1 ADR below it. The sweep's extreme is the lowest low from that candle until the CISD.
 2. **The CISD:** within 12 E candles of the sweep, an E candle closes above the open of the first candle of the latest run of down-closing E candles that ended at or after the sweep (dojis skipped). This is the trader's CISD (`blocks.runs`).
 3. **The hand fails** when 12 E candles pass without the CISD, or when the level fails. The engine then looks for a new sweep.
 4. **The order (V1):**
@@ -205,7 +218,7 @@ The trader's answer (2026-10-31, "blueprint, not template"): a level is the char
 4. **The budget:**
    - at most one filled entry per market per trading day;
    - at most two per thesis;
-   - never against the thesis (by construction).
+   - never against the thesis, by construction (the trader's rule of 2026-10-29: a signal against the side is manipulation). AlgoMindDIS §12.1 allows a countertrend setup with its own justification (`algomind_dis.contract.qualify`: COUNTERTREND_JUSTIFIED). Whether the engine takes those is a decision for the trader (design.md).
 5. **Exits (V1):** the stop, the draw, or the thesis's `until` at market. V1 has no break-even and no partial.
 
 ### Requirement 10: The journal
@@ -240,7 +253,7 @@ The trader's answer (2026-10-31, "blueprint, not template"): a level is the char
 
 #### Acceptance Criteria
 
-1. An engine-chart layer, "Thesis Engine", SHALL draw:
+1. An engine-chart layer, "Thesis Engine", beside the AlgoMindDIS layer, SHALL draw:
    - the live thesis: the draw dashed, the protected level solid;
    - the side's levels, with the one in use highlighted;
    - a state strip, one cell per E candle, coloured by state;
@@ -275,6 +288,10 @@ The trader's answer (2026-10-31, "blueprint, not template"): a level is the char
    - stops in spreads;
    - each market, and buys and sells apart;
    - H-N's stack with the same side (+0.17R a trade);
+   - AlgoMindDIS §16.4's baselines on the same window:
+     - the existing setup engine, without a side and with the same sides (THESIS mode);
+     - this engine with a simple higher-timeframe side (the W1 trend at the week's open, LE-D15);
+     - this engine fed by AlgoMindDIS V1, which H-AF already tested. V2 waits for its own registration;
    - the companions: a limit at the block's MT, break-even at +1R, the day's close as the exit, and M1 as the E frame.
 
 ### Requirement 14: Paper, later
@@ -283,5 +300,5 @@ The trader's answer (2026-10-31, "blueprint, not template"): a level is the char
 
 #### Acceptance Criteria
 
-1. Only after H-AG passes and the trader says go, a paper agent SHALL run the same `step` on the terminal's live M1, with the trader's /context calls as the source, through the paper broker.
+1. Only after H-AG passes and the trader says go, a paper agent SHALL run the same `step` on the terminal's live M1, through the paper broker. Its source is the trader's /context calls, or AlgoMindDIS in the mode the trader sets (Requirement 4.6).
 2. Its record SHALL sit beside the context agent's on the /context scorecard.

@@ -9,6 +9,16 @@ A new package, `thesis_engine/`, with one machine per market. It is stepped by e
 
 The thesis is the outer state, and the stages (at a level, armed, in a trade, spent) live inside it, so the end of the thesis ends them all. Direction only ever comes in with a thesis.
 
+**Where it sits.** In the trader's AlgoMindDIS architecture (§3) this is the Setup Engine. The detection layer detects, and AlgoMindDIS interprets and holds the side. This engine takes the side and the detections as they are, and decides only where, when and how to enter.
+
+```
+liquidity_engine.context      detects: arrays, swings, blocks (the inverted FVG is added here)
+  → algomind_dis.analyzers    interpret: objectives, arrays in context, ranges, structure (V2: the trader's arrays)
+  → algomind_dis.state        the side, one step per D1 close → DirectionalBiasOutput 1.0.0
+  → thesis_engine             the thesis (DIS / CALL / FILE / research) · the book as of t · level · time · hand · order
+  → FillModel / paper broker  → risk, unchanged
+```
+
 ## Architecture
 
 ```
@@ -45,10 +55,13 @@ Theses go live and end inside `step`, from the source's records and the book.
 |---|---|---|
 | M1 bars | `data/research/snapshots/mt5-m1-develop` (the nine focus markets, 2021-07-16 to 2022-12-30); `mt5-m1-2026-10` (XAUUSD, UK100, US100, US500, GER40, 2026-02-15 to 2026-10-23); the terminal (Noculus sessions) | Read as they are. EURUSD and GBPUSD for October 2026 come from a fresh terminal export |
 | The New York calendar | `liquidity_engine.utils.time_utils` (the 17:00 day open, `KILLZONE_WINDOWS`); `services/market_data/strategy_calendar.py` | **New:** the clock. The indices' day opens at 18:00 (the trader's H4 clock), and the strategy calendar has one 17:00 open |
-| Three-candle swings | `algo_research.atlas.swings` (AR-D28: strict, known at the third candle's close) | The batch reference for the book's pools |
-| FVGs: gap, CE, time | `algo_research.atlas.arrays`; `liquidity_engine.context.measures.bearish_fvgs` (the gap only) | The batch reference |
-| Order blocks and breakers | `liquidity_engine.context.blocks` (`delivery_blocks`, `runs`): the trader's rule, at parity with `ob_rule = "cisd"` | The batch reference. The book's version, updated close by close, must equal it at every cut. `runs` also defines the hand's CISD |
-| Dealing ranges | `liquidity_engine.context.frame_state.dealing_range` (lookback 2, stretched to later extremes) | The same reading on the trader's three-candle swing. **New:** updated close by close |
+| Liquidity objectives | `algomind_dis.analyzers.objectives`: swings, previous candles, equal highs and lows, gaps; typed EXTERNAL, INTERNAL or TEMPORAL; SWEPT or MITIGATED, with the time | Reused as the book's pools |
+| PD arrays | `algomind_dis.analyzers.arrays` on V2 (`frame_state._arrays`: FVGs as the gap; order blocks and breakers by the trader's rule, `liquidity_engine.context.blocks`), dated, with mitigation and invalidation | Reused as the book's arrays. **Gap:** the inverted FVG, added to the array layer |
+| Dealing ranges | `algomind_dis.analyzers.ranges` (SWING, PREVIOUS and DISPLACEMENT, each with its validity; zones at 0.45 and 0.55) | Reused |
+| Structure and swings | `algomind_dis.analyzers.structure` (the engine's swings, lookback 2; BOS and MSS); `algo_research.atlas.swings` (the trader's three candles) | Reused. The lookback is a decision for the trader |
+| Reading as of t | `algomind_dis.observe.prepare`: each frame's history read once, with dated objects filtered by t | The book's as-of view |
+| The E frame's CISD | `liquidity_engine.context.blocks.runs` | The hand's CISD |
+| The side from AlgoMindDIS | `algomind_dis.contract` (`output`, `thesis_entry`, `qualify`); `algomind_dis.state` (`Held`, TRANSITIONAL, stale) | The DIS source |
 | Levels | `liquidity_engine.context.levels` (Requirement 34, read from the old engine's `PDArray`s) | The same characteristics, rebuilt on the book's objects, on the thesis's side only |
 | The thesis | `agent.context_calls` (`Call`, `ContextBook`, `week_open`, `week_close`, `thesis_table`); `agent.order_intent.theses` and `_context_ended` | CALL and FILE read through them. The ends match `_context_ended` |
 | Fills and costs | `agent.brokers.fill_model` (`FillModel`, `SimOrder`, `Bar`, `swap_nights`); `agent.broker_profiles.load_profile`; H-N's spread rule (`algo_research.search_crt`) | Reused as they are |
@@ -65,8 +78,9 @@ thesis_engine/
   settings.py     Settings (frozen); V1
   records.py      the records below; to_json / from_json
   clock.py        Clock(market, frames, day_open).push(bar) → [Candle closed at the bar's close], highest frame first
-  book.py         Book(market, frames).update(candle); .pools(frame), .arrays(frame), .range(frame), .get(id)
-  thesis.py       ends(thesis, book, t) → (end, reason) | None; calls(path), thesis_file(path),
+  book.py         Book(market, frames, settings).at(t): AlgoMindDIS's objectives, arrays, ranges and structure as of t;
+                  .changes(t0, t1): their status changes; .e_swings(t), .e_runs(t): the E frame's
+  thesis.py       ends(thesis, book, t) → (end, reason) | None; calls(path), thesis_file(path), dis(timeline, mode),
                   oracle(bars, market, kind="ORACLE" | "MIRROR" | "RANDOM", seed), complete(side, book, t)
   levels.py       levels(thesis, book, t) → [Level], best first
   machine.py      step(state, event, ctx) → (state, [Transition], [Intent]); TABLE (the allowed transitions)
@@ -85,9 +99,7 @@ thesis_engine/
 All records are frozen dataclasses. Times are UTC nanoseconds, prices floats, and ids are stable hashes of the content that defines the record.
 
 - **Thesis:** `id, market, side, draw, protected, since, until, source, note`.
-- **Pool:** `id, market, frame, kind (SWING | PREVIOUS | EQUAL), side (HIGH | LOW), price, formed_at, taken_at`.
-- **Array:** `id, market, frame, kind (FVG | IFVG | OB | BREAKER), side, low, high, mid (the CE or the MT), formed_at, ended_at, inverted_from, high_probability`.
-- **Range:** `market, frame, low, high, low_at, high_at`, with `zone(price)` → PREMIUM | EQUILIBRIUM | DISCOUNT.
+- **Pools, arrays, ranges and structure:** AlgoMindDIS's records as they are (`algomind_dis.records`: `LiquidityObjective`, `ArrayContext`, `DealingRange`, `PricePosition`, `StructureEvent`), with their ids and dates. The book adds no fields.
 - **Level:** `array_id, low, high, score, reasons`.
 - **Hand:** `pool_id, swept_at, extreme, run_open, run_first_at, cisd_at`.
 - **Intent:** `market, thesis_id, level_id, side, kind (MARKET | LIMIT), entry, stop, target, at`.
@@ -109,8 +121,8 @@ All records are frozen dataclasses. Times are UTC nanoseconds, prices floats, an
 | FLAT | THESIS | a thesis goes live | "CALL, bullish: draw 1.09500, protected 1.08200 (week of 2 Nov)" |
 | THESIS | AT_LEVEL | an E candle trades into a level of the side | "at the H1 bullish FVG 1.08610-1.08680 (score 3)" |
 | AT_LEVEL | THESIS | the level fails, or price moves away | "an H1 close 1.08550 through the level's far edge 1.08610" |
-| AT_LEVEL | ARMED | the window opens, or price reaches the level inside it | "00:00 New York: Q2 opened" |
-| ARMED | AT_LEVEL | the window closes with no hand in progress | "12:00 New York: the window closed without a hand" |
+| AT_LEVEL | ARMED | the window opens, or price reaches the level inside it; never while a DIS side is TRANSITIONAL or the data is stale | "00:00 New York: Q2 opened" |
+| ARMED | AT_LEVEL | the window closes with no hand in progress, the DIS side turns TRANSITIONAL, or the data goes stale | "12:00 New York: the window closed without a hand" |
 | ARMED | IN_TRADE | the hand completes and the order passes the risk rules | "M5 took the 04:10 swing low 1.08590, then closed above the run's open 1.08630 (CISD): buy at market, stop 1.08560, target 1.09500 (12.6R)" |
 | IN_TRADE | SPENT or THESIS | the order closes or is rejected | "stopped at 1.08560 (−1.0R)" |
 | SPENT | THESIS | a new trading day, with entries left on the thesis | "a new day: 1 of 2 entries left" |
@@ -123,12 +135,12 @@ A skipped order (a stop under 10 spreads, a draw under 2R, or the budget used) i
 - **TE-D1. Direction is an input.** Only a thesis gives a side. With no thesis the machine is FLAT and reads nothing but the clock and the book.
 - **TE-D2. One instant, highest frame first.** Candles closing together are stepped from the highest frame down, so the E frame's step sees the D1, H4 and H1 candles that closed at the same time.
 - **TE-D3. Closed candles only.** A candle exists from its close. The forming candle is never read. The old engine's default still reads it (`engine.py`, the `else` branch at the array detector).
-- **TE-D4. The trader's definitions:**
-  - a swing is three candles;
+- **TE-D4. The definitions are the detection layer's,** read through AlgoMindDIS at V2, and they are the trader's:
   - an FVG is the gap, its CE and its time;
   - an order block is the CISD run's bodies, with the MT at their midpoint;
   - a close through ends or inverts an array;
-  - a wick beyond a level is liquidation, not an end.
+  - a wick beyond a level is liquidation, not an end;
+  - the swing's lookback is the trader's decision: three candles, or the analyzers' 2.
 - **TE-D5. Levels** are Requirement 34's characteristics, on the thesis's side only and inside the thesis's range (between the protected level and the draw).
 - **TE-D6. The window** is Q2-Q3, 00:00-12:00 New York: the trader's quarters and the levels gate's window. The killzones alone (London 02:00-05:00, New York AM 07:00-10:00) would miss two of the trader's own samples:
   - the GBPUSD 29 Oct Judas swing bottomed at 05:27;
@@ -142,11 +154,14 @@ A skipped order (a stop under 10 spreads, a draw under 2R, or the budget used) i
   - the draw at least 2R away;
   - one filled entry per market per trading day, and two per thesis.
 - **TE-D9. Exits:** the stop, the draw, or the thesis's `until`. V1 has no break-even or partial; both changed the shape of the results, not the sign (2026-10-27).
-- **TE-D10. The completion rule** for side-only sources (Requirement 4.4) takes the nearest pools. H-AF's far draw (a median 14 ADR away, against a protected level at 0.7 ADR) made every race lopsided.
+- **TE-D10. The completion rule** is for the research sources only (Requirement 4.4). It takes the nearest pools because H-AF's far draw (a median 14 ADR away, against a protected level at 0.7 ADR) made every race lopsided. It is not a claim about the draw: for the trader's calls and AlgoMindDIS, the draw is theirs (§5.4).
 - **TE-D11. The market's calendar:** the day opens at 17:00 New York for FX, gold and DXY, and at 18:00 for the indices.
 - **TE-D12. The ladder:** T is W1, L is D1, H4 and H1, and E is M5. M5 can form the trader's sequence where M15 can't (tasks 342-344). M1 is a companion.
 - **TE-D13. V1 is frozen at the trader's review** (task 414). After that, a change is V2 and a new registration.
 - **TE-D14. The development window stays unread** until H-AG is registered. Before that, the code runs only on hand-made bars and on October 2026 bars (the scenarios).
+- **TE-D15. No re-detection** (AlgoMindDIS §19.2). The book is an as-of view over AlgoMindDIS's analyzers, and a missing detection is added to the detection layer. This replaces the first draft's own detection, before any code (task 408).
+- **TE-D16. AlgoMindDIS's contract is a source.** ACTIVE gives a thesis, TRANSITIONAL arms nothing new, and any other state ends it. Its activation modes (§18, Phase 7) decide whether orders are placed.
+- **TE-D17. The live feed** (§13.3): repeated or out-of-order bars are dropped, the forming bar is never read, and stale data arms nothing.
 
 ## Decisions for the Trader
 
@@ -158,7 +173,9 @@ The defaults above stand until the trader answers.
 4. **The stop floor:** 10 typical spreads, the floor the data supports (stops under 8 spreads lost in every market out of sample). The trader's GBPUSD 29 Oct stop was about 7 Exness spreads, so the floor would have skipped it.
 5. **The execution frame:** M5, or M1?
 6. **The entry:** at market at the CISD close, or a limit at the run's MT (the trader's OB entry)?
-7. **The name:** "Thesis Engine" is a working name.
+7. **The name:** "Thesis Engine" is a working name. In AlgoMindDIS's architecture (§3) this is the Setup Engine.
+8. **Countertrend:** never against the side (the 2026-10-29 rule), or also AlgoMindDIS's justified countertrend (§12.1: a target inside the D1 range, from an opposing higher-timeframe array, after a sweep)?
+9. **The swing:** three candles (the trader's, 2026-10-16), or the analyzers' lookback of 2? Three candles would become part of AlgoMindDIS V2, which is still untested, so no registered test changes.
 
 ## Correctness Properties
 
@@ -166,7 +183,7 @@ Each property is a test. "Hypothesis" means a property-based test with the `hypo
 
 ### Property 1: Only the Past
 *For any* bars and cut t (Hypothesis), the state, the book and the journal at t SHALL equal those of a run on the bars before t only.
-**Validates: Requirements 2.1, 3.6**
+**Validates: Requirements 2.1, 3.4**
 
 ### Property 2: Determinism
 *For any* bars and theses, two runs SHALL write the same journal, byte for byte.
@@ -176,9 +193,9 @@ Each property is a test. "Hypothesis" means a property-based test with the `hypo
 *For any* cut t, a run stopped at t and resumed from its saved state SHALL write the same journal as an uncut run.
 **Validates: Requirements 2.4, 11.3**
 
-### Property 4: The Book Equals the Batch Rules
-*For any* random walk with dojis and any cut, the book's swings, gaps, blocks, breakers and ranges SHALL equal the batch references run on the closed candles.
-**Validates: Requirements 3.6**
+### Property 4: The Book Equals the Analyzers
+*For any* random walk with dojis and any cut, the book's objectives, arrays, ranges and structure SHALL equal AlgoMindDIS's analyzers run on the candles closed by the cut.
+**Validates: Requirements 3.4**
 
 ### Property 5: The Mirror
 *For any* bars, the bars turned upside down with the mirrored thesis SHALL give the mirrored journal.
@@ -204,6 +221,9 @@ Each property is a test. "Hypothesis" means a property-based test with the `hypo
 - **An order the fill model rejects** (it opened beyond the stop or the target): the entry is not counted against the budget, and the machine returns to AT_LEVEL with the reason.
 - **A level of zero height, or a range with no swing:** not a level, and no zone. Neither is an error.
 - **A saved state from another version:** refused. A resume needs the same `VERSION` and settings.
+- **Repeated, out-of-order or revised bars** (§13.3): dropped and journaled. The forming bar is never read.
+- **Stale data:** nothing new is armed until bars resume. An open order is unaffected.
+- **AlgoMindDIS unavailable or failing:** no DIS thesis. The engine keeps its other sources, and nothing else changes (§19.8).
 
 ## Testing Strategy
 
@@ -212,20 +232,22 @@ Each property is a test. "Hypothesis" means a property-based test with the `hypo
   - each candle emitted once, at its close, highest frame first;
   - cut-and-resume.
 - **The book:**
-  - each object's life on hand-made bars;
-  - Property 4 against `atlas.swings`, the gap rule, `blocks.delivery_blocks` and `dealing_range` on the three-candle swing.
+  - Property 4 against AlgoMindDIS's analyzers at every cut;
+  - the inverted FVG on hand-made bars, in the array layer's own tests;
+  - the E frame's swings and runs.
 - **The thesis:**
   - the contract's checks;
   - each end, including a wick beyond the protected level that is not an end;
   - CALL and FILE read the formats that exist;
   - the completion rule's choices and its counted refusals;
-  - ORACLE and MIRROR are opposite every week.
+  - ORACLE and MIRROR are opposite every week;
+  - the DIS source: ACTIVE, TRANSITIONAL and each end, under each activation mode.
 - **The machine:**
   - each row of the table with its reason, and Property 6;
   - the hand's sweep, CISD and failure;
   - each skip;
   - Properties 5, 7 and 8.
-- **The replay:** Properties 1-3.
+- **The replay:** Properties 1-3, and the live feed's repeated, out-of-order and stale bars.
 - **Scenarios** (task 414): the trader's October 2026 trades, each with their call, drawn on the layer and judged by the trader.
 - **Speed target:** one market's 18 months of M1 in under two minutes, one market at a time (the PC's memory limits).
 
@@ -234,5 +256,6 @@ Each property is a test. "Hypothesis" means a property-based test with the `hypo
 - **It can show:**
   - whether the trader's order of work, run as rules, turns a right side into R (H-AG);
   - how often it waits, and why;
-  - where it differs from the trader's own trades (the scenarios).
+  - where it differs from the trader's own trades (the scenarios);
+  - once an AlgoMindDIS version passes its own test, whether its side, run through this machine, pays.
 - **It can't show an edge on its own.** Its side comes from a source. A pass on H-AG says the machine is ready for a side. The trader's blind calls, at about 300, say whether their read gives that side.
