@@ -90,7 +90,12 @@ const answer = { withheld: false, source: "ORACLE", words: "the week's real side
   trades: [{ placed: 1741743600, filled: 1741743600, closed: null, direction: "LONG", fill: 1.2, stop: 1.0, target: 2.5,
              exit: null, reason: null, net_r: null, risk_spreads: null }] };
 global.fetch = async (url) => {
-  if (url.startsWith("/api/watch/thesis")) return routed ? reply(200, answer) : reply(404, { error: "no such path /api/watch/thesis" });
+  if (url.startsWith("/api/watch/thesis")) {
+    if (!routed) return reply(404, { error: "no such path /api/watch/thesis" });
+    return /source=ORACLE/.test(url) ? reply(200, { ...answer, any: true, next_trade: 1741800000 })
+      : reply(200, { ...answer, source: "SCENARIO", any: false, words: "your calls", hindsight: false, moves: [], now: null,
+                     thesis: null, theses: [], sweeps: [], trades: [], next_trade: null });
+  }
   if (url === "/api/watch/status") return reply(200, status);
   return reply(200, {});
 };

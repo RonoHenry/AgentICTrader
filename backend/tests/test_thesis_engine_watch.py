@@ -22,6 +22,11 @@ def test_the_layer_answers_for_every_source(session):  # noqa: F811
         assert set(got) >= {"moves", "now", "thesis", "level", "theses", "levels", "sweeps", "skips", "trades"}
         assert all(m["t"] <= end for m in got["moves"])
         assert got["hindsight"] == (source in ("ORACLE", "MIRROR"))
+        assert isinstance(got["any"], bool)
+    start = session.status()["start"]
+    first = session.thesis({"t": start, "source": "ORACLE"})
+    assert first["next_trade"] is None or first["next_trade"] > start
+    assert all(tr["placed"] <= start for tr in first["trades"])           # nothing ahead of the clock is drawn
     with pytest.raises(ValueError):
         session.thesis({"t": end, "source": "GUESS"})
 

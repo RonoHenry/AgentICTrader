@@ -18,6 +18,9 @@
   threw = null;
   try { await loadThesis(); } catch (e) { threw = e.message; }
   check("once the route exists the layer loads", threw === null && !S.thesis.error && S.thesis.trades.length === 1, threw);
+  check("with no call of yours it shows the week's real side, and says so",
+        /no call of yours/.test(S.thesis.words) && S.thesis.hindsight === true, S.thesis.words);
+  check("it knows its next entry (Next TE trade)", S.thesis.next_trade === 1741800000, S.thesis.next_trade);
   drawn.length = 0;
   try { paintThesis(ctx, { width: 900, height: 500 }, pal, text, line); } catch (e) { bad.push("painting a trade threw: " + e.message); }
   check("an open trade with no spread count paints", drawn.some((s) => /TE long @/.test(s)), drawn.join(" | "));

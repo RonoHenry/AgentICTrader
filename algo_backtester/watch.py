@@ -1048,7 +1048,12 @@ class WatchSession:
                 continue
             done = tr["closed"] is not None and tr["closed"] <= clock
             trades.append({**tr, **({} if done else {"closed": None, "exit": None, "reason": None, "net_r": None})})
+        ahead = [tr["placed"] for tr in v["trades"] if tr["placed"] > clock]
         return {"withheld": False, "source": source, "words": v["words"], "hindsight": source in ("ORACLE", "MIRROR"),
+                # whether the source holds a thesis anywhere in the session, and when its next entry comes (the page's
+                # "Next TE trade"); a session is blind or it isn't, so this shows nothing a blind reader hasn't chosen
+                "any": any(x["since"] < wall(self.end) and x["until"] > wall(self.start) for x in v["theses"].values()),
+                "next_trade": min(ahead) if ahead else None,
                 "moves": shown, "now": now, "thesis": live, "level": level,
                 "theses": [x for x in v["theses"].values() if x["since"] <= clock and x["until"] >= since],
                 "levels": [v["levels"][m["level_id"]] for m in shown if m["to"] == "AT_LEVEL"

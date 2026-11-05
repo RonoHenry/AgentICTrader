@@ -616,7 +616,13 @@ async function loadThesis() {
   // A layer never stops the replay: a server still running older code (no route yet) or a failed read leaves the
   // layer empty, with the reason on its card, and play goes on.
   try {
-    const got = await api(`/api/watch/thesis?t=${S.t}&source=${S.thesisSource}`);
+    let got = await api(`/api/watch/thesis?t=${S.t}&source=${S.thesisSource}`);
+    // With no call of yours anywhere in the session the engine would sit FLAT: show it on the week's real side
+    // instead, said plainly (hindsight), so there is something to judge. Your calls, once made, take over.
+    if (["SCENARIO", "CALL"].includes(S.thesisSource) && got.any === false && !got.withheld) {
+      got = { ...(await api(`/api/watch/thesis?t=${S.t}&source=ORACLE`)),
+              words: "no call of yours in this session, so it shows the week's real side (hindsight)" };
+    }
     S.thesis = { ...teEmpty(), ...got, at: key };
   } catch (e) {
     S.thesis = { ...teEmpty(), at: key, error: e.message };
@@ -1173,6 +1179,16 @@ function buildLayers() {
   te.onchange = () => act(async () => { S.thesisSource = te.value; Prefs.set("watch.thesisSource", te.value); S.thesis.at = null;
                                         await loadThesis(); renderEngine(); refresh(); });
   box.append(te);
+  const only = document.createElement("button");
+  only.className = "boxed"; only.id = "thesisOnly"; only.textContent = "Thesis Engine only";
+  only.title = "Hide the old engine's and the research layers' trades, so only the Thesis Engine trades on the chart";
+  only.onclick = () => act(async () => {
+    for (const k of ["orders", "sequence", "candidates", "crt", "sweep", "modelA", "modelAFramed"]) S.layers[k] = false;
+    S.layers.thesis = true; Prefs.set("watch.layers", S.layers);
+    $("layers").replaceChildren(); buildLayers();
+    await loadState();
+  });
+  box.append(only);
   const sel = document.createElement("select");
   sel.title = "Which of the engine's arrays to draw";
   sel.innerHTML = [["interval", "arrays: by visibility interval"], ["all", "arrays: every one"], ["M15", "arrays: M15 and up"],
@@ -1212,6 +1228,8 @@ function buildControls() {
   $("stepBtn").onclick = () => act(async () => { stop(); await advance(900 - (S.t % 900 || 0) || 900); });
   $("nextSetup").onclick = () => act(async () => { stop(); const t = nextTime((r) => (r.decision === "EXECUTE" ? [r.t] : [])); if (t) await jumpTo(t); else say("No more orders in this session."); });
   $("nextEvent").onclick = () => act(async () => { stop(); const t = nextTime((r) => (r.decision === "EXECUTE" ? [r.t, r.filled_at, r.closed_at] : [])); if (t) await jumpTo(t); else say("No more events in this session."); });
+  $("nextThesis").onclick = () => act(async () => { stop(); const t = S.thesis && S.thesis.next_trade;
+                                                    if (t) await jumpTo(t); else say("No more Thesis Engine entries in this session (or its layer is off)."); });
   document.addEventListener("keydown", (e) => {
     const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
     if (e.key === "Escape") { if (noculus.armed()) noculus.arm(null);
