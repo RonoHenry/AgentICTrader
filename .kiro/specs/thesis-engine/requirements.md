@@ -304,3 +304,55 @@ The trader's answer (2026-10-31, "blueprint, not template"): a level is the char
 
 1. Only after H-AG passes and the trader says go, a paper agent SHALL run the same `step` on the terminal's live M1, through the paper broker. Its source is the trader's /context calls, or AlgoMindDIS in the mode the trader sets (Requirement 4.6).
 2. Its record SHALL sit beside the context agent's on the /context scorecard.
+
+
+## Update 2026-11-05b: V2, the hand on the real manipulation
+
+**Why.** The trader's October trades (the scenarios) and my own review of eight trades on Noculus (gold 9 Jun 2025 and three weeks drawn at random) show V1 failing the same way, with the right side:
+- **It enters before the real manipulation.** It fires on the first small M5 sweep in a quiet range (a "CISD" 0.1-0.5 points beyond the run's open), with a stop inside the zone the real manipulation then raids. The Judas swing, the London sweep or the news spike takes the stop, and the day's budget is then spent. Across H-AG the median stopped trade never got past +0.6R.
+- **It chases.** At market on the close of a big displacement or news candle, the stop is far and the pull-back takes it.
+- **It holds right trades to a far draw with no management,** and some come all the way back (US100 17 Mar 2025 about +17R, EURUSD 12 May 2025 about +10R, both ended at −1R).
+
+V2 makes the hand the trader's own rules: a real pool taken into the level, a displacement, and the entry on the array it leaves. It also makes the stack a gate. V1 stays as it is, and H-AG's result stays V1's.
+
+### Requirement 15: V2, the trader's trigger
+
+**User Story:** As the trader, I want the engine to enter where I would: on the manipulation into my level, after a real displacement, on the array it leaves, so that it stops buying the quiet range before the move.
+
+#### Acceptance Criteria
+
+1. V2 SHALL keep every V1 rule except those below. V1 SHALL run unchanged: its journals on the same bars and theses stay identical.
+2. **The pools the hand may sweep** (a bullish hand; bearish is the mirror):
+   - the previous D1 candle's low;
+   - the trading day's Asia range low (from the day's open to 00:00 New York);
+   - the previous H4 candle's low;
+   - the previous H1 candle's low;
+   - an untaken H1 swing low (the analyzers' swing).
+
+   An M5 swing alone is no longer a pool. The pool still lies inside the level or within 0.1 ADR under it.
+3. **The CISD shows displacement:** the candle that closes through the run's open has a body at least 1.5 times the M5 average range of the 20 candles before it (Model A's displacement).
+4. **The entry is a limit at the run's mean threshold,** the midpoint of the CISD run's bodies (the trader's order block):
+   - the stop stays at the sweep's extreme, and the target at the draw;
+   - the limit expires at the window's end (12:00 New York), or 60 minutes after it is placed if that is later, or when the thesis ends;
+   - an expired limit isn't an entry: the machine returns to AT_LEVEL, and the budget counts fills only.
+5. **The stack is a gate:** a level counts only when arrays of the side on at least two level frames overlap it, or when it is a D1 array.
+6. **Exits stay V1's:** the stop, the draw, or the thesis's `until`. A partial (a third off at +3R, the rest's stop to the fill) is reported as a companion, not judged.
+
+### Requirement 16: H-AH, V2's conversion test
+
+**User Story:** As the trader, I want V2 measured the way V1 was, registered before it runs, so that I know whether the trigger change helps before anything depends on it.
+
+#### Acceptance Criteria
+
+1. H-AH SHALL be registered in `docs/research/SEARCH_2018_2024.md` with V2's settings before V2's code exists.
+2. **The arms, the data and the window** are H-AG's: ORACLE, MIRROR, RANDOM and W1TREND on the eight traded focus markets, `mt5-m1-develop`, theses from the week of 4 October 2021.
+3. **Pass** (all three):
+   - ORACLE's net R a trade is above zero, and so is its 95% interval (resampling market-weeks);
+   - ORACLE is positive in at least 6 of the 8 markets;
+   - the break-even weekly hit rate counted a week (the trades a week included) is below V1's 58.3%.
+4. **Not a try:** its sides are hindsight. A pass gets one run on the test window (2023-2024), exported for it then. Nothing of 2023-2024 is read before.
+5. **Reported beside it, not judged:**
+   - V1 and V2 side by side;
+   - the funnel, with limits placed, filled and expired;
+   - the companion with the partial;
+   - each market, and buys and sells apart.

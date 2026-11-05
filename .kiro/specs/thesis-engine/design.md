@@ -261,3 +261,23 @@ Each property is a test. "Hypothesis" means a property-based test with the `hypo
   - where it differs from the trader's own trades (the scenarios);
   - once an AlgoMindDIS version passes its own test, whether its side, run through this machine, pays.
 - **It can't show an edge on its own.** Its side comes from a source. A pass on H-AG says the machine is ready for a side. The trader's blind calls, at about 300, say whether their read gives that side.
+
+
+## Update 2026-11-05b: V2 (Requirements 15, 16)
+
+V2 is `thesis_engine.settings.V2`, a copy of V1 with five settings changed. The machine reads them, so V1 runs exactly as it did.
+
+| Setting | V1 | V2 |
+|---|---|---|
+| `hand_pools` | `"M5_SWINGS"` (E swings and the previous H1 extreme) | `"TRADER"` (PDL, the Asia low, the previous H4 and H1 lows, untaken H1 swing lows) |
+| `displacement_body` | `0.0` | `1.5` (times the M5 average range of 20 candles) |
+| `entry` | `"MARKET"` (at the CISD close) | `"LIMIT_MT"` (the CISD run's bodies' midpoint) |
+| `limit_minutes` | — | `60` (and at least to the window's end) |
+| `stack_min_frames` | `1` | `2` (or a D1 array) |
+
+- **TE-D18. The pools are the trader's liquidity,** not M5 swings: the previous day's and the previous H4's and H1's extremes, the Asia range and the H1 swings. These are the pools their manipulation takes (the Judas swing under the Asia low, the London sweep of the previous H4, the news sweep of equal highs).
+- **TE-D19. Displacement** is Model A §10's default: a body of 1.5 times the frame's average range. Without it a 0.1-point close through counted as a CISD.
+- **TE-D20. The limit at the run's MT** is the trader's answer of 2026-10-28: the order block is the whole series, and its MT is the entry for a large series. The stop stays beyond the manipulation's extreme, so the risk is smaller than V1's market entry.
+- **TE-D21. Expiry** is the trader's rule of 2026-10-02: a pending limit expires at the end of the killzone, here the window's end, and never sooner than 60 minutes after it is placed.
+- **TE-D22. The stack gate** follows the post-hoc check on H-AG's trades: on the right side, heavy stacks made +0.99R a trade and thin ones +0.59R. That look was on the development data, so H-AH's development run favours V2. Only the test window can confirm it.
+- **TE-D23. Management stays a companion.** The 2026-10-27 replay found that management changes the shape of results, not their sign.

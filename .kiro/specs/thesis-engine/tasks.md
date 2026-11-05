@@ -139,6 +139,28 @@
   - The modes DIS_DISABLED, DIS_SHADOW, DIS_ADVISORY and DIS_ENFORCED.
   - **Validates: Requirements 4.3, 4.6**
 
+- [x] 418. V2 written up and H-AH registered (Requirements 15, 16)
+  - The trader (2026-11-05): "please", for writing V2 up and registering it.
+  - Requirements 15-16, design.md's update (TE-D18 to TE-D23), and H-AH registered in `docs/research/SEARCH_2018_2024.md` before V2's code exists.
+  - **Validates: Requirements 15, 16.1**
+
+- [ ] 419. V2 built (Requirement 15)
+  - **419a. RED:**
+    - V1's journals are unchanged on the same bars and theses;
+    - the trader's pools (PDL, the Asia low, the previous H4 and H1 lows, untaken H1 swing lows) and no M5 swing;
+    - the displacement test;
+    - the limit at the run's MT with its expiry, and an expired limit back at AT_LEVEL without using the budget;
+    - the stack gate;
+    - mirrored bars give the mirrored journal.
+  - **419b. GREEN:** `settings.V2` and the machine, the levels and the replay reading it.
+  - **Validates: Requirement 15.1-15.6**
+
+- [ ] 420. H-AH run on development (Requirement 16)
+  - The four arms with V2, V1 beside it, the companion with the partial.
+  - The report goes to `docs/research/THESIS_ENGINE_HAH.md`, with a line in the search log.
+  - If it passes: the test window's export and one run.
+  - **Validates: Requirement 16.2-16.5**
+
 ## Task Dependency Graph
 
 Dependencies are denoted as `prerequisite → dependent`. The trader's answers to design.md's decisions are needed by 412 (the machine) and close at 414 (V1 frozen).
