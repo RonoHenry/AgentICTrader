@@ -556,6 +556,7 @@ function teColor(state, side, pal) {
 function paintThesis(ctx, size, pal, text, line) {
   const H = size.height, W = size.width, y = H - 52, T = S.thesis;
   if (T.withheld) { text("Thesis Engine: hidden until you reveal", 6, y - 3, pal.muted); return; }
+  if (T.error) { text(`Thesis Engine: unavailable (${T.error})`, 6, y - 3, pal.muted); return; }
   const sideOf = (id) => (T.theses.find((x) => x.id === id) || {}).side;
   for (let i = 0; i < T.moves.length; i++) {
     const m = T.moves[i], end = i + 1 < T.moves.length ? T.moves[i + 1].t : S.t;
@@ -601,7 +602,7 @@ function paintThesis(ctx, size, pal, text, line) {
     line(x0, ey, x1, ey, long ? pal.up : pal.bad, [], 1.5);
     const done = t.closed != null;
     const s = done ? `TE ${t.direction.toLowerCase()} · ${t.reason} ${t.net_r >= 0 ? "+" : ""}${t.net_r.toFixed(2)}R`
-                   : `TE ${t.direction.toLowerCase()} @ ${fmt(t.fill)} · stop ${fmt(t.stop)} (${t.risk_spreads.toFixed(0)} spreads) · target ${fmt(t.target)}`;
+                   : `TE ${t.direction.toLowerCase()} @ ${fmt(t.fill)} · stop ${fmt(t.stop)} (${t.risk_spreads != null ? t.risk_spreads.toFixed(0) : "?"} spreads) · target ${fmt(t.target)}`;
     text(s, x0 + 4, long ? ey + 22 : ey - 12, done ? (t.net_r > 0 ? pal.good : pal.bad) : pal.ink);
   }
   const n = T.now, side = T.thesis && T.thesis.side;
@@ -612,12 +613,20 @@ async function loadThesis() {
   if (!S.status || !S.layers.thesis) { S.thesis = teEmpty(); return; }
   const key = `${Math.floor(S.t / 300)}|${S.thesisSource}|${!!(S.state && S.state.withheld)}`;   // it steps at M5 closes
   if (S.thesis.at === key) return;
-  const got = await api(`/api/watch/thesis?t=${S.t}&source=${S.thesisSource}`);
-  S.thesis = { ...teEmpty(), ...got, at: key };
+  // A layer never stops the replay: a server still running older code (no route yet) or a failed read leaves the
+  // layer empty, with the reason on its card, and play goes on.
+  try {
+    const got = await api(`/api/watch/thesis?t=${S.t}&source=${S.thesisSource}`);
+    S.thesis = { ...teEmpty(), ...got, at: key };
+  } catch (e) {
+    S.thesis = { ...teEmpty(), at: key, error: e.message };
+  }
 }
 function thesisCard() {
   const T = S.thesis;
   if (T.withheld) return `<div class="card"><b>Thesis Engine</b><div class="muted">Hidden: this session is blind.</div></div>`;
+  if (T.error) return `<div class="card"><b>Thesis Engine</b><div class="muted">Unavailable: ${esc(T.error)}.
+    If the server was started before the layer existed, restart it (<code>python -m algo_backtester watch</code>) to load its route; the rest of the page works meanwhile.</div></div>`;
   const n = T.now, th = T.thesis, lv = T.level;
   const recent = T.moves.slice(-6).reverse().map((m) => `<div class="nmark"><span class="muted">${fmtTime(m.t)}</span> ${esc(m.from)} → <b>${esc(m.to)}</b>: ${esc(m.reason)}</div>`).join("");
   const done = T.trades.filter((t) => t.net_r != null), sum = done.reduce((a, t) => a + t.net_r, 0);

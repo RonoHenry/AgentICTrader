@@ -1290,7 +1290,8 @@ def _thesis_view(j, words: str, source: str) -> dict:
         placed, filled, closed = stamps([r["placed_at"], r["filled_at"] or r["placed_at"], r["closed_at"]])
         out.append({"placed": placed, "filled": filled, "closed": closed, "direction": r["direction"],
                     "fill": r["fill"], "stop": r["stop"], "target": r["target"], "exit": r["exit"],
-                    "reason": r["reason"], "net_r": r["net_r"], "risk_spreads": r["risk_spreads"]})
+                    "reason": r["reason"], "net_r": r["net_r"],
+                    "risk_spreads": r["risk_spreads"] if np.isfinite(r["risk_spreads"]) else None})   # JSON has no inf
     return {"words": words, "source": source, "moves": moves, "theses": theses, "levels": levels, "sweeps": sweeps,
             "skips": skips, "trades": out}
 
