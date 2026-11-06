@@ -25,6 +25,7 @@ from liquidity_engine.context.blocks import delivery_blocks, runs
 from liquidity_engine.context.frame_state import Candles
 from liquidity_engine.context.inversions import inverted_fvgs
 from liquidity_engine.context.measures import average_range, swing_highs, swing_lows
+from thesis_engine.clock import NY, trading_day
 from thesis_engine.settings import V1, Settings
 
 __all__ = ["NEVER", "ArrayRow", "Book", "Frame", "next_beyond"]
@@ -161,9 +162,9 @@ class Book:
                       for bullish in (True, False)}
         # The trading day's Asia range (V2's pools): its candles from the day's open to 00:00 New York, read once
         # midnight has passed.
-        from thesis_engine.clock import NY, trading_day
         self._h0 = s.day_open_hour(market)
-        self._e_hour = np.asarray(pd.DatetimeIndex(pd.to_datetime(e.t, utc=True)).tz_convert(NY).hour) if len(e)             else np.zeros(0, dtype=int)
+        self._e_hour = (np.asarray(pd.DatetimeIndex(pd.to_datetime(e.t, utc=True)).tz_convert(NY).hour) if len(e)
+                        else np.zeros(0, dtype=int))
         self._e_day = trading_day(e.t, market, s) if len(e) else np.zeros(0, dtype=np.int64)
         self._asia: Dict[int, Tuple[float, float, int]] = {}
         night = self._e_hour >= self._h0
