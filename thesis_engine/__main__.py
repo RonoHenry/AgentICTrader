@@ -1,5 +1,5 @@
-"""``python -m thesis_engine replay MARKET --snapshot NAME --source ORACLE`` | ``hag`` | ``hah`` | ``scenarios`` |
-``live``."""
+"""``python -m thesis_engine replay MARKET --snapshot NAME --source ORACLE`` | ``hag`` | ``hah`` | ``hai`` |
+``scenarios`` | ``live``."""
 from __future__ import annotations
 
 import argparse
@@ -16,7 +16,8 @@ from thesis_engine.thesis import RESEARCH, call_theses, file_theses, research_th
 def _replay(args) -> None:
     snapshot = REPO / "data" / "research" / "snapshots" / args.snapshot
     if args.snapshot == "mt5-m1-develop":
-        raise SystemExit("the development window is read only by H-AG and H-AH (python -m thesis_engine hag | hah)")
+        raise SystemExit("the development window is read only by the registered tests (python -m thesis_engine "
+                         "hag | hah | hai)")
     mk = prepare(args.market, pd.read_parquet(snapshot / f"{args.market}_M1.parquet"))
     if args.source in RESEARCH:
         theses, refused = research_theses(args.market, mk.book, args.source)
@@ -42,6 +43,7 @@ def main() -> None:
     r.add_argument("--source", default="ORACLE", help="ORACLE | MIRROR | RANDOM | W1TREND | CALL | a thesis file")
     sub.add_parser("hag", help="H-AG on the development window (registered 2026-11-05)")
     sub.add_parser("hah", help="H-AH, V2 on the development window (registered 2026-11-05)")
+    sub.add_parser("hai", help="H-AI, V3 on the development window (registered 2026-11-06)")
     sc = sub.add_parser("scenarios", help="the trader's own trades, each with the call they held")
     sc.add_argument("--snapshot", default="mt5-m1-2026-11")
     lv = sub.add_parser("live", help="on the terminal's live bars with your /context calls, paper only")
@@ -56,6 +58,9 @@ def main() -> None:
     elif args.cmd == "hah":
         from thesis_engine.hah import main as hah
         hah()
+    elif args.cmd == "hai":
+        from thesis_engine.hai import main as hai
+        hai()
     elif args.cmd == "scenarios":
         from thesis_engine.scenarios import main as scenarios
         scenarios(args.snapshot)
