@@ -257,9 +257,12 @@
   - **430b. GREEN:** `settings.V5`, and the machine reading `entry_in_window`.
   - **Validates: Requirement 21.1-21.3**
 
-- [ ] 431. H-AL run (Requirement 22)
+- [x] 431. H-AL run (Requirement 22)
   - The runner is committed first, then 2023-2024 is exported (`mt5-m1-test`) and run once: V5 and V1 judged, V5 on 2021-22 and 2025-26 reported.
   - The report goes to `docs/research/THESIS_ENGINE_HAL.md`, with a line in the search log.
+  - Run 2026-11-06 (runner cb873d4, export after 4100a4e):
+    - **H-AL FAILS:** V5 +0.609R a trade [+0.086, +1.230], 5 of 8 markets, 60.7% a week against V1's 50.0%.
+    - **V1 PASSES H-AG's rule on 2023-2024:** +0.977R [+0.639, +1.353], 7 of 8 markets, 42.9% a trade, 50.0% a week. V1 stays the machine, now confirmed on the test window.
   - **Validates: Requirement 22.2-22.6**
 
 - [ ] 432. V5 on Noculus beside V4 to V1
