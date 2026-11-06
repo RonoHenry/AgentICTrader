@@ -24,7 +24,7 @@ from algomind_dis.records import DealingRange, make_id
 from liquidity_engine.context.blocks import delivery_blocks, runs
 from liquidity_engine.context.frame_state import Candles
 from liquidity_engine.context.inversions import inverted_fvgs
-from liquidity_engine.context.measures import average_range, swing_highs, swing_lows
+from liquidity_engine.context.measures import average_range, rolling_average_range, swing_highs, swing_lows
 from thesis_engine.clock import NY, trading_day
 from thesis_engine.settings import V1, Settings
 
@@ -149,8 +149,8 @@ class Book:
         self.h1 = frames["H1"]
         e = self.e = frames[s.e_frame]
         lb = s.e_swing_lookback
-        self._e_pools: Dict[bool, Dict[int, List[int]]] = {}
-        for lows in (True, False):
+        self._e_pools: Dict[bool, Dict[int, List[int]]] = {True: {}, False: {}}
+        for lows in ((True, False) if s.hand_pools != "TRADER" else ()):     # V1's pools; V2 and V3 don't read them
             idx = np.array((swing_lows if lows else swing_highs)(e.l if lows else e.h, lb), dtype=np.int64)
             taken = next_beyond(e.l if lows else e.h, lower=lows)[idx] if len(idx) else np.array([], np.int64)
             by_taker: Dict[int, List[int]] = {}
@@ -174,6 +174,38 @@ class Book:
             for d, row in g.iterrows():
                 midnight = int(pd.Timestamp(int(d)).tz_localize(NY).tz_convert("UTC").value)
                 self._asia[int(d)] = (float(row["l"]), float(row["h"]), midnight)
+        # V3 (Requirement 17): each execution frame's candles, down- and up-close runs and average ranges, and the
+        # M30 and M15 swings as pools, by the E candle that first trades beyond them once they are known.
+        self.x: Dict[str, Candles] = {}
+        self._x_runs: Dict[str, Dict[bool, Dict[int, Tuple[int, int]]]] = {}
+        self._x_reach: Dict[str, np.ndarray] = {}
+        self._swing_takers: Dict[str, Dict[bool, Dict[int, List[float]]]] = {}
+        if s.exec_child == "POOL":
+            for tf in s.exec_frames:
+                c = self.x[tf] = frames[tf]
+                self._x_runs[tf] = self._runs if tf == s.e_frame else {
+                    bullish: {through: (first, last) for first, last, through in runs(c.o, c.c, bullish)}
+                    for bullish in (True, False)}
+                self._x_reach[tf] = rolling_average_range(c.h, c.l, 20)
+            for tf in s.swing_pools:
+                self._swing_takers[tf] = {lows: self._takers(frames[tf], lows) for lows in (True, False)}
+
+    def _takers(self, c: Candles, lows: bool) -> Dict[int, List[float]]:
+        """The frame's swing lows (highs), the analyzers' lookback, by the E candle that first trades beyond each
+        once it is known (its right-hand candles closed): that E candle is in the frame's first candle beyond."""
+        e, x = self.e, (c.l if lows else c.h)
+        idx = np.array((swing_lows if lows else swing_highs)(x, LOOKBACK), dtype=np.int64)
+        beyond = next_beyond(x, lower=lows)
+        out: Dict[int, List[float]] = {}
+        for i in idx.tolist():
+            j = int(beyond[i])
+            if j == NEVER:
+                continue
+            a, b = int(np.searchsorted(e.t, c.t[j], "left")), int(np.searchsorted(e.t, c.end[j], "left"))
+            hit = np.flatnonzero(e.l[a:b] < x[i]) if lows else np.flatnonzero(e.h[a:b] > x[i])
+            if len(hit):
+                out.setdefault(a + int(hit[0]), []).append(float(x[i]))
+        return out
 
     def n(self, tf: str, t: int) -> int:
         return self.frames[tf].n(t) if tf in self.frames else int(np.searchsorted(self.h1.end, t, "right"))
@@ -217,6 +249,18 @@ class Book:
         """V2's pools (Requirement 15.2) that E candle m is the first to trade beyond since each became known: the
         previous D1, H4 and H1 extremes, the trading day's Asia range (from 00:00 New York) and the untaken H1 swings
         (a bullish hand's lows; a bearish one's highs)."""
+        return [(name, price) for name, price, _ in self._trader_pools(m, bullish)]
+
+    def pools_taken(self, m: int, bullish: bool) -> List[Tuple[str, float, str]]:
+        """V3's pools (Requirement 17.3) that E candle m takes, each with its frame: V2's, and the untaken swings
+        of ``swing_pools``."""
+        out, side = self._trader_pools(m, bullish), ("low" if bullish else "high")
+        for tf in self.s.swing_pools:
+            for price in sorted(self._swing_takers[tf][bullish].get(m, ())):
+                out.append((f"the {tf} swing {side} {price:.6g}", price, tf))
+        return out
+
+    def _trader_pools(self, m: int, bullish: bool) -> List[Tuple[str, float, str]]:
         t, side, out = int(self.e.t[m]), ("low" if bullish else "high"), []
         for tf, name in (("D1", "previous day's"), ("H4", "previous H4"), ("H1", "previous H1")):
             c = self.frames[tf].c
@@ -224,20 +268,46 @@ class Book:
             if k >= 0:
                 price = float(c.l[k] if bullish else c.h[k])
                 if self._first_beyond(m, price, int(c.end[k]), bullish):
-                    out.append((f"the {name} {side} {price:.6g}", price))
+                    out.append((f"the {name} {side} {price:.6g}", price, tf))
         if len(self._e_hour) and self._e_hour[m] < self._h0:
             asia = self._asia.get(int(self._e_day[m]))
             if asia is not None:
                 price = asia[0] if bullish else asia[1]
                 if self._first_beyond(m, price, asia[2], bullish):
-                    out.append((f"the Asia {side} {price:.6g}", price))
+                    out.append((f"the Asia {side} {price:.6g}", price, "ASIA"))
         h1 = self.frames["H1"]
         n = h1.n(t)
         if n:
             for price in sorted(set(float(x) for x in h1.untaken(n, lows=bullish))):
                 if self._first_beyond(m, price, int(h1.c.end[n - 1]), bullish):
-                    out.append((f"the H1 swing {side} {price:.6g}", price))
+                    out.append((f"the H1 swing {side} {price:.6g}", price, "H1"))
         return out
+
+    # -- V3: the execution frames (Requirement 17) --
+    def x_at(self, tf: str, m: int) -> int:
+        """The index of the execution frame's candle that holds E candle m."""
+        return int(np.searchsorted(self.x[tf].end, self.e.end[m], "left"))
+
+    def x_closed(self, tf: str, t: int) -> int:
+        """The number of the execution frame's candles closed by ``t``."""
+        return int(np.searchsorted(self.x[tf].end, t, "right"))
+
+    def x_cisd(self, tf: str, k: int, bullish: bool, k0: int) -> Optional[Tuple[int, int]]:
+        """The run the frame's candle k closes through, when that run ended no earlier than ``run_slack`` candles
+        before the sweep's candle k0 (the run into the sweep): (first, last)."""
+        run = self._x_runs[tf][bullish].get(k)
+        return run if run is not None and run[1] >= k0 - self.s.run_slack else None
+
+    def x_reach(self, tf: str, k: int) -> float:
+        """The frame's average range over the 20 candles before candle k."""
+        return float(self._x_reach[tf][k])
+
+    def x_run_mt(self, tf: str, first: int, last: int) -> float:
+        """The mean threshold of the frame's candles first..last's bodies."""
+        c = self.x[tf]
+        lo = float(np.minimum(c.o[first:last + 1], c.c[first:last + 1]).min())
+        hi = float(np.maximum(c.o[first:last + 1], c.c[first:last + 1]).max())
+        return (lo + hi) / 2
 
     def run_mt(self, first: int, last: int) -> float:
         """The mean threshold of E candles first..last's bodies (the trader's order block)."""

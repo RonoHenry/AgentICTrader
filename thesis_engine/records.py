@@ -82,6 +82,10 @@ class Hand:
     pool_price: float
     swept: int                 # the E candle's index
     extreme: float             # the sweep's extreme so far
+    frame: str = ""            # V3: the child frame the CISD is read on
+    pool_tf: str = ""          # V3: the pool's frame
+    k0: int = -1               # V3: the child candle that holds the sweep
+    seen: int = -1             # V3: the last child candle read
 
 
 @dataclass(frozen=True)

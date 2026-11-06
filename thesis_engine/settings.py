@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 
 from algomind_dis.settings import V2 as DIS_V2, Settings as DisSettings
 
-__all__ = ["INDICES", "Settings", "V1", "V2"]
+__all__ = ["INDICES", "MINUTES", "Settings", "V1", "V2", "V3"]
 
 #: The indices' trading day opens at 18:00 New York; FX, gold and DXY at 17:00 (the trader's H4 clock, TE-D11).
 INDICES = frozenset({"US100", "US500", "US30", "GER40", "UK100"})
@@ -51,8 +51,9 @@ class Settings:
     hand_pools: str = "M5_SWINGS"
     #: The CISD candle's body, in E average ranges of the 20 candles before it (0: no test; V2: 1.5).
     displacement_body: float = 0.0
-    #: The entry: "MARKET" at the CISD close (V1) or "LIMIT_MT" at the CISD run's bodies' midpoint (V2), expiring
-    #: at the window's end or ``limit_minutes`` after it is placed, whichever is later.
+    #: The entry: "MARKET" at the CISD close (V1), "LIMIT_MT" at the CISD run's bodies' midpoint (V2), expiring
+    #: at the window's end or ``limit_minutes`` after it is placed, whichever is later, or "NEAR_MT" (V3): at market
+    #: when the close is near that midpoint, a limit at it otherwise.
     entry: str = "MARKET"
     limit_minutes: int = 60
     #: The stack gate: a level needs arrays of the side on this many level frames, or to be a D1 array (V2: 2).
@@ -60,13 +61,39 @@ class Settings:
     #: Levels of equal score and distance: "ID" (V1: by the array's content id) or "FRAME" (V2: the higher frame,
     #: then the tighter zone, then the latest formed; the same choice in a mirrored market).
     level_tiebreak: str = "ID"
+    #: The hand's frame: "" (V1, V2: the E frame) or "POOL" (V3: the child of the swept pool's frame, the largest of
+    #: ``exec_frames`` no longer than a tenth of it; Requirement 17.4).
+    exec_child: str = ""
+    exec_frames: tuple = ()
+    #: Frames whose untaken swings are pools too (V3: M30 and M15).
+    swing_pools: tuple = ()
+    #: The run into the sweep may end this many child candles before the sweep's (V3: 1).
+    run_slack: int = 0
+    #: "NEAR_MT" entries (V3) go at market when the CISD close is within this many child average ranges of the run's
+    #: MT, and as a limit at the MT otherwise.
+    near_mt: float = 0.5
 
     def day_open_hour(self, market: str) -> int:
         return 18 if market.upper() in INDICES else 17
 
+    def child(self, pool_tf: str) -> str:
+        """The execution frame a pool of ``pool_tf`` is confirmed on (V3)."""
+        cap = MINUTES[pool_tf] / 10
+        return max((tf for tf in self.exec_frames if MINUTES[tf] <= cap), key=lambda tf: MINUTES[tf])
+
+
+#: Each frame's length in minutes; the Asia range (from the trading day's open to 00:00 New York) counts as six hours.
+MINUTES = {"M1": 1, "M3": 3, "M5": 5, "M10": 10, "M15": 15, "M20": 20, "M30": 30, "H1": 60, "H4": 240, "ASIA": 360,
+           "D1": 1440}
 
 V1 = Settings()
 #: V2 (Requirement 15, registered as H-AH before it ran): the trader's pools, a displacement, a limit at the run's MT
 #: and the stack as a gate. Everything else is V1.
 V2 = replace(V1, version="v2", hand_pools="TRADER", displacement_body=1.5, entry="LIMIT_MT", stack_min_frames=2,
              level_tiebreak="FRAME")
+#: V3 (Requirement 17, registered as H-AI before it ran): the machine steps on M1, and each hand runs on its pool's
+#: child frame, from M30 down to M1; at market near the run's MT, a limit at it when price has run. Everything else
+#: is V2.
+V3 = replace(V2, version="v3", e_frame="M1", exec_child="POOL",
+             exec_frames=("M30", "M20", "M15", "M10", "M5", "M3", "M1"), swing_pools=("M30", "M15"), run_slack=1,
+             entry="NEAR_MT", near_mt=0.5)

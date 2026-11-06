@@ -175,7 +175,9 @@
   - Requirements 17-18, design.md's update (TE-D25 to TE-D30), and H-AI registered in `docs/research/SEARCH_2018_2024.md` before V3's code exists.
   - **Validates: Requirements 17, 18.1**
 
-- [ ] 422. V3 built (Requirement 17)
+- [x] 422. V3 built (Requirement 17)
+  - Built 2026-11-06: `backend/tests/test_thesis_engine_v3.py` (10). V1's and V2's journals are byte for byte the same on the walks and on gold's October 2026 month (8 fingerprints).
+  - On the walks every V3 entry is a limit: after a 1.5 average-range displacement the close sits more than half an average range from the run's MT unless the run itself is big.
   - **422a. RED:**
     - V1's and V2's journals are unchanged on the same bars and theses;
     - the execution frames from M1;

@@ -20,7 +20,7 @@ from thesis_engine.book import Book
 from thesis_engine.clock import in_window, stale, trading_day
 from thesis_engine.levels import levels, rank
 from thesis_engine.records import Hand, Intent, Level, Skip, Thesis, Transition, make_id, to_json
-from thesis_engine.settings import V1, Settings
+from thesis_engine.settings import MINUTES, V1, Settings
 from thesis_engine.thesis import end
 
 __all__ = ["STATES", "TABLE", "Ctx", "State", "on_close", "on_fill"]
@@ -181,6 +181,8 @@ def _stage(st: State, ctx: Ctx, m: int, out: _Out) -> State:
 
     if st.name != "ARMED":
         return st
+    if s.exec_child == "POOL":                                       # V3: the hand on its pool's child frame
+        return _hand_on_child(st, ctx, m, out)
     hand = st.hand
     if hand is None:
         if not ctx.window[m] or ctx.stale[m]:
@@ -228,14 +230,85 @@ def _sweep(st: State, ctx: Ctx, m: int, out: _Out) -> Optional[Hand]:
     return Hand(name, float(price), m, float(e.l[m] if bull else e.h[m]))
 
 
-def _order(st: State, ctx: Ctx, m: int, hand: Hand, run: Tuple[int, int], out: _Out) -> State:
-    """The hand completed (Requirement 8.4): an order, or a skip with its reason (Requirement 9)."""
-    book, s, th = ctx.book, ctx.s, st.thesis
+def _hand_on_child(st: State, ctx: Ctx, m: int, out: _Out) -> State:
+    """V3 (Requirement 17): the hand waits on its pool's child frame and reads each child candle at its close; a
+    sweep of a larger frame's pool takes a waiting hand over, the extreme carried."""
+    book, s, bull = ctx.book, ctx.s, st.thesis.bullish
     e = book.e
-    t, spread, bull = int(e.end[m]), ctx.typical_spread, th.bullish
+    hand = st.hand
+    if hand is None and (not ctx.window[m] or ctx.stale[m]):
+        return out.move(st, "AT_LEVEL", "the window closed without a hand" if not ctx.window[m]
+                        else "the data went stale", s.e_frame)
+    if hand is None or (ctx.window[m] and not ctx.stale[m]):
+        taken = _pool_swept(st, ctx, m, out, hand)
+        if taken is not None:
+            hand = taken
+    if hand is None:
+        return st
+    hand = replace(hand, extreme=min(hand.extreme, float(e.l[m])) if bull else max(hand.extreme, float(e.h[m])))
+    x = book.x[hand.frame]
+    for k in range(hand.seen + 1, book.x_closed(hand.frame, int(e.end[m]))):
+        hand = replace(hand, seen=k)
+        run = book.x_cisd(hand.frame, k, bull, hand.k0)
+        if run is not None and s.displacement_body > 0:
+            reach, body = book.x_reach(hand.frame, k), abs(float(x.c[k]) - float(x.o[k]))
+            if not body >= s.displacement_body * reach:
+                out.note("no_displacement", pool=hand.pool, frame=hand.frame, body=body, reach=reach)
+                run = None
+        if run is not None and k - hand.k0 <= s.hand_candles:
+            return _order(st, ctx, k, hand, run, out, x=x, tf=hand.frame, t=int(e.end[m]))
+        if k - hand.k0 >= s.hand_candles:
+            out.note("hand_failed", why=f"no CISD within {s.hand_candles} {hand.frame} candles of the sweep",
+                     pool=hand.pool, frame=hand.frame)
+            st = replace(st, hand=None)
+            if not ctx.window[m]:
+                return out.move(st, "AT_LEVEL", "the window closed without a hand", s.e_frame)
+            return st
+    return replace(st, hand=hand)
+
+
+def _pool_swept(st: State, ctx: Ctx, m: int, out: _Out, hand: Optional[Hand]) -> Optional[Hand]:
+    """V3: the pools at the level that E candle m takes (Requirement 17.3). The largest frame's, then the deepest,
+    starts a hand on its child frame, or takes over a waiting hand of a smaller frame's pool."""
+    book, s, lv, bull = ctx.book, ctx.s, st.level, st.thesis.bullish
+    e = book.e
+    band = s.pool_band_adr * book.adr(int(e.end[m]))
+    lo, hi = (lv.low - band, lv.high) if bull else (lv.low, lv.high + band)
+    pools = [(name, p, tf) for name, p, tf in book.pools_taken(m, bull) if lo <= p <= hi]
+    if hand is not None:
+        pools = [x for x in pools if MINUTES[x[2]] > MINUTES[hand.pool_tf]]
+    if not pools:
+        return None
+    big = max(MINUTES[tf] for _, _, tf in pools)
+    pools = [x for x in pools if MINUTES[x[2]] == big]
+    name, price, tf = min(pools, key=lambda x: x[1]) if bull else max(pools, key=lambda x: x[1])
+    frame = s.child(tf)
+    k0 = book.x_at(frame, m)
+    bar = float(e.l[m] if bull else e.h[m])
+    extreme = bar if hand is None else (min(hand.extreme, bar) if bull else max(hand.extreme, bar))
+    out.note("sweep", pool=name, price=price, level_id=lv.array_id, pool_tf=tf, frame=frame,
+             took_over=hand.pool if hand is not None else None)
+    return Hand(name, float(price), m, extreme, frame=frame, pool_tf=tf, k0=k0, seen=k0 - 1)
+
+
+def _order(st: State, ctx: Ctx, m: int, hand: Hand, run: Tuple[int, int], out: _Out, x=None, tf: str = "",
+           t: Optional[int] = None) -> State:
+    """The hand completed (Requirement 8.4): an order, or a skip with its reason (Requirement 9). V3 passes the child
+    frame's candles ``x`` (m indexes them) and the step's time."""
+    book, s, th = ctx.book, ctx.s, st.thesis
+    e = book.e if x is None else x
+    tf = tf or s.e_frame
+    t = int(e.end[m]) if t is None else t
+    spread, bull = ctx.typical_spread, th.bullish
     close = float(e.c[m])
     limit = s.entry == "LIMIT_MT"
-    if limit:                                                       # V2: a limit at the run's mean threshold
+    away = None
+    if s.entry == "NEAR_MT":                                        # V3: at market near the MT, else a limit at it
+        mt, reach = book.x_run_mt(tf, *run), book.x_reach(tf, m)
+        away = abs(close - mt) / reach if reach > 0 else float("inf")
+        limit = not away <= s.near_mt
+        entry = mt if limit else (close + spread if bull else close)
+    elif limit:                                                     # V2: a limit at the run's mean threshold
         entry = book.run_mt(*run)
     else:
         entry = close + spread if bull else close                   # a buy pays the ask; a sell takes the bid
@@ -244,7 +317,7 @@ def _order(st: State, ctx: Ctx, m: int, hand: Hand, run: Tuple[int, int], out: _
     reward = th.draw - entry if bull else entry - th.draw
     intent = Intent(ctx.market, th.id, st.level.array_id, th.side, "LIMIT" if limit else "MARKET", entry, stop,
                     th.draw, t)
-    why = (f"{s.e_frame} took {hand.pool}, then closed {_p(close)} {'above' if bull else 'below'} the run's open "
+    why = (f"{tf} took {hand.pool}, then closed {_p(close)} {'above' if bull else 'below'} the run's open "
            f"{_p(float(e.o[run[0]]))} (CISD)")
     skip = None
     if risk <= 0 or risk < s.min_stop_spreads * spread:
@@ -261,6 +334,10 @@ def _order(st: State, ctx: Ctx, m: int, hand: Hand, run: Tuple[int, int], out: _
     order_id = make_id(ctx.market, t, th.id, "order")
     out.intents.append(intent)
     how = f"limit at the run's MT {_p(entry)}" if limit else "at market"
+    if away is not None:                                            # V3: how far the close ran from the MT
+        how += f" ({away:.1f} {tf} average ranges from the run's MT)"
+        out.note("hand", pool=hand.pool, pool_tf=hand.pool_tf, frame=tf, k=m, k0=hand.k0,
+                 kind="LIMIT" if limit else "MARKET", away=away, order_id=order_id)
     return out.move(st, "IN_TRADE", f"{why}: {'buy' if bull else 'sell'} {how}, stop {_p(stop)}, "
                     f"target {_p(th.draw)} ({reward / risk:.1f}R)", s.e_frame, hand=None, order_id=order_id)
 

@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from liquidity_engine.context.frame_state import Candles
-from thesis_engine.settings import V1, Settings
+from thesis_engine.settings import MINUTES, V1, Settings
 
 __all__ = ["FRAMES", "NS", "NY", "clean", "frames", "stale", "trading_day", "in_window"]
 
@@ -84,7 +84,8 @@ def _aggregate(tf: str, key: np.ndarray, end: np.ndarray, o, h, l, c, last_close
 
 
 def frames(m1: pd.DataFrame, market: str, s: Settings = V1) -> Dict[str, Candles]:
-    """W1, D1, H4, H1 and M5 from clean M1 bars (``time`` UTC, the bar's open)."""
+    """W1, D1, H4, H1 and M5 from clean M1 bars (``time`` UTC, the bar's open), and the clock frames the settings
+    execute or read swings on (V3: M30, M20, M15, M10, M3 and M1)."""
     t = m1["time"].to_numpy("datetime64[ns]").astype(np.int64)
     o, h, l, c = (m1[k].to_numpy(dtype=float) for k in ("open", "high", "low", "close"))
     hour = s.day_open_hour(market)
@@ -115,7 +116,11 @@ def frames(m1: pd.DataFrame, market: str, s: Settings = V1) -> Dict[str, Candles
     w1_open = _utc(monday - pd.Timedelta(days=1) + pd.Timedelta(hours=hour))
     w1_end = _utc(monday + pd.Timedelta(days=4) + pd.Timedelta(hours=hour))
     out["W1"] = _aggregate("W1", w1_open, w1_end, o, h, l, c, last_close)
-    return {tf: out[tf] for tf in FRAMES}
+    extra = sorted({s.e_frame, *s.exec_frames, *s.swing_pools} - set(FRAMES), key=lambda tf: -MINUTES[tf])
+    for tf in extra:                                               # on the clock, like M5 and H1
+        start = t - t % (MINUTES[tf] * MINUTE)
+        out[tf] = _aggregate(tf, start, start + MINUTES[tf] * MINUTE, o, h, l, c, last_close)
+    return {tf: out[tf] for tf in (*FRAMES, *extra)}
 
 
 def stale(e: Candles, market: str, s: Settings = V1) -> np.ndarray:
