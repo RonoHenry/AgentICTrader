@@ -157,10 +157,14 @@
   - **419b. GREEN:** `settings.V2` and the machine, the levels and the replay reading it.
   - **Validates: Requirement 15.1-15.7**
 
-- [ ] 420. H-AH run on development (Requirement 16)
+- [x] 420. H-AH run on development (Requirement 16)
   - The four arms with V2, V1 beside it, the companion with the partial.
   - The report goes to `docs/research/THESIS_ENGINE_HAH.md`, with a line in the search log.
   - If it passes: the test window's export and one run.
+  - Run 2026-11-06 (runner 3318f67): **H-AH FAILS.**
+    - V2 with the week's real side: +0.574R a trade [−0.352, +1.655] on 67 trades, positive in 4 of 8 markets.
+    - Weekly break-even 71.2%, against V1's 58.3%.
+    - V1, rerun, matches H-AG exactly. V1 stays the machine, and the test window stays closed.
   - **Validates: Requirement 16.2-16.5**
 
 ## Task Dependency Graph
