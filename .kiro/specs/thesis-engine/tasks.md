@@ -204,6 +204,38 @@
   - The layer's version menu gains V3. The card names each order's frame and whether it went at market or as a limit.
   - **Validates: Requirement 12**
 
+- [x] 425. V4 written up and H-AJ registered (Requirements 19, 20)
+  - The trader (2026-11-06):
+    - "any time frame 5mins and below are just for entries and refining entries that we find on the M30 and M15";
+    - the setup frame by the pool's size;
+    - the entry on an M3 or M1 CISD inside the setup's order block;
+    - the stop beyond the setup's sweep;
+    - judged on 2025-26.
+  - Requirements 19-20, design.md's update (TE-D31 to TE-D35), and H-AJ registered in `docs/research/SEARCH_2018_2024.md` before V4's code exists.
+  - **Validates: Requirements 19, 20.1**
+
+- [ ] 426. V4 built (Requirement 19)
+  - **426a. RED:**
+    - V1's, V2's and V3's journals are unchanged on the same bars and theses;
+    - each pool's setup frame, with no M30 or M15 swing pools;
+    - the setup places no order;
+    - the pull-back into the order block and the refining CISD, at market;
+    - the stop at the sweep's extreme;
+    - failure beyond the extreme, and expiry;
+    - mirrored bars give the mirrored journal.
+  - **426b. GREEN:** `settings.V4`, the clock's and the book's refining frames, and the machine's setup and refinement.
+  - **Validates: Requirement 19.1-19.7**
+
+- [ ] 427. H-AJ run (Requirement 20)
+  - V4 and V1 on 2025-26, which is judged; V4 on 2021-22, which is reported.
+  - The report goes to `docs/research/THESIS_ENGINE_HAJ.md`, with a line in the search log.
+  - If it passes: the test window's export and one run.
+  - **Validates: Requirement 20.2-20.5**
+
+- [ ] 428. V4 on Noculus beside V3, V2 and V1
+  - The layer's menu gains V4. The chart shows each setup's order block, the pull-back and the refined entry.
+  - **Validates: Requirement 12**
+
 ## Task Dependency Graph
 
 Dependencies are denoted as `prerequisite → dependent`. The trader's answers to design.md's decisions are needed by 412 (the machine) and close at 414 (V1 frozen).

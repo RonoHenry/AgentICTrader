@@ -422,3 +422,74 @@ The trader (2026-11-06): "the engine has to be dynamic then, we can execute anyw
    - V1, V2 and V3 side by side;
    - the funnel by the pool's frame and the execution frame, with market and limit entries, and limits filled and expired;
    - each market, and buys and sells apart.
+
+
+## Update 2026-11-06b: V4, setups on M30 and M15, entries refined below
+
+**Why.** V3 failed H-AI. Read after the run:
+- the hands confirmed on M30 and M20 made +1.33R a trade with the right side;
+- every hand confirmed on M5 (from an H1 sweep) lost, whichever side it was given (−0.9 to −1.0R a trade on 109 trades);
+- every V3 entry was a limit, and the wrong side's limits filled more often than the right side's (66% against 44%).
+
+The trader (2026-11-06): "The fact that time is fractal does not mean that we can derive bias from the lower time frames. I think we should adjust this so that any time frame 5mins and below are just for entries and refining entries that we find on the M30 and M15. Sweeps can happen on the M15 and above, we can then utilize the m5 and below for refined entries."
+
+They then chose:
+- the setup frame by the pool's size;
+- the entry on a lower frame's CISD inside the setup's order block;
+- the stop beyond the setup's sweep;
+- a test judged on a year the engine has never run on.
+
+### Requirement 19: V4, setups on M30 and M15, entries refined on M3 and M1
+
+**User Story:** As the trader, I want the sweep and its CISD read only on M30 and M15, and M5 and below used only to refine the entry inside that setup, so that a lower frame times the entry but never decides that the manipulation is over.
+
+#### Acceptance Criteria
+
+1. V4 SHALL keep every V3 rule except those below. V1, V2 and V3 SHALL run unchanged: their journals on the same bars and theses stay identical.
+2. **The pools** are V2's: the previous D1, H4 and H1 extremes, the trading day's Asia range and untaken H1 swings. M30 and M15 swings are not pools.
+3. **The setup frame follows the pool's size:**
+   - the previous D1 extreme, the Asia range and the previous H4 → M30;
+   - the previous H1 extreme and H1 swings → M15.
+
+   A larger pool's sweep takes over a waiting hand, as in V3.
+4. **The setup** is V3's CISD on the setup frame:
+   - the close goes through the open of the run into the sweep;
+   - within 12 setup candles;
+   - with a body of at least 1.5 of that frame's average ranges.
+
+   It places no order. Its order block is the bodies of the CISD's run.
+5. **The refined entry:**
+   - after the setup, the machine waits for price to trade back into the order block;
+   - then the first CISD back the thesis's way on the refining frame (M3 for an M30 setup, M1 for an M15 setup) enters at market at its close;
+   - that CISD's run must be the run into the pull-back: it ends at the candle that touched the order block or the one before.
+6. **The stop is beyond the setup's sweep extreme.**
+   - If price trades beyond it before the entry, the setup fails.
+   - If there is no entry by the window's end, or 60 minutes after the setup if that is later, the setup expires. It never waits past the thesis's end.
+7. **Everything else is V3's:**
+   - the M1 step;
+   - the levels and the stack gate;
+   - the risk rules (a stop of at least 10 typical spreads, at least 2R to the draw);
+   - the budget, the window, the exits and the ties.
+
+### Requirement 20: H-AJ, V4's test on a year no version was shaped on
+
+**User Story:** As the trader, I want V4 judged on a year none of the versions was built from, so that a pass means more than a fit to 2021-22.
+
+#### Acceptance Criteria
+
+1. H-AJ SHALL be registered in `docs/research/SEARCH_2018_2024.md` with V4's settings before V4's code exists.
+2. **The judged year:**
+   - the eight traded focus markets in `focus-2025-2026h1`;
+   - its bars from 1 January 2025, so nothing before 2025 is read;
+   - theses from the week of 6 July 2025 to the last complete week, which closes on 3 July 2026.
+
+   The arms are ORACLE, MIRROR, RANDOM and W1TREND, each completed by the nearest-pool rule. V4 and V1 both run.
+3. **Pass** (all three, on that year):
+   - V4's ORACLE net R a trade is above zero, and so is its 95% interval (resampling market-weeks);
+   - V4's ORACLE is positive in at least 6 of the 8 markets;
+   - V4's break-even weekly hit rate counted a week is below V1's on the same year.
+4. **Not a try:** the sides are hindsight. A pass gets one run on the test window (2023-2024), exported for it then. Nothing of 2023-2024 is read before.
+5. **Reported beside it, not judged:**
+   - V4 on the development window (H-AG's arms, data and theses);
+   - the funnel: setups, pull-backs, refined entries, failures and expiries, by frame;
+   - each market, and buys and sells apart.

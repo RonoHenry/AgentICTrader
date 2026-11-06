@@ -308,3 +308,30 @@ V3 is `thesis_engine.settings.V3`: a copy of V2 with the settings below. The mac
 - **TE-D28. The entry follows the trader's words.** It goes at market when price is around the entry level and as a limit when price has traded away from it. "Around" is half the child frame's average range. The number is mine; theirs is "around".
 - **TE-D29. M1 is the step.** Every child candle is read at its own close, and pools are taken at the minute.
 - **TE-D30. The bias.** V3 follows V2's development results and my review of five weeks on Noculus, four of them chosen because V2 traded them. H-AI's development run favours V3. Only the test window can confirm it.
+
+
+## Update 2026-11-06b: V4 (Requirements 19, 20)
+
+V4 is `thesis_engine.settings.V4`: a copy of V3 with the settings below. V1, V2 and V3 run exactly as they did.
+
+| Setting | V3 | V4 |
+|---|---|---|
+| `exec_frames` | `("M30", "M20", "M15", "M10", "M5", "M3", "M1")` | `("M30", "M15")`: the setup frames |
+| `child_map` | `()` (a tenth of the pool's frame) | D1, the Asia range and H4 → M30; H1 → M15 |
+| `swing_pools` | `("M30", "M15")` | `()` |
+| `entry` | `"NEAR_MT"` | `"REFINED"`: market on the refining frame's CISD inside the order block |
+| `refine` | `()` | M30 → M3, M15 → M1 |
+
+- **TE-D31. Setups live on M30 and M15 only.**
+  - This is the trader's rule of 2026-11-06: the lower frames are for entries and their refinement, never for deciding that the manipulation is over.
+  - H-AI agreed after the run: every H1 → M5 hand lost, on either side.
+  - Answering the trader's question that day: the engine never takes its side from M5. The side is the thesis's. "Either side" in H-AI was the MIRROR control.
+- **TE-D32. The setup frame by the pool's size** (the trader's choice): the previous day, the Asia range and the previous H4 → M30; the previous H1 and H1 swings → M15.
+- **TE-D33. The refined entry** (the trader's choice): the pull-back into the setup's order block, then an M3 or M1 CISD back the thesis's way, at market.
+  - It fills only once price turns the thesis's way. That answers H-AI's adverse fills.
+  - M3 for M30 and M1 for M15 are the trader's Model A sets, (H4, M15/M30, M3/M1).
+- **TE-D34. The stop is beyond the setup's sweep** (the trader's choice). The M5 sweep's extreme lost on every trade in V3. The refined entry is where the R comes from.
+- **TE-D35. The year that judges** is July 2025 to June 2026 in `focus-2025-2026h1`.
+  - No version of the Thesis Engine has run on it. The five weeks I viewed on Noculus in 2025 come before it.
+  - The bars are read from 1 January 2025, so nothing of 2023-2024 is read, and the 2026-07-07 hold-out of the old engine's study is after it.
+  - 2021-22 is reported but no longer judges. V4 was shaped by H-AI's results there.
