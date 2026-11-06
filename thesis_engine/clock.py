@@ -22,7 +22,7 @@ import pandas as pd
 from liquidity_engine.context.frame_state import Candles
 from thesis_engine.settings import MINUTES, V1, Settings
 
-__all__ = ["FRAMES", "NS", "NY", "clean", "frames", "stale", "trading_day", "in_window"]
+__all__ = ["FRAMES", "NS", "NY", "clean", "frames", "limit_expiry", "stale", "trading_day", "in_window"]
 
 NY = "America/New_York"
 NS = 1_000_000_000
@@ -116,11 +116,20 @@ def frames(m1: pd.DataFrame, market: str, s: Settings = V1) -> Dict[str, Candles
     w1_open = _utc(monday - pd.Timedelta(days=1) + pd.Timedelta(hours=hour))
     w1_end = _utc(monday + pd.Timedelta(days=4) + pd.Timedelta(hours=hour))
     out["W1"] = _aggregate("W1", w1_open, w1_end, o, h, l, c, last_close)
-    extra = sorted({s.e_frame, *s.exec_frames, *s.swing_pools} - set(FRAMES), key=lambda tf: -MINUTES[tf])
+    extra = sorted({s.e_frame, *s.exec_frames, *s.swing_pools, *(r for _, r in s.refine)} - set(FRAMES),
+                   key=lambda tf: -MINUTES[tf])
     for tf in extra:                                               # on the clock, like M5 and H1
         start = t - t % (MINUTES[tf] * MINUTE)
         out[tf] = _aggregate(tf, start, start + MINUTES[tf] * MINUTE, o, h, l, c, last_close)
     return {tf: out[tf] for tf in (*FRAMES, *extra)}
+
+
+def limit_expiry(at: int, until: int, s: Settings = V1) -> int:
+    """When an order or a setup placed at ``at`` stops waiting (Requirement 15.4): the window's end (New York), or
+    ``limit_minutes`` after ``at``, whichever is later; never after ``until``, the thesis's end."""
+    local = pd.Timestamp(at, tz="UTC").tz_convert(NY)
+    end = local.normalize() + pd.Timedelta(hours=s.window[1])
+    return min(max(int(end.tz_convert("UTC").value), at + s.limit_minutes * MINUTE), until)
 
 
 def stale(e: Candles, market: str, s: Settings = V1) -> np.ndarray:

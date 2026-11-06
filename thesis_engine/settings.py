@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 
 from algomind_dis.settings import V2 as DIS_V2, Settings as DisSettings
 
-__all__ = ["INDICES", "MINUTES", "Settings", "V1", "V2", "V3"]
+__all__ = ["INDICES", "MINUTES", "Settings", "V1", "V2", "V3", "V4"]
 
 #: The indices' trading day opens at 18:00 New York; FX, gold and DXY at 17:00 (the trader's H4 clock, TE-D11).
 INDICES = frozenset({"US100", "US500", "US30", "GER40", "UK100"})
@@ -72,12 +72,19 @@ class Settings:
     #: "NEAR_MT" entries (V3) go at market when the CISD close is within this many child average ranges of the run's
     #: MT, and as a limit at the MT otherwise.
     near_mt: float = 0.5
+    #: The setup frame of each pool's frame, as pairs (V4); empty: the largest execution frame no longer than a tenth
+    #: of the pool's frame (V3).
+    child_map: tuple = ()
+    #: "REFINED" entries (V4): each setup frame's refining frame, whose CISD inside the setup's order block enters.
+    refine: tuple = ()
 
     def day_open_hour(self, market: str) -> int:
         return 18 if market.upper() in INDICES else 17
 
     def child(self, pool_tf: str) -> str:
-        """The execution frame a pool of ``pool_tf`` is confirmed on (V3)."""
+        """The execution frame a pool of ``pool_tf`` is confirmed on (V3, V4)."""
+        if self.child_map:
+            return dict(self.child_map)[pool_tf]
         cap = MINUTES[pool_tf] / 10
         return max((tf for tf in self.exec_frames if MINUTES[tf] <= cap), key=lambda tf: MINUTES[tf])
 
@@ -97,3 +104,9 @@ V2 = replace(V1, version="v2", hand_pools="TRADER", displacement_body=1.5, entry
 V3 = replace(V2, version="v3", e_frame="M1", exec_child="POOL",
              exec_frames=("M30", "M20", "M15", "M10", "M5", "M3", "M1"), swing_pools=("M30", "M15"), run_slack=1,
              entry="NEAR_MT", near_mt=0.5)
+#: V4 (Requirement 19, registered as H-AJ before it ran): setups only on M30 (the previous day, the Asia range, the
+#: previous H4) and M15 (the previous H1, H1 swings); the entry at market on an M3 or M1 CISD once price is back in
+#: the setup's order block, the stop at the setup's sweep. Everything else is V3.
+V4 = replace(V3, version="v4", exec_frames=("M30", "M15"),
+             child_map=(("D1", "M30"), ("ASIA", "M30"), ("H4", "M30"), ("H1", "M15")), swing_pools=(),
+             entry="REFINED", refine=(("M30", "M3"), ("M15", "M1")))

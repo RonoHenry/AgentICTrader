@@ -214,7 +214,9 @@
   - Requirements 19-20, design.md's update (TE-D31 to TE-D35), and H-AJ registered in `docs/research/SEARCH_2018_2024.md` before V4's code exists.
   - **Validates: Requirements 19, 20.1**
 
-- [ ] 426. V4 built (Requirement 19)
+- [x] 426. V4 built (Requirement 19)
+  - Built 2026-11-06: `backend/tests/test_thesis_engine_v4.py` (8). V1's, V2's and V3's journals are byte for byte the same (12 fingerprints: walks and gold's October 2026 month).
+  - `clock.limit_expiry` is now shared by the replay's limits and V4's setups.
   - **426a. RED:**
     - V1's, V2's and V3's journals are unchanged on the same bars and theses;
     - each pool's setup frame, with no M30 or M15 swing pools;

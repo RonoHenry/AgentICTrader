@@ -181,7 +181,7 @@ class Book:
         self._x_reach: Dict[str, np.ndarray] = {}
         self._swing_takers: Dict[str, Dict[bool, Dict[int, List[float]]]] = {}
         if s.exec_child == "POOL":
-            for tf in s.exec_frames:
+            for tf in dict.fromkeys((*s.exec_frames, *(r for _, r in s.refine))):     # V4: the refining frames too
                 c = self.x[tf] = frames[tf]
                 self._x_runs[tf] = self._runs if tf == s.e_frame else {
                     bullish: {through: (first, last) for first, last, through in runs(c.o, c.c, bullish)}

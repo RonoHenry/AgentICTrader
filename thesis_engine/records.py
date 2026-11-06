@@ -86,6 +86,12 @@ class Hand:
     pool_tf: str = ""          # V3: the pool's frame
     k0: int = -1               # V3: the child candle that holds the sweep
     seen: int = -1             # V3: the last child candle read
+    rframe: str = ""           # V4: once the setup is confirmed, the refining frame
+    zone_lo: float = 0.0       # V4: the setup's order block (its CISD run's bodies)
+    zone_hi: float = 0.0
+    until: int = 0             # V4: when the setup stops waiting for its entry
+    touched: int = -1          # V4: the refining candle in which price came back into the order block
+    rseen: int = -1            # V4: the last refining candle read
 
 
 @dataclass(frozen=True)

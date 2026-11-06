@@ -26,7 +26,7 @@ from agent.brokers.fill_model import Bar, FillModel, SimOrder
 from liquidity_engine.context.frame_state import Candles
 from thesis_engine import VERSION
 from thesis_engine.book import Book
-from thesis_engine.clock import clean, frames
+from thesis_engine.clock import clean, frames, limit_expiry
 from thesis_engine.machine import Ctx, State, on_close, on_fill
 from thesis_engine.records import Thesis, to_json
 from thesis_engine.settings import V1, Settings
@@ -114,11 +114,8 @@ def _close_at(order: SimOrder, bar: Bar, reason: str) -> None:
 
 
 def _limit_expiry(at: int, until: int, s: Settings) -> int:
-    """V2's limit expiry (Requirement 15.4): the window's end (New York), or ``limit_minutes`` after it is placed,
-    whichever is later; never after the thesis's ``until``."""
-    local = pd.Timestamp(at, tz="UTC").tz_convert("America/New_York")
-    end = local.normalize() + pd.Timedelta(hours=s.window[1])
-    return min(max(int(end.tz_convert("UTC").value), at + s.limit_minutes * 60 * 10**9), until)
+    """V2's limit expiry (Requirement 15.4): ``clock.limit_expiry``."""
+    return limit_expiry(at, until, s)
 
 
 def _journal_step(j: Journal, out) -> None:
