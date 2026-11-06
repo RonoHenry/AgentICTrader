@@ -65,6 +65,7 @@ from algo_research.chain_view import ChainView, trading_days
 from algo_research.search_crt import m15_from_m1, session_trades
 from algo_research.search_crt_context import WARMUP as CRT_WARMUP
 from algo_research.search_crt_context import Context as CrtContext
+from algo_research.sweep_m1 import session_trades as sweep_trades
 from algo_research.config import load_research_config, trading_date_open
 from algo_research.fractal_poi import FractalPOI, FractalSettings, partners_for, warmup_days
 from algo_research.fractal_poi import defaults as fractal_defaults
@@ -78,6 +79,7 @@ from algo_research.snapshot import SNAPSHOTS_DIR
 from algo_research.atlas.arrays import fvgs, order_blocks
 from algo_research.trend import SIGNALS as TREND_SIGNALS, call_outcome, trend_signals
 from liquidity_engine import LiquidityMappingEngine
+from liquidity_engine.context.levels import levels as engine_levels
 from liquidity_engine.grader.sequence import SetupSequenceDetector, _EntryWindow
 from liquidity_engine.grader.setup_grader import _ENTRY_ELIGIBLE_TIMEFRAMES
 from liquidity_engine.models import BiasDirection, PDArray, SetupSequence, Timeframe
@@ -102,6 +104,8 @@ KEPT_SESSIONS = 3
 PICKS = REPO_ROOT / "data" / "journal" / "watch_picks.jsonl"
 _CALENDAR = StrategyCalendar()
 _ARRAYS_SHOWN, _POOLS_SHOWN, _CANDIDATES_SHOWN = 80, 50, 30
+#: The levels drawn on each side: the strongest price (or the setup's wick) is in, and the next ones beyond price.
+_LEVELS_IN, _LEVELS_AHEAD = 2, 3
 #: Model A on the chart (context-engine Requirement 17): the trader's frame sets, and how long an ended instance
 #: that reached the manipulation stays drawn (one F candle).
 MODEL_A_SETS = ("model_d1", "model_h4")
@@ -131,6 +135,23 @@ TREND_CALLS = {"BEARISH": -1, "BULLISH": 1, "UNCLEAR": 0}
 #: frame's dealing range needs, and how many D1 candles before the session's first are shown.
 CHAIN_WARMUP_DAYS = 550
 CHAIN_SHOWN_BEFORE = 10
+#: AlgoMindDIS (algomind-dis Requirement 16.3): the D1 history its monthly and weekly ranges need (about four
+#: years), and the D1 closes shown before the session's first.
+DIS_WARMUP_DAYS = 1500
+DIS_SHOWN_BEFORE = 20
+#: The Thesis Engine (thesis-engine Requirement 12): the M1 history its D1 and W1 ranges and its ADR need before the
+#: session's first day, how long before that the layer shows, and the sources it runs on. The research sources' sides
+#: are hindsight.
+THESIS_WARMUP_DAYS = 150
+#: The week the session ends in is read to its close when the bars hold it, so the research sides (the week's real
+#: side, last week's trend) exist for its last week. A read at any clock still sees only the candles closed by then,
+#: and the layer never draws past the session's end.
+THESIS_AFTER_DAYS = 7
+THESIS_SHOWN_BEFORE = 7 * 86400
+THESIS_SOURCES = ("SCENARIO", "CALL", "ORACLE", "MIRROR", "RANDOM", "W1TREND")
+#: The machine's versions (thesis-engine Requirements 15, 17, 19): V4, setups on M30 and M15 with the entry refined
+#: on M3 or M1, unless the page asks for V3, V2 or V1.
+THESIS_VERSIONS = ("v4", "v3", "v2", "v1")
 
 
 class SnapshotSource:
@@ -256,8 +277,18 @@ class WatchSession:
         self._trend_lock = threading.Lock()
         self._chain: Optional[tuple] = None                     # (trading day, days, reader, reads by day)
         self._chain_lock = threading.Lock()
+        self._dis: Optional[tuple] = None                       # (trading day, AlgoMindDIS's chart view, history)
+        self._dis_lock = threading.Lock()
+        self._thesis: dict = {}               # by step frame: (session end, the Thesis Engine's market, runs)
+        self._thesis_lock = threading.Lock()
+        self.spec = None                                        # the instrument's spec, once prepared
+        #: The broker's terminal, when the server has one: ``(instrument, tf, start, end) -> bars``. AlgoMindDIS
+        #: reads its years of H1 for the monthly and weekly frames the session's own M1 is too short for.
+        self.history: Optional[Callable] = None
         self._crt: Optional[tuple[int, list[dict]]] = None      # (M1 bars read, H-N's trades on them)
         self._crt_lock = threading.Lock()
+        self._sweep: Optional[tuple[int, list[dict]]] = None    # (M1 bars read, the M1 sweep model's trades on them)
+        self._sweep_lock = threading.Lock()
 
     # ── preparing ───────────────────────────────────────────────────────────
     def prepare(self) -> None:
@@ -331,7 +362,7 @@ class WatchSession:
                            "close": [b.close for b in data.m1]})
         self.bars = ReplayBars(m1, self.instrument, PriceBasis(instruments=()))   # the engine's own prices, unflattened
         # What a pseudo trade is priced on (Requirement 19.2): the same M1 and costs the races use, in wall seconds.
-        spec = specs[self.instrument]
+        spec = self.spec = specs[self.instrument]
         self.frame = frame_from_data(data, spec.default_spread, spec.stop_slippage)
         self.costs = RaceCosts.from_spec(spec, specs.account_ccy)
         self.path = {"time": np.asarray(wall_seconds(self.frame.m1["time"]), dtype=np.int64),
@@ -670,8 +701,24 @@ class WatchSession:
                            "In a killzone": g.time_window_aligned}}
         bias = {tf: {"direction": b.direction.value, "open": b.reference_open} for tf, b in lm.htf_bias.items()
                 if tf in ("W1", "D1", "H4", "H1")}
+        # Where the engine waits (context-engine Requirement 34), as the gate reads it at this close: the levels price
+        # or the setup's protected wick is in, and the next ones beyond price on each side.
+        found = engine_levels(lm.pd_arrays, view, t, lm.liquidity_levels) if price is not None else []
+        wick = seq.protected_swing.wick if seq is not None else None
+        out_levels, inside = [], {}
+        for side, below in ((BiasDirection.BULLISH, True), (BiasDirection.BEARISH, False)):
+            mine = [x for x in found if x.side == side]
+            holding = [x for x in mine if x.holds(price) or (wick is not None and seq.direction == side and x.holds(wick))]
+            inside[side.value] = sum(1 for x in mine if x.holds(price))
+            here = sorted(holding, key=lambda x: (-x.score, x.high - x.low))[:_LEVELS_IN]
+            ahead = sorted((x for x in mine if x not in holding and (x.high < price if below else x.low > price)),
+                           key=lambda x: abs(price - (x.high if below else x.low)))[:_LEVELS_AHEAD]
+            out_levels += [{"side": x.side.value, "low": x.low, "high": x.high, "arrays": list(x.arrays),
+                            "discount": list(x.discount), "pools": list(x.pools), "score": x.score,
+                            "formed": wall(x.formed_at), "here": x in here} for x in here + ahead]
         return {"price": price, "arrays": out_arrays, "pools": pools[:_POOLS_SHOWN], "profile": profile, "sequence": sequence,
-                "grade": grade, "bias": bias, "candidates": self._candidates(seen, seq, t)}
+                "grade": grade, "bias": bias, "levels": out_levels, "inside": inside,
+                "candidates": self._candidates(seen, seq, t)}
 
     @staticmethod
     def _candidates(seen, chosen_sequence, t: datetime) -> dict:
@@ -884,6 +931,163 @@ class WatchSession:
             rows.append(row)
         return {"withheld": False, "smt": "abstains: one market on this chart", "rows": rows}
 
+    # ── AlgoMindDIS v1 (algomind-dis, 2026-11-03) ───────────────────────────────
+    def _dis_daily(self) -> tuple[pd.DataFrame, str]:
+        """The trading days AlgoMindDIS reads, closed by the session's end: the broker's H1 from the terminal for
+        about four years when the server has one (the same broker as the chart's candles; context, never scored),
+        else the session's own M1, which may hold only months."""
+        from algomind_dis.frames import ny_daily
+        if self.history is not None:
+            try:
+                h1 = self.history(self.instrument, Timeframe.H1,
+                                  (self.start - pd.Timedelta(days=DIS_WARMUP_DAYS)).to_pydatetime(),
+                                  self.end.to_pydatetime())
+                if h1 is not None and len(h1):
+                    h1 = h1[pd.to_datetime(h1["time"], utc=True) + pd.Timedelta(hours=1) <= self.end]
+                    days = ny_daily(h1)
+                    return days, "the broker's H1 from the terminal"
+            except Exception:                                   # the terminal closed: the session's own bars
+                pass
+        size, end = seconds_of("D1"), wall(self.end)
+        bars = ReplayBars(self._m1(self.instrument, DIS_WARMUP_DAYS), self.instrument, PriceBasis(instruments=()))
+        rows = bars.as_of("D1", from_wall(end), since=None)
+        rows = rows[np.asarray(rows["time"], dtype=np.int64) + size <= end].reset_index(drop=True)
+        days = trading_days(rows)
+        return (pd.DataFrame({"date": days["time"].dt.tz_localize(None),
+                              **{k: days[k].to_numpy(float) for k in ("open", "high", "low", "close")}}),
+                "the session's M1")
+
+    def _dis_view(self):
+        """AlgoMindDIS v1's timeline over every D1 candle closed by the session's end, from about four years of
+        warm-up (the monthly frame's ranges need them), and its reads at each close. Rebuilt when a new trading day
+        starts; a close reads only the candles closed by it."""
+        from algomind_dis.frames import from_daily
+        from algomind_dis.settings import V2
+        from algomind_dis.view import ChartView
+        end, size = wall(self.end), seconds_of("D1")
+        day = (end + 7 * 3600) // size
+        with self._dis_lock:
+            if self._dis is None or self._dis[0] != day:
+                daily, source = self._dis_daily()
+                history = {"source": source, "from": str(pd.Timestamp(daily["date"].iloc[0]).date()) if len(daily)
+                           else None, "days": int(len(daily))}
+                self._dis = (day, ChartView(self.instrument, from_daily(self.instrument, daily), V2), history)
+            return self._dis[1], self._dis[2]
+
+    def dis(self, q: dict) -> dict:
+        """AlgoMindDIS v1 on the chart up to the clock ``t``: the state at each D1 close of the session (and the
+        twenty before), its changes, and everything it read at the latest close; nothing while the session is blind.
+        It is shown to watch, not to trade: H-AF failed (``algomind_dis.view.HAF``)."""
+        from algomind_dis.view import HAF
+        clock = min(int(q["t"]), wall(self.end))
+        if self.withheld:
+            return {"withheld": True, "rows": []}
+        view, history = self._dis_view()
+        since = wall(self.start) - DIS_SHOWN_BEFORE * seconds_of("D1")
+        k = view.index_at(clock)
+        return {"withheld": False, "rows": view.rows(since, clock), "transitions": view.transitions(since, clock),
+                "now": None if k is None else view.detail(k), "tested": HAF, "history": history}
+
+    # ── the Thesis Engine (thesis-engine Requirement 12, task 414) ─────────────
+    def _thesis_market(self, s):
+        """The Thesis Engine's market over the session's M1 from THESIS_WARMUP_DAYS before it, built once per session
+        end (a live session's end moves) and the frames a version reads (V1 and V2 share one on M5; V3 and V4 each
+        have their own on M1), and shared by every source, with each source's run."""
+        from thesis_engine.replay import prepare
+        with self._thesis_lock:
+            key, kind = str(self.end), (s.e_frame, s.exec_frames, s.swing_pools, s.refine)
+            held = self._thesis.get(kind)
+            if held is None or held[0] != key:
+                frame = self.source._frame(self.instrument)
+                m1 = frame[(frame["time"] >= self.start - pd.Timedelta(days=THESIS_WARMUP_DAYS))
+                           & (frame["time"] < self.end + pd.Timedelta(days=THESIS_AFTER_DAYS))].reset_index(drop=True)
+                if "spread" not in m1:
+                    m1 = m1.assign(spread=self.spec.default_spread if self.spec else 0.0)
+                held = self._thesis[kind] = (
+                    key, prepare(self.instrument, m1[["time", "open", "high", "low", "close", "spread"]], s), {})
+            return held[1], held[2]
+
+    def _thesis_run(self, source: str, version: str) -> dict:
+        from thesis_engine.replay import run
+        from thesis_engine.scenarios import for_market
+        from thesis_engine.settings import V1, V2, V3, V4
+        from thesis_engine.thesis import call_theses, research_theses
+        s = {"v1": V1, "v2": V2, "v3": V3, "v4": V4}[version]
+        mk, runs = self._thesis_market(s)
+        key = f"{source}|{version}"
+        with self._thesis_lock:
+            if key not in runs:
+                if source == "SCENARIO":
+                    found = for_market(self.instrument)
+                    theses = [x.thesis() for x in found]
+                    words = ("your calls as read from your notes" + ("" if all(x.confirmed for x in found)
+                                                                       else ", not yet confirmed by you"))
+                elif source == "CALL":
+                    theses, words = call_theses(self.instrument), "your /context calls"
+                else:
+                    theses, _ = research_theses(self.instrument, mk.book, source)
+                    words = {"ORACLE": "the week's real side: hindsight, not a call",
+                             "MIRROR": "the opposite of the week's real side: hindsight",
+                             "RANDOM": "a coin flip each week",
+                             "W1TREND": "the last W1 candle's trend at the week's open"}[source]
+                j = run(mk, theses, s, slippage=self.spec.stop_slippage if self.spec else 0.0)
+                runs[key] = _thesis_view(j, words, source)
+            return runs[key]
+
+    def thesis(self, q: dict) -> dict:
+        """The Thesis Engine (``version`` v4, v3, v2 or v1) on the session's bars with the source ``source``, up to the clock
+        ``t``: the theses in view, the levels it waited at, each state and why, its sweeps, skips, orders and trades.
+        An order's outcome and a trade's exit show once they are in the past. Nothing while the session is blind."""
+        clock = min(int(q["t"]), wall(self.end))
+        source = str(q.get("source") or "SCENARIO").upper()
+        if source not in THESIS_SOURCES:
+            raise ValueError(f"source: one of {', '.join(THESIS_SOURCES)}")
+        version = str(q.get("version") or THESIS_VERSIONS[0]).lower()
+        if version not in THESIS_VERSIONS:
+            raise ValueError(f"version: one of {', '.join(THESIS_VERSIONS)}")
+        if self.withheld:
+            return {"withheld": True}
+        v = self._thesis_run(source, version)
+        since = wall(self.start) - THESIS_SHOWN_BEFORE
+        moves = [m for m in v["moves"] if m["t"] <= clock]
+        before = [m for m in moves if m["t"] < since]
+        shown = before[-1:] + [m for m in moves if m["t"] >= since]
+        now = moves[-1] if moves else None
+        live = None
+        if now is not None and now["to"] != "FLAT":
+            live = v["theses"].get(now["thesis_id"])
+        level = v["levels"].get(now["level_id"]) if now is not None and now["to"] in ("AT_LEVEL", "ARMED") else None
+        trades = []
+        for tr in v["trades"]:
+            if tr["placed"] > clock or (tr["closed"] is not None and tr["closed"] < since):
+                continue
+            done = tr["closed"] is not None and tr["closed"] <= clock
+            trades.append({**tr, **({} if done else {"closed": None, "exit": None, "reason": None, "net_r": None})})
+        orders = []
+        for o in v["orders"]:
+            if o["placed"] > clock or (o["ended"] is not None and o["ended"] < since):
+                continue
+            done = o["ended"] is not None and o["ended"] <= clock
+            orders.append({**o, **({} if done else {"ended": None, "outcome": None})})
+        ahead = [o["placed"] for o in v["orders"] if clock < o["placed"] <= wall(self.end)]
+        return {"withheld": False, "source": source, "version": version, "words": v["words"],
+                "hindsight": source in ("ORACLE", "MIRROR"),
+                # whether the source holds a thesis anywhere in the session, and when its next entry comes (the page's
+                # "Next TE trade"); a session is blind or it isn't, so this shows nothing a blind reader hasn't chosen
+                "any": any(x["since"] < wall(self.end) and x["until"] > wall(self.start) for x in v["theses"].values()),
+                "next_trade": min(ahead) if ahead else None,
+                "moves": shown, "now": now, "thesis": live, "level": level,
+                "theses": [x for x in v["theses"].values() if x["since"] <= clock and x["until"] >= since],
+                "levels": [v["levels"][m["level_id"]] for m in shown if m["to"] == "AT_LEVEL"
+                           and m["level_id"] in v["levels"]],
+                "sweeps": [x for x in v["sweeps"] if since <= x["t"] <= clock],
+                "skips": [x for x in v["skips"] if since <= x["t"] <= clock], "trades": trades, "orders": orders,
+                "no_displacement": [x for x in v["no_displacement"] if since <= x["t"] <= clock],
+                # V4: each setup's order block, how it ended once that is in the past
+                "setups": [{**x, **({} if x["ended"] is not None and x["ended"] <= clock else
+                                    {"ended": None, "outcome": None})}
+                           for x in v["setups"] if since <= x["t"] <= clock]}
+
     # ── H-N, the trader's M15 CRT at market on M1 (2026-10-27) ─────────────────
     def crt(self, q: dict) -> dict:
         """H-N's trades (``algo_research.search_crt.session_trades``) on the session's own M1 and spreads, those whose
@@ -936,6 +1140,49 @@ class WatchSession:
         return {"withheld": False, "rows": rows, "summary": summary, "reached_3r": sum(reached),
                 "develop": "2021-07 to 2022, nine markets: every CRT -0.21R a trade at 3R, 4R and 5R (H-N); "
                            "H-O's filter -0.17R; at a gap -0.16R net, +0.10R better than the other side"}
+
+    # ── the M1 sweep model without a bias, 2R (2026-10-30) ─────────────────────
+    def sweep(self, q: dict) -> dict:
+        """The M1 sweep model's trades (``algo_research.sweep_m1.session_trades``) on the session's own M1 and spreads,
+        those entered by the clock ``t``: the pools swept, the extreme, the CISD, the fill, the stop and the exits at 2R
+        taken by the clock. A trade's result, and its mirror's, shows once its exit is in the past. Nothing while the
+        session is blind."""
+        clock = min(int(q["t"]), wall(self.end))
+        if self.withheld:
+            return {"withheld": True, "rows": []}
+        with self._sweep_lock:
+            n = len(self.frame.m1)
+            if self._sweep is None or self._sweep[0] != n:
+                m1 = pd.DataFrame({"time": self.frame.m1["time"].reset_index(drop=True),
+                                   **{k: self.frame.arrays[k] for k in ("open", "high", "low", "close", "spread")}})
+                found = sweep_trades(m1)
+                for tr in found:                              # in the chart's wall seconds, once
+                    for key in ("sweep", "extreme_at", "cisd", "entry", "day_end"):
+                        tr[key] = wall(tr[key])
+                    tr["pools"] = [dict(x, at=wall(x["at"])) for x in tr["pools"]]
+                    tr["legs"] = [dict(leg, at=wall(leg["at"])) for leg in tr["legs"]]
+                self._sweep = (n, found)
+            found = self._sweep[1]
+        since, until = wall(self.start), wall(self.end)
+        data_end = int(self.path["time"][-1]) + 60 if len(self.path["time"]) else since
+        rows = []
+        for tr in found:
+            if not since <= tr["entry"] < until or tr["entry"] > clock:
+                continue
+            legs = tr["legs"]
+            cut = legs[-1]["kind"] == "close" and data_end < tr["day_end"]      # the bars stop before the day closes
+            done = not cut and legs[-1]["at"] <= clock
+            rows.append({**{k: tr[k] for k in ("side", "sweep", "extreme_at", "cisd", "entry", "extreme", "level",
+                                               "pools", "fill", "stop", "risk")},
+                         "legs": [leg for leg in legs if leg["at"] <= clock and not (cut and leg["kind"] == "close")],
+                         "net": tr["net"] if done else None, "mirror": tr["mirror"] if done else None})
+        nets = [r["net"] for r in rows if r["net"] is not None]
+        mirrors = [r["mirror"] for r in rows if r["net"] is not None and r["mirror"] is not None]
+        summary = {"closed": len(nets), "total": round(sum(nets), 2), "wins": sum(v >= 2 - 1e-9 for v in nets),
+                   "mirror": round(sum(mirrors), 2), "longs": sum(r["side"] > 0 for r in rows)}
+        return {"withheld": False, "rows": rows, "summary": summary,
+                "tested": "2021-07 to 2022, nine markets, 113,945 trades: -0.23R a trade net (+0.03R gross), 2R reached "
+                          "24%; the mirror -0.24R. 2025 H1: -0.17R net, the mirror -0.17R"}
 
     def _m1(self, instrument: str, days: int) -> pd.DataFrame:
         """The session's M1 (the snapshot's or the terminal's) for ``instrument`` from ``days`` before the session to
@@ -1048,6 +1295,77 @@ def live_feed(config: Path) -> Optional[Callable[[], LiveSource]]:
     return lambda: LiveSource(Terminal(profile), research.instruments)
 
 
+def _thesis_view(j, words: str, source: str) -> dict:
+    """A Thesis Engine journal in the chart's wall seconds, once: its moves, theses, levels, sweeps, skips and trades."""
+    stamps = lambda ns: [int(w) for w in wall_seconds(pd.to_datetime(list(ns), utc=True))] if len(ns) else []  # noqa: E731
+    tr = j.of("transition")
+    walls = stamps([r["t"] for r in tr])
+    moves = [{"t": w, "from": r["frm"], "to": r["to"], "reason": r["reason"], "thesis_id": r["thesis_id"],
+              "level_id": r["level_id"]} for w, r in zip(walls, tr)]
+    th = j.of("thesis")
+    ts = stamps([x for r in th for x in (r["since"], r["until"])])
+    theses = {r["id"]: {"id": r["id"], "side": r["side"], "draw": r["draw"], "protected": r["protected"],
+                        "since": ts[2 * i], "until": ts[2 * i + 1], "note": r["note"], "source": r["source"]}
+              for i, r in enumerate(th)}
+    notes = j.of("note")
+    lv = [r for r in notes if r["note"] == "level"]
+    lw = stamps([r["formed_at"] for r in lv])
+    levels = {r["array_id"]: {"id": r["array_id"], "tf": r["tf"], "kind": r["kind"], "side": r["side"],
+                              "low": r["low"], "high": r["high"], "formed": w, "score": r["score"],
+                              "reasons": r["reasons"]} for w, r in zip(lw, lv)}
+    sw = [r for r in notes if r["note"] == "sweep"]
+    sweeps = [{"t": w, "price": r["price"], "pool": r["pool"], "frame": r.get("frame"), "took_over": r.get("took_over")}
+              for w, r in zip(stamps([r["t"] for r in sw]), sw)]
+    hands = {r["order_id"]: r for r in notes if r["note"] == "hand"}          # V3: each order's frame
+    sk = j.of("skip")
+    skips = [{"t": w, "reason": r["reason"], "detail": r["detail"]} for w, r in zip(stamps([r["t"] for r in sk]), sk)]
+    nd = [r for r in notes if r["note"] == "no_displacement"]
+    no_displacement = [{"t": w, "pool": r["pool"], "body": r["body"], "reach": r["reach"]}
+                       for w, r in zip(stamps([r["t"] for r in nd]), nd)]
+    # Each order and how it ended: FILLED (its trade follows), EXPIRED or CANCELLED (a limit), REJECTED (at market).
+    ends = {}
+    for r in j.of("fill"):
+        if r["event"] in ("FILLED", "EXPIRED", "CANCELLED", "REJECTED"):
+            ends.setdefault(r["order_id"], r)
+    intents = j.of("intent")
+    orders = []
+    for r in intents:
+        end = ends.get(r["order_id"])
+        placed, ended = stamps([r["at"], end["t"] if end else r["at"]])
+        orders.append({"placed": placed, "ended": ended if end else None, "outcome": end["event"] if end else None,
+                       "kind": r["kind"], "direction": "LONG" if r["side"] == "BULLISH" else "SHORT",
+                       "entry": r["entry"], "stop": r["stop"], "target": r["target"],
+                       "frame": hands.get(r["order_id"], {}).get("frame")})
+    kinds = {r["order_id"]: r["kind"] for r in intents}
+    # V4: each setup, its order block, and how it ended: ENTERED (the refined entry), FAILED (price beyond the sweep's
+    # extreme), EXPIRED (no entry in time), or None (the thesis ended first)
+    found, current = [], None
+    for r in notes:
+        if r["note"] == "setup":
+            current = {"t": r["t"], "frame": r["frame"], "refine": r["refine"], "pool": r["pool"], "low": r["zone_low"],
+                       "high": r["zone_high"], "extreme": r["extreme"], "until": r["until"], "ended": None,
+                       "outcome": None}
+            found.append(current)
+        elif current is not None and r["note"] in ("hand", "setup_failed", "setup_expired"):
+            current["ended"] = r["t"]
+            current["outcome"] = {"hand": "ENTERED", "setup_failed": "FAILED", "setup_expired": "EXPIRED"}[r["note"]]
+            current = None
+    setups = []
+    for x in found:
+        t, until, ended = stamps([x["t"], x["until"], x["ended"] if x["ended"] is not None else x["until"]])
+        setups.append({**x, "t": t, "until": until, "ended": ended if x["ended"] is not None else None})
+    out = []
+    for r in j.of("trade"):
+        placed, filled, closed = stamps([r["placed_at"], r["filled_at"] or r["placed_at"], r["closed_at"]])
+        out.append({"placed": placed, "filled": filled, "closed": closed, "direction": r["direction"],
+                    "kind": kinds.get(r["order_id"], "MARKET"),
+                    "fill": r["fill"], "stop": r["stop"], "target": r["target"], "exit": r["exit"],
+                    "reason": r["reason"], "net_r": r["net_r"],
+                    "risk_spreads": r["risk_spreads"] if np.isfinite(r["risk_spreads"]) else None})   # JSON has no inf
+    return {"words": words, "source": source, "moves": moves, "theses": theses, "levels": levels, "sweeps": sweeps,
+            "skips": skips, "trades": out, "orders": orders, "no_displacement": no_displacement, "setups": setups}
+
+
 def noculus_periods(research) -> list[tuple[date, date, Path]]:
     """The first days a Noculus session may start on, each period with the snapshot that holds it (2026-10-28, the
     trader's choice): the research snapshot's exploration and confirmation slices, up to the study's hold-out, and
@@ -1123,6 +1441,8 @@ class WatchApp:
         session = WatchSession(self.config, None if variant == "base" else variant, instrument, day, days, snapshot,
                                studies_root=self.studies_root, blind=blind, live=live)
         session.noculus = self._journal(session)            # an open session's positions are kept too (D39)
+        if self._live_feed is not None:
+            session.history = lambda *a: self.live_source().rates(*a)
         if blind:
             reveal = session.noculus.data.get("reveal")
             if reveal:                                       # the engine was seen once: it can't be un-seen
@@ -1211,8 +1531,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._answer(lambda: self.app.need().trend(q))
         elif url.path == "/api/watch/chain":
             self._answer(lambda: self.app.need().chain(q))
+        elif url.path == "/api/watch/dis":
+            self._answer(lambda: self.app.need().dis(q))
+        elif url.path == "/api/watch/thesis":
+            self._answer(lambda: self.app.need().thesis(q))
         elif url.path == "/api/watch/crt":
             self._answer(lambda: self.app.need().crt(q))
+        elif url.path == "/api/watch/sweep":
+            self._answer(lambda: self.app.need().sweep(q))
         elif url.path == "/api/watch/noculus/trend_calls":
             self._answer(lambda: self.app.need().trend_calls(q))
         elif url.path == "/api/watch/fractal-defaults":

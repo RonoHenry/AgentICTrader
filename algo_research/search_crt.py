@@ -83,9 +83,10 @@ def _first(mask: np.ndarray) -> Optional[int]:
     return int(np.argmax(mask)) if mask.any() else None
 
 
-def race(p: _Path, side: int, e: int, trigger: float, legs: bool = False) -> Optional[dict]:
+def race(p: _Path, side: int, e: int, trigger: float, legs: bool = False,
+         targets: tuple[float, ...] = TARGETS) -> Optional[dict]:
     """A market entry at bar ``e``'s open with its stop triggering at the bid level ``trigger``: R net and gross for
-    each target, and whether 3R was reached. None when the risk is under two spreads. With ``legs``, each target's
+    each of ``targets``, and whether 3R was reached. None when the risk is under two spreads. With ``legs``, each target's
     exits too: (share, price, bar index, kind), kind one of stop, partial, be, target, close."""
     end, s0 = int(p.day_end[e]), p.cost[e]
     o, h, l, c, cost = (a[e:end + 1] for a in (p.o, p.h, p.l, p.c, p.cost))
@@ -111,7 +112,7 @@ def race(p: _Path, side: int, e: int, trigger: float, legs: bool = False) -> Opt
     i_stop = _first(stopped)
     i_part = _first(reach(favourable, fill + sign * PARTIAL_R * risk))
     out = {"risk": risk, "risk_spreads": risk / s0 if s0 else np.inf, "reached_3r": i_part is not None and (i_stop is None or i_part < i_stop)}
-    for k in TARGETS:
+    for k in targets:
         target = fill + sign * k * risk
         i_tgt = _first(reach(favourable, target))
         if k <= PARTIAL_R:                                         # no partial at or beyond the target

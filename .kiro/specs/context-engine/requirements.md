@@ -775,3 +775,218 @@ H-K, H-L and H-M failed on 2018-2022. The trader asked to see the chain's reads 
    - whether H-O keeps it.
 
    This SHALL come through the search's own `algo_research.search_crt_context`, read on a month of the session's M1. A menu SHALL show every trade, only those at a gap, or only H-O's, with the card's totals for what is shown.
+
+## Update 2026-10-29: The Trader's Weekly Context
+
+Every mechanical side tried on the search's unread years came out at a random walk from the same close:
+- the chain (H-K) and the stack (H-M);
+- the turtle soup with the trader's raid, pool and discount (H-U);
+- the side kept by the frames above, with the flip after delivery (H-V).
+
+Meanwhile H-N's trades take both sides on 97% of market-days, and the losing side pays for the winning one. Sorted by the week's own close against its open, a hindsight upper bound, the trades on that side made +0.18R before costs and the others −0.07R. With stops of ten spreads or more, the week's side made +0.16R (3R) and +0.19R (5R) after costs. Called right 57-60% of the time, one weekly side clears the costs.
+
+The trader (2026-10-29): "a trade with context beats a trade that was basically just Model A showing". They will call the context of all nine markets each week. The engine executes only inside it.
+
+### Requirement 32: The Trader's Weekly Context
+
+**User Story:** As the trader, I want to give each market's context once a week (the side, the draw and the protected swing) and have the engine trade only inside it, so that its execution follows my read instead of every setup that shows.
+
+#### Acceptance Criteria
+
+1. **A call.** A CALL SHALL be one market's context for one trading week (Sunday 17:00 to Friday 17:00 New York):
+   - the side: BULLISH, BEARISH or NONE;
+   - the draw;
+   - the protected swing (a bullish call's protected swing is below its draw, and a bearish call's above);
+   - an optional note;
+   - the time it was made.
+
+   A call made after its week opened is kept but marked late. The calls are journal data: local and git-ignored.
+2. **The thesis file.** THE calls SHALL write the engine's thesis file (market-narrative Requirement 17), one entry per trading date of the week: the side, the draw, the protected swing and `since`, the later of the week's open and the call's time.
+3. **When a context ends.** UNDER `bias_mode = THESIS`, a setup against the entry's side is refused as before (`AGAINST_THESIS`), and a date with no entry as before (`NO_THESIS`). When an entry carries a draw, the context ends:
+   - **delivered:** once price has traded at the draw since `since`, refused as `THESIS_DELIVERED`;
+   - **invalidated:** once a D1 candle has closed beyond the protected swing since `since`, refused as `THESIS_INVALIDATED`. A wick beyond it is liquidation and does not end the context.
+
+   A plain side entry keeps its old meaning.
+4. **The page.** NOCULUS SHALL have a context page:
+   - for a chosen week (by default the next to open), the nine markets with their last price when the terminal is connected;
+   - each market's call, with its side, draw and protected swing checked on entry;
+   - saving a call rewrites the thesis file.
+5. **The variant.** THE configuration SHALL have a variant that trades the partial strategy only inside the calls: `bias_mode = THESIS` on the calls' thesis file, with stops of at least ten typical spreads. A paper agent SHALL run it on the control agents' markets, beside them.
+6. **The scorecard.** A SCORECARD SHALL give, for each called week and market:
+   - **the call:** side, draw and protected swing, and whether it was late;
+   - **the week:** its open and close, and whether it closed on the call's side;
+   - **the context:** delivered, invalidated or still open, and when, with a random walk's chance of reaching the draw before the protected swing from the price at `since`;
+   - **the paper agents:** the R net of the trades placed in the week by the context agent and by each control.
+
+   Its totals SHALL give the hit rate of the week's close against the 57-60% the costs need.
+
+### Requirement 33: The Trader's Sequence
+
+**User Story:** As the trader, I want the engine to read a market-day the way I do, top-down, time first and then price, so that it takes the one setup my narrative allows instead of every setup that shows.
+
+The rules come from the trader's Backtest Diary for GBPUSD, Thursday 29 Oct 2026, and their answers of 31 Oct 2026. New York time throughout.
+
+#### Acceptance Criteria
+
+1. **The soup.** A TURTLE SOUP on any frame SHALL be two candles, named by the first: C2 trades beyond C1's low (high) and closes back inside C1. It SHALL be valid once the frame below confirms a CISD: a close beyond the open of the run of opposite candles that delivered C2's extreme. A candle of the trade's colour, or a doji (a body under a tenth of its range), ends the run.
+2. **The narrative.** THE side SHALL come from the latest valid W1 soup:
+   - its C2 falls in the month's first two weeks;
+   - its extreme took an untaken low (high) of the last four quarters or three months (external range liquidity);
+   - a D1 CISD confirmed it by C2's close.
+
+   Its draw SHALL be the nearest W1 gap beyond C2's close whose CE price hasn't reached (internal range liquidity), else a D1 one. The side SHALL end when price reaches the draw's CE (delivered) or a D1 candle closes beyond C2's extreme (invalidated; a wick beyond it is liquidation). A soup against a live side SHALL be ignored as manipulation.
+3. **The setup.** A DAY SHALL be C3 only after a D1 soup on the side whose C2 falls on Monday to Wednesday, whose extreme lies inside a key level, and whose H4 or H1 CISD confirmed by C2's close. A key level is a D1 or W1 gap of the side, an inverted gap of the other side, or an opening gap (NDOG, NWOG) of the last ten trading days.
+4. **C3.** Q1 (18:00-00:00) SHALL set the range. In Q2 (00:00-06:00) price SHALL take Q1's extreme against the side (the Judas swing), and an M5 CISD before 12:00 SHALL confirm it.
+   - The limit SHALL go at the open of the run's last candle (the order block), when that is in discount (premium) of the leg from the Judas extreme.
+   - It is good until 12:00.
+   - Its stop is the Judas extreme.
+5. **The targets.** THE read SHALL list the Judas swing's deviations (−1, −2, −2.5, −4 and −4.5, from the last M5 swing before the extreme). For each it SHALL give the pools and gaps within a fifth of a deviation and the distance in average daily ranges, and it SHALL mark the deviation in confluence with the narrative's draw.
+6. **The acceptance test.** ON the trader's GBPUSD long of Thursday 29 Oct 2026, the reader SHALL find, from the bars closed at each step:
+   - their narrative: the Q2 low taken, and the September W1 gap as the draw;
+   - their soup: Tuesday-Wednesday, into the D1 inverted gap and the 16 Oct NDOG;
+   - their H4 and H1 CISD runs;
+   - their order block (1.33030, filled 09:18) and their stop (1.32956);
+   - their target: the −4 deviation at the W1 gap's edge.
+7. **Frozen per sample.** THE reader SHALL be committed before each new sample of the trader's is read, and the committed version reads each sample first. Changes a sample prompts SHALL come after that read, as a new version.
+
+### Requirement 34: Where the Engine Waits
+
+**User Story:** As the trader, I want the engine to know where it would act before price gets there, and to look for a trigger only once price is at one of those levels, in time, so that it stops firing before price reaches any point of interest.
+
+The trader's blueprint of 31 Oct 2026: a move is the characteristics that line up at a price (discount, a PD array, liquidity and time), not a fixed sequence of events.
+
+#### Acceptance Criteria
+
+1. **A level.** A LEVEL to buy from SHALL be an unfilled PD array of the side on H4, D1 or W1 (an FVG, an inverted FVG, an order block, a breaker or a balanced price range):
+   - at most one D1 average range tall;
+   - with its CE under the equilibrium of the D1 or the W1 dealing range.
+
+   A level to sell from is the mirror. The side's other arrays that overlap a level are stacked on it.
+2. **Its score.** A level's score SHALL count each frame with an array in it, each range it is in discount (premium) of, and liquidity resting inside it or within a tenth of the D1 average range beyond it.
+3. **The gate.** UNDER `require_level`, a setup SHALL be refused as `NOT_AT_LEVEL` unless all four line up:
+   - its protected wick is inside a level of its side (the array, in discount or premium);
+   - the pool it raided is at that level (the liquidity);
+   - the raid came in Q2-Q3, 00:00-12:00 New York (the time).
+
+   The refusal SHALL name the nearest level, or the level the raid missed.
+4. **The variant.** THE configuration SHALL have `fresh_near_gap_levels`: the partial strategy behind the gate, with nothing else changed.
+5. **The chart.** NOCULUS SHALL draw the levels the gate reads at each close: those price or the setup's wick is in, and the next three beyond price on each side, each with its arrays, ranges, liquidity and score.
+
+---
+
+## Update 2026-11-02: The Directional State (AlgoMindDIS)
+
+The trader wrote a target architecture for the engine's direction, AlgoMindDIS. Its core idea is that the side is a held, explainable state, not a signal re-read at every close. A side is set by evidence, kept until it is delivered or invalidated, and "no side" is allowed. Setups are qualified against it, in shadow first.
+
+Two ways to fill that state were put to the trader:
+- **A:** a weighted sum of generic evidence (structure, liquidity, premium/discount, PD arrays, delivery).
+- **B:** rules that carry the trader's own read.
+
+They chose B (2026-11-02). Every input to A has tested at a random walk from the same close as a direction source (H-K, H-M, H-Q to H-V, the trend, the draw on liquidity, valuation). The learned combination of the same inputs (brain v2) walked forward at +0.7 points over 1995-2022. B's rules are reader v0's narrative (Requirement 33.2): the turn, its draw, its protected swing and its end.
+
+### Requirement 35: The Directional State
+
+**User Story:** As the trader, I want the engine to hold one side per market, with the evidence that set it, its draw and what would prove it wrong, and to say "no side" otherwise, so that setups are judged against a narrative instead of being re-read at every close.
+
+#### Acceptance Criteria
+
+1. **The record.** A DIRECTIONAL STATE SHALL be one market's side at a time t, from one source:
+   - the source and its version;
+   - the side: BULLISH, BEARISH or NONE;
+   - the state: ACTIVE, DELIVERED, INVALIDATED or UNDETERMINED;
+   - `since`, the close that set it;
+   - the draw (name and level) and the protected swing;
+   - the evidence that set it, each item with its time (for the reader: the W1 soup, the external pool it took, the D1 CISD);
+   - the turns against it that were ignored (manipulation);
+   - the invalidation condition in words, and when it ended and why.
+2. **The state machine.** THE side SHALL be held from the turn that set it until it is delivered or invalidated:
+   - **delivered:** price trades at the draw's CE;
+   - **invalidated:** a D1 candle closes beyond the protected swing (a wick is liquidation).
+
+   A turn on the live side replaces it, with its own draw and protected swing. A turn against the live side is recorded as ignored and changes nothing. After an end, the state is UNDETERMINED until the next turn. The state at t SHALL use only candles closed by t, and the same bars SHALL always give the same states.
+3. **The sources.** THE record SHALL be filled the same way from any source:
+   - the reader's narrative (Requirement 33.2, frozen at fe84645);
+   - the trader's weekly calls (Requirement 32);
+   - the brain's weekly side (algo-mind).
+
+   Each source is scored by the same rules (35.5).
+4. **Shadow first.** NOTHING in the engine SHALL read the record until a source has passed its test. The /context page SHALL show each source's record beside the trader's call. *(2026-11-03: the trader moved the reader's record to paper, Requirement 37.)*
+5. **The test.** THE reader's states SHALL be measured over the long daily history (1996-2022) as H-AE, registered in the search log before it runs:
+   - the narrative's draw reached before its invalidation, against matched random starts;
+   - the weeks opened under a live side, closed on it, against drift;
+   - how often a side is live.
+6. **Open decisions, kept as settings.** The trader hasn't yet answered two questions. Each is a setting with reader v0's default, changed only as a new version:
+   - **External liquidity:** the lows (highs) of the last four quarters and three months (default), or any untaken W1 swing.
+   - **After delivery:** UNDETERMINED until the next turn (default), or the opposite external pool as the next draw.
+
+---
+
+## Update 2026-11-02b: Blind Weekly Calls
+
+H-AE failed: reader v0's narrative, held over 1996-2022, reached its draw no more often than random starts, and the weeks under it closed on its side 51.5% of the time against 51.1% drift. The rules were one hindsight sample, coded. What hasn't been measured is the trader's own read: no weekly calls are logged. Live weeks give a handful of sides a week, so about 300 calls (the number that tells 57% from drift, ±5.7 points) would take most of a year.
+
+The trader agreed (2026-11-02) to call history blind instead: a random market and week from years nobody has read with these rules, the call made with the same record as Requirement 35, scored at once by H-AE's race. Reader v0 is diffed against the trader's calls, not against the market. If the calls clear the bar, the edge is in the read and the engine executes inside it; if they sit at drift, direction is nobody's edge here.
+
+### Requirement 36: Blind Weekly Calls
+
+**User Story:** As the trader, I want to call many past weeks quickly without knowing which market or year they are, and see each scored at once, so that I learn whether my weekly read beats drift before the engine relies on it.
+
+#### Acceptance Criteria
+
+1. **The charts.** A CHART SHALL be one market and one week of the long daily history (Yahoo, the nine markets): its Friday from 1996 (and the market's 53rd week) to 2017. 2018-2022 is the search's development window and 2023-2024 is unread. The order is fixed by a seed, and each pair is shown once.
+2. **Blind.** THE page SHALL show MN1, W1 and D1 up to that Friday's close, and nothing after it until the call is saved:
+   - the market is hidden;
+   - dates are moved 56 years later, which keeps weekdays, months and leap years;
+   - prices are scaled so the last close is 1000.
+3. **The call.** A CALL SHALL be:
+   - the side, BULLISH, BEARISH or NONE;
+   - the draw and the protected swing (a bullish call's protected swing below the last close and its draw above, a bearish one's the mirror);
+   - confidence from 1 to 3;
+   - the evidence, from a fixed list of tags, and a note;
+   - "I recognise this chart", which leaves it out of the totals;
+   - the time it took.
+
+   Calls are journal data: local and git-ignored. The real prices are kept beside the scaled ones.
+4. **The score, at save.**
+   - **The week:** the next week closed beyond its open on the call's side, against the market's share of such weeks over 1996-2017.
+   - **The race:** H-AE's, from the Friday close. Held when a D1 candle trades at the draw before one closes beyond the protected swing (a day doing both fails), against H-AE's matched control and a random walk's odds.
+   - **The days** it took to end.
+5. **The reveal.** AFTER the save the page SHALL show:
+   - the market and the real dates;
+   - the next eight weeks of D1 on the chart;
+   - the score;
+   - reader v0's state at that close (Requirement 35) beside the call.
+6. **The totals.** THE page SHALL total the calls with a side, leaving out recognised charts:
+   - the week's hit against drift and the race against its control, each with an interval over the calls;
+   - each by confidence and by market;
+   - agreement with the reader where it had a side;
+   - the hit against the 57-60% the trades need.
+
+   The bar is judged at 300 calls.
+
+---
+
+## Update 2026-11-03: AlgoMindDIS Is Algo Mind
+
+The trader asked (2026-11-03): "Why don't we take this new approach. Do away with the old one for now." AlgoMindDIS replaces the brain as Algo Mind, on paper. Neither has passed a test: brain v2 walked forward at +0.7 points over 1995-2022, and reader v0's narrative failed H-AE. The change is the trader's choice of which unproven source the engine executes inside, so it can be watched trading. It isn't evidence of an edge, and 35.4's "shadow first" gives way to paper only.
+
+### Requirement 37: AlgoMindDIS on Paper
+
+**User Story:** As the trader, I want the engine to decide the side with AlgoMindDIS before it trades, and the old brain out of the way, so that I can watch the held narrative steer the paper agent.
+
+#### Acceptance Criteria
+
+1. **The thesis file.** EACH read of a week (Requirement 35.4's shadow) SHALL rewrite `data/research/theses/dis_theses.json` from every week read. Every market whose record at the week's open is ACTIVE gets, for each trading date of the week:
+   - its side;
+   - the draw's CE (where the reader calls it delivered);
+   - the protected swing;
+   - `since`, the week's open.
+
+   A side set inside the week is not traded until the next week's open (the reader's turns are set at W1 closes).
+2. **The hands.** A PAPER AGENT (`fresh_near_gap_dis`) SHALL trade the file under `bias_mode = THESIS`. It is the context variant with only its thesis file changed. The engine ends the side as it ends the trader's call: the draw trades, or a D1 candle closes beyond the protected swing.
+3. **The loop.** `python -m algo_mind shadow --loop` SHALL read the week ahead five minutes after every D1 close (17:00 New York): during a week its own, from Friday's close the next one. A read with no market (the terminal down) SHALL leave the files as they were and retry in ten minutes.
+4. **The brain retired.**
+   - The brain's and the agreement's variants and paper agents SHALL be removed.
+   - /context SHALL no longer show or run the brain.
+   - Its code, briefs and ledger stay, so it can come back as a version.
+5. **The page.** /context SHALL show AlgoMindDIS as Algo Mind beside the trader's call. Its button reads the markets again and rewrites the thesis file. The scorecard SHALL total AlgoMindDIS's side against the week's close and give the paper agents' R on its markets as well as on the trader's.

@@ -40,6 +40,7 @@ from liquidity_engine.models import (
     Timeframe,
 )
 from tests.test_liquidity_engine_perf import FIXTURES, _load
+from tests.test_context_levels import ranged_view
 from tests.test_liquidity_grader import full_liquidity_map, make_level, make_pdarray, make_sequence
 
 GOLDEN_MESSAGE = Path(__file__).parent / "fixtures" / "backtester" / "order_intent" / "EURUSD_M5_message.json"
@@ -434,6 +435,61 @@ def test_htf_poi_needs_the_wick_inside_an_unfilled_h4_or_d1_array(arrays, expect
     assert reason(decide(_policy_map(profile=_profile(), pd_arrays=arrays), cfg)) == expected
 
 
+def _raid_at(lm, ny_hour: int = 8, pool: float = 1.0991):
+    """The map with its setup's raid of a pool at ``pool`` at ``ny_hour`` New York on AS_OF's date (the levels'
+    window is 00:00-12:00)."""
+    seq = lm.setup_sequence
+    raid = datetime(2026, 1, 14, ny_hour, tzinfo=ZoneInfo("America/New_York")).astimezone(timezone.utc)
+    taken = seq.raid.pool.model_copy(update={"price": pool})
+    return lm.model_copy(update={"setup_sequence": seq.model_copy(
+        update={"raid": seq.raid.model_copy(update={"raided_at": raid, "pool": taken})})})
+
+
+def _level_view(d1=(1.0950, 1.1050), w1=(1.0900, 1.1100)):
+    """D1 and W1 ranges with their equilibrium at 1.1000 (context-engine Requirement 34), and the M5 close."""
+    return {**ranged_view(d1, w1, AS_OF, "EURUSD"), Timeframe.M5: _view()[Timeframe.M5]}
+
+
+@pytest.mark.parametrize("arrays, expected", [
+    ([_htf()], "ORDER"),                    # the wick (1.0989) inside an H4 bullish FVG in discount of both ranges
+    ([_htf(Timeframe.D1)], "ORDER"),
+    ([_htf(Timeframe.W1)], "ORDER"),        # a W1 array makes a level, unlike the HTF POI
+    ([_htf(Timeframe.H1)], "NOT_AT_LEVEL"),  # an H1 array doesn't
+    ([_htf(filled=True)], "NOT_AT_LEVEL"),
+    ([_htf(direction=BEAR)], "NOT_AT_LEVEL"),
+    ([_htf(low=1.0990, high=1.0995)], "NOT_AT_LEVEL"),   # the wick is below it
+    ([], "NOT_AT_LEVEL"),
+])
+def test_the_level_gate_needs_the_wick_inside_a_level_of_its_side(arrays, expected):
+    lm = _raid_at(_policy_map(profile=_profile(), pd_arrays=arrays))
+    assert reason(build_order_intent(lm, _level_view(), "EURUSD", AS_OF, policy(require_level=True))) == expected
+
+
+def test_the_level_gate_reads_discount_and_the_window():
+    cfg = policy(require_level=True)
+    lm = _policy_map(profile=_profile(), pd_arrays=[_htf()])
+    # In premium of both ranges (D1 1.0900-1.1000, W1 1.0850-1.1050) the same array is no level to buy from.
+    premium = build_order_intent(_raid_at(lm), _level_view((1.0900, 1.1000), (1.0850, 1.1050)), "EURUSD", AS_OF, cfg)
+    assert reason(premium) == "NOT_AT_LEVEL" and "inside no BULLISH level" in premium.detail
+    late = build_order_intent(_raid_at(lm, 13), _level_view(), "EURUSD", AS_OF, cfg)
+    assert reason(late) == "NOT_AT_LEVEL" and "outside the levels' window" in late.detail
+    # The raid must have swept liquidity at the level: inside it, or within a tenth of the D1 average range under
+    # it (the range is 27 pips here, so 2.7). A pool 2 pips under the level is at it; one 4 pips under isn't.
+    assert reason(build_order_intent(_raid_at(lm, pool=1.0978), _level_view(), "EURUSD", AS_OF, cfg)) == "ORDER"
+    away = build_order_intent(_raid_at(lm, pool=1.0976), _level_view(), "EURUSD", AS_OF, cfg)
+    assert reason(away) == "NOT_AT_LEVEL" and "is not at the BULLISH level" in away.detail
+    assert reason(build_order_intent(_raid_at(lm, 13), _level_view(), "EURUSD", AS_OF, policy())) == "ORDER"   # off
+
+
+def test_the_levels_variant_is_the_partial_strategy_with_the_level_gate():
+    from algo_backtester.config import REPO_ROOT, load_run_config
+    focus = REPO_ROOT / "config" / "backtests" / "focus.toml"
+    levels, partial = load_run_config(focus, "fresh_near_gap_levels"), load_run_config(focus, "fresh_near_gap_partial")
+    assert levels.strategy.require_level and not partial.strategy.require_level
+    assert levels.management == partial.management
+    assert levels.strategy.model_copy(update={"require_level": False}) == partial.strategy
+
+
 def test_policy_checks_in_order_before_the_stop_and_targets():
     cfg = policy(bias_mode="PROFILE", require_false_move=True, time_window="MANIPULATION", require_htf_poi=True)
     steps = [
@@ -654,8 +710,9 @@ def test_the_box_needs_the_mean_range_of_twenty_closed_days():
 
 # ── the engine trades the thesis's side (market-narrative Requirement 17, task 351) ──
 def _theses(tmp_path, side):
-    """A thesis file: AS_OF (09:00 New York, 14 January 2026) falls in trading date 2026-01-14."""
-    path = tmp_path / "theses.json"
+    """A thesis file: AS_OF (09:00 New York, 14 January 2026) falls in trading date 2026-01-14. A file per side: the
+    reader caches by time, size and identity, which in-place rewrites of one file can share."""
+    path = tmp_path / f"theses-{side}.json"
     path.write_text(json.dumps({"EURUSD": {"2026-01-14": side, "2026-01-13": "BEARISH"}}), encoding="utf-8")
     return str(path)
 
@@ -676,6 +733,52 @@ def test_a_day_without_a_thesis_orders_nothing(tmp_path):
                     encoding="utf-8")
     result = decide(_policy_map(profile=_profile()), policy(bias_mode="THESIS", thesis_file=str(path)))
     assert isinstance(result, NoTrade) and result.reason == "NO_THESIS" and "2026-01-14" in result.detail
+
+
+# ── the trader's weekly context ends at its draw or a close beyond its protected swing (context-engine Req 32.3) ──
+def _context(tmp_path, **entry):
+    # A file per entry: the thesis reader caches by modification time and size, which two quick same-size writes
+    # to one file can share.
+    path = tmp_path / f"context-{len(list(tmp_path.glob('context-*.json')))}.json"
+    entry = {"side": "BULLISH", "draw": 1.1030, "protected": 1.0980, "since": "2026-01-11T22:00:00+00:00", **entry}
+    path.write_text(json.dumps({"EURUSD": {"2026-01-14": entry}}), encoding="utf-8")
+    return str(path)
+
+
+def _context_view(h1_high=None, d1=None):
+    """_view() with a closed H1 candle on 13 January (high ``h1_high``) and a closed D1 candle for 13 January's
+    trading day (``d1``: its low and close) before the in-progress 14 January one."""
+    view = _view()
+    if h1_high is not None:
+        ts = datetime(2026, 1, 13, 15, tzinfo=timezone.utc)
+        view[Timeframe.H1] = [Candle(timestamp=ts, open=1.1000, high=h1_high, low=1.0995, close=1.1000, volume=1,
+                                     timeframe=Timeframe.H1, instrument="EURUSD")]
+    if d1 is not None:
+        ts = datetime(2026, 1, 12, 22, tzinfo=timezone.utc)
+        view[Timeframe.D1] = [Candle(timestamp=ts, open=1.1000, high=1.1010, low=d1[0], close=d1[1], volume=1,
+                                     timeframe=Timeframe.D1, instrument="EURUSD")] + view[Timeframe.D1]
+    return view
+
+
+def _in_context(tmp_path, view, **entry):
+    return build_order_intent(_policy_map(profile=_profile()), view, "EURUSD", AS_OF,
+                              policy(bias_mode="THESIS", thesis_file=_context(tmp_path, **entry)))
+
+
+def test_a_weekly_context_trades_its_side_until_its_draw_trades(tmp_path):
+    assert reason(_in_context(tmp_path, _context_view(h1_high=1.1020))) == "ORDER"
+    done = _in_context(tmp_path, _context_view(h1_high=1.1031))
+    assert isinstance(done, NoTrade) and done.reason == "THESIS_DELIVERED" and "1.103" in done.detail
+    later = _in_context(tmp_path, _context_view(h1_high=1.1031), since="2026-01-13T16:00:00+00:00")
+    assert reason(later) == "ORDER"                                          # the touch came before the call
+    against = _in_context(tmp_path, _context_view(), side="BEARISH", draw=1.0950, protected=1.1040)
+    assert reason(against) == "AGAINST_THESIS"
+
+
+def test_a_weekly_context_ends_at_a_d1_close_beyond_its_protected_swing_not_a_wick(tmp_path):
+    broken = _in_context(tmp_path, _context_view(d1=(1.0970, 1.0975)))
+    assert isinstance(broken, NoTrade) and broken.reason == "THESIS_INVALIDATED" and "2026-01-13" in broken.detail
+    assert reason(_in_context(tmp_path, _context_view(d1=(1.0970, 1.0990)))) == "ORDER"     # a wick: liquidation
 
 
 def test_the_thesis_mode_needs_a_file():
