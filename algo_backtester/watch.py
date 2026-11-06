@@ -149,6 +149,8 @@ THESIS_WARMUP_DAYS = 150
 THESIS_AFTER_DAYS = 7
 THESIS_SHOWN_BEFORE = 7 * 86400
 THESIS_SOURCES = ("SCENARIO", "CALL", "ORACLE", "MIRROR", "RANDOM", "W1TREND")
+#: The machine's versions (thesis-engine Requirement 15): V2, the trader's trigger, unless the page asks for V1.
+THESIS_VERSIONS = ("v2", "v1")
 
 
 class SnapshotSource:
@@ -1002,13 +1004,15 @@ class WatchSession:
                                 {})
             return self._thesis[1], self._thesis[2]
 
-    def _thesis_run(self, source: str) -> dict:
+    def _thesis_run(self, source: str, version: str) -> dict:
         from thesis_engine.replay import run
         from thesis_engine.scenarios import for_market
+        from thesis_engine.settings import V1, V2
         from thesis_engine.thesis import call_theses, research_theses
         mk, runs = self._thesis_market()
+        key = f"{source}|{version}"
         with self._thesis_lock:
-            if source not in runs:
+            if key not in runs:
                 if source == "SCENARIO":
                     found = for_market(self.instrument)
                     theses = [x.thesis() for x in found]
@@ -1022,21 +1026,25 @@ class WatchSession:
                              "MIRROR": "the opposite of the week's real side: hindsight",
                              "RANDOM": "a coin flip each week",
                              "W1TREND": "the last W1 candle's trend at the week's open"}[source]
-                j = run(mk, theses, slippage=self.spec.stop_slippage if self.spec else 0.0)
-                runs[source] = _thesis_view(j, words, source)
-            return runs[source]
+                j = run(mk, theses, V2 if version == "v2" else V1,
+                        slippage=self.spec.stop_slippage if self.spec else 0.0)
+                runs[key] = _thesis_view(j, words, source)
+            return runs[key]
 
     def thesis(self, q: dict) -> dict:
-        """The Thesis Engine on the session's bars with the source ``source``, up to the clock ``t``: the theses in
-        view, the levels it waited at, each state and why, its sweeps, skips and trades. A trade's exit shows once
-        it is in the past. Nothing while the session is blind."""
+        """The Thesis Engine (``version`` v2 or v1) on the session's bars with the source ``source``, up to the clock
+        ``t``: the theses in view, the levels it waited at, each state and why, its sweeps, skips, orders and trades.
+        An order's outcome and a trade's exit show once they are in the past. Nothing while the session is blind."""
         clock = min(int(q["t"]), wall(self.end))
         source = str(q.get("source") or "SCENARIO").upper()
         if source not in THESIS_SOURCES:
             raise ValueError(f"source: one of {', '.join(THESIS_SOURCES)}")
+        version = str(q.get("version") or THESIS_VERSIONS[0]).lower()
+        if version not in THESIS_VERSIONS:
+            raise ValueError(f"version: one of {', '.join(THESIS_VERSIONS)}")
         if self.withheld:
             return {"withheld": True}
-        v = self._thesis_run(source)
+        v = self._thesis_run(source, version)
         since = wall(self.start) - THESIS_SHOWN_BEFORE
         moves = [m for m in v["moves"] if m["t"] <= clock]
         before = [m for m in moves if m["t"] < since]
@@ -1052,8 +1060,15 @@ class WatchSession:
                 continue
             done = tr["closed"] is not None and tr["closed"] <= clock
             trades.append({**tr, **({} if done else {"closed": None, "exit": None, "reason": None, "net_r": None})})
-        ahead = [tr["placed"] for tr in v["trades"] if clock < tr["placed"] <= wall(self.end)]
-        return {"withheld": False, "source": source, "words": v["words"], "hindsight": source in ("ORACLE", "MIRROR"),
+        orders = []
+        for o in v["orders"]:
+            if o["placed"] > clock or (o["ended"] is not None and o["ended"] < since):
+                continue
+            done = o["ended"] is not None and o["ended"] <= clock
+            orders.append({**o, **({} if done else {"ended": None, "outcome": None})})
+        ahead = [o["placed"] for o in v["orders"] if clock < o["placed"] <= wall(self.end)]
+        return {"withheld": False, "source": source, "version": version, "words": v["words"],
+                "hindsight": source in ("ORACLE", "MIRROR"),
                 # whether the source holds a thesis anywhere in the session, and when its next entry comes (the page's
                 # "Next TE trade"); a session is blind or it isn't, so this shows nothing a blind reader hasn't chosen
                 "any": any(x["since"] < wall(self.end) and x["until"] > wall(self.start) for x in v["theses"].values()),
@@ -1063,7 +1078,8 @@ class WatchSession:
                 "levels": [v["levels"][m["level_id"]] for m in shown if m["to"] == "AT_LEVEL"
                            and m["level_id"] in v["levels"]],
                 "sweeps": [x for x in v["sweeps"] if since <= x["t"] <= clock],
-                "skips": [x for x in v["skips"] if since <= x["t"] <= clock], "trades": trades}
+                "skips": [x for x in v["skips"] if since <= x["t"] <= clock], "trades": trades, "orders": orders,
+                "no_displacement": [x for x in v["no_displacement"] if since <= x["t"] <= clock]}
 
     # ── H-N, the trader's M15 CRT at market on M1 (2026-10-27) ─────────────────
     def crt(self, q: dict) -> dict:
@@ -1294,15 +1310,33 @@ def _thesis_view(j, words: str, source: str) -> dict:
     sweeps = [{"t": w, "price": r["price"], "pool": r["pool"]} for w, r in zip(stamps([r["t"] for r in sw]), sw)]
     sk = j.of("skip")
     skips = [{"t": w, "reason": r["reason"], "detail": r["detail"]} for w, r in zip(stamps([r["t"] for r in sk]), sk)]
+    nd = [r for r in notes if r["note"] == "no_displacement"]
+    no_displacement = [{"t": w, "pool": r["pool"], "body": r["body"], "reach": r["reach"]}
+                       for w, r in zip(stamps([r["t"] for r in nd]), nd)]
+    # Each order and how it ended: FILLED (its trade follows), EXPIRED or CANCELLED (a limit), REJECTED (at market).
+    ends = {}
+    for r in j.of("fill"):
+        if r["event"] in ("FILLED", "EXPIRED", "CANCELLED", "REJECTED"):
+            ends.setdefault(r["order_id"], r)
+    intents = j.of("intent")
+    orders = []
+    for r in intents:
+        end = ends.get(r["order_id"])
+        placed, ended = stamps([r["at"], end["t"] if end else r["at"]])
+        orders.append({"placed": placed, "ended": ended if end else None, "outcome": end["event"] if end else None,
+                       "kind": r["kind"], "direction": "LONG" if r["side"] == "BULLISH" else "SHORT",
+                       "entry": r["entry"], "stop": r["stop"], "target": r["target"]})
+    kinds = {r["order_id"]: r["kind"] for r in intents}
     out = []
     for r in j.of("trade"):
         placed, filled, closed = stamps([r["placed_at"], r["filled_at"] or r["placed_at"], r["closed_at"]])
         out.append({"placed": placed, "filled": filled, "closed": closed, "direction": r["direction"],
+                    "kind": kinds.get(r["order_id"], "MARKET"),
                     "fill": r["fill"], "stop": r["stop"], "target": r["target"], "exit": r["exit"],
                     "reason": r["reason"], "net_r": r["net_r"],
                     "risk_spreads": r["risk_spreads"] if np.isfinite(r["risk_spreads"]) else None})   # JSON has no inf
     return {"words": words, "source": source, "moves": moves, "theses": theses, "levels": levels, "sweeps": sweeps,
-            "skips": skips, "trades": out}
+            "skips": skips, "trades": out, "orders": orders, "no_displacement": no_displacement}
 
 
 def noculus_periods(research) -> list[tuple[date, date, Path]]:

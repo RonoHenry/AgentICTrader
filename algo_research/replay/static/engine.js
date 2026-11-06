@@ -42,6 +42,7 @@ const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, jo
             chain: { rows: [], withheld: false, at: null, smt: "" },
             dis: { rows: [], transitions: [], now: null, withheld: false, at: null, tested: "", history: null },
             thesis: teEmpty(), thesisSource: Prefs.get("watch.thesisSource", "SCENARIO"),
+            thesisVersion: Prefs.get("watch.thesisVersion", "v2"),
             crt: { rows: [], withheld: false, at: null, summary: null, reached: 0, develop: "" }, crtTarget: Prefs.get("watch.crtTarget", "5"), crtFilter: Prefs.get("watch.crtFilter", "all"),
             sweep: { rows: [], withheld: false, at: null, summary: null, tested: "" },
             speed: 1, digits: 5, layers: Prefs.get("watch.layers", { arrays: true, pools: true, profile: true, sequence: true, orders: true }),
@@ -544,10 +545,12 @@ function disCard() {
 const TE_SOURCES = [["SCENARIO", "Thesis: your calls (from your notes)"], ["CALL", "Thesis: your /context calls"],
                     ["ORACLE", "Thesis: the week's real side (hindsight)"], ["MIRROR", "Thesis: the opposite side (hindsight)"],
                     ["RANDOM", "Thesis: a coin flip"], ["W1TREND", "Thesis: the last W1 trend"]];
+// V2 (thesis-engine Requirement 15) is the trader's trigger; V1 is the machine H-AG measured.
+const TE_VERSIONS = [["v2", "Thesis Engine V2 (your trigger)"], ["v1", "Thesis Engine V1"]];
 const TE_MARK = { FLAT: "○", THESIS: "◇", AT_LEVEL: "▣", ARMED: "◆", IN_TRADE: "●", SPENT: "✓" };
 function teEmpty() {
   return { withheld: false, at: null, words: "", hindsight: false, moves: [], now: null, thesis: null, level: null,
-           theses: [], levels: [], sweeps: [], skips: [], trades: [] };
+           theses: [], levels: [], sweeps: [], skips: [], trades: [], orders: [], no_displacement: [] };
 }
 function teColor(state, side, pal) {
   const s = side === "BULLISH" ? pal.good : side === "BEARISH" ? pal.bad : pal.muted;
@@ -592,6 +595,19 @@ function paintThesis(ctx, size, pal, text, line) {
     const x = X(s.t), yy = Y(s.price);
     if (isFinite(x) && isFinite(yy) && x >= 0 && x <= W) text("✕", x, yy + 4, pal.warn, "center");
   }
+  // V2's limits: dashed at the entry from the order to its fill, its expiry or the clock; a filled one's trade follows.
+  for (const o of T.orders || []) {
+    if (o.kind !== "LIMIT") continue;
+    const x0 = X(o.placed), x1 = Math.min(X(o.ended != null ? o.ended : S.t), W), ey = Y(o.entry);
+    if (!isFinite(x0) || !isFinite(x1) || !isFinite(ey) || x1 < 0 || x0 > W) continue;
+    const long = o.direction === "LONG", side = long ? "buy" : "sell";
+    line(Math.max(x0, 0), ey, Math.max(x1, x0 + 4), ey, long ? pal.up : pal.bad, [3, 3], 1.5);
+    if (o.outcome === "FILLED") continue;
+    const s = o.outcome === "EXPIRED" ? `TE limit ${side} @ ${fmt(o.entry)} · expired unfilled`
+            : o.outcome === "CANCELLED" ? `TE limit ${side} @ ${fmt(o.entry)} · cancelled: the thesis ended`
+            : `TE limit ${side} @ ${fmt(o.entry)} · stop ${fmt(o.stop)} · target ${fmt(o.target)} · pending`;
+    text(s, Math.max(x0, 0) + 4, long ? ey + 22 : ey - 12, o.outcome ? pal.muted : pal.ink);
+  }
   for (const t of T.trades) {
     const x0 = X(t.filled), x1 = Math.max(X(t.closed != null ? t.closed : S.t), x0 + 4);
     if (!isFinite(x0) || !isFinite(x1) || x1 < 0 || x0 > W) continue;
@@ -611,16 +627,16 @@ function paintThesis(ctx, size, pal, text, line) {
 }
 async function loadThesis() {
   if (!S.status || !S.layers.thesis) { S.thesis = teEmpty(); return; }
-  const key = `${Math.floor(S.t / 300)}|${S.thesisSource}|${!!(S.state && S.state.withheld)}`;   // it steps at M5 closes
+  const key = `${Math.floor(S.t / 300)}|${S.thesisSource}|${S.thesisVersion}|${!!(S.state && S.state.withheld)}`;   // it steps at M5 closes
   if (S.thesis.at === key) return;
   // A layer never stops the replay: a server still running older code (no route yet) or a failed read leaves the
   // layer empty, with the reason on its card, and play goes on.
   try {
-    let got = await api(`/api/watch/thesis?t=${S.t}&source=${S.thesisSource}`);
+    let got = await api(`/api/watch/thesis?t=${S.t}&source=${S.thesisSource}&version=${S.thesisVersion}`);
     // With no call of yours anywhere in the session the engine would sit FLAT: show it on the week's real side
     // instead, said plainly (hindsight), so there is something to judge. Your calls, once made, take over.
     if (["SCENARIO", "CALL"].includes(S.thesisSource) && got.any === false && !got.withheld) {
-      got = { ...(await api(`/api/watch/thesis?t=${S.t}&source=ORACLE`)),
+      got = { ...(await api(`/api/watch/thesis?t=${S.t}&source=ORACLE&version=${S.thesisVersion}`)),
               words: "no call of yours in this session, so it shows the week's real side (hindsight)" };
     }
     S.thesis = { ...teEmpty(), ...got, at: key };
@@ -639,14 +655,21 @@ function thesisCard() {
   const skips = {};
   for (const x of T.skips) skips[x.reason] = (skips[x.reason] || 0) + 1;
   const skipText = Object.entries(skips).map(([k, v]) => `${v} ${k.toLowerCase().replace(/_/g, " ")}`).join(", ") || "none";
-  return `<div class="card"><b>Thesis Engine v1</b> · <span class="muted">${esc(T.words)}</span>
+  const v2 = T.version === "v2", od = T.orders || [], ended = (k) => od.filter((o) => o.outcome === k).length;
+  const pending = od.filter((o) => o.outcome == null).length, nd = (T.no_displacement || []).length;
+  const orderText = !od.length ? "no orders" : `${od.length} order(s): ${ended("FILLED")} filled`
+    + (v2 ? `, ${ended("EXPIRED")} expired, ${ended("CANCELLED")} cancelled` : "") + (pending ? `, ${pending} pending` : "");
+  const hint = v2
+    ? "V2, your trigger: a sweep of the previous day's, H4's or H1's high or low, the Asia range or an H1 swing, at a level with arrays on two frames (or a D1 array); a CISD whose body is at least 1.5 average M5 ranges; a limit at the run's mean threshold, expiring at 12:00 New York (at least an hour after it is placed). H-AH (2021-22, the week's real side): +0.57R a trade on 67 trades, against V1's +0.84R on 412. It failed its test."
+    : "FLAT → THESIS → AT_LEVEL → ARMED (00:00–12:00 New York) → IN_TRADE → SPENT. The side comes only from the thesis. H-AG: with the week's real side it made +0.84R a trade on 2021-22 (hindsight, not an edge).";
+  return `<div class="card"><b>Thesis Engine ${esc((T.version || "v1").toUpperCase())}</b> · <span class="muted">${esc(T.words)}</span>
     ${T.hindsight ? `<div style="color:var(--warn)">Hindsight: this side is known only after the week closed.</div>` : ""}
     <div><b>${esc(n ? n.to : "FLAT")}</b>${th ? ` · ${esc(th.side.toLowerCase())} since ${fmtTime(th.since)} · draw ${fmt(th.draw)} · protected ${fmt(th.protected)}${th.note ? " · " + esc(th.note) : ""}` : " · no thesis live, so nothing runs"}</div>
     ${lv ? `<div>Level: ${esc(lv.tf)} ${esc(lv.kind)} ${fmt(lv.low)}–${fmt(lv.high)} (score ${lv.score}: ${esc(lv.reasons.join(", "))})</div>` : ""}
     <div style="margin-top:4px">${recent || (T.theses.length ? '<span class="muted">No move yet.</span>'
       : '<span class="muted">This source has no thesis in this session, so the engine stays FLAT. Pick another in the menu: the real side of the week shows what the machine does with a right side.</span>')}</div>
-    <div class="muted" style="margin-top:4px">In view: ${T.trades.length} trade(s), ${done.length} closed (${sum >= 0 ? "+" : ""}${sum.toFixed(2)}R) · ${T.sweeps.length} sweep(s) · skips: ${esc(skipText)}</div>
-    <div class="hint">FLAT → THESIS → AT_LEVEL → ARMED (00:00–12:00 New York) → IN_TRADE → SPENT. The side comes only from the thesis. H-AG: with the week's real side it made +0.84R a trade on 2021-22 (hindsight, not an edge).</div></div>`;
+    <div class="muted" style="margin-top:4px">In view: ${T.trades.length} trade(s), ${done.length} closed (${sum >= 0 ? "+" : ""}${sum.toFixed(2)}R) · ${esc(orderText)} · ${T.sweeps.length} sweep(s)${nd ? ` · ${nd} CISD(s) without displacement` : ""} · skips: ${esc(skipText)}</div>
+    <div class="hint">${esc(hint)}</div></div>`;
 }
 // H-N, the trader's M15 CRT at market on M1 (context-engine Requirement 31): every trade the rule takes, from C3's
 // open to its last exit (or the clock). C1's swept level runs dashed to the entry and a dot marks C2's wick; red is the
@@ -1178,7 +1201,12 @@ function buildLayers() {
   te.innerHTML = TE_SOURCES.map(([v, t]) => `<option value="${v}" ${S.thesisSource === v ? "selected" : ""}>${t}</option>`).join("");
   te.onchange = () => act(async () => { S.thesisSource = te.value; Prefs.set("watch.thesisSource", te.value); S.thesis.at = null;
                                         await loadThesis(); renderEngine(); refresh(); });
-  box.append(te);
+  const tv = document.createElement("select");
+  tv.id = "thesisVersion"; tv.title = "Which Thesis Engine runs: V2, your trigger, or V1";
+  tv.innerHTML = TE_VERSIONS.map(([v, t]) => `<option value="${v}" ${S.thesisVersion === v ? "selected" : ""}>${t}</option>`).join("");
+  tv.onchange = () => act(async () => { S.thesisVersion = tv.value; Prefs.set("watch.thesisVersion", tv.value); S.thesis.at = null;
+                                        await loadThesis(); renderEngine(); refresh(); });
+  box.append(tv, te);
   const only = document.createElement("button");
   only.className = "boxed"; only.id = "thesisOnly"; only.textContent = "Thesis Engine only";
   only.title = "Hide the old engine's and the research layers' trades, so only the Thesis Engine trades on the chart";

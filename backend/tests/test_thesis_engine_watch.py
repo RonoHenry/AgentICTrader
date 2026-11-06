@@ -1,6 +1,6 @@
 """
 Tests for the Thesis Engine on Noculus and the trader's scenarios (thesis-engine Requirement 12; task 414): the
-layer's route, the recent months' period, and the scenarios' record and run.
+layer's route for V2 and V1, the recent months' period, and the scenarios' record and run.
 """
 from __future__ import annotations
 
@@ -18,8 +18,9 @@ def test_the_layer_answers_for_every_source(session):  # noqa: F811
     end = session.status()["end"]
     for source in watch.THESIS_SOURCES:
         got = session.thesis({"t": end, "source": source})
-        assert got["withheld"] is False and got["source"] == source and got["words"]
-        assert set(got) >= {"moves", "now", "thesis", "level", "theses", "levels", "sweeps", "skips", "trades"}
+        assert got["withheld"] is False and got["source"] == source and got["words"] and got["version"] == "v2"
+        assert set(got) >= {"moves", "now", "thesis", "level", "theses", "levels", "sweeps", "skips", "trades",
+                            "orders", "no_displacement"}
         assert all(m["t"] <= end for m in got["moves"])
         assert got["hindsight"] == (source in ("ORACLE", "MIRROR"))
         assert isinstance(got["any"], bool)
@@ -30,6 +31,21 @@ def test_the_layer_answers_for_every_source(session):  # noqa: F811
     assert all(tr["placed"] <= start for tr in first["trades"])           # nothing ahead of the clock is drawn
     with pytest.raises(ValueError):
         session.thesis({"t": end, "source": "GUESS"})
+    with pytest.raises(ValueError):
+        session.thesis({"t": end, "source": "ORACLE", "version": "v9"})
+
+
+def test_v1_and_v2_are_both_there_and_each_order_says_how_it_ended(session):  # noqa: F811
+    end = session.status()["end"]
+    for version in watch.THESIS_VERSIONS:
+        got = session.thesis({"t": end, "source": "ORACLE", "version": version})
+        assert got["version"] == version
+        for o in got["orders"]:
+            assert o["kind"] == ("LIMIT" if version == "v2" else "MARKET")
+            assert o["outcome"] in (None, "FILLED", "EXPIRED", "CANCELLED", "REJECTED")
+            if o["outcome"] is not None:
+                early = session.thesis({"t": o["ended"] - 60, "source": "ORACLE", "version": version})
+                assert all(x["outcome"] is None for x in early["orders"] if x["placed"] == o["placed"])
 
 
 def test_a_trades_exit_shows_only_once_it_is_past(session):  # noqa: F811
