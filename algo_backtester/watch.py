@@ -149,9 +149,9 @@ THESIS_WARMUP_DAYS = 150
 THESIS_AFTER_DAYS = 7
 THESIS_SHOWN_BEFORE = 7 * 86400
 THESIS_SOURCES = ("SCENARIO", "CALL", "ORACLE", "MIRROR", "RANDOM", "W1TREND")
-#: The machine's versions (thesis-engine Requirements 15, 17): V3, the frame that follows the pool, unless the page
-#: asks for V2 or V1.
-THESIS_VERSIONS = ("v3", "v2", "v1")
+#: The machine's versions (thesis-engine Requirements 15, 17, 19): V4, setups on M30 and M15 with the entry refined
+#: on M3 or M1, unless the page asks for V3, V2 or V1.
+THESIS_VERSIONS = ("v4", "v3", "v2", "v1")
 
 
 class SnapshotSource:
@@ -991,28 +991,28 @@ class WatchSession:
     # ── the Thesis Engine (thesis-engine Requirement 12, task 414) ─────────────
     def _thesis_market(self, s):
         """The Thesis Engine's market over the session's M1 from THESIS_WARMUP_DAYS before it, built once per session
-        end (a live session's end moves) and step frame (V1 and V2 step on M5, V3 on M1), and shared by every source,
-        with each source's run."""
+        end (a live session's end moves) and the frames a version reads (V1 and V2 share one on M5; V3 and V4 each
+        have their own on M1), and shared by every source, with each source's run."""
         from thesis_engine.replay import prepare
         with self._thesis_lock:
-            key = str(self.end)
-            held = self._thesis.get(s.e_frame)
+            key, kind = str(self.end), (s.e_frame, s.exec_frames, s.swing_pools, s.refine)
+            held = self._thesis.get(kind)
             if held is None or held[0] != key:
                 frame = self.source._frame(self.instrument)
                 m1 = frame[(frame["time"] >= self.start - pd.Timedelta(days=THESIS_WARMUP_DAYS))
                            & (frame["time"] < self.end + pd.Timedelta(days=THESIS_AFTER_DAYS))].reset_index(drop=True)
                 if "spread" not in m1:
                     m1 = m1.assign(spread=self.spec.default_spread if self.spec else 0.0)
-                held = self._thesis[s.e_frame] = (
+                held = self._thesis[kind] = (
                     key, prepare(self.instrument, m1[["time", "open", "high", "low", "close", "spread"]], s), {})
             return held[1], held[2]
 
     def _thesis_run(self, source: str, version: str) -> dict:
         from thesis_engine.replay import run
         from thesis_engine.scenarios import for_market
-        from thesis_engine.settings import V1, V2, V3
+        from thesis_engine.settings import V1, V2, V3, V4
         from thesis_engine.thesis import call_theses, research_theses
-        s = {"v1": V1, "v2": V2, "v3": V3}[version]
+        s = {"v1": V1, "v2": V2, "v3": V3, "v4": V4}[version]
         mk, runs = self._thesis_market(s)
         key = f"{source}|{version}"
         with self._thesis_lock:
@@ -1035,7 +1035,7 @@ class WatchSession:
             return runs[key]
 
     def thesis(self, q: dict) -> dict:
-        """The Thesis Engine (``version`` v3, v2 or v1) on the session's bars with the source ``source``, up to the clock
+        """The Thesis Engine (``version`` v4, v3, v2 or v1) on the session's bars with the source ``source``, up to the clock
         ``t``: the theses in view, the levels it waited at, each state and why, its sweeps, skips, orders and trades.
         An order's outcome and a trade's exit show once they are in the past. Nothing while the session is blind."""
         clock = min(int(q["t"]), wall(self.end))
@@ -1082,7 +1082,11 @@ class WatchSession:
                            and m["level_id"] in v["levels"]],
                 "sweeps": [x for x in v["sweeps"] if since <= x["t"] <= clock],
                 "skips": [x for x in v["skips"] if since <= x["t"] <= clock], "trades": trades, "orders": orders,
-                "no_displacement": [x for x in v["no_displacement"] if since <= x["t"] <= clock]}
+                "no_displacement": [x for x in v["no_displacement"] if since <= x["t"] <= clock],
+                # V4: each setup's order block, how it ended once that is in the past
+                "setups": [{**x, **({} if x["ended"] is not None and x["ended"] <= clock else
+                                    {"ended": None, "outcome": None})}
+                           for x in v["setups"] if since <= x["t"] <= clock]}
 
     # ── H-N, the trader's M15 CRT at market on M1 (2026-10-27) ─────────────────
     def crt(self, q: dict) -> dict:
@@ -1333,6 +1337,23 @@ def _thesis_view(j, words: str, source: str) -> dict:
                        "entry": r["entry"], "stop": r["stop"], "target": r["target"],
                        "frame": hands.get(r["order_id"], {}).get("frame")})
     kinds = {r["order_id"]: r["kind"] for r in intents}
+    # V4: each setup, its order block, and how it ended: ENTERED (the refined entry), FAILED (price beyond the sweep's
+    # extreme), EXPIRED (no entry in time), or None (the thesis ended first)
+    found, current = [], None
+    for r in notes:
+        if r["note"] == "setup":
+            current = {"t": r["t"], "frame": r["frame"], "refine": r["refine"], "pool": r["pool"], "low": r["zone_low"],
+                       "high": r["zone_high"], "extreme": r["extreme"], "until": r["until"], "ended": None,
+                       "outcome": None}
+            found.append(current)
+        elif current is not None and r["note"] in ("hand", "setup_failed", "setup_expired"):
+            current["ended"] = r["t"]
+            current["outcome"] = {"hand": "ENTERED", "setup_failed": "FAILED", "setup_expired": "EXPIRED"}[r["note"]]
+            current = None
+    setups = []
+    for x in found:
+        t, until, ended = stamps([x["t"], x["until"], x["ended"] if x["ended"] is not None else x["until"]])
+        setups.append({**x, "t": t, "until": until, "ended": ended if x["ended"] is not None else None})
     out = []
     for r in j.of("trade"):
         placed, filled, closed = stamps([r["placed_at"], r["filled_at"] or r["placed_at"], r["closed_at"]])
@@ -1342,7 +1363,7 @@ def _thesis_view(j, words: str, source: str) -> dict:
                     "reason": r["reason"], "net_r": r["net_r"],
                     "risk_spreads": r["risk_spreads"] if np.isfinite(r["risk_spreads"]) else None})   # JSON has no inf
     return {"words": words, "source": source, "moves": moves, "theses": theses, "levels": levels, "sweeps": sweeps,
-            "skips": skips, "trades": out, "orders": orders, "no_displacement": no_displacement}
+            "skips": skips, "trades": out, "orders": orders, "no_displacement": no_displacement, "setups": setups}
 
 
 def noculus_periods(research) -> list[tuple[date, date, Path]]:

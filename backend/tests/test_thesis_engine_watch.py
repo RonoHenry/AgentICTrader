@@ -19,7 +19,7 @@ def test_the_layer_answers_for_every_source(session):  # noqa: F811
     for source in watch.THESIS_SOURCES:
         got = session.thesis({"t": end, "source": source})
         assert got["withheld"] is False and got["source"] == source and got["words"]
-        assert got["version"] == watch.THESIS_VERSIONS[0] == "v3"
+        assert got["version"] == watch.THESIS_VERSIONS[0] == "v4" and isinstance(got["setups"], list)
         assert set(got) >= {"moves", "now", "thesis", "level", "theses", "levels", "sweeps", "skips", "trades",
                             "orders", "no_displacement"}
         assert all(m["t"] <= end for m in got["moves"])
@@ -42,8 +42,12 @@ def test_every_version_is_there_and_each_order_says_how_it_ended(session):  # no
         got = session.thesis({"t": end, "source": "ORACLE", "version": version})
         assert got["version"] == version
         for o in got["orders"]:
-            assert o["kind"] in {"v1": {"MARKET"}, "v2": {"LIMIT"}, "v3": {"MARKET", "LIMIT"}}[version]
-            assert (o["frame"] in ("M30", "M20", "M15", "M10", "M5", "M3", "M1")) == (version == "v3")
+            assert o["kind"] in {"v1": {"MARKET"}, "v2": {"LIMIT"}, "v3": {"MARKET", "LIMIT"}, "v4": {"MARKET"}}[version]
+            assert (o["frame"] in ("M30", "M20", "M15", "M10", "M5", "M3", "M1")) == (version in ("v3", "v4"))
+            assert version != "v4" or o["frame"] in ("M30", "M15")
+        for x in got["setups"]:
+            assert version == "v4" and x["frame"] in ("M30", "M15") and x["low"] <= x["high"]
+            assert x["outcome"] in (None, "ENTERED", "FAILED", "EXPIRED") and (x["outcome"] is None) == (x["ended"] is None)
             assert o["outcome"] in (None, "FILLED", "EXPIRED", "CANCELLED", "REJECTED")
             if o["outcome"] is not None:
                 early = session.thesis({"t": o["ended"] - 60, "source": "ORACLE", "version": version})
