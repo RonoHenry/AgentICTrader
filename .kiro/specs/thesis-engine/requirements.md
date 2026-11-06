@@ -357,3 +357,68 @@ V2 makes the hand the trader's own rules: a real pool taken into the level, a di
    - the funnel, with limits placed, filled and expired;
    - the companion with the partial;
    - each market, and buys and sells apart.
+
+
+## Update 2026-11-06: V3, the frame follows the manipulation
+
+**Why.** V2 failed H-AH. Its funnel and five weeks on Noculus show three faults:
+- **Its stops sat inside a bigger manipulation.** The stop was the M5 sweep's extreme, and the real manipulation ran through it (GBPUSD 30 May 2022, US100 9 Mar 2022). 56 of its 67 trades were stopped.
+- **It missed moves whose M5 CISD didn't displace,** such as gold 9-13 Jun 2025, where V1 made +19.4R.
+- **A third of its limits expired unfilled.**
+
+The trader (2026-11-06): "the engine has to be dynamic then, we can execute anywhere from the M30, M20, M15, M10, M5, M3, M1". Asked how the frame is chosen, they chose the child of the swept pool's frame. On the entry: "If price is around the entry level, just go with a market order, if it has traded away from our entry level, I think we can just go with a limit order instead of chasing price."
+
+### Requirement 17: V3, the execution frame follows the pool
+
+**User Story:** As the trader, I want the engine to confirm a sweep on the frame that fits the liquidity taken, from M30 down to M1, so that a big manipulation gets a big frame and a small one a small frame, and its entry doesn't chase price.
+
+#### Acceptance Criteria
+
+1. V3 SHALL keep every V2 rule except those below. V1 and V2 SHALL run unchanged: their journals on the same bars and theses stay identical.
+2. **The machine steps on M1 closes.** The execution frames are M30, M20, M15, M10, M5, M3 and M1, each built on the clock from the M1 bars, complete candles only.
+3. **The pools** (a bullish hand; bearish is the mirror):
+   - V2's: the previous D1, H4 and H1 lows, the trading day's Asia range low and untaken H1 swing lows;
+   - new: untaken M30 and M15 swing lows (the analyzers' swing, lookback 2).
+
+   A pool is taken by the first M1 bar to trade beyond it once it is known. The band rule is V2's.
+4. **The frame:** a hand runs on its pool's child, the largest execution frame no longer than a tenth of the pool's frame:
+
+   | Pool | Child |
+   |---|---|
+   | the previous D1 extreme, the Asia range | M30 |
+   | the previous H4 | M20 |
+   | the previous H1, H1 swings | M5 |
+   | M30 swings | M3 |
+   | M15 swings | M1 |
+
+   M15 and M10 are the child of no pool.
+   - When one bar takes several pools, the hand takes the pool of the largest frame, and the deepest of those.
+   - While a hand waits, a later sweep of a larger frame's pool takes it over: the manipulation grew. The extreme so far carries over.
+5. **The CISD is on the child frame:**
+   - a child candle closes through the open of the run into the sweep;
+   - the run ends at the sweep's child candle or the one before it;
+   - the close comes within 12 child candles of the sweep's;
+   - its body is at least 1.5 times the child frame's average range over the 20 candles before it.
+6. **The entry:** the entry level is the mean threshold of the CISD run's bodies.
+   - If the CISD close is within half the child frame's average range of it, the order goes at market.
+   - Otherwise it is a limit at the mean threshold, with V2's expiry.
+   - The stop stays beyond the sweep's extreme.
+7. **Everything else is V2's:** the levels and the stack gate, the risk rules (a stop of at least 10 typical spreads, at least 2R to the draw), the budget, the window, the exits and the ties.
+
+### Requirement 18: H-AI, V3's conversion test
+
+**User Story:** As the trader, I want V3 measured the way V1 and V2 were, registered before it runs, so that I know whether the dynamic frame helps before anything depends on it.
+
+#### Acceptance Criteria
+
+1. H-AI SHALL be registered in `docs/research/SEARCH_2018_2024.md` with V3's settings before V3's code exists.
+2. **The arms, the data and the window** are H-AG's: ORACLE, MIRROR, RANDOM and W1TREND on the eight traded focus markets, `mt5-m1-develop`, theses from the week of 4 October 2021.
+3. **Pass** (all three):
+   - ORACLE's net R a trade is above zero, and so is its 95% interval (resampling market-weeks);
+   - ORACLE is positive in at least 6 of the 8 markets;
+   - the break-even weekly hit rate counted a week is below V1's 58.3%.
+4. **Not a try:** its sides are hindsight. A pass gets one run on the test window (2023-2024), exported for it then. Nothing of 2023-2024 is read before.
+5. **Reported beside it, not judged:**
+   - V1, V2 and V3 side by side;
+   - the funnel by the pool's frame and the execution frame, with market and limit entries, and limits filled and expired;
+   - each market, and buys and sells apart.

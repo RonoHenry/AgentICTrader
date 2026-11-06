@@ -167,6 +167,36 @@
     - V1, rerun, matches H-AG exactly. V1 stays the machine, and the test window stays closed.
   - **Validates: Requirement 16.2-16.5**
 
+- [x] 421. V3 written up and H-AI registered (Requirements 17, 18)
+  - The trader (2026-11-06):
+    - "the engine has to be dynamic then, we can execute anywhere from the M30, M20, M15, M10, M5, M3, M1";
+    - the frame is the child of the swept pool's;
+    - market near the entry level, a limit when price has traded away.
+  - Requirements 17-18, design.md's update (TE-D25 to TE-D30), and H-AI registered in `docs/research/SEARCH_2018_2024.md` before V3's code exists.
+  - **Validates: Requirements 17, 18.1**
+
+- [ ] 422. V3 built (Requirement 17)
+  - **422a. RED:**
+    - V1's and V2's journals are unchanged on the same bars and theses;
+    - the execution frames from M1;
+    - each pool's child frame, with M30 and M15 swings as pools;
+    - a larger pool takes a waiting hand over;
+    - the CISD on the child (the run may end one candle before the sweep's), with displacement in the child's average range;
+    - market near the MT, a limit when price is away;
+    - mirrored bars give the mirrored journal.
+  - **422b. GREEN:** `settings.V3`, the clock's frames, the book's execution frames and the machine reading them.
+  - **Validates: Requirement 17.1-17.7**
+
+- [ ] 423. H-AI run on development (Requirement 18)
+  - The four arms with V3; V1 and V2 beside it from H-AH's run.
+  - The report goes to `docs/research/THESIS_ENGINE_HAI.md`, with a line in the search log.
+  - If it passes: the test window's export and one run.
+  - **Validates: Requirement 18.2-18.5**
+
+- [ ] 424. V3 on Noculus beside V1 and V2
+  - The layer's version menu gains V3. The card names each order's frame and whether it went at market or as a limit.
+  - **Validates: Requirement 12**
+
 ## Task Dependency Graph
 
 Dependencies are denoted as `prerequisite → dependent`. The trader's answers to design.md's decisions are needed by 412 (the machine) and close at 414 (V1 frozen).

@@ -283,3 +283,28 @@ V2 is `thesis_engine.settings.V2`, a copy of V1 with six settings changed. The m
 - **TE-D22. The stack gate** follows the post-hoc check on H-AG's trades: on the right side, heavy stacks made +0.99R a trade and thin ones +0.59R. That look was on the development data, so H-AH's development run favours V2. Only the test window can confirm it.
 - **TE-D23. Management stays a companion.** The 2026-10-27 replay found that management changes the shape of results, not their sign.
 - **TE-D24. Ties between levels go to the higher frame,** then the tighter zone, then the latest formed. V1 broke ties by the array's content id, a hash that differs in a mirrored market, so V2's mirror test chose another level and diverged. The higher frame first follows the trader's rule that the higher frame outweighs the lower. It was added after H-AH's registration and before its run, and is recorded there as an amendment.
+
+
+## Update 2026-11-06: V3 (Requirements 17, 18)
+
+V3 is `thesis_engine.settings.V3`: a copy of V2 with the settings below. The machine reads them, so V1 and V2 run exactly as they did.
+
+| Setting | V2 | V3 |
+|---|---|---|
+| `e_frame` | `"M5"` | `"M1"`: the machine steps on M1 closes |
+| `exec_child` | `""` (the hand on the E frame) | `"POOL"`: the hand on its pool's child frame |
+| `exec_frames` | `()` | `("M30", "M20", "M15", "M10", "M5", "M3", "M1")` |
+| `swing_pools` | `()` | `("M30", "M15")`: their untaken swings are pools too |
+| `run_slack` | `0` | `1`: the run into the sweep may end one child candle before the sweep's |
+| `entry` | `"LIMIT_MT"` | `"NEAR_MT"`: at market when the close is near the MT, else a limit at it |
+| `near_mt` | — | `0.5` (child average ranges) |
+
+- **TE-D25. The frame follows the pool.** This is the trader's choice of 2026-11-06, and their rule that a turtle soup is valid when the parent's child frame confirms a CISD.
+  - The child is the largest execution frame no longer than a tenth of the pool's frame.
+  - H1 → M5 is their GBPUSD diary: an H1 turtle soup confirmed by an M5 CISD.
+  - D1 → M30 is the top of their list. Their own D1 turtle soup is confirmed on H1, a twenty-fourth.
+- **TE-D26. A larger pool takes the hand over.** The trader frames the biggest liquidity taken. A small pool's hand waiting when the Judas swing takes the Asia high becomes the Asia hand on M30, with its stop beyond the whole swing.
+- **TE-D27. The run into the sweep may end one candle before the sweep's.** On M30 the sweep and the rejection often sit in one candle, a wick. V2's rule would wait for a second run.
+- **TE-D28. The entry follows the trader's words.** It goes at market when price is around the entry level and as a limit when price has traded away from it. "Around" is half the child frame's average range. The number is mine; theirs is "around".
+- **TE-D29. M1 is the step.** Every child candle is read at its own close, and pools are taken at the minute.
+- **TE-D30. The bias.** V3 follows V2's development results and my review of five weeks on Noculus, four of them chosen because V2 traded them. H-AI's development run favours V3. Only the test window can confirm it.
