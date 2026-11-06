@@ -189,10 +189,15 @@
   - **422b. GREEN:** `settings.V3`, the clock's frames, the book's execution frames and the machine reading them.
   - **Validates: Requirement 17.1-17.7**
 
-- [ ] 423. H-AI run on development (Requirement 18)
+- [x] 423. H-AI run on development (Requirement 18)
   - The four arms with V3; V1 and V2 beside it from H-AH's run.
   - The report goes to `docs/research/THESIS_ENGINE_HAI.md`, with a line in the search log.
   - If it passes: the test window's export and one run.
+  - Run 2026-11-06 (runner 6a75578): **H-AI FAILS.**
+    - V3 with the week's real side: +0.614R a trade [−0.240, +1.658] on 69 trades, positive in 3 of 8 markets.
+    - Weekly break-even 77.4%.
+    - Every entry was a limit, and wrong-side limits filled more often (66% against 44%).
+    - Read after the run: the M30 and M20 hands made +1.33R a trade with the right side, and every H1 → M5 hand lost on either side. V1 stays the machine.
   - **Validates: Requirement 18.2-18.5**
 
 - [ ] 424. V3 on Noculus beside V1 and V2
