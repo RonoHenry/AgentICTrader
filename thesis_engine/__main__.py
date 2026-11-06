@@ -1,5 +1,5 @@
 """``python -m thesis_engine replay MARKET --snapshot NAME --source ORACLE`` | ``hag`` | ``hah`` | ``hai`` |
-``scenarios`` | ``live``."""
+``haj`` | ``scenarios`` | ``live``."""
 from __future__ import annotations
 
 import argparse
@@ -17,7 +17,7 @@ def _replay(args) -> None:
     snapshot = REPO / "data" / "research" / "snapshots" / args.snapshot
     if args.snapshot == "mt5-m1-develop":
         raise SystemExit("the development window is read only by the registered tests (python -m thesis_engine "
-                         "hag | hah | hai)")
+                         "hag | hah | hai | haj)")
     mk = prepare(args.market, pd.read_parquet(snapshot / f"{args.market}_M1.parquet"))
     if args.source in RESEARCH:
         theses, refused = research_theses(args.market, mk.book, args.source)
@@ -44,6 +44,7 @@ def main() -> None:
     sub.add_parser("hag", help="H-AG on the development window (registered 2026-11-05)")
     sub.add_parser("hah", help="H-AH, V2 on the development window (registered 2026-11-05)")
     sub.add_parser("hai", help="H-AI, V3 on the development window (registered 2026-11-06)")
+    sub.add_parser("haj", help="H-AJ, V4 judged on July 2025 to June 2026 (registered 2026-11-06)")
     sc = sub.add_parser("scenarios", help="the trader's own trades, each with the call they held")
     sc.add_argument("--snapshot", default="mt5-m1-2026-11")
     lv = sub.add_parser("live", help="on the terminal's live bars with your /context calls, paper only")
@@ -61,6 +62,9 @@ def main() -> None:
     elif args.cmd == "hai":
         from thesis_engine.hai import main as hai
         hai()
+    elif args.cmd == "haj":
+        from thesis_engine.haj import main as haj
+        haj()
     elif args.cmd == "scenarios":
         from thesis_engine.scenarios import main as scenarios
         scenarios(args.snapshot)
