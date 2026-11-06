@@ -66,7 +66,8 @@ def by_frame(j: Journal) -> Counter:
 
 
 def _window(name: str, folder: Path, bars_from: Optional[pd.Timestamp], since: int,
-            versions: Tuple[Tuple[str, Settings], ...]) -> Tuple[Dict[str, pd.DataFrame], Dict[str, int], dict, dict]:
+            versions: Tuple[Tuple[str, Settings], ...], out: Path = OUT
+            ) -> Tuple[Dict[str, pd.DataFrame], Dict[str, int], dict, dict]:
     """Each version's four arms over one window, one market at a time: trades, the market-weeks each arm held a
     thesis, the funnels and V4's hands by frame."""
     specs = load_profile("exness-standard-swapfree").specs()
@@ -91,7 +92,7 @@ def _window(name: str, folder: Path, bars_from: Optional[pd.Timestamp], since: i
                     ids[arm] = [th.id for th in theses]
                     weeks[arm] += len(theses)
                 j = run(mk, theses, s, slippage=specs[market].stop_slippage)
-                j.write(OUT / name / v / arm / f"{market}.jsonl")
+                j.write(out / name / v / arm / f"{market}.jsonl")
                 hands = {r["order_id"]: r for r in j.of("note") if r["note"] == "hand"}
                 for t in _trades(j, market, arm):
                     h = hands.get(t["order_id"], {})

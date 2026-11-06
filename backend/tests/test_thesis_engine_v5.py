@@ -117,3 +117,12 @@ def test_v1s_tie_break_is_the_only_asymmetry():
     m1 = walk_m1(14, seed=8, step=0.0003, spread=0.0)
     assert not _mirror(m1, V5)[2]
     assert _mirror(m1, replace(V5, level_tiebreak="FRAME"))[2]
+
+
+def test_the_runner_keeps_v1s_london_hands_for_the_comparison():
+    from thesis_engine.hal import london
+    ny = lambda s: int(pd.Timestamp(s, tz="America/New_York").tz_convert("UTC").value)   # noqa: E731
+    t = pd.DataFrame({"placed_at": [ny("2023-03-01 01:55"), ny("2023-03-01 02:00"), ny("2023-03-01 03:55"),
+                                    ny("2023-03-01 04:00"), ny("2023-07-03 02:30")], "net_r": [1, 2, 3, 4, 5]})
+    assert london(t)["net_r"].tolist() == [2, 3, 5]
+
