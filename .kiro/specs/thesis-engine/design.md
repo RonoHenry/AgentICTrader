@@ -335,3 +335,17 @@ V4 is `thesis_engine.settings.V4`: a copy of V3 with the settings below. V1, V2 
   - No version of the Thesis Engine has run on it. The five weeks I viewed on Noculus in 2025 come before it.
   - The bars are read from 1 January 2025, so nothing of 2023-2024 is read, and the 2026-07-07 hold-out of the old engine's study is after it.
   - 2021-22 is reported but no longer judges. V4 was shaped by H-AI's results there.
+
+
+## Update 2026-11-06c: V5 (Requirements 21, 22)
+
+V5 is `thesis_engine.settings.V5`: V1 with two settings changed. V1 to V4 run exactly as they did.
+
+| Setting | V1 | V5 |
+|---|---|---|
+| `window` | `(0, 12)` | `(2, 4)`: New York hours, Monday to Friday |
+| `entry_in_window` | `False` (a hand may complete after the window closes) | `True`: a hand completes only inside the window and ends when it closes |
+
+- **TE-D36. The London window comes from ICT's daytrade model,** which the trader shared on 2026-11-06. It is the only one of five rules (H-AK) that held on the unseen year. Its hands are no more often on the right side, but with the right side they pay more (+1.12R against +0.49R). It is also inside the trader's own Q2, the manipulation quarter.
+- **TE-D37. The hand completes inside the window.** That is what the filter kept: entries between 02:00 and 04:00. V1's rule, letting a hand finish within 12 candles after the window, would have let entries run to 05:00.
+- **TE-D38. One run on 2023-2024 judges both V5 and V1.** V1's run there has been owed since H-AG's pass.

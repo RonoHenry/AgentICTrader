@@ -242,6 +242,28 @@
   - The layer's menu gains V4. The chart shows each setup's order block, the pull-back and the refined entry.
   - **Validates: Requirement 12**
 
+- [x] 429. V5 written up and H-AL registered (Requirements 21, 22)
+  - The trader (2026-11-06) chose to spend 2023-2024 on V5, V1 in the 02:00-04:00 New York window, after H-AK.
+  - Requirements 21-22, design.md's update (TE-D36 to TE-D38), and H-AL registered in `docs/research/SEARCH_2018_2024.md` before V5's code exists and before 2023-2024 is exported.
+  - **Validates: Requirements 21, 22.1**
+
+- [ ] 430. V5 built (Requirement 21)
+  - **430a. RED:**
+    - V1 to V4 are unchanged on the same bars and theses;
+    - V5 arms at 02:00, and its sweeps and orders fall inside 02:00-04:00 New York;
+    - a hand waiting at 04:00 ends;
+    - mirrored bars give the mirrored journal.
+  - **430b. GREEN:** `settings.V5`, and the machine reading `entry_in_window`.
+  - **Validates: Requirement 21.1-21.3**
+
+- [ ] 431. H-AL run (Requirement 22)
+  - The runner is committed first, then 2023-2024 is exported (`mt5-m1-test`) and run once: V5 and V1 judged, V5 on 2021-22 and 2025-26 reported.
+  - The report goes to `docs/research/THESIS_ENGINE_HAL.md`, with a line in the search log.
+  - **Validates: Requirement 22.2-22.6**
+
+- [ ] 432. V5 on Noculus beside V4 to V1
+  - **Validates: Requirement 12**
+
 ## Task Dependency Graph
 
 Dependencies are denoted as `prerequisite → dependent`. The trader's answers to design.md's decisions are needed by 412 (the machine) and close at 414 (V1 frozen).

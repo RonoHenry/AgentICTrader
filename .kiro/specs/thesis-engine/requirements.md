@@ -493,3 +493,45 @@ They then chose:
    - V4 on the development window (H-AG's arms, data and theses);
    - the funnel: setups, pull-backs, refined entries, failures and expiries, by frame;
    - each market, and buys and sells apart.
+
+
+## Update 2026-11-06c: V5, V1 in the London window
+
+**Why.** The trader shared ICT's daytrade model. Of the five rules registered as H-AK (07e3d17) and read on V1's own hands, one held on a year no version was shaped on: entries between 02:00 and 04:00 New York ("buying between 2:00 am to 4:00 am NY Time seeking LOD"). Kept alone, V1's hands need 44.3% a week there (52.3% on 2021-22), against 58.8% (58.3%) with every hand. A filter on V1's hands is not the machine run in that window, since the day's budget then buys other hands. The trader chose to spend 2023-2024 on that version (2026-11-06).
+
+### Requirement 21: V5, V1 entering only from 02:00 to 04:00 New York
+
+**User Story:** As the trader, I want the engine to take its hand only in the London open, from 02:00 to 04:00 New York, so that it enters where the day's manipulation is, not in the quiet hours before it or the continuation after.
+
+#### Acceptance Criteria
+
+1. V5 SHALL keep every V1 rule except those below. V1 to V4 SHALL run unchanged: their journals on the same bars and theses stay identical.
+2. **The window is 02:00 to 04:00 New York,** Monday to Friday. The machine arms at 02:00.
+3. **A hand completes only inside the window.** The sweep and the CISD fall in M5 candles that open in it. A hand still waiting when the window closes ends, and the machine returns to AT_LEVEL.
+
+### Requirement 22: H-AL, V5's judged run on 2023-2024
+
+**User Story:** As the trader, I want V5 judged once on the years kept closed since the 2018-2024 search began, so that a pass means it holds on data nothing was built from.
+
+#### Acceptance Criteria
+
+1. H-AL SHALL be registered in `docs/research/SEARCH_2018_2024.md` before V5's code exists and before 2023-2024 is exported.
+2. **The judged years:**
+   - M1 for the eight traded focus markets, exported from the trader's MT5 terminal from 1 October 2022 to 1 January 2025 (`mt5-m1-test`);
+   - theses from the week of 1 January 2023 to the last complete week of 2024.
+
+   The arms are ORACLE, MIRROR, RANDOM and W1TREND, completed by the nearest-pool rule. V5 and V1 both run.
+3. **V5 passes** (all three):
+   - its ORACLE net R a trade is above zero, and so is its 95% interval (resampling market-weeks);
+   - its ORACLE is positive in at least 6 of the 8 markets;
+   - its break-even weekly hit rate counted a week is below V1's on the same years.
+4. **V1 is judged on the same run by H-AG's own rule,** the test-window run its pass was owed:
+   - ORACLE's net R a trade and its interval above zero;
+   - at least 6 of 8 markets;
+   - the break-even weekly hit rate (a trade) at most 60%.
+5. **Reported, not judged:**
+   - V5 on 2021-22 and 2025-26;
+   - the funnel;
+   - each market;
+   - buys and sells apart.
+6. **Not a try:** the sides are hindsight. After this run no year of 2018-2024 is unread.
