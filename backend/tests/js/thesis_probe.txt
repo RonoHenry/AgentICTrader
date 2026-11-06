@@ -21,14 +21,15 @@
   check("with no call of yours it shows the week's real side, and says so",
         /no call of yours/.test(S.thesis.words) && S.thesis.hindsight === true, S.thesis.words);
   check("it knows its next entry (Next TE trade)", S.thesis.next_trade === 1741800000, S.thesis.next_trade);
-  check("it asks for V2 unless told otherwise", global.__urls.length > 0 && global.__urls.every((u) => /version=v2/.test(u)),
+  check("it asks for V3 unless told otherwise", global.__urls.length > 0 && global.__urls.every((u) => /version=v3/.test(u)),
         global.__urls.join(" "));
-  check("the card names the version and counts the orders", /Thesis Engine V2/.test(thesisCard()) && /1 pending/.test(thesisCard())
+  check("the card names the version, the order's frame and counts the orders", /Thesis Engine V3/.test(thesisCard())
+        && /M30 limit/.test(thesisCard()) && /1 pending/.test(thesisCard())
         && /without displacement/.test(thesisCard()));
   drawn.length = 0;
   try { paintThesis(ctx, { width: 900, height: 500 }, pal, text, line); } catch (e) { bad.push("painting a trade threw: " + e.message); }
   check("an open trade with no spread count paints", drawn.some((s) => /TE long @/.test(s)), drawn.join(" | "));
-  check("a pending limit paints", drawn.some((s) => /TE limit buy @ .*pending/.test(s)), drawn.join(" | "));
+  check("a pending limit paints with its frame", drawn.some((s) => /TE M30 limit buy @ .*pending/.test(s)), drawn.join(" | "));
   check("the card shows the state", /IN_TRADE/.test(thesisCard()));
   console.log(ok.map((s) => "  ok   " + s).join("\n"));
   if (bad.length) console.log(bad.map((s) => "  FAIL " + s).join("\n"));

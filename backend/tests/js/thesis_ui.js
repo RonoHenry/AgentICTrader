@@ -80,7 +80,7 @@ const status = { state: "ready", progress: 1, message: "", instrument: "XAUUSD",
                  days: 2, start: 1741730400, end: 1741903200, digits: 3, summary: {}, closes: 180, blind: false, revealed_at: null };
 const reply = (code, body) => ({ ok: code < 400, status: code, statusText: String(code), json: async () => body });
 let routed = false;
-const answer = { withheld: false, source: "ORACLE", version: "v2", words: "the week's real side: hindsight, not a call", hindsight: true,
+const answer = { withheld: false, source: "ORACLE", version: "v3", words: "the week's real side: hindsight, not a call", hindsight: true,
   moves: [{ t: 1741740000, from: "FLAT", to: "THESIS", reason: "ORACLE, bullish", thesis_id: "a", level_id: null },
           { t: 1741743600, from: "THESIS", to: "IN_TRADE", reason: "the hand", thesis_id: "a", level_id: null }],
   now: { t: 1741743600, from: "THESIS", to: "IN_TRADE", reason: "the hand", thesis_id: "a", level_id: null },
@@ -89,7 +89,8 @@ const answer = { withheld: false, source: "ORACLE", version: "v2", words: "the w
   levels: [], sweeps: [{ t: 1741743000, price: 1.0, pool: "the M5 swing low 1" }], skips: [],
   trades: [{ placed: 1741743600, filled: 1741743600, closed: null, direction: "LONG", fill: 1.2, stop: 1.0, target: 2.5,
              exit: null, reason: null, net_r: null, risk_spreads: null }],
-  orders: [{ placed: 1741743600, ended: null, outcome: null, kind: "LIMIT", direction: "LONG", entry: 1.1, stop: 1.0, target: 2.5 }],
+  orders: [{ placed: 1741743600, ended: null, outcome: null, kind: "LIMIT", direction: "LONG", entry: 1.1, stop: 1.0, target: 2.5,
+              frame: "M30" }],
   no_displacement: [{ t: 1741743300, pool: "the Asia low 1", body: 0.1, reach: 0.2 }] };
 global.__urls = [];
 global.fetch = async (url) => {

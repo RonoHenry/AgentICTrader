@@ -42,7 +42,7 @@ const S = { meta: null, status: null, tf: "M15", bars: [], t: 0, state: null, jo
             chain: { rows: [], withheld: false, at: null, smt: "" },
             dis: { rows: [], transitions: [], now: null, withheld: false, at: null, tested: "", history: null },
             thesis: teEmpty(), thesisSource: Prefs.get("watch.thesisSource", "SCENARIO"),
-            thesisVersion: Prefs.get("watch.thesisVersion", "v2"),
+            thesisVersion: Prefs.get("watch.thesisVersion", "v3"),
             crt: { rows: [], withheld: false, at: null, summary: null, reached: 0, develop: "" }, crtTarget: Prefs.get("watch.crtTarget", "5"), crtFilter: Prefs.get("watch.crtFilter", "all"),
             sweep: { rows: [], withheld: false, at: null, summary: null, tested: "" },
             speed: 1, digits: 5, layers: Prefs.get("watch.layers", { arrays: true, pools: true, profile: true, sequence: true, orders: true }),
@@ -545,8 +545,10 @@ function disCard() {
 const TE_SOURCES = [["SCENARIO", "Thesis: your calls (from your notes)"], ["CALL", "Thesis: your /context calls"],
                     ["ORACLE", "Thesis: the week's real side (hindsight)"], ["MIRROR", "Thesis: the opposite side (hindsight)"],
                     ["RANDOM", "Thesis: a coin flip"], ["W1TREND", "Thesis: the last W1 trend"]];
-// V2 (thesis-engine Requirement 15) is the trader's trigger; V1 is the machine H-AG measured.
-const TE_VERSIONS = [["v2", "Thesis Engine V2 (your trigger)"], ["v1", "Thesis Engine V1"]];
+// V3 (thesis-engine Requirement 17) executes on the swept pool's child frame, M30 to M1; V2 is the trader's trigger
+// on M5; V1 is the machine H-AG measured.
+const TE_VERSIONS = [["v3", "Thesis Engine V3 (dynamic frame)"], ["v2", "Thesis Engine V2 (your trigger)"],
+                     ["v1", "Thesis Engine V1"]];
 const TE_MARK = { FLAT: "○", THESIS: "◇", AT_LEVEL: "▣", ARMED: "◆", IN_TRADE: "●", SPENT: "✓" };
 function teEmpty() {
   return { withheld: false, at: null, words: "", hindsight: false, moves: [], now: null, thesis: null, level: null,
@@ -600,12 +602,12 @@ function paintThesis(ctx, size, pal, text, line) {
     if (o.kind !== "LIMIT") continue;
     const x0 = X(o.placed), x1 = Math.min(X(o.ended != null ? o.ended : S.t), W), ey = Y(o.entry);
     if (!isFinite(x0) || !isFinite(x1) || !isFinite(ey) || x1 < 0 || x0 > W) continue;
-    const long = o.direction === "LONG", side = long ? "buy" : "sell";
+    const long = o.direction === "LONG", side = long ? "buy" : "sell", tf = o.frame ? `${o.frame} ` : "";
     line(Math.max(x0, 0), ey, Math.max(x1, x0 + 4), ey, long ? pal.up : pal.bad, [3, 3], 1.5);
     if (o.outcome === "FILLED") continue;
-    const s = o.outcome === "EXPIRED" ? `TE limit ${side} @ ${fmt(o.entry)} · expired unfilled`
-            : o.outcome === "CANCELLED" ? `TE limit ${side} @ ${fmt(o.entry)} · cancelled: the thesis ended`
-            : `TE limit ${side} @ ${fmt(o.entry)} · stop ${fmt(o.stop)} · target ${fmt(o.target)} · pending`;
+    const s = o.outcome === "EXPIRED" ? `TE ${tf}limit ${side} @ ${fmt(o.entry)} · expired unfilled`
+            : o.outcome === "CANCELLED" ? `TE ${tf}limit ${side} @ ${fmt(o.entry)} · cancelled: the thesis ended`
+            : `TE ${tf}limit ${side} @ ${fmt(o.entry)} · stop ${fmt(o.stop)} · target ${fmt(o.target)} · pending`;
     text(s, Math.max(x0, 0) + 4, long ? ey + 22 : ey - 12, o.outcome ? pal.muted : pal.ink);
   }
   for (const t of T.trades) {
@@ -655,13 +657,16 @@ function thesisCard() {
   const skips = {};
   for (const x of T.skips) skips[x.reason] = (skips[x.reason] || 0) + 1;
   const skipText = Object.entries(skips).map(([k, v]) => `${v} ${k.toLowerCase().replace(/_/g, " ")}`).join(", ") || "none";
-  const v2 = T.version === "v2", od = T.orders || [], ended = (k) => od.filter((o) => o.outcome === k).length;
+  const ver = T.version || "v1", od = T.orders || [], ended = (k) => od.filter((o) => o.outcome === k).length;
   const pending = od.filter((o) => o.outcome == null).length, nd = (T.no_displacement || []).length;
-  const orderText = !od.length ? "no orders" : `${od.length} order(s): ${ended("FILLED")} filled`
-    + (v2 ? `, ${ended("EXPIRED")} expired, ${ended("CANCELLED")} cancelled` : "") + (pending ? `, ${pending} pending` : "");
-  const hint = v2
-    ? "V2, your trigger: a sweep of the previous day's, H4's or H1's high or low, the Asia range or an H1 swing, at a level with arrays on two frames (or a D1 array); a CISD whose body is at least 1.5 average M5 ranges; a limit at the run's mean threshold, expiring at 12:00 New York (at least an hour after it is placed). H-AH (2021-22, the week's real side): +0.57R a trade on 67 trades, against V1's +0.84R on 412. It failed its test."
-    : "FLAT → THESIS → AT_LEVEL → ARMED (00:00–12:00 New York) → IN_TRADE → SPENT. The side comes only from the thesis. H-AG: with the week's real side it made +0.84R a trade on 2021-22 (hindsight, not an edge).";
+  const frames = [...new Set(od.map((o) => o.frame && `${o.frame} ${o.kind.toLowerCase()}`).filter(Boolean))].join(", ");
+  const orderText = !od.length ? "no orders" : `${od.length} order(s)${frames ? ` (${frames})` : ""}: ${ended("FILLED")} filled`
+    + (ver !== "v1" ? `, ${ended("EXPIRED")} expired, ${ended("CANCELLED")} cancelled` : "") + (pending ? `, ${pending} pending` : "");
+  const hint = {
+    v3: "V3, the frame follows the pool: the swept pool's child frame confirms it (previous day or Asia → M30, previous H4 → M20, previous H1 or H1 swing → M5, M30 swing → M3, M15 swing → M1), and a larger pool taken later takes the hand over. The CISD displaces on that frame (1.5 of its average ranges); at market when price is still near the run's mean threshold, a limit there when it has run. Registered as H-AI before it ran.",
+    v2: "V2, your trigger: a sweep of the previous day's, H4's or H1's high or low, the Asia range or an H1 swing, at a level with arrays on two frames (or a D1 array); a CISD whose body is at least 1.5 average M5 ranges; a limit at the run's mean threshold, expiring at 12:00 New York (at least an hour after it is placed). H-AH (2021-22, the week's real side): +0.57R a trade on 67 trades, against V1's +0.84R on 412. It failed its test.",
+    v1: "FLAT → THESIS → AT_LEVEL → ARMED (00:00–12:00 New York) → IN_TRADE → SPENT. The side comes only from the thesis. H-AG: with the week's real side it made +0.84R a trade on 2021-22 (hindsight, not an edge).",
+  }[ver] || "";
   return `<div class="card"><b>Thesis Engine ${esc((T.version || "v1").toUpperCase())}</b> · <span class="muted">${esc(T.words)}</span>
     ${T.hindsight ? `<div style="color:var(--warn)">Hindsight: this side is known only after the week closed.</div>` : ""}
     <div><b>${esc(n ? n.to : "FLAT")}</b>${th ? ` · ${esc(th.side.toLowerCase())} since ${fmtTime(th.since)} · draw ${fmt(th.draw)} · protected ${fmt(th.protected)}${th.note ? " · " + esc(th.note) : ""}` : " · no thesis live, so nothing runs"}</div>

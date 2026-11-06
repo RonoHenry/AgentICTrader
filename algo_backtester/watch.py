@@ -149,8 +149,9 @@ THESIS_WARMUP_DAYS = 150
 THESIS_AFTER_DAYS = 7
 THESIS_SHOWN_BEFORE = 7 * 86400
 THESIS_SOURCES = ("SCENARIO", "CALL", "ORACLE", "MIRROR", "RANDOM", "W1TREND")
-#: The machine's versions (thesis-engine Requirement 15): V2, the trader's trigger, unless the page asks for V1.
-THESIS_VERSIONS = ("v2", "v1")
+#: The machine's versions (thesis-engine Requirements 15, 17): V3, the frame that follows the pool, unless the page
+#: asks for V2 or V1.
+THESIS_VERSIONS = ("v3", "v2", "v1")
 
 
 class SnapshotSource:
@@ -278,7 +279,7 @@ class WatchSession:
         self._chain_lock = threading.Lock()
         self._dis: Optional[tuple] = None                       # (trading day, AlgoMindDIS's chart view, history)
         self._dis_lock = threading.Lock()
-        self._thesis: Optional[tuple] = None                    # (session end, the Thesis Engine's market, runs)
+        self._thesis: dict = {}               # by step frame: (session end, the Thesis Engine's market, runs)
         self._thesis_lock = threading.Lock()
         self.spec = None                                        # the instrument's spec, once prepared
         #: The broker's terminal, when the server has one: ``(instrument, tf, start, end) -> bars``. AlgoMindDIS
@@ -988,28 +989,31 @@ class WatchSession:
                 "now": None if k is None else view.detail(k), "tested": HAF, "history": history}
 
     # ── the Thesis Engine (thesis-engine Requirement 12, task 414) ─────────────
-    def _thesis_market(self):
+    def _thesis_market(self, s):
         """The Thesis Engine's market over the session's M1 from THESIS_WARMUP_DAYS before it, built once per session
-        end (a live session's end moves) and shared by every source, with each source's run."""
+        end (a live session's end moves) and step frame (V1 and V2 step on M5, V3 on M1), and shared by every source,
+        with each source's run."""
         from thesis_engine.replay import prepare
         with self._thesis_lock:
             key = str(self.end)
-            if self._thesis is None or self._thesis[0] != key:
+            held = self._thesis.get(s.e_frame)
+            if held is None or held[0] != key:
                 frame = self.source._frame(self.instrument)
                 m1 = frame[(frame["time"] >= self.start - pd.Timedelta(days=THESIS_WARMUP_DAYS))
                            & (frame["time"] < self.end + pd.Timedelta(days=THESIS_AFTER_DAYS))].reset_index(drop=True)
                 if "spread" not in m1:
                     m1 = m1.assign(spread=self.spec.default_spread if self.spec else 0.0)
-                self._thesis = (key, prepare(self.instrument, m1[["time", "open", "high", "low", "close", "spread"]]),
-                                {})
-            return self._thesis[1], self._thesis[2]
+                held = self._thesis[s.e_frame] = (
+                    key, prepare(self.instrument, m1[["time", "open", "high", "low", "close", "spread"]], s), {})
+            return held[1], held[2]
 
     def _thesis_run(self, source: str, version: str) -> dict:
         from thesis_engine.replay import run
         from thesis_engine.scenarios import for_market
-        from thesis_engine.settings import V1, V2
+        from thesis_engine.settings import V1, V2, V3
         from thesis_engine.thesis import call_theses, research_theses
-        mk, runs = self._thesis_market()
+        s = {"v1": V1, "v2": V2, "v3": V3}[version]
+        mk, runs = self._thesis_market(s)
         key = f"{source}|{version}"
         with self._thesis_lock:
             if key not in runs:
@@ -1026,13 +1030,12 @@ class WatchSession:
                              "MIRROR": "the opposite of the week's real side: hindsight",
                              "RANDOM": "a coin flip each week",
                              "W1TREND": "the last W1 candle's trend at the week's open"}[source]
-                j = run(mk, theses, V2 if version == "v2" else V1,
-                        slippage=self.spec.stop_slippage if self.spec else 0.0)
+                j = run(mk, theses, s, slippage=self.spec.stop_slippage if self.spec else 0.0)
                 runs[key] = _thesis_view(j, words, source)
             return runs[key]
 
     def thesis(self, q: dict) -> dict:
-        """The Thesis Engine (``version`` v2 or v1) on the session's bars with the source ``source``, up to the clock
+        """The Thesis Engine (``version`` v3, v2 or v1) on the session's bars with the source ``source``, up to the clock
         ``t``: the theses in view, the levels it waited at, each state and why, its sweeps, skips, orders and trades.
         An order's outcome and a trade's exit show once they are in the past. Nothing while the session is blind."""
         clock = min(int(q["t"]), wall(self.end))
@@ -1307,7 +1310,9 @@ def _thesis_view(j, words: str, source: str) -> dict:
                               "low": r["low"], "high": r["high"], "formed": w, "score": r["score"],
                               "reasons": r["reasons"]} for w, r in zip(lw, lv)}
     sw = [r for r in notes if r["note"] == "sweep"]
-    sweeps = [{"t": w, "price": r["price"], "pool": r["pool"]} for w, r in zip(stamps([r["t"] for r in sw]), sw)]
+    sweeps = [{"t": w, "price": r["price"], "pool": r["pool"], "frame": r.get("frame"), "took_over": r.get("took_over")}
+              for w, r in zip(stamps([r["t"] for r in sw]), sw)]
+    hands = {r["order_id"]: r for r in notes if r["note"] == "hand"}          # V3: each order's frame
     sk = j.of("skip")
     skips = [{"t": w, "reason": r["reason"], "detail": r["detail"]} for w, r in zip(stamps([r["t"] for r in sk]), sk)]
     nd = [r for r in notes if r["note"] == "no_displacement"]
@@ -1325,7 +1330,8 @@ def _thesis_view(j, words: str, source: str) -> dict:
         placed, ended = stamps([r["at"], end["t"] if end else r["at"]])
         orders.append({"placed": placed, "ended": ended if end else None, "outcome": end["event"] if end else None,
                        "kind": r["kind"], "direction": "LONG" if r["side"] == "BULLISH" else "SHORT",
-                       "entry": r["entry"], "stop": r["stop"], "target": r["target"]})
+                       "entry": r["entry"], "stop": r["stop"], "target": r["target"],
+                       "frame": hands.get(r["order_id"], {}).get("frame")})
     kinds = {r["order_id"]: r["kind"] for r in intents}
     out = []
     for r in j.of("trade"):

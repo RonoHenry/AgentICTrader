@@ -1,6 +1,6 @@
 """
 Tests for the Thesis Engine on Noculus and the trader's scenarios (thesis-engine Requirement 12; task 414): the
-layer's route for V2 and V1, the recent months' period, and the scenarios' record and run.
+layer's route for V3, V2 and V1, the recent months' period, and the scenarios' record and run.
 """
 from __future__ import annotations
 
@@ -18,7 +18,8 @@ def test_the_layer_answers_for_every_source(session):  # noqa: F811
     end = session.status()["end"]
     for source in watch.THESIS_SOURCES:
         got = session.thesis({"t": end, "source": source})
-        assert got["withheld"] is False and got["source"] == source and got["words"] and got["version"] == "v2"
+        assert got["withheld"] is False and got["source"] == source and got["words"]
+        assert got["version"] == watch.THESIS_VERSIONS[0] == "v3"
         assert set(got) >= {"moves", "now", "thesis", "level", "theses", "levels", "sweeps", "skips", "trades",
                             "orders", "no_displacement"}
         assert all(m["t"] <= end for m in got["moves"])
@@ -35,13 +36,14 @@ def test_the_layer_answers_for_every_source(session):  # noqa: F811
         session.thesis({"t": end, "source": "ORACLE", "version": "v9"})
 
 
-def test_v1_and_v2_are_both_there_and_each_order_says_how_it_ended(session):  # noqa: F811
+def test_every_version_is_there_and_each_order_says_how_it_ended(session):  # noqa: F811
     end = session.status()["end"]
     for version in watch.THESIS_VERSIONS:
         got = session.thesis({"t": end, "source": "ORACLE", "version": version})
         assert got["version"] == version
         for o in got["orders"]:
-            assert o["kind"] == ("LIMIT" if version == "v2" else "MARKET")
+            assert o["kind"] in {"v1": {"MARKET"}, "v2": {"LIMIT"}, "v3": {"MARKET", "LIMIT"}}[version]
+            assert (o["frame"] in ("M30", "M20", "M15", "M10", "M5", "M3", "M1")) == (version == "v3")
             assert o["outcome"] in (None, "FILLED", "EXPIRED", "CANCELLED", "REJECTED")
             if o["outcome"] is not None:
                 early = session.thesis({"t": o["ended"] - 60, "source": "ORACLE", "version": version})
