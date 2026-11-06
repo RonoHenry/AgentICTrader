@@ -189,6 +189,9 @@ def _stage(st: State, ctx: Ctx, m: int, out: _Out) -> State:
             return out.move(st, "AT_LEVEL", "the window closed without a hand" if not ctx.window[m]
                             else "the data went stale", s.e_frame)
         return replace(st, hand=_sweep(st, ctx, m, out))
+    if s.entry_in_window and not ctx.window[m]:                     # V5: a hand completes inside the window
+        out.note("hand_failed", why="the window closed before the CISD", pool=hand.pool)
+        return out.move(replace(st, hand=None), "AT_LEVEL", "the window closed without a hand", s.e_frame)
     extreme = min(hand.extreme, float(e.l[m])) if bull else max(hand.extreme, float(e.h[m]))
     hand = replace(hand, extreme=extreme)
     run = book.cisd(m, bull, hand.swept)

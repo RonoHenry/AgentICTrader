@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 
 from algomind_dis.settings import V2 as DIS_V2, Settings as DisSettings
 
-__all__ = ["INDICES", "MINUTES", "Settings", "V1", "V2", "V3", "V4"]
+__all__ = ["INDICES", "MINUTES", "Settings", "V1", "V2", "V3", "V4", "V5"]
 
 #: The indices' trading day opens at 18:00 New York; FX, gold and DXY at 17:00 (the trader's H4 clock, TE-D11).
 INDICES = frozenset({"US100", "US500", "US30", "GER40", "UK100"})
@@ -77,6 +77,9 @@ class Settings:
     child_map: tuple = ()
     #: "REFINED" entries (V4): each setup frame's refining frame, whose CISD inside the setup's order block enters.
     refine: tuple = ()
+    #: A hand completes only while the window is open, and ends when it closes (V5); V1 lets it finish within
+    #: ``hand_candles`` after the window.
+    entry_in_window: bool = False
 
     def day_open_hour(self, market: str) -> int:
         return 18 if market.upper() in INDICES else 17
@@ -110,3 +113,6 @@ V3 = replace(V2, version="v3", e_frame="M1", exec_child="POOL",
 V4 = replace(V3, version="v4", exec_frames=("M30", "M15"),
              child_map=(("D1", "M30"), ("ASIA", "M30"), ("H4", "M30"), ("H1", "M15")), swing_pools=(),
              entry="REFINED", refine=(("M30", "M3"), ("M15", "M1")))
+#: V5 (Requirement 21, registered as H-AL before it ran): V1 in ICT's London window, 02:00-04:00 New York, a hand
+#: completing only inside it. Everything else is V1.
+V5 = replace(V1, version="v5", window=(2, 4), entry_in_window=True)

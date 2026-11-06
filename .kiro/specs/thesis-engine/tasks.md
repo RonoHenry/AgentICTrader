@@ -247,12 +247,13 @@
   - Requirements 21-22, design.md's update (TE-D36 to TE-D38), and H-AL registered in `docs/research/SEARCH_2018_2024.md` before V5's code exists and before 2023-2024 is exported.
   - **Validates: Requirements 21, 22.1**
 
-- [ ] 430. V5 built (Requirement 21)
+- [x] 430. V5 built (Requirement 21)
+  - Built 2026-11-06: `backend/tests/test_thesis_engine_v5.py` (7). V1 to V4 are byte for byte the same (15 fingerprints).
   - **430a. RED:**
     - V1 to V4 are unchanged on the same bars and theses;
     - V5 arms at 02:00, and its sweeps and orders fall inside 02:00-04:00 New York;
     - a hand waiting at 04:00 ends;
-    - mirrored bars give the mirrored journal.
+    - mirrored bars give the mirrored journal where no two levels tie. V1's tie-break by content id doesn't survive a mirror, and V5 keeps it, as H-AG ran V1.
   - **430b. GREEN:** `settings.V5`, and the machine reading `entry_in_window`.
   - **Validates: Requirement 21.1-21.3**
 
