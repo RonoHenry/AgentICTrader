@@ -228,10 +228,14 @@
   - **426b. GREEN:** `settings.V4`, the clock's and the book's refining frames, and the machine's setup and refinement.
   - **Validates: Requirement 19.1-19.7**
 
-- [ ] 427. H-AJ run (Requirement 20)
+- [x] 427. H-AJ run (Requirement 20)
   - V4 and V1 on 2025-26, which is judged; V4 on 2021-22, which is reported.
   - The report goes to `docs/research/THESIS_ENGINE_HAJ.md`, with a line in the search log.
   - If it passes: the test window's export and one run.
+  - Run 2026-11-06 (runner 1ce75be): **H-AJ FAILS.**
+    - V4 with the week's real side: +0.460R a trade [−0.034, +1.046] on 107 trades, 5 of 8 markets, weekly break-even 66.1%.
+    - V1 on the same year: +0.682R [+0.301, +1.116], 7 of 8, 58.8%. V1's H-AG result held out of sample.
+    - Read after the run: M30 setups with M3 entries made +1.12R a trade (46% win), and M15 setups with M1 entries −0.16R. V1 stays the machine.
   - **Validates: Requirement 20.2-20.5**
 
 - [ ] 428. V4 on Noculus beside V3, V2 and V1
