@@ -328,3 +328,25 @@ That is one source in AlgoMindDIS's container, not this specification. This spec
 #### Acceptance Criteria
 
 1. Hand-made bars for scenarios A-G (bullish and bearish reversal, bullish and bearish continuation, conflicting timeframes, neutral consolidation, news volatility) SHALL give §17.4's expected outcomes, and stay as permanent tests.
+
+### Requirement 18: v3, the Draw First (H-AM)
+
+**User Story:** As the trader, I want AlgoMindDIS to name the draw on liquidity first and take the side from it, so that the draw derives the directional bias (2026-11-07: "Remember Draw on Liquidity derives Directional Bias"; "that is what AlgoMindDIS is supposed to be able to do").
+
+#### Acceptance Criteria
+
+1. v1 SHALL stay unchanged. v3 reads v1's analyzers (`observe` with `V1`): the ranked objectives of MN1, W1 and D1 and the W1 structural direction.
+2. AT each D1 close without a held draw, v3 SHALL pick one draw from the reachable live objectives (beyond the close, 0.5 to 5 ADR), by significance, then nearness:
+   - **A, the draw alone:** from both sides;
+   - **B, the draw with structure:** from the side of the W1 structural direction only (the trader: "Structure is equally important ... Test the second as well").
+
+   The side is the draw's. The protected level is the nearest live D1 swing objective on the other side (0.5 to 5 ADR), else the previous week's opposite extreme; without one there is no pick.
+3. A held draw SHALL end, in this order:
+   - invalidated (a D1 close beyond the protected level);
+   - delivered (traded);
+   - rejected (within 0.5 ADR without trading it, closing in the far quarter of the candle's range);
+   - expired (20 closes);
+   - for B, the W1 structure turning.
+
+   v3 picks again at the same close. A draw ended any way but delivery is refuted and never picked again.
+4. H-AM SHALL be registered in the search log before any code, scored with H-AE's race and control (cell 1) and the weekly side against drift (cell 2) for A and B. Each of the four cells is judged at 98.75%, needing at least 6 of 9 markets. One run is one try (31).

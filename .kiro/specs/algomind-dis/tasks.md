@@ -185,3 +185,17 @@
   - **If v1 passed H-AF:** DIS_ENFORCED writes the paper agent's thesis file in place of reader v0's, after the trader's go.
   - **If not:** v1 stays in shadow, and the trader chooses the next version's change. **(v1 failed, 2026-11-03.)**
   - **Validates: Requirement 14.3, 16.1-16.4**
+
+- [x] 433. v3, the draw first: the requirement and H-AM registered before any code (Requirement 18)
+  - The trader (2026-11-07) asked for the draw on liquidity to derive the bias, and for both picks: the draw alone (A) and the draw on the W1 structure's side (B).
+  - Requirement 18 and H-AM in `docs/research/SEARCH_2018_2024.md`, committed before `algomind_dis/draw.py` exists.
+  - **Validates: Requirement 18.4**
+
+- [ ] 434. v3 built, and H-AM's runner committed before it runs (Requirement 18)
+  - `algomind_dis/draw.py`: the pick, the protected level and the hold, for A and B, over v1's observations.
+  - `algomind_dis/ham.py`: the replay, the four cells and the companions, with H-AE's scorer.
+  - Tests: `backend/tests/test_algomind_dis_draw.py`.
+  - **Validates: Requirement 18.1-18.3**
+
+- [ ] 435. H-AM run once; the result logged whatever it is (Requirement 18)
+  - **Validates: Requirement 18.4**
