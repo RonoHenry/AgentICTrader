@@ -199,3 +199,10 @@
 
 - [ ] 435. H-AM run once; the result logged whatever it is (Requirement 18)
   - **Validates: Requirement 18.4**
+
+- [x] 436. AlgoMindDIS v1's sides on the Thesis Engine layer (Noculus)
+  - The trader (2026-11-07): "please load them", AlgoMindDIS's trades from the end-to-end run, on the chart.
+  - `algomind_dis/theses.py` (`python -m algomind_dis.theses`) writes `data/research/theses/algomind_dis_v1.json` (git-ignored). v1 runs at every D1 close of the broker's daily bars (`mt5-2018-2026`, extended with whole UTC days from `mt5-m1-2026-11`). Each trading date from 2021-08-16 takes the state at the last D1 close before it opens.
+  - The Thesis Engine layer's source menu has "AlgoMindDIS v1" (`ALGOMIND` in `watch.THESIS_SOURCES`). With no side held in a session the engine stays FLAT, and the card says so; it never swaps in hindsight.
+  - A server started before this answers the new source with an error. The card shows it, and the rest of the page plays on.
+  - Tests: `test_algomind_dis_theses.py` (3).

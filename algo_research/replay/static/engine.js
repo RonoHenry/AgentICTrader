@@ -543,6 +543,7 @@ function disCard() {
 // thesis's draw (dashed) and protected level; the levels it waited at (the one in use outlined); ✕ at each sweep;
 // its trades, the exit and R once they are in the past. The menu picks where the side comes from.
 const TE_SOURCES = [["SCENARIO", "Thesis: your calls (from your notes)"], ["CALL", "Thesis: your /context calls"],
+                    ["ALGOMIND", "Thesis: AlgoMindDIS v1 (your full spec)"],
                     ["ORACLE", "Thesis: the week's real side (hindsight)"], ["MIRROR", "Thesis: the opposite side (hindsight)"],
                     ["RANDOM", "Thesis: a coin flip"], ["W1TREND", "Thesis: the last W1 trend"]];
 // V3 (thesis-engine Requirement 17) executes on the swept pool's child frame, M30 to M1; V2 is the trader's trigger
@@ -653,6 +654,10 @@ async function loadThesis() {
     if (["SCENARIO", "CALL"].includes(S.thesisSource) && got.any === false && !got.withheld) {
       got = { ...(await api(`/api/watch/thesis?t=${S.t}&source=ORACLE&version=${S.thesisVersion}`)),
               words: "no call of yours in this session, so it shows the week's real side (hindsight)" };
+    }
+    // AlgoMindDIS says nothing on most days: then the engine is FLAT, and the card says why instead of swapping sides.
+    if (S.thesisSource === "ALGOMIND" && got.any === false && !got.withheld) {
+      got = { ...got, words: "AlgoMindDIS v1 held no side anywhere in this session, so the engine stays FLAT" };
     }
     S.thesis = { ...teEmpty(), ...got, at: key };
   } catch (e) {

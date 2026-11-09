@@ -148,7 +148,8 @@ THESIS_WARMUP_DAYS = 150
 #: and the layer never draws past the session's end.
 THESIS_AFTER_DAYS = 7
 THESIS_SHOWN_BEFORE = 7 * 86400
-THESIS_SOURCES = ("SCENARIO", "CALL", "ORACLE", "MIRROR", "RANDOM", "W1TREND")
+#: ALGOMIND: AlgoMindDIS v1's sides from its thesis file (``algomind_dis.theses``, algomind-dis task 436).
+THESIS_SOURCES = ("SCENARIO", "CALL", "ALGOMIND", "ORACLE", "MIRROR", "RANDOM", "W1TREND")
 #: The machine's versions (thesis-engine Requirements 15, 17, 19): V4, setups on M30 and M15 with the entry refined
 #: on M3 or M1, unless the page asks for V3, V2 or V1.
 THESIS_VERSIONS = ("v4", "v3", "v2", "v1")
@@ -1011,7 +1012,7 @@ class WatchSession:
         from thesis_engine.replay import run
         from thesis_engine.scenarios import for_market
         from thesis_engine.settings import V1, V2, V3, V4
-        from thesis_engine.thesis import call_theses, research_theses
+        from thesis_engine.thesis import call_theses, file_theses, research_theses
         s = {"v1": V1, "v2": V2, "v3": V3, "v4": V4}[version]
         mk, runs = self._thesis_market(s)
         key = f"{source}|{version}"
@@ -1024,6 +1025,13 @@ class WatchSession:
                                                                        else ", not yet confirmed by you"))
                 elif source == "CALL":
                     theses, words = call_theses(self.instrument), "your /context calls"
+                elif source == "ALGOMIND":
+                    from algomind_dis import theses as dis_theses
+                    path = dis_theses.PATH
+                    theses = file_theses(self.instrument, path) if path.exists() else []
+                    words = ("AlgoMindDIS v1 (your full spec): its side, draw and protected level at the last D1 "
+                             "close before each trading date" if path.exists() else
+                             "AlgoMindDIS v1: no thesis file yet (python -m algomind_dis.theses)")
                 else:
                     theses, _ = research_theses(self.instrument, mk.book, source)
                     words = {"ORACLE": "the week's real side: hindsight, not a call",
