@@ -80,6 +80,17 @@ class Settings:
     #: A hand completes only while the window is open, and ends when it closes (V5); V1 lets it finish within
     #: ``hand_candles`` after the window.
     entry_in_window: bool = False
+    #: Management (Requirement 23; H-AN), all off in V1 to V5. At ``partial_r`` R beyond the fill the stop moves to
+    #: the fill and ``partial_fraction`` of the position closes there (0: never; the fill model's partial).
+    partial_r: float = 0.0
+    partial_fraction: float = 0.0
+    #: The target is this many R when the draw is farther (0: the draw). The minimum-reward check reads the draw.
+    target_cap_r: float = 0.0
+    #: A check (""; "DAY_END": the end of the fill's trading day; "HOURS": ``check_hours`` after the fill): an open
+    #: position closes there unless it has been ``check_r`` R beyond its fill (0: it closes regardless).
+    check_at: str = ""
+    check_hours: float = 0.0
+    check_r: float = 0.0
 
     def day_open_hour(self, market: str) -> int:
         return 18 if market.upper() in INDICES else 17

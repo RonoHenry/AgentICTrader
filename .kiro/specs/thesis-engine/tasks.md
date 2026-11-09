@@ -273,10 +273,12 @@
   - H-AN is registered in `docs/research/SEARCH_2018_2024.md` before its code: ten single-change variants, the pick, the power statement and the pass.
   - **Validates: Requirement 24.1**
 
-- [ ] 438. The management settings and H-AN's runner (Requirements 23, 24)
+- [x] 438. The management settings and H-AN's runner (Requirements 23, 24)
   - `settings.py` gains `partial_r`, `partial_fraction`, `target_cap_r`, `check_at`, `check_hours` and `check_r`, all off in V1 to V5. The machine reads the cap, and the replay reads the rest.
   - `thesis_engine/han.py`: `tune` (the ten variants and V1 on the three read windows, the pick and its power) and `confirm` (the pick and V1 on July to November 2026).
-  - Tests: V1 to V5 byte for byte the same; each setting on hand-made bars.
+  - Tests (built 2026-11-09):
+    - `test_thesis_engine_management.py` (8): V5's fingerprint, recorded before the code, unchanged (V1 to V4: `test_thesis_engine_v5.py`), the trading day's end through both clock changes, and each setting on random walks;
+    - `test_thesis_engine_han.py` (3): the bar, the registered pick, and one window end to end.
   - **Validates: Requirements 23.1-23.5, 24.2-24.3**
 
 - [ ] 439. H-AN tuned; the pick and its power logged before the confirmation runs (Requirement 24.2)

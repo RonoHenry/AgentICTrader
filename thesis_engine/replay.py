@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -118,6 +118,39 @@ def _limit_expiry(at: int, until: int, s: Settings) -> int:
     return limit_expiry(at, until, s)
 
 
+def day_end(t: int, hour: int) -> int:
+    """The end of the trading day holding ``t`` (ns): the next ``hour``:00 New York after it."""
+    local = pd.Timestamp(t, tz="UTC").tz_convert("America/New_York")
+    day = local.date()
+    end = pd.Timestamp(day.year, day.month, day.day, hour).tz_localize("America/New_York")
+    if end <= local:
+        day += timedelta(days=1)
+        end = pd.Timestamp(day.year, day.month, day.day, hour).tz_localize("America/New_York")
+    return int(end.tz_convert("UTC").value)
+
+
+def check_time(filled: int, market: str, s: Settings) -> Optional[int]:
+    """When a position filled at ``filled`` meets its check (Requirement 23.4); None without one."""
+    if s.check_at == "DAY_END":
+        return day_end(filled, s.day_open_hour(market))
+    if s.check_at == "HOURS":
+        return filled + int(round(s.check_hours * 3600 * 1e9))
+    if s.check_at:
+        raise ValueError(f"unknown check {s.check_at!r}")
+    return None
+
+
+def _has_been(order: SimOrder, stop: float, r: float) -> bool:
+    """Whether the position's best closing-side price since its fill has been ``r`` times the planned risk beyond
+    the fill (``r`` 0: never, so the check always closes)."""
+    if r <= 0:
+        return False
+    long_ = order.direction == "LONG"
+    risk = order.fill - stop if long_ else stop - order.fill
+    best = (order.mfe_price - order.fill) if long_ else (order.fill - order.mfe_price)
+    return risk > 0 and best >= r * risk
+
+
 def _journal_step(j: Journal, out) -> None:
     for tr in out.transitions:
         j.add("transition", to_json(tr))
@@ -131,7 +164,9 @@ def run(mk: Market, theses: Sequence[Thesis], s: Settings = V1, slippage: float 
         until: Optional[int] = None, partial: Optional[Tuple[float, float]] = None) -> Journal:
     """The machine over ``mk``'s bars with ``theses``. ``until`` cuts the run (ns): nothing after it is read.
     ``partial`` (R, fraction) takes that share of every position off at that many R and moves the rest's stop to the
-    fill: the companion H-AH reports, never a setting of the machine."""
+    fill: the companion H-AH reports. With it None, the settings' own (``partial_r``, Requirement 23.2) apply."""
+    if partial is None and s.partial_r > 0:
+        partial = (s.partial_r, s.partial_fraction)
     j = Journal(mk.name)
     j.add("run", {"version": VERSION, "settings": s.version, "market": mk.name, "theses": len(theses),
                   "typical_spread": mk.typical_spread, "dropped": mk.dropped})
@@ -143,6 +178,7 @@ def run(mk: Market, theses: Sequence[Thesis], s: Settings = V1, slippage: float 
     st = State()
     order: Optional[SimOrder] = None
     order_until, order_spread, order_stop = 0, 0.0, 0.0
+    order_check: Optional[int] = None              # Requirement 23.4: set at the fill, None once passed
     thesis_until = {th.id: th.until for th in theses}
     bi = 0
     prev: Optional[Bar] = None                     # the last bar the open order met
@@ -174,7 +210,7 @@ def run(mk: Market, theses: Sequence[Thesis], s: Settings = V1, slippage: float 
 
     def walk(to: int) -> None:
         """The open order through bars [bi, to)."""
-        nonlocal st, order, bi, prev
+        nonlocal st, order, bi, prev, order_check
         for i in range(bi, to):
             if order is None:
                 break
@@ -183,8 +219,16 @@ def run(mk: Market, theses: Sequence[Thesis], s: Settings = V1, slippage: float 
                 _close_at(order, prev, "TIME")
                 finish(prev)
                 break
+            if order.status == "OPEN" and order_check is not None and mk.t[i] >= order_check and prev is not None:
+                if not _has_been(order, order_stop, s.check_r):
+                    _close_at(order, prev, "CHECK")
+                    finish(prev)
+                    break
+                order_check = None
             for ev in fm.step(order, b):
                 j.add("fill", {"order_id": ev.order_id, "event": ev.kind, "t": _ns(ev.at), "price": ev.price})
+                if ev.kind == "FILLED":
+                    order_check = check_time(_ns(ev.at), mk.name, s)
                 if ev.kind in ("FILLED", "REJECTED", "EXPIRED"):
                     st, out = on_fill(st, ctx, ev.kind, _ns(ev.at), ev.price)
                     _journal_step(j, out)
@@ -216,6 +260,7 @@ def run(mk: Market, theses: Sequence[Thesis], s: Settings = V1, slippage: float 
             order = None
         for intent in out.intents:
             order_until, order_spread, order_stop = thesis_until[intent.thesis_id], mk.typical_spread, intent.stop
+            order_check = None
             order = SimOrder(st.order_id, intent.thesis_id, mk.name, "LONG" if intent.side == "BULLISH" else "SHORT",
                              intent.kind, intent.entry, intent.stop, intent.target, _dt(t),
                              expires_at=_dt(_limit_expiry(t, order_until, s)) if intent.kind == "LIMIT" else None,

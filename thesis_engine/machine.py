@@ -373,8 +373,12 @@ def _order(st: State, ctx: Ctx, m: int, hand: Hand, run: Tuple[int, int], out: _
     stop = hand.extreme if bull else hand.extreme + spread          # a short's stop triggers on the ask
     risk = entry - stop if bull else stop - entry
     reward = th.draw - entry if bull else entry - th.draw
+    target, planned = th.draw, reward                               # Requirement 23.3: a cap, off in V1 to V5
+    if s.target_cap_r > 0 and risk > 0 and reward > s.target_cap_r * risk:
+        planned = s.target_cap_r * risk
+        target = entry + planned if bull else entry - planned
     intent = Intent(ctx.market, th.id, st.level.array_id, th.side, "LIMIT" if limit else "MARKET", entry, stop,
-                    th.draw, t)
+                    target, t)
     if hand.rframe:                                                 # V4: the setup above, the entry refined below
         why = (f"{hand.frame} took {hand.pool} (the setup); price came back into its order block "
                f"{_p(hand.zone_lo)}-{_p(hand.zone_hi)} and {tf} closed {_p(close)} {'above' if bull else 'below'} "
@@ -405,7 +409,7 @@ def _order(st: State, ctx: Ctx, m: int, hand: Hand, run: Tuple[int, int], out: _
         out.note("hand", pool=hand.pool, pool_tf=hand.pool_tf, frame=hand.frame, refine=tf, k=m, k0=hand.k0,
                  kind="MARKET", away=None, zone_low=hand.zone_lo, zone_high=hand.zone_hi, order_id=order_id)
     return out.move(st, "IN_TRADE", f"{why}: {'buy' if bull else 'sell'} {how}, stop {_p(stop)}, "
-                    f"target {_p(th.draw)} ({reward / risk:.1f}R)", s.e_frame, hand=None, order_id=order_id)
+                    f"target {_p(target)} ({planned / risk:.1f}R)", s.e_frame, hand=None, order_id=order_id)
 
 
 def on_fill(st: State, ctx: Ctx, kind: str, t: int, price: Optional[float], r: Optional[float] = None
@@ -421,7 +425,8 @@ def on_fill(st: State, ctx: Ctx, kind: str, t: int, price: Optional[float], r: O
     if kind in ("REJECTED", "EXPIRED"):
         return out.move(st, "AT_LEVEL", "rejected: the open was beyond the stop or the target" if kind == "REJECTED"
                         else "the limit expired unfilled", s.e_frame), out
-    what = {"SL": "stopped", "TP": "the draw traded", "TIME": "time: closed", "END": "the data ended"}.get(kind, kind)
+    what = {"SL": "stopped", "TP": "the draw traded", "TIME": "time: closed", "END": "the data ended",
+            "CHECK": "the check: closed"}.get(kind, kind)
     reason = f"{what} at {_p(price)}" + (f" ({r:+.2f}R)" if r is not None else "")
     spent = st.entries_day >= s.per_day or st.entries_thesis >= s.per_thesis
     return out.move(st, "SPENT" if spent else "THESIS", reason, s.e_frame), out
