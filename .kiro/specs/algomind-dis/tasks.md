@@ -191,10 +191,13 @@
   - Requirement 18 and H-AM in `docs/research/SEARCH_2018_2024.md`, committed before `algomind_dis/draw.py` exists.
   - **Validates: Requirement 18.4**
 
-- [ ] 434. v3 built, and H-AM's runner committed before it runs (Requirement 18)
-  - `algomind_dis/draw.py`: the pick, the protected level and the hold, for A and B, over v1's observations.
-  - `algomind_dis/ham.py`: the replay, the four cells and the companions, with H-AE's scorer.
-  - Tests: `backend/tests/test_algomind_dis_draw.py`.
+- [x] 434. v3 built, and H-AM's runner committed before it runs (Requirement 18)
+  - `algomind_dis/draw.py`: the pick, the protected level and the hold, for A and B, over v1's observations. It also has NEAREST, the geometric companion. Each rule is a `Machine` stepped at every D1 close, with its own refuted set.
+  - `algomind_dis/ham.py`: the replay, the four cells and the companions, with H-AE's race and judgement at 98.75%.
+    - The control is H-AE's `control_share`, computed faster and exactly (`Control`): from each start, the rows where the high (low) and the close set a new extreme, so the first touch is a lookup.
+    - Every market recomputes 12 calls a rule with `control_share` itself and stops on any difference.
+    - `python -m algomind_dis.ham --workers 3` writes `data/research/search/ham_*_develop.parquet` and `ham_report_develop.md`.
+  - Tests: `backend/tests/test_algomind_dis_draw.py` (9). They cover the three picks, the protected level's fallbacks, the order of the ends, refutation, the ladders against `control_share` on a random walk, and the replay end to end.
   - **Validates: Requirement 18.1-18.3**
 
 - [ ] 435. H-AM run once; the result logged whatever it is (Requirement 18)
