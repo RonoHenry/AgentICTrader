@@ -222,5 +222,7 @@
   - Tests: `test_algomind_dis_unfold.py` (15). Nothing later is read, a mirrored market gives mirrored events, the commit waits for the FVG, the withdrawal counts closes, one market end to end with the companions.
   - **Validates: Requirements 19.1-19.4**
 
-- [ ] 447. H-AP run once on 2021-22, the result logged whatever it is; 2023-24 only after a pass (Requirement 19)
+- [x] 447. H-AP run once on 2021-22, the result logged whatever it is; 2023-24 only after a pass (Requirement 19)
+  - Run 2026-11-09 (commit 1e37167): fails all three checks. UNFOLD −0.12R a trade [−0.43, +0.22] on 143 trades, 1 of 8 markets positive; from the commit the week closes on the side 49.3% of the time. Logged in the search log; try 32. Report: `docs/research/THESIS_ENGINE_HAP.md`.
+  - 2023-24 was not run, as registered. v4 stays research only.
   - **Validates: Requirement 19.5**
