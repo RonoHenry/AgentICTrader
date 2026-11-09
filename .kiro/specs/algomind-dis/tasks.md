@@ -200,7 +200,8 @@
   - Tests: `backend/tests/test_algomind_dis_draw.py` (9). They cover the three picks, the protected level's fallbacks, the order of the ends, refutation, the ladders against `control_share` on a random walk, and the replay end to end.
   - **Validates: Requirement 18.1-18.3**
 
-- [ ] 435. H-AM run once; the result logged whatever it is (Requirement 18)
+- [x] 435. H-AM run once; the result logged whatever it is (Requirement 18)
+  - Run 2026-11-09 (commit 7a4ad76): fails. A1 +0.8, A2 +0.9, B1 +1.0, B2 +0.4 points, every interval spanning zero; the weeks held close on the draw's side 50-51% against about 50% drift. Logged in the search log; try 31.
   - **Validates: Requirement 18.4**
 
 - [x] 436. AlgoMindDIS v1's sides on the Thesis Engine layer (Noculus)
