@@ -535,3 +535,38 @@ They then chose:
    - each market;
    - buys and sells apart.
 6. **Not a try:** the sides are hindsight. After this run no year of 2018-2024 is unread.
+
+### Requirement 23: Management settings, V1 unchanged
+
+**User Story:** As the trader, I want the engine's trade management tunable as settings, so that it can need fewer right weeks to make money (2026-11-09: "We can still have a 40% win rate and be insanely profitable").
+
+#### Acceptance Criteria
+
+1. Each setting SHALL be off in V1 to V5, whose journals on the same bars and theses stay byte for byte the same.
+2. **A stop move and a partial:** at `partial_r` R the stop moves to the fill, and `partial_fraction` of the position closes there (the fill model's, algo-backtester Requirement 28).
+3. **A target cap:** with `target_cap_r` above zero, the target is that many R when the draw is farther. The minimum-reward check still reads the draw.
+4. **A check:** with `check_at` "DAY_END" (the end of the fill's trading day: 17:00 New York, 18:00 for the indices) or "HOURS" (`check_hours` after the fill), an open position closes unless it has been `check_r` R beyond its fill.
+   - "Has been" reads the best closing-side price since the fill, against the planned risk.
+   - The close is at the M1 bar's close before the check time, as the TIME exit.
+   - Its reason is CHECK.
+5. The entries a thesis (`per_thesis`) stay a setting, as in V1.
+
+### Requirement 24: H-AN, the management that lowers the bar
+
+**User Story:** As the trader, I want V1's management tuned on the years already read and confirmed once on July to November 2026, so that the side it needs is easier to reach.
+
+#### Acceptance Criteria
+
+1. H-AN SHALL be registered in `docs/research/SEARCH_2018_2024.md` before its code exists. Its ten variants, its pick and its pass are frozen there.
+2. **The tuning** runs V1 and each variant with ORACLE, MIRROR and RANDOM on H-AG's, H-AL's and H-AJ's windows. The code picks, by the registered rule:
+   - p below V1's in all three windows;
+   - ORACLE above zero a week;
+   - pooled p at least 2 points under V1's;
+   - the lowest pooled p.
+   
+   With no pick, it stops before the confirmation. The tuning log states the confirmation's power.
+3. **The confirmation** runs the pick and V1 once, on `mt5-m1-2026-11`, with theses from the week of 6 July 2026 to the week of 26 October 2026. It passes when all hold:
+   - the pick's p is below V1's;
+   - the paired difference's 90% interval over market-weeks is below zero;
+   - the pick's ORACLE is above zero a week.
+4. **A pass makes the pick V6.** Not a try: the sides are hindsight.

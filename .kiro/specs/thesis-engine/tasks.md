@@ -268,6 +268,21 @@
 - [ ] 432. V5 on Noculus beside V4 to V1
   - **Validates: Requirement 12**
 
+- [x] 437. H-AN registered (Requirements 23, 24)
+  - The trader (2026-11-09) chose to lower the bar: tune V1's management to need fewer right weeks, then confirm on July to November 2026, spending it.
+  - H-AN is registered in `docs/research/SEARCH_2018_2024.md` before its code: ten single-change variants, the pick, the power statement and the pass.
+  - **Validates: Requirement 24.1**
+
+- [ ] 438. The management settings and H-AN's runner (Requirements 23, 24)
+  - `settings.py` gains `partial_r`, `partial_fraction`, `target_cap_r`, `check_at`, `check_hours` and `check_r`, all off in V1 to V5. The machine reads the cap, and the replay reads the rest.
+  - `thesis_engine/han.py`: `tune` (the ten variants and V1 on the three read windows, the pick and its power) and `confirm` (the pick and V1 on July to November 2026).
+  - Tests: V1 to V5 byte for byte the same; each setting on hand-made bars.
+  - **Validates: Requirements 23.1-23.5, 24.2-24.3**
+
+- [ ] 439. H-AN tuned; the pick and its power logged before the confirmation runs (Requirement 24.2)
+
+- [ ] 440. H-AN confirmed once on July to November 2026, the result logged whatever it is (Requirements 24.3-24.4)
+
 ## Task Dependency Graph
 
 Dependencies are denoted as `prerequisite → dependent`. The trader's answers to design.md's decisions are needed by 412 (the machine) and close at 414 (V1 frozen).
