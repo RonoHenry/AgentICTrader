@@ -216,10 +216,10 @@
   - Requirement 19 and H-AP in `docs/research/SEARCH_2018_2024.md`, committed before `algomind_dis/unfold.py` exists.
   - **Validates: Requirement 19.5**
 
-- [ ] 446. v4 built, and H-AP's runner committed before it runs (Requirement 19)
+- [x] 446. v4 built, and H-AP's runner committed before it runs (Requirement 19)
   - `algomind_dis/unfold.py`: the events, the hold, the geometry and the withdrawal, over the Thesis Engine's book.
-  - `thesis_engine/hap.py`: the arms, the companions, the judgement and the report.
-  - Tests: nothing later is read, a mirrored market gives mirrored events, the commit waits for the FVG, the withdrawal counts closes.
+  - `thesis_engine/hap.py`: the arms, the companions, the judgement and the report. `python -m thesis_engine.hap dev`, then `test` only after a pass; each refuses a second run.
+  - Tests: `test_algomind_dis_unfold.py` (15). Nothing later is read, a mirrored market gives mirrored events, the commit waits for the FVG, the withdrawal counts closes, one market end to end with the companions.
   - **Validates: Requirements 19.1-19.4**
 
 - [ ] 447. H-AP run once on 2021-22, the result logged whatever it is; 2023-24 only after a pass (Requirement 19)
