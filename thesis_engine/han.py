@@ -121,16 +121,17 @@ def bar(o: float, m: float) -> float:
     return float(-m / (o - m)) if o > m else 1.0
 
 
-def table(trades: pd.DataFrame, held: pd.DataFrame) -> pd.DataFrame:
+def table(trades: pd.DataFrame, held: pd.DataFrame, variants=None) -> pd.DataFrame:
     """One row per window (and "pooled") and variant: each arm's R a week and a trade, the bar a week and a trade."""
     out = []
     present = set(trades["variant"])
     names = [*sorted(held["window"].unique())]
+    variants = VARIANTS if variants is None else variants
     for w in names + (["pooled"] if len(names) > 1 else []):
         h = held if w == "pooled" else held[held["window"] == w]
         tw = trades if w == "pooled" else trades[trades["window"] == w]
         weeks = h.groupby("arm").size()
-        for v in [v for v in VARIANTS if v in present]:
+        for v in [v for v in variants if v in present]:
             t = tw[tw["variant"] == v]
             row = {"window": w, "variant": v}
             for arm in ARMS:

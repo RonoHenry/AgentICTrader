@@ -91,6 +91,15 @@ class Settings:
     check_at: str = ""
     check_hours: float = 0.0
     check_r: float = 0.0
+    #: Volume Profile (Requirement 25; H-AO), all off in V1 to V5. A gate ("": none; "POC", "VA", "NEAR", "PATH",
+    #: volume.py) reads the profile of the last ``volume_anchor`` candle closed by the order's time. ``entry``
+    #: "LIMIT_POC" is a limit at the POC of the leg from the sweep's E candle to the CISD's close.
+    volume_gate: str = ""
+    volume_anchor: str = "W1"
+    profile_bins: int = 100
+    leg_bins: int = 20
+    value_area: float = 0.70
+    volume_near_adr: float = 0.25
 
     def day_open_hour(self, market: str) -> int:
         return 18 if market.upper() in INDICES else 17

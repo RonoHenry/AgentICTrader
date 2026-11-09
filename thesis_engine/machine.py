@@ -22,6 +22,7 @@ from thesis_engine.levels import levels, rank
 from thesis_engine.records import Hand, Intent, Level, Skip, Thesis, Transition, make_id, to_json
 from thesis_engine.settings import MINUTES, V1, Settings
 from thesis_engine.thesis import end
+from thesis_engine.volume import Profiles, passes
 
 __all__ = ["STATES", "TABLE", "Ctx", "State", "on_close", "on_fill"]
 
@@ -58,12 +59,15 @@ class Ctx:
     theses: Sequence[Thesis]
     typical_spread: float
     s: Settings = V1
+    profiles: Optional[Profiles] = None        # the market's tick volume; only H-AO's settings read it
     window: np.ndarray = field(init=False)
     day: np.ndarray = field(init=False)
     stale: np.ndarray = field(init=False)
     _levels: Dict[tuple, List[Level]] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
+        if (self.s.volume_gate or self.s.entry == "LIMIT_POC") and self.profiles is None:
+            raise ValueError(f"settings {self.s.version} need tick volume, and these bars have none")
         e = self.book.e
         self.theses = sorted(self.theses, key=lambda x: (x.since, x.id))
         self.window = in_window(e.t, self.s) if len(e) else np.zeros(0, bool)
@@ -366,6 +370,10 @@ def _order(st: State, ctx: Ctx, m: int, hand: Hand, run: Tuple[int, int], out: _
         away = abs(close - mt) / reach if reach > 0 else float("inf")
         limit = not away <= s.near_mt
         entry = mt if limit else (close + spread if bull else close)
+    elif s.entry == "LIMIT_POC":                                    # H-AO: the leg's POC, when it is a pull-back
+        poc = ctx.profiles.leg_poc(int(e.t[hand.swept]), t, s.leg_bins)
+        limit = poc is not None and (poc < close if bull else poc > close)
+        entry = poc if limit else (close + spread if bull else close)
     elif limit:                                                     # V2: a limit at the run's mean threshold
         entry = book.run_mt(*run)
     else:
@@ -394,13 +402,18 @@ def _order(st: State, ctx: Ctx, m: int, hand: Hand, run: Tuple[int, int], out: _
         skip = ("TARGET_TOO_CLOSE", f"the draw is {reward / risk:.2f}R away, under {s.min_rr:g}R")
     elif st.entries_day >= s.per_day or st.entries_thesis >= s.per_thesis:
         skip = ("BUDGET", f"{st.entries_day} today, {st.entries_thesis} on the thesis")
+    elif s.volume_gate and not passes(s.volume_gate, ctx.profiles.previous(book.frames[s.volume_anchor].c, t,
+                                                                          s.profile_bins, s.value_area),
+                                      bull, entry, risk, hand.extreme, book.adr(t), s.volume_near_adr, s.min_rr):
+        skip = ("VOLUME", f"{s.volume_gate} on the last closed {s.volume_anchor}'s profile")
     if skip is not None:
         out.skips.append(Skip(intent, *skip))
         out.note("skip", reason=skip[0], detail=skip[1], hand=why)
         return replace(st, hand=None)
     order_id = make_id(ctx.market, t, th.id, "order")
     out.intents.append(intent)
-    how = f"limit at the run's MT {_p(entry)}" if limit else "at market"
+    how = (f"limit at the leg's POC {_p(entry)}" if s.entry == "LIMIT_POC" else f"limit at the run's MT {_p(entry)}"
+           ) if limit else "at market"
     if away is not None:                                            # V3: how far the close ran from the MT
         how += f" ({away:.1f} {tf} average ranges from the run's MT)"
         out.note("hand", pool=hand.pool, pool_tf=hand.pool_tf, frame=tf, k=m, k0=hand.k0,

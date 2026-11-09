@@ -30,6 +30,7 @@ from thesis_engine.clock import clean, frames, limit_expiry
 from thesis_engine.machine import Ctx, State, on_close, on_fill
 from thesis_engine.records import Thesis, to_json
 from thesis_engine.settings import V1, Settings
+from thesis_engine.volume import Profiles
 
 __all__ = ["Market", "Journal", "prepare", "run"]
 
@@ -48,15 +49,20 @@ class Market:
     frames: Dict[str, Candles]
     book: Book
     dropped: Dict[str, int]
+    profiles: Optional[Profiles] = None        # when the bars carry tick volume (Requirement 25)
 
 
 def prepare(name: str, m1: pd.DataFrame, s: Settings = V1) -> Market:
     bars, dropped = clean(m1)
     typical = float(bars["spread"].median())
     fr = frames(bars, name, s)
-    return Market(name, bars["time"].to_numpy("datetime64[ns]").astype(np.int64),
-                  *(bars[k].to_numpy(dtype=float) for k in ("open", "high", "low", "close")),
-                  np.maximum(bars["spread"].to_numpy(dtype=float), typical), typical, fr, Book(name, fr, s), dropped)
+    t = bars["time"].to_numpy("datetime64[ns]").astype(np.int64)
+    col = next((c for c in ("tick_volume", "volume") if c in bars), None)
+    profiles = None if col is None else Profiles(t, bars["low"].to_numpy(dtype=float), bars["high"].to_numpy(dtype=float),
+                                                 bars[col].to_numpy(dtype=float))
+    return Market(name, t, *(bars[k].to_numpy(dtype=float) for k in ("open", "high", "low", "close")),
+                  np.maximum(bars["spread"].to_numpy(dtype=float), typical), typical, fr, Book(name, fr, s), dropped,
+                  profiles)
 
 
 @dataclass
@@ -172,7 +178,7 @@ def run(mk: Market, theses: Sequence[Thesis], s: Settings = V1, slippage: float 
                   "typical_spread": mk.typical_spread, "dropped": mk.dropped})
     for th in sorted(theses, key=lambda x: x.since):
         j.add("thesis", {**to_json(th), "id": th.id})
-    ctx = Ctx(mk.name, mk.book, theses, mk.typical_spread, s)
+    ctx = Ctx(mk.name, mk.book, theses, mk.typical_spread, s, mk.profiles)
     e = mk.book.e
     fm = FillModel(slippage)
     st = State()
