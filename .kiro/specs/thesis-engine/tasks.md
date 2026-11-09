@@ -281,9 +281,13 @@
     - `test_thesis_engine_han.py` (3): the bar, the registered pick, and one window end to end.
   - **Validates: Requirements 23.1-23.5, 24.2-24.3**
 
-- [ ] 439. H-AN tuned; the pick and its power logged before the confirmation runs (Requirement 24.2)
+- [x] 439. H-AN tuned; the pick and its power logged before the confirmation runs (Requirement 24.2)
+  - Run 2026-11-09 (commit 9ca0d22, 20 minutes): **no pick.** Every variant raises the pooled bar (V1 54.9%; ONE 55.2% is closest; DAY 66.8% is worst). None is below V1 in all three windows.
+  - P2 reaches a 40% win rate on the right side but needs 60.3% right weeks.
+  - Report: `docs/research/THESIS_ENGINE_HAN.md`; logged in the search log.
 
-- [ ] 440. H-AN confirmed once on July to November 2026, the result logged whatever it is (Requirements 24.3-24.4)
+- [x] 440. H-AN confirmed once on July to November 2026, the result logged whatever it is (Requirements 24.3-24.4)
+  - Not run, as registered: nothing qualified at the tuning stage, so July to November 2026 stays unspent.
 
 ## Task Dependency Graph
 
