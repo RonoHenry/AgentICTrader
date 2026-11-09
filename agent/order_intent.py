@@ -21,7 +21,8 @@ and before the stop checks; the first rule a setup fails names its NoTrade:
 a fresh raid (raid_window, update 2026-10-21), the expansion day's box (d1_box_expansion, update 2026-10-23),
 the anticipated direction (bias_mode), the false move (require_false_move),
 the manipulation window (time_window), the higher-timeframe POI
-(require_htf_poi). Then the stop must be beyond the entry and at least
+(require_htf_poi), the level the engine waits at (require_level, context-engine
+Req 34). Then the stop must be beyond the entry and at least
 min_stop_spreads typical spreads away, and TP1 may be the profile's draw
 when it is nearer (target_mode).
 
@@ -40,6 +41,7 @@ from datetime import datetime, timedelta
 from typing import Literal, Optional
 
 from agent.strategy_config import BiasMode, StopMode, StrategyConfig, TargetMode, TimeWindow
+from liquidity_engine.context.levels import in_window, levels
 from liquidity_engine.models import BiasDirection, Candle, LiquidityMap, SetupGrade, SetupSequence, Timeframe
 from liquidity_engine.utils.id_utils import deterministic_id
 from liquidity_engine.utils.time_utils import closed_candles
@@ -52,14 +54,14 @@ Direction = Literal["LONG", "SHORT"]
 NoTradeReason = Literal[
     "NO_GRADE", "NO_TRADE", "RR_BELOW_MIN", "INVALID_STOP",
     "NO_ANTICIPATION", "AGAINST_PROFILE", "NO_FALSE_MOVE", "OUTSIDE_WINDOW", "NO_POI", "STOP_TOO_TIGHT",
-    "STALE_RAID", "STOP_TOO_WIDE", "AGAINST_THESIS", "NO_THESIS", "IN_D1_BOX",
+    "STALE_RAID", "STOP_TOO_WIDE", "AGAINST_THESIS", "NO_THESIS", "IN_D1_BOX", "NOT_AT_LEVEL",
 ]
 #: Reasons the backtest journal records as their own decision rather than NO_TRADE
 #: (liquidity-engine Req 23.6): a graded setup refused by a rule, not by the grader.
 OWN_DECISION_REASONS = (
     "RR_BELOW_MIN", "INVALID_STOP",
     "NO_ANTICIPATION", "AGAINST_PROFILE", "NO_FALSE_MOVE", "OUTSIDE_WINDOW", "NO_POI", "STOP_TOO_TIGHT",
-    "STALE_RAID", "STOP_TOO_WIDE", "AGAINST_THESIS", "NO_THESIS", "IN_D1_BOX",
+    "STALE_RAID", "STOP_TOO_WIDE", "AGAINST_THESIS", "NO_THESIS", "IN_D1_BOX", "NOT_AT_LEVEL",
 )
 _POI_TIMEFRAMES = (Timeframe.H4, Timeframe.D1)
 _NEW_YORK = ZoneInfo("America/New_York")
@@ -272,11 +274,16 @@ def _candle_policy(
                                  f"its range {box.low:.6g}-{box.high:.6g}")
     if cfg.bias_mode == BiasMode.THESIS:
         day = trading_date(as_of)
-        side = theses(cfg.thesis_file).get(liquidity_map.instrument, {}).get(day)
+        entry = theses(cfg.thesis_file).get(liquidity_map.instrument, {}).get(day)
+        side = entry.get("side") if isinstance(entry, dict) else entry
         if side not in ("BULLISH", "BEARISH"):
             return "NO_THESIS", f"no thesis for {liquidity_map.instrument} on trading date {day}"
         if side != sequence.direction.value:
             return "AGAINST_THESIS", f"{sequence.direction.value} setup on a {side} thesis day ({day})"
+        if isinstance(entry, dict) and entry.get("draw") is not None:
+            ended = _context_ended(entry, view, as_of, cfg.entry_tf)
+            if ended is not None:
+                return ended
     if cfg.bias_mode == BiasMode.PROFILE:
         if profile is None or profile.direction == BiasDirection.NEUTRAL:
             return "NO_ANTICIPATION", "no anticipated direction for the candle"
@@ -297,6 +304,54 @@ def _candle_policy(
         for a in liquidity_map.pd_arrays
     ):
         return "NO_POI", f"protected swing {wick} is not inside an unfilled H4 or D1 {sequence.direction.value} PD array"
+    if cfg.require_level:
+        return _level_rule(liquidity_map, sequence, view, as_of)
+    return None
+
+
+def _level_rule(liquidity_map: LiquidityMap, sequence: SetupSequence, view: Mapping[Timeframe, Sequence[Candle]],
+                as_of: datetime) -> Optional[tuple[NoTradeReason, str]]:
+    """Where the engine waits (context-engine Requirement 34): the level first, then the trigger. All four of the
+    trader's characteristics line up: the protected wick inside a level of the setup's side (a PD array, in
+    discount or premium), the raided pool at that level (the liquidity) and the raid in Q2-Q3 (the time)."""
+    raid = sequence.raid
+    if not in_window(raid.raided_at):
+        return "NOT_AT_LEVEL", (f"raid at {raid.raided_at.astimezone(_NEW_YORK):%H:%M} New York is outside the "
+                                f"levels' window (00:00-12:00)")
+    wick = sequence.protected_swing.wick
+    found = [x for x in levels(liquidity_map.pd_arrays, view, as_of, liquidity_map.liquidity_levels)
+             if x.side == sequence.direction]
+    holding = [x for x in found if x.holds(wick)]
+    if not holding:
+        nearest = min(found, key=lambda x: min(abs(wick - x.low), abs(wick - x.high)), default=None)
+        return "NOT_AT_LEVEL", (f"protected swing {wick} is inside no {sequence.direction.value} level; "
+                                + (f"the nearest is the {nearest.reason()}" if nearest else "there is none"))
+    if not any(x.at(raid.pool.price) for x in holding):
+        return "NOT_AT_LEVEL", (f"the raided {raid.pool.source.value} {raid.pool.price:.6g} is not at the "
+                                f"{max(holding, key=lambda x: x.score).reason()}")
+    return None
+
+
+def _context_ended(entry: Mapping, view: Mapping[Timeframe, Sequence[Candle]], as_of: datetime,
+                   entry_tf: Timeframe) -> Optional[tuple[str, str]]:
+    """Whether the trader's weekly context (context-engine Requirement 32.3) has ended by ``as_of``: its draw traded
+    since ``since`` (on the closed H1 and entry candles opened since), or a closed D1 candle ending after ``since``
+    closed beyond its protected swing. A wick beyond the protected swing is liquidation, not an end."""
+    since = datetime.fromisoformat(entry["since"])
+    bullish = entry["side"] == "BULLISH"
+    draw, protected = float(entry["draw"]), float(entry["protected"])
+    closed = closed_candles({tf: view.get(tf, []) for tf in (Timeframe.H1, entry_tf, Timeframe.D1)}, as_of)
+    for tf in (Timeframe.H1, entry_tf):
+        for c in closed[tf]:
+            if c.timestamp >= since and (c.high >= draw if bullish else c.low <= draw):
+                return "THESIS_DELIVERED", (f"the {entry['side']} context's draw {draw:.6g} traded in the {tf.value} "
+                                            f"candle of {c.timestamp:%Y-%m-%d %H:%M} UTC")
+    calendar = StrategyCalendar()
+    for c in closed[Timeframe.D1]:
+        if calendar.period_end(c.timestamp, Timeframe.D1) > since and (c.close < protected if bullish
+                                                                        else c.close > protected):
+            return "THESIS_INVALIDATED", (f"the D1 candle of {trading_date(c.timestamp)} closed at {c.close:.6g}, "
+                                          f"beyond the {entry['side']} context's protected swing {protected:.6g}")
     return None
 
 
@@ -334,11 +389,13 @@ def theses(path: str) -> dict:
     """The thesis file's {instrument: {trading date: side}}, read once per version of the file."""
     p = Path(path)
     stat = p.stat()
-    return _read_theses(str(p.resolve()), stat.st_mtime_ns, stat.st_size)
+    return _read_theses(str(p.resolve()), stat.st_mtime_ns, stat.st_size, stat.st_ino)
 
 
 @lru_cache(maxsize=8)
-def _read_theses(path: str, mtime_ns: int, size: int) -> dict:
+def _read_theses(path: str, mtime_ns: int, size: int, inode: int) -> dict:
+    # The file's identity is in the key: a thesis file replaced by a new one (agent.context_calls writes through a
+    # temporary file) is never served from the old one's entry, however close its time and size.
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 

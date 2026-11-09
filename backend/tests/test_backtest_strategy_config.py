@@ -110,6 +110,7 @@ _CHANGED = {
     "raid_window": TF.H4,
     "raid_window_candles": 3,
     "require_htf_poi": True,
+    "require_level": True,
     "target_mode": TargetMode.NEAREST,
     "min_stop_spreads": 2.0,
     "max_stop_atr": 1.0,
