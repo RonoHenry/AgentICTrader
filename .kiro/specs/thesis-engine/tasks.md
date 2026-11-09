@@ -289,6 +289,20 @@
 - [x] 440. H-AN confirmed once on July to November 2026, the result logged whatever it is (Requirements 24.3-24.4)
   - Not run, as registered: nothing qualified at the tuning stage, so July to November 2026 stays unspent.
 
+- [x] 441. H-AO registered (Requirements 25, 26)
+  - The trader (2026-11-09) chose to test Volume Profile, as a filter and as an entry. They named no profile, so the default stands: the previous week's POC and value area edges, with the previous day's beside it.
+  - H-AO is registered in `docs/research/SEARCH_2018_2024.md` before its code: nine single-change variants, the pick and the pass.
+  - **Validates: Requirement 26.1**
+
+- [ ] 442. The volume settings and H-AO's runner (Requirements 25, 26)
+  - `thesis_engine/volume.py`: the profile, the gates and the leg's POC. `settings.py` gains the volume settings, all off in V1 to V5. The machine reads the gate and the LIMIT_POC entry.
+  - `thesis_engine/hao.py`: `tune` (the nine variants and V1 on the three read windows, the pick and its power) and `confirm` (the pick and V1 on July to November 2026).
+  - **Validates: Requirements 25.1-25.6, 26.2-26.3**
+
+- [ ] 443. H-AO tuned; the pick and its power logged before any confirmation runs (Requirement 26.2)
+
+- [ ] 444. H-AO confirmed once on July to November 2026, on the trader's go, the result logged whatever it is (Requirements 26.3-26.4)
+
 ## Task Dependency Graph
 
 Dependencies are denoted as `prerequisite → dependent`. The trader's answers to design.md's decisions are needed by 412 (the machine) and close at 414 (V1 frozen).

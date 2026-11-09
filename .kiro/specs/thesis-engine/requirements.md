@@ -570,3 +570,35 @@ They then chose:
    - the paired difference's 90% interval over market-weeks is below zero;
    - the pick's ORACLE is above zero a week.
 4. **A pass makes the pick V6.** Not a try: the sides are hindsight.
+
+### Requirement 25: Volume Profile settings, V1 unchanged
+
+**User Story:** As the trader, I want Volume Profile readings available to the machine, so that bad trades can be filtered out and the high-probability ones kept, if the readings do that (2026-11-09: "lets test it ... If not we can just do away with it").
+
+#### Acceptance Criteria
+
+1. Each setting SHALL be off in V1 to V5, whose journals on the same bars and theses stay byte for byte the same, with or without a volume column in the bars.
+2. **The profile** of a closed W1 or D1 period SHALL be built from its M1 bars only: 100 equal price bins from the period's low to its high, each bar's tick volume spread evenly over the bins it traded. The POC is the largest bin's midpoint (a tie: nearest the range's middle, then the lower). The value area grows from the POC by the larger neighbouring bin (both on a tie) until it holds 70% of the volume.
+3. **Nothing later is read:** at an order's time the gate reads the last period closed by then, and the leg's POC reads M1 bars up to the CISD's close.
+4. **A gate** (`volume_gate` "POC", "VA", "NEAR" or "PATH", on `volume_anchor` "W1" or "D1") that fails SHALL be a skip with the reason VOLUME. A gate with no profile fails.
+5. **An entry** of "LIMIT_POC" SHALL be a limit at the POC of the M1 bars from the open of the sweep's E candle to the CISD's close (20 bins), expiring as V2's limits do, and at market as V1 when that POC isn't on the pull-back side of the close or doesn't exist.
+6. A setting that needs volume SHALL raise an error on bars that have none.
+
+### Requirement 26: H-AO, Volume Profile on V1
+
+**User Story:** As the trader, I want the profile tested on the years already read and confirmed once on my go, so that it is kept only if it lowers the side the engine needs.
+
+#### Acceptance Criteria
+
+1. H-AO SHALL be registered in `docs/research/SEARCH_2018_2024.md` before its code exists. Its nine variants, its pick and its pass are frozen there.
+2. **The tuning** runs V1 and each variant with ORACLE, MIRROR and RANDOM on H-AG's, H-AL's and H-AJ's windows. V1 SHALL reproduce H-AN's table. The code picks, by the registered rule:
+   - p below V1's in all three windows;
+   - ORACLE above zero a week;
+   - pooled p at least 2 points under V1's;
+   - pooled ORACLE trades at least a quarter of V1's;
+   - for EPOC, pooled p below MT's; MT is never picked;
+   - the lowest pooled p.
+
+   With no pick, it stops before the confirmation. The tuning log states the confirmation's power.
+3. **The confirmation** runs the pick and V1 once on `mt5-m1-2026-11`, H-AN's window and pass, and only on the trader's go.
+4. **A pass makes the pick V6.** Not a try: the sides are hindsight. A failure removes volume from the engine's open questions, for tick volume.
