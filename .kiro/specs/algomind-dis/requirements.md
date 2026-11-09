@@ -350,3 +350,15 @@ That is one source in AlgoMindDIS's container, not this specification. This spec
 
    v3 picks again at the same close. A draw ended any way but delivery is refuted and never picked again.
 4. H-AM SHALL be registered in the search log before any code, scored with H-AE's race and control (cell 1) and the weekly side against drift (cell 2) for A and B. Each of the four cells is judged at 98.75%, needing at least 6 of 9 markets. One run is one try (31).
+
+### Requirement 19: v4, the Week as It Unfolds (H-AP)
+
+**User Story:** As the trader, I want the layer to read the week as it unfolds and stand down when its side is failing, instead of calling the week from a snapshot (2026-11-09: "that is a better approach then lets try that and see how it performes on tests").
+
+#### Acceptance Criteria
+
+1. v1, v2 and v3 SHALL stay unchanged, and the Thesis Engine SHALL run at V1. v4 reads only the book's closed candles.
+2. A week SHALL open with no side. A side SHALL be set by an H1 CISD whose run took a D1-or-larger pool, closed back beyond it, left an FVG, and reacted at an H4 or D1 array of the side that existed before the run. The side is set at the close that completes the last of these.
+3. The protected level SHALL be the reaction's extreme. The draw SHALL be the nearest W1 extreme or untaken D1 swing 0.5 to 5 ADR beyond the commit close; without one the event is refused.
+4. A side SHALL end when delivered, invalidated, at the week's close, replaced by an event of the other side, or withdrawn at the second close beyond the far edge of an H4 or D1 array of the side above the protected level. A wick SHALL NOT withdraw it.
+5. H-AP SHALL be registered in the search log before any code and run once on 2021-22, with UNFOLD, MIRROR and RANDOM on the same commits. It passes with net R a trade above zero and a 95% market-week interval above zero, at least 6 of 8 markets positive, and positive without its five best trades. Only a pass gets one run on 2023-24. One run is one try (32).

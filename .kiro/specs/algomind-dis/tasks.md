@@ -210,3 +210,17 @@
   - The Thesis Engine layer's source menu has "AlgoMindDIS v1" (`ALGOMIND` in `watch.THESIS_SOURCES`). With no side held in a session the engine stays FLAT, and the card says so; it never swaps in hindsight.
   - A server started before this answers the new source with an error. The card shows it, and the rest of the page plays on.
   - Tests: `test_algomind_dis_theses.py` (3).
+
+- [x] 445. v4, the week as it unfolds: the requirement and H-AP registered before any code (Requirement 19)
+  - The trader (2026-11-09) chose to test a layer that reads the week as it unfolds and withdraws a failing side, with a reachable draw and a structural protected level.
+  - Requirement 19 and H-AP in `docs/research/SEARCH_2018_2024.md`, committed before `algomind_dis/unfold.py` exists.
+  - **Validates: Requirement 19.5**
+
+- [ ] 446. v4 built, and H-AP's runner committed before it runs (Requirement 19)
+  - `algomind_dis/unfold.py`: the events, the hold, the geometry and the withdrawal, over the Thesis Engine's book.
+  - `thesis_engine/hap.py`: the arms, the companions, the judgement and the report.
+  - Tests: nothing later is read, a mirrored market gives mirrored events, the commit waits for the FVG, the withdrawal counts closes.
+  - **Validates: Requirements 19.1-19.4**
+
+- [ ] 447. H-AP run once on 2021-22, the result logged whatever it is; 2023-24 only after a pass (Requirement 19)
+  - **Validates: Requirement 19.5**
