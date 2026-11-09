@@ -300,9 +300,13 @@
   - Tests (built 2026-11-09): `test_thesis_engine_volume.py` (26): the profile's arithmetic and ties, nothing later read, each gate on each side, the POC entry, V1 and V2 byte for byte with volume in the bars, the registered pick, and one window end to end. The Thesis Engine suite: 116 pass.
   - **Validates: Requirements 25.1-25.6, 26.2-26.3**
 
-- [ ] 443. H-AO tuned; the pick and its power logged before any confirmation runs (Requirement 26.2)
+- [x] 443. H-AO tuned; the pick and its power logged before any confirmation runs (Requirement 26.2)
+  - Run 2026-11-09 (commit 9eb1fe1, 28 minutes): **no pick.** V1 reproduces H-AN's table. No variant is below V1 in all three windows; the best two (PATH_W, VA_D) are 0.2 points under V1's pooled 54.9%, against the 2 the rule asks for.
+  - The value filters remove more right-side trades than wrong-side ones (the right side's share falls from 43.0% to 32.2-38.4%).
+  - Report: `docs/research/THESIS_ENGINE_HAO.md`; logged in the search log.
 
-- [ ] 444. H-AO confirmed once on July to November 2026, on the trader's go, the result logged whatever it is (Requirements 26.3-26.4)
+- [x] 444. H-AO confirmed once on July to November 2026, on the trader's go, the result logged whatever it is (Requirements 26.3-26.4)
+  - Not run, as registered: nothing qualified at the tuning stage, so July to November 2026 stays unspent.
 
 ## Task Dependency Graph
 
