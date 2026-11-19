@@ -8,6 +8,11 @@ and each market's first intraday date.
 
     python scripts/export_mt5_history.py [--name mt5-2018-2026] [--start 2018-01-01]
     python scripts/export_mt5_history.py --name mt5-m1-develop --timeframes M1 --start 2021-07-16 --end 2023-01-01
+    python scripts/export_mt5_history.py --list-symbols USDJPY,JP225,USOIL     # what the server calls them
+    python scripts/export_mt5_history.py --name mt5-m1-assets --timeframes M1 --start 2021-01-01 \\
+        --symbols USDJPY=USDJPYm,...                                             # H-AS's markets
+
+A symbol the server doesn't carry is skipped and listed under ``unavailable`` in the manifest.
 
 Requests go a month at a time, so the terminal's bar limit never truncates M1. ``--end`` keeps a window unread
 (the 2018-2024 search's test years stay out of a development export).
@@ -37,18 +42,31 @@ def main() -> None:
     parser.add_argument("--start", default="2018-01-01")
     parser.add_argument("--end", default=None, help="exclusive, UTC; default now")
     parser.add_argument("--timeframes", default=",".join(TIMEFRAMES))
+    parser.add_argument("--symbols", default="", help="NAME=SYMBOL,... instead of the focus markets (H-AS)")
+    parser.add_argument("--list-symbols", default="", help="print the terminal's symbols containing these, then stop")
     args = parser.parse_args()
-    out = REPO / "data" / "research" / "snapshots" / args.name
-    out.mkdir(parents=True, exist_ok=True)
     if not mt5.initialize():
         raise SystemExit(f"MT5 initialize failed: {mt5.last_error()}")
+    if args.list_symbols:
+        names = [s.name for s in mt5.symbols_get()]
+        for key in args.list_symbols.split(","):
+            print(key, [n for n in names if key.upper() in n.upper()])
+        mt5.shutdown()
+        return
+    symbols = dict(x.split("=", 1) for x in args.symbols.split(",") if x) if args.symbols else SYMBOLS
+    out = REPO / "data" / "research" / "snapshots" / args.name
+    out.mkdir(parents=True, exist_ok=True)
     start = datetime.fromisoformat(args.start).replace(tzinfo=timezone.utc)
     now = datetime.now(timezone.utc)
     end = datetime.fromisoformat(args.end).replace(tzinfo=timezone.utc) if args.end else now
     manifest = {"source": f"{mt5.account_info().server} ({mt5.terminal_info().name})", "server_utc_offset": 0,
-                "exported_at": now.isoformat(timespec="seconds"), "until": end.isoformat(), "markets": {}}
-    for instrument, symbol in SYMBOLS.items():
-        mt5.symbol_select(symbol, True)
+                "exported_at": now.isoformat(timespec="seconds"), "until": end.isoformat(), "markets": {},
+                "unavailable": []}
+    for instrument, symbol in symbols.items():
+        if not mt5.symbol_select(symbol, True) or mt5.symbol_info(symbol) is None:
+            manifest["unavailable"].append({"instrument": instrument, "symbol": symbol})
+            print(instrument, symbol, "unavailable on this server", flush=True)
+            continue
         point = mt5.symbol_info(symbol).point
         manifest["markets"][instrument] = {"symbol": symbol, "point": point, "timeframes": {}}
         for tf in args.timeframes.split(","):
