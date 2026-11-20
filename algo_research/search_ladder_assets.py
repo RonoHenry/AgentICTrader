@@ -14,6 +14,9 @@ What H-AS sets, because these markets are new:
   export's end;
 - stop slippage: half the market's median M1 spread over its export (Exness gives no figure for these);
 - the verdict: pooled over the markets, see ``verdict``.
+Amended 2026-11-20, before the run: USOIL and JP225 are frozen (``FROZEN``). Exness has no prices for them on any
+timeframe for two long stretches, so they're held back like the unavailable cryptos. The eleven FX markets run, and the
+pass needs 7 of 11 positive.
 
     python -m algo_research.search_ladder_assets run --registered
     python -m algo_research.search_ladder_assets verdict
@@ -49,6 +52,10 @@ WARMUP_DAYS = 80
 SLIPPAGE_SHARE = 0.5
 ARMS = ("BASE_FULL", "BASE_HALF")
 MARKET_SHARE = 0.6
+#: Frozen before the run (2026-11-20, the trader's call): the server has no prices for these on any timeframe
+#: (M1 to D1) for long stretches. They wait for another broker's complete history, under a new registration.
+FROZEN = {"USOIL": "no prices 2023-06-30..2024-03-31 and 2026-07-17..2026-10-11 on any timeframe",
+          "JP225": "no prices 2023-06-30..2024-03-31 and 2026-07-17..2026-10-11 on any timeframe"}
 
 
 def since_for(manifest: dict, market: str) -> str:
@@ -139,7 +146,7 @@ def main(argv=None) -> None:
     args = ap.parse_args(argv)
     OUT.mkdir(parents=True, exist_ok=True)
     manifest = json.loads((SNAPSHOTS / SNAPSHOT / "manifest.json").read_text(encoding="utf-8"))
-    markets = [m for m in ASSETS if m in manifest["markets"]]
+    markets = [m for m in ASSETS if m in manifest["markets"] and m not in FROZEN]
     if args.cmd == "run":
         if not args.registered:
             raise SystemExit("H-AS runs once, after its registration is committed (--registered)")
@@ -152,8 +159,8 @@ def main(argv=None) -> None:
                   f"({time.time() - t0:.0f}s)", flush=True)
         pd.DataFrame(rows).to_parquet(OUT / "has_assets.parquet")
         (OUT / "has_assets_info.json").write_text(json.dumps({"markets": info, "unavailable":
-                                                             manifest.get("unavailable", [])}, indent=1),
-                                                 encoding="utf-8")
+                                                             manifest.get("unavailable", []), "frozen": FROZEN},
+                                                            indent=1), encoding="utf-8")
     else:
         df = pd.read_parquet(OUT / "has_assets.parquet")
         res = verdict(df, markets)
