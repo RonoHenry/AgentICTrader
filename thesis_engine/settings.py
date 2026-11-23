@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 
 from algomind_dis.settings import V2 as DIS_V2, Settings as DisSettings
 
-__all__ = ["INDICES", "MINUTES", "Settings", "V1", "V2", "V3", "V4", "V5"]
+__all__ = ["INDICES", "MINUTES", "Settings", "V1", "V2", "V3", "V4", "V5", "V6", "V7"]
 
 #: The indices' trading day opens at 18:00 New York; FX, gold and DXY at 17:00 (the trader's H4 clock, TE-D11).
 INDICES = frozenset({"US100", "US500", "US30", "GER40", "UK100"})
@@ -100,6 +100,10 @@ class Settings:
     leg_bins: int = 20
     value_area: float = 0.70
     volume_near_adr: float = 0.25
+    #: The previous day's raid (Requirement 27; H-AU), off in V1 to V6: a hand orders only when the trading day has
+    #: already traded beyond the previous trading day's extreme on the stop's side by the CISD's close: below its low
+    #: for a buy, above its high for a sell. A hand without it is skipped (NO_PD_RAID) and spends no budget.
+    pd_raid: bool = False
 
     def day_open_hour(self, market: str) -> int:
         return 18 if market.upper() in INDICES else 17
@@ -136,3 +140,9 @@ V4 = replace(V3, version="v4", exec_frames=("M30", "M15"),
 #: V5 (Requirement 21, registered as H-AL before it ran): V1 in ICT's London window, 02:00-04:00 New York, a hand
 #: completing only inside it. Everything else is V1.
 V5 = replace(V1, version="v5", window=(2, 4), entry_in_window=True)
+#: V6 (Requirement 27, registered as H-AU before it ran): a second entry on the same trading day, so a hand stopped
+#: before the session's real manipulation doesn't spend the day. Two a thesis, as V1. Everything else is V1.
+V6 = replace(V1, version="v6", per_day=2)
+#: V7 (Requirement 27, registered as H-AU before it ran): V1's hand orders only after the trading day has raided the
+#: previous day's low (a buy) or high (a sell). Everything else is V1.
+V7 = replace(V1, version="v7", pd_raid=True)

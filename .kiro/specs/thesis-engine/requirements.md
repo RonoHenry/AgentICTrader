@@ -602,3 +602,27 @@ They then chose:
    With no pick, it stops before the confirmation. The tuning log states the confirmation's power.
 3. **The confirmation** runs the pick and V1 once on `mt5-m1-2026-11`, H-AN's window and pass, and only on the trader's go.
 4. **A pass makes the pick V6.** Not a try: the sides are hindsight. A failure removes volume from the engine's open questions, for tick volume.
+
+### Requirement 27: V6 and V7, single changes to V1's hand from the trader's diary
+
+**User Story:** As the trader, I want the engine to stop spending its day on a small sweep before the session's real manipulation, so that it takes the trades I take after the raid (2026-11-23: "Register the two untested fixes").
+
+#### Acceptance Criteria
+
+1. Each setting SHALL be off in V1 to V5, whose journals on the same bars and theses stay byte for byte the same.
+2. **The previous day's raid (`pd_raid`):** a completed hand orders only when the trading day holding the CISD's close has traded beyond the previous trading day's extreme on the stop's side by that close: below its low for a buy, above its high for a sell. It is read on the execution frame's closed candles and the trader's trading day (17:00 New York, 18:00 for the indices). A hand without it is skipped as NO_PD_RAID and spends no budget.
+3. **V6** is V1 with two entries a trading day (`per_day` 2); two a thesis, as V1.
+4. **V7** is V1 with `pd_raid` on.
+
+### Requirement 28: H-AU, V6 and V7 judged on 2018-2020
+
+**User Story:** As the trader, I want the two changes judged on years no version has read, so that a pass means more than my diary's picked winners.
+
+#### Acceptance Criteria
+
+1. H-AU SHALL be registered in `docs/research/SEARCH_2018_2024.md` before V6 or V7 first runs and before any 2018-2020 intraday bar is obtained.
+2. **The judged window:** M1 for the eight traded focus markets, 1 January 2018 to 1 January 2021 UTC (`m1-2018-2020`), from the source the registration names; theses from the week of 1 April 2018 to the last complete week of 2020. The arms are ORACLE, MIRROR, RANDOM and W1TREND, completed by the nearest-pool rule. V6, V7 and V1 run.
+3. **Each of V6 and V7 passes** (all three): its ORACLE net R a trade above zero with its 97.5% interval above zero (two versions judged together, Holm-style); positive in at least 6 of the 8 markets; its break-even weekly hit rate counted a week below V1's on the same window.
+4. **V1 is reported by H-AG's own rule** on the same run.
+5. **Explore (reported, never judged):** V6 and V7 on the three windows already read (2021-22, 2023-24, July 2025 to June 2026), beside V1.
+6. **Not a try:** the sides are hindsight. The judged run happens once, whatever explore shows.

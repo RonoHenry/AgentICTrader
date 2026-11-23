@@ -41,7 +41,11 @@ CACHE = REPO / "data" / "research" / "downloads"
 UA = {"User-Agent": "Mozilla/5.0 (research data client)"}
 
 BINANCE = {"BTCUSD": ("BTCUSDT", 0.01), "ETHUSD": ("ETHUSDT", 0.01), "XRPUSD": ("XRPUSDT", 0.0001)}
-DUKASCOPY = {"USOIL": ("LIGHTCMDUSD", 1000.0), "JP225": ("JPNIDXJPY", 1000.0)}
+DUKASCOPY = {"USOIL": ("LIGHTCMDUSD", 1000.0), "JP225": ("JPNIDXJPY", 1000.0),
+             # the eight traded focus markets, for windows the MT5 servers hold no intraday history for (H-AU)
+             "XAUUSD": ("XAUUSD", 1000.0), "EURUSD": ("EURUSD", 100000.0), "GBPUSD": ("GBPUSD", 100000.0),
+             "US100": ("USATECHIDXUSD", 1000.0), "US500": ("USA500IDXUSD", 1000.0), "US30": ("USA30IDXUSD", 1000.0),
+             "GER40": ("DEUIDXEUR", 1000.0), "UK100": ("GBRIDXGBP", 1000.0)}
 COLUMNS = ["time", "open", "high", "low", "close", "tick_volume", "spread"]
 
 

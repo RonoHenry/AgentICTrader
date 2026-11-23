@@ -308,6 +308,24 @@
 - [x] 444. H-AO confirmed once on July to November 2026, on the trader's go, the result logged whatever it is (Requirements 26.3-26.4)
   - Not run, as registered: nothing qualified at the tuning stage, so July to November 2026 stays unspent.
 
+- [x] 449. H-AU registered (Requirements 27, 28)
+  - The trader (2026-11-23) chose to register the two untested fixes from the diary diff (26 Oct to 4 Nov 2026). There, V1 spends its day on an M5 sweep before the session's manipulation, while the trader's entries come after a raid.
+  - H-AU is registered in `docs/research/SEARCH_2018_2024.md` before V6 or V7 runs and before any 2018-2020 intraday bar is obtained.
+  - **Validates: Requirement 28.1**
+
+- [x] 450. V6, V7 and H-AU's runner (Requirements 27, 28)
+  - `settings.py` gains `pd_raid` (off in V1 to V5), V6 (`per_day` 2) and V7 (`pd_raid`).
+  - `machine.py` gains `Ctx.pd_raided` and the NO_PD_RAID skip.
+  - `hau.py` has `explore` and `judge`.
+  - `scripts/export_free_history.py` maps the eight focus markets on Dukascopy.
+  - Tests: `test_thesis_engine_v6v7.py` (5): V1 byte for byte, each version's one change, V6's budget, the raid against a direct computation, and V7 ordering only after the raid.
+  - **Validates: Requirements 27.1-27.4, 28.2-28.5**
+
+- [ ] 451. H-AU explore on the three read windows, reported (Requirement 28.5)
+
+- [ ] 452. H-AU judged once on 2018-2020, the result logged whatever it is (Requirements 28.2-28.4, 28.6)
+  - Needs `m1-2018-2020`: the eight markets' M1 from the source the registration names.
+
 ## Task Dependency Graph
 
 Dependencies are denoted as `prerequisite → dependent`. The trader's answers to design.md's decisions are needed by 412 (the machine) and close at 414 (V1 frozen).

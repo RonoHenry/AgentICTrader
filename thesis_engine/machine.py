@@ -74,6 +74,22 @@ class Ctx:
         self.day = trading_day(e.t, self.market, self.s) if len(e) else np.zeros(0, np.int64)
         self.stale = stale(e, self.market, self.s)
 
+    def pd_raided(self, t: int, bull: bool) -> bool:
+        """Whether the trading day holding time ``t`` has traded beyond the previous trading day's extreme on the
+        stop's side by ``t`` (below its low for a buy, above its high for a sell), read on the execution frame's
+        candles closed by ``t`` (Requirement 27.2; V7)."""
+        e = self.book.e
+        m = int(np.searchsorted(e.end, t, side="right")) - 1
+        if m < 0:
+            return False
+        start = int(np.searchsorted(self.day, self.day[m], side="left"))
+        if start == 0:
+            return False                                              # no previous trading day in the bars
+        prev = int(np.searchsorted(self.day, self.day[start - 1], side="left"))
+        if bull:
+            return float(e.l[start:m + 1].min()) < float(e.l[prev:start].min())
+        return float(e.h[start:m + 1].max()) > float(e.h[prev:start].max())
+
     def levels(self, th: Thesis, t: int, price: float) -> List[Level]:
         frames = self.book.frames
         key = (th.id, *(frames[tf].n(t) for tf in (*self.s.level_frames, "D1", "W1")))
@@ -406,6 +422,8 @@ def _order(st: State, ctx: Ctx, m: int, hand: Hand, run: Tuple[int, int], out: _
                                                                           s.profile_bins, s.value_area),
                                       bull, entry, risk, hand.extreme, book.adr(t), s.volume_near_adr, s.min_rr):
         skip = ("VOLUME", f"{s.volume_gate} on the last closed {s.volume_anchor}'s profile")
+    elif s.pd_raid and not ctx.pd_raided(t, bull):
+        skip = ("NO_PD_RAID", f"the day has not yet traded {'below the previous day low' if bull else 'above the previous day high'}")
     if skip is not None:
         out.skips.append(Skip(intent, *skip))
         out.note("skip", reason=skip[0], detail=skip[1], hand=why)

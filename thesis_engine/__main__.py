@@ -1,5 +1,5 @@
 """``python -m thesis_engine replay MARKET --snapshot NAME --source ORACLE`` | ``hag`` | ``hah`` | ``hai`` |
-``haj`` | ``hal`` | ``scenarios`` | ``live``."""
+``haj`` | ``hal`` | ``hau explore|judge`` | ``scenarios`` | ``live``."""
 from __future__ import annotations
 
 import argparse
@@ -46,6 +46,8 @@ def main() -> None:
     sub.add_parser("hai", help="H-AI, V3 on the development window (registered 2026-11-06)")
     sub.add_parser("haj", help="H-AJ, V4 judged on July 2025 to June 2026 (registered 2026-11-06)")
     sub.add_parser("hal", help="H-AL, V5 and V1 judged on 2023-2024 (registered 2026-11-06)")
+    hu = sub.add_parser("hau", help="H-AU, V6 and V7 against V1 (registered 2026-11-23)")
+    hu.add_argument("which", choices=("explore", "judge"), help="explore: the read windows, reported; judge: 2018-2020")
     sc = sub.add_parser("scenarios", help="the trader's own trades, each with the call they held")
     sc.add_argument("--snapshot", default="mt5-m1-2026-11")
     lv = sub.add_parser("live", help="on the terminal's live bars with your /context calls, paper only")
@@ -69,6 +71,9 @@ def main() -> None:
     elif args.cmd == "hal":
         from thesis_engine.hal import main as hal
         hal()
+    elif args.cmd == "hau":
+        from thesis_engine.hau import main as hau
+        hau(args.which)
     elif args.cmd == "scenarios":
         from thesis_engine.scenarios import main as scenarios
         scenarios(args.snapshot)
