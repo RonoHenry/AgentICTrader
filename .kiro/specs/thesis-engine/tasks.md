@@ -321,7 +321,8 @@
   - Tests: `test_thesis_engine_v6v7.py` (5): V1 byte for byte, each version's one change, V6's budget, the raid against a direct computation, and V7 ordering only after the raid.
   - **Validates: Requirements 27.1-27.4, 28.2-28.5**
 
-- [ ] 451. H-AU explore on the three read windows, reported (Requirement 28.5)
+- [x] 451. H-AU explore on the three read windows, reported (Requirement 28.5)
+  - Run 2026-11-23 (23 minutes). The break-even a week: V1 58.3/50.0/58.8%, V6 53.2/50.8/53.3%, V7 52.1/46.1/58.2%. V1 reproduces H-AG, H-AL and H-AJ. Logged in the search log; report in data/research/thesis_engine/hau/explore.md.
 
 - [ ] 452. H-AU judged once on 2018-2020, the result logged whatever it is (Requirements 28.2-28.4, 28.6)
   - Needs `m1-2018-2020`: the eight markets' M1 from the source the registration names.
