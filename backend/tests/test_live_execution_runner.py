@@ -80,3 +80,87 @@ class TestExpiryInTheRunner:
         broker = MagicMock()
         broker.sync.side_effect = RuntimeError("terminal gone")
         assert runner._manage(broker) == []
+
+
+# ── one trade per market, one attempt per setup (task 458) ─────────────────
+
+def _intent(setup_id="EURUSD-M15-ob-1"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        setup_id=setup_id, grade=SimpleNamespace(value="A"), direction="LONG", entry=1.1, stop_loss=1.09,
+        take_profit_1=1.12, take_profit_2=None, r_ratio=2.0,
+        time_features=SimpleNamespace(time_window="NY_AM", is_killzone=True),
+        to_message=lambda mode, detected_at=None: {"setup_id": setup_id})
+
+
+@pytest.fixture
+def engine_stub(monkeypatch):
+    """The engine grades one setup; the graph records whether it ran."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(runner, "LiquidityMappingEngine", lambda *a: SimpleNamespace(
+        analyze=lambda *a: SimpleNamespace(to_agent_context=lambda: "")))
+    monkeypatch.setattr(runner, "build_order_intent", lambda *a, **k: _intent())
+    ran = []
+    graph = SimpleNamespace(run=lambda message: ran.append(message) or SimpleNamespace(
+        decision=None, decision_reason="", error=None, trade_id="t1"))
+    return graph, ran
+
+
+class TestOneTradePerMarket:
+    def test_an_active_trade_skips_the_market(self):
+        broker = MagicMock()
+        broker.active_trade.return_value = {"trade_id": "555", "status": "PENDING"}
+        assert runner._skip_in_trade("EURUSD", broker) == {
+            "instrument": "EURUSD", "grade": "-", "decision": "IN TRADE (PENDING)", "trade_id": "555"}
+        broker.active_trade.assert_called_once_with("EURUSD")
+
+    def test_no_active_trade_no_skip(self):
+        broker = MagicMock()
+        broker.active_trade.return_value = None
+        assert runner._skip_in_trade("EURUSD", broker) is None
+
+
+class TestOneAttemptPerSetup:
+    def test_an_attempted_setup_is_not_ordered_again(self, engine_stub):
+        from datetime import datetime, timezone
+
+        graph, ran = engine_stub
+        summary = runner._process_instrument("EURUSD", {}, datetime(2026, 9, 30, 13, tzinfo=timezone.utc), graph,
+                                             MagicMock(), "AUTONOMOUS", verbose=False,
+                                             attempted=lambda: {"EURUSD-M15-ob-1"})
+        assert summary["decision"] == "SETUP_ALREADY_ATTEMPTED" and ran == []
+
+    def test_a_new_setup_goes_to_the_graph(self, engine_stub):
+        from datetime import datetime, timezone
+
+        graph, ran = engine_stub
+        runner._process_instrument("EURUSD", {}, datetime(2026, 9, 30, 13, tzinfo=timezone.utc), graph,
+                                   MagicMock(), "AUTONOMOUS", verbose=False, attempted=lambda: {"other"})
+        assert len(ran) == 1
+
+    def test_attempted_comes_from_the_paper_trades(self):
+        paper = MagicMock()
+        paper.trades.return_value = [{"setup_id": "a", "status": "CLOSED"}, {"setup_id": "b", "status": "OPEN"},
+                                     {"setup_id": None, "status": "CLOSED"}]
+        assert runner._attempted(paper=paper)() == {"a", "b"}
+
+    def test_attempted_comes_from_the_mt5_ledger(self):
+        broker = MagicMock()
+        broker.attempted_setups.return_value = {"x"}
+        assert runner._attempted(mt5_broker=broker)() == {"x"}
+
+
+class TestPaperExposure:
+    def test_open_trades_from_the_paper_trades_before_each_decision(self):
+        import json
+
+        import fakeredis
+
+        paper = MagicMock()
+        paper.trades.return_value = [{"status": "OPEN"}, {"status": "PENDING"}, {"status": "CLOSED"}]
+        redis = fakeredis.FakeRedis(decode_responses=True)
+        runner._paper_exposure(paper, redis)()
+        exposure = json.loads(redis.get(f"risk:exposure:{runner._USER_ID}"))
+        assert exposure["open_trades"] == 2 and exposure["daily_dd_pct"] == 0.0

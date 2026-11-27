@@ -59,9 +59,15 @@
     - Tests: `test_live_execution_account.py` (11).
   - **Validates: Requirements 4.1-4.4**
 
-- [ ] 458. One trade per market, one attempt per setup (Requirement 5)
+- [x] 458. One trade per market, one attempt per setup (Requirement 5)
   - MT5: IN TRADE from the ledger after sync; attempted setups from the ledger.
   - Paper: attempted setups from its trade file; open trades from its trades before each decision.
+  - **Done 2026-11-27.**
+    - `run_live_agent._skip_in_trade` serves paper and MT5.
+    - `_attempted` reads the paper trades or the MT5 ledger.
+    - `_process_instrument(attempted=...)` returns `SETUP_ALREADY_ATTEMPTED` before the graph.
+    - `_paper_exposure` counts paper's open trades before each decision, instead of relying on the close callback.
+    - Tests: `test_live_execution_runner.py` (7 more).
   - **Validates: Requirements 5.1, 5.2**
 
 - [ ] 459. The partial and break-even on MT5 (Requirement 7)

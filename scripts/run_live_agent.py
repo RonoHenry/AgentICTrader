@@ -461,6 +461,7 @@ def _process_instrument(
     evaluated: Optional[dict[str, datetime]] = None,
     typical_spread: Optional[float] = None,
     before_decision: Optional[Callable[[], None]] = None,
+    attempted: Optional[Callable[[], set[str]]] = None,
 ) -> dict:
     """Grade the window as of ``t`` and, if warranted, trade it. Returns a
     summary dict for the end-of-run table — never raises for a NO_TRADE
@@ -471,7 +472,8 @@ def _process_instrument(
     pass would otherwise re-send the same setup. ``typical_spread`` is the
     instrument's spec spread, for cfg.min_stop_spreads. ``before_decision``
     writes the account's exposure just before the graph runs, as the
-    backtest's simulate() does (live-execution Req 4.1).
+    backtest's simulate() does (live-execution Req 4.1). ``attempted`` gives
+    the setups ordered before: one of them isn't ordered again (D6, Req 5.2).
     """
     if evaluated is not None and evaluated.get(instrument) == t:
         return {"instrument": instrument, "grade": "-", "decision": "NO NEW BAR", "trade_id": None}
@@ -491,6 +493,10 @@ def _process_instrument(
         if verbose:
             print(f"[{instrument}] No valid setup right now — {intent.detail}")
         return {"instrument": instrument, "grade": "NO_TRADE", "decision": None, "trade_id": None}
+    if attempted is not None and intent.setup_id in attempted():
+        # One attempt per setup, whatever became of it (algo-backtester D6), as the backtest journals it.
+        return {"instrument": instrument, "grade": intent.grade.value, "decision": "SETUP_ALREADY_ATTEMPTED",
+                "trade_id": None}
 
     # Detected now, from data as of t (the last bar close): observe_node
     # rejects setups detected more than 60 s before it sees them. The candle
@@ -612,14 +618,19 @@ def main() -> None:
         live_account = LiveAccount(account_cfg.risk_per_trade, account_cfg.compounding, state_path=args.mt5_account)
         refresh_exposure = _mt5_exposure(mt5_broker, live_account, redis_client)
         refresh_exposure()
+    elif paper is not None:
+        # Paper trades still active from an earlier run count against the limit, now and before every decision.
+        refresh_exposure = _paper_exposure(paper, redis_client)
+        refresh_exposure()
     else:
-        # Paper trades still active from an earlier run count against the limit.
-        open_trades = sum(1 for t in paper.trades() if t["status"] in ("PENDING", "OPEN")) if paper else 0
         redis_client.set(
             f"risk:exposure:{_USER_ID}",
-            json.dumps({"daily_dd_pct": 0.0, "weekly_dd_pct": 0.0, "open_trades": open_trades,
-                        "equity": _DEMO_EQUITY}),
+            json.dumps({"daily_dd_pct": 0.0, "weekly_dd_pct": 0.0, "open_trades": 0, "equity": _DEMO_EQUITY}),
         )
+    # The broker whose own trades the runner tracks: one active trade per instrument and one attempt per setup,
+    # from its persisted trades (live-execution Req 5).
+    tracking = paper if paper is not None else mt5_broker
+    attempted = _attempted(paper=paper, mt5_broker=mt5_broker) if tracking is not None else None
 
     graph = AgentGraph(
         redis_client=redis_client,
@@ -673,11 +684,11 @@ def main() -> None:
                         _print_paper_event(event)
                     if m1:
                         paper_synced[instrument] = m1[-1].timestamp
-                    active = paper.active_trade(instrument)
-                    if active is not None:
-                        results.append({"instrument": instrument, "grade": "-",
-                                        "decision": f"IN TRADE ({active['status']})", "trade_id": active["trade_id"]})
-                        continue
+                # One active trade per instrument: a market in a trade isn't evaluated (live-execution Req 5.1).
+                in_trade = _skip_in_trade(instrument, tracking) if tracking is not None else None
+                if in_trade is not None:
+                    results.append(in_trade)
+                    continue
                 view, t = _as_of_window(
                     fetch,
                     lambda start, end, instrument=instrument: fetch_m1_range(instrument, start, end),
@@ -687,7 +698,8 @@ def main() -> None:
                 )
                 results.append(
                     _process_instrument(instrument, view, t, graph, cfg, mode, verbose=not args.loop, evaluated=evaluated,
-                                        typical_spread=spreads.get(instrument), before_decision=refresh_exposure)
+                                        typical_spread=spreads.get(instrument), before_decision=refresh_exposure,
+                                        attempted=attempted)
                 )
             except _FEED_DOWN as exc:
                 logger.error("Feed unavailable (%s) — skipping the rest of this pass", exc)
@@ -752,6 +764,33 @@ def _print_summary(results: list[dict]) -> None:
     print(f"{'instrument':<10} {'grade':<10} {'decision':<25} trade_id")
     for r in results:
         print(f"{r['instrument']:<10} {r['grade']:<10} {str(r['decision']):<25} {r['trade_id'] or ''}")
+
+
+def _skip_in_trade(instrument: str, broker) -> Optional[dict]:
+    """The summary row for a market with an own trade pending or open, which isn't evaluated (one active trade per
+    instrument, live-execution Req 5.1, as the backtest's IN_TRADE); None when it has none."""
+    active = broker.active_trade(instrument)
+    if active is None:
+        return None
+    return {"instrument": instrument, "grade": "-", "decision": f"IN TRADE ({active['status']})",
+            "trade_id": active["trade_id"]}
+
+
+def _attempted(paper=None, mt5_broker=None) -> Callable[[], set[str]]:
+    """The setups already ordered, from the broker's persisted state, so a restart keeps them (Req 5.2)."""
+    if mt5_broker is not None:
+        return mt5_broker.attempted_setups
+    return lambda: {t["setup_id"] for t in paper.trades() if t.get("setup_id")}
+
+
+def _paper_exposure(paper, redis_client) -> Callable[[], None]:
+    """Before each paper decision, the open trades from the paper broker's own trades (LX-D4). Paper has no money
+    account: drawdown stays 0 and the equity is the demo seed (design, Known divergences)."""
+    def refresh() -> None:
+        open_trades = sum(1 for t in paper.trades() if t["status"] in ("PENDING", "OPEN"))
+        redis_client.set(f"risk:exposure:{_USER_ID}", json.dumps(
+            {"daily_dd_pct": 0.0, "weekly_dd_pct": 0.0, "open_trades": open_trades, "equity": _DEMO_EQUITY}))
+    return refresh
 
 
 def _mt5_exposure(broker, account, redis_client, clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)):
