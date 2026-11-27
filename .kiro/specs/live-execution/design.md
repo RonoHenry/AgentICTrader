@@ -46,6 +46,7 @@ Defaults stand until the trader answers.
 
 - **Break-even timing.** The backtest moves the rest's stop on the bar the partial fills. Live moves it within the minute after. A reversal inside that minute stops the rest at the original stop.
 - **Market fills.** The backtest fills a market order at the next M1 bar's open; live fills at the tick. The partial level follows each one's actual fill (Requirement 7.2).
+- **Lot value off the account currency.** MT5 prices a lot by `trade_tick_value`, converted at the current price. SimBroker converts a USD-based pair (USDJPY) or a cross at the entry. A limit away from the market can therefore size a step apart. USD-quoted instruments (EURUSD, GBPUSD, gold, the US indices) are exact: the parity test draws them only.
 - **Paper drawdown.** Paper trades have no money account: their exposure counts open trades from the broker's truth but keeps drawdown at 0. Part 3 (running unattended) is where paper or demo gets the daily-loss kill switch.
 
 ## Testing

@@ -81,8 +81,13 @@
     - Tests: `test_live_execution_mt5.py` (9 more), `test_live_execution_runner.py` (1 more).
   - **Validates: Requirements 7.1-7.4**
 
-- [ ] 460. The parity test (Requirement 8)
+- [x] 460. The parity test (Requirement 8)
   - Hypothesis over instruments, budgets, stops, markets and times: SimBroker and the adapter on a fake terminal agree.
+  - **Done 2026-11-27.** `test_live_execution_parity.py`: 400 examples in the suite, plus two one-off runs of 5,000 that passed. A second test checks the cases reach limits, markets, STOP_TOO_TIGHT and MIN_VOLUME_OVER_RISK.
+  - **What it found, now fixed:**
+    1. The adapter didn't check the stop's and target's sides, so it refused with another code. `stops_valid` is now shared, checked before sizing as in SimBroker.
+    2. A backstop tie: the adapter's ask - bid spread differed from the bar's by float error. `stop_too_tight` is now shared, with a 1e-9 tolerance.
+  - **Known divergence logged (design.md):** the lot value off the account currency.
   - **Validates: Requirement 8.1**
 
 - [ ] 461. The demo check **(user action: the MT5 terminal on the Exness demo)**

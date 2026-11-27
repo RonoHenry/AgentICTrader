@@ -55,7 +55,7 @@ from typing import Any, Callable, Optional
 
 from agent.brokers.base import BrokerClient
 from agent.brokers.fill_model import Bar, FillModel, SimOrder, pending_expiry, swap_nights
-from agent.brokers.sizing import SizingError, lots_for_risk, split_lots, stop_overrun
+from agent.brokers.sizing import SizingError, lots_for_risk, split_lots, stop_too_tight, stops_valid
 from agent.clock import Clock
 from agent.instruments import (
     InstrumentSpec, InstrumentSpecs, commission_per_side, money_per_price_unit, swap_per_lot_per_night,
@@ -206,7 +206,7 @@ class SimBroker(BrokerClient):
         now = self._clock()
         spec = self._specs[instrument]
         if (self._max_stop_overrun is not None
-                and stop_overrun(abs(reference - stop), last.spread, spec.stop_slippage) > self._max_stop_overrun):
+                and stop_too_tight(abs(reference - stop), last.spread, spec.stop_slippage, self._max_stop_overrun)):
             raise SimBrokerError("STOP_TOO_TIGHT", f"spread {last.spread} + slippage {spec.stop_slippage} over "
                                                    f"{self._max_stop_overrun:.0%} of the {abs(reference - stop):.6g} stop")
         conversion = self._conversion_rate(spec, now)
@@ -354,9 +354,7 @@ class SimBroker(BrokerClient):
 def _check_stops(long_: bool, price: float, stop: float, target: Optional[float]) -> None:
     """Stop and target on the right sides of ``price`` (the limit, or the
     market fill), strictly, as MT5 requires."""
-    valid = (stop < price and (target is None or target > price) if long_
-             else stop > price and (target is None or target < price))
-    if not valid:
+    if not stops_valid(long_, price, stop, target):
         raise SimBrokerError("INVALID_STOPS", f"stop {stop} / target {target} against {price}")
 
 

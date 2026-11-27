@@ -49,7 +49,7 @@ from typing import Any, Callable, Optional
 
 from agent.brokers.base import BrokerClient
 from agent.brokers.fill_model import partial_level, pending_expiry
-from agent.brokers.sizing import SizingError, lots_for_risk, round_down, split_lots, stop_overrun
+from agent.brokers.sizing import SizingError, lots_for_risk, round_down, split_lots, stop_too_tight, stops_valid
 from agent.clock import Clock, wall_clock
 from agent.instruments import InstrumentSpecs
 from agent.strategy_config import PendingExpiry
@@ -320,7 +320,7 @@ class MT5BrokerAdapter(BrokerClient):
             spread = max(0.0, float(tick.ask) - float(tick.bid))
             slippage = (self._specs[instrument].stop_slippage
                         if self._specs is not None and instrument in self._specs else 0.0)
-            if stop_overrun(distance, spread, slippage) > self._max_stop_overrun:
+            if stop_too_tight(distance, spread, slippage, self._max_stop_overrun):
                 raise _refused("STOP_TOO_TIGHT", f"{instrument}: spread {spread:.6g} + slippage {slippage:.6g} over "
                                                  f"{self._max_stop_overrun:.0%} of the {distance:.6g} stop")
         try:
@@ -431,18 +431,23 @@ class MT5BrokerAdapter(BrokerClient):
         is_long = direction == "LONG"
         market_price = tick.ask if is_long else tick.bid
 
-        risk_amount = order.get("risk_amount")
-        if risk_amount:
-            reference = requested_entry if requested_entry is not None else market_price
-            size = self._lots_for_risk(instrument, symbol, reference, order.get("stop_loss"), float(risk_amount),
-                                       tick)
-        else:
-            # A manual order: its explicit size, on the symbol's step.
-            size = self._normalize_volume(symbol, float(order.get("size", 0.01)))
-
         is_pending = requested_entry is not None and (
             requested_entry < market_price if is_long else requested_entry > market_price
         )
+        stop_loss = order.get("stop_loss")
+        if stop_loss is not None and not stops_valid(is_long, requested_entry if is_pending else market_price,
+                                                     float(stop_loss), order.get("take_profit")):
+            # MT5 refuses these itself; refused here, before sizing, with SimBroker's code (Requirement 8).
+            raise _refused("INVALID_STOPS", f"{instrument}: stop {stop_loss} / target {order.get('take_profit')} "
+                                            f"against {requested_entry if is_pending else market_price}")
+
+        risk_amount = order.get("risk_amount")
+        if risk_amount:
+            reference = requested_entry if requested_entry is not None else market_price
+            size = self._lots_for_risk(instrument, symbol, reference, stop_loss, float(risk_amount), tick)
+        else:
+            # A manual order: its explicit size, on the symbol's step.
+            size = self._normalize_volume(symbol, float(order.get("size", 0.01)))
 
         now = self._clock()
         expires_at = (pending_expiry(now, self._expiry_rule, self._fallback_ttl)

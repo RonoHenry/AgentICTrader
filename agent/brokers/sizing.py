@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import math
 from decimal import Decimal
+from typing import Optional
 
-__all__ = ["SizingError", "lots_for_risk", "round_down", "split_lots", "stop_overrun"]
+__all__ = ["SizingError", "lots_for_risk", "round_down", "split_lots", "stop_overrun", "stop_too_tight", "stops_valid"]
 
 
 class SizingError(Exception):
@@ -69,3 +70,17 @@ def stop_overrun(stop_distance: float, spread: float, slippage: float) -> float:
     if stop_distance <= 0:
         return math.inf
     return (spread + slippage) / stop_distance
+
+
+def stop_too_tight(stop_distance: float, spread: float, slippage: float, max_overrun: float) -> bool:
+    """The backstop's verdict (live-execution Requirement 2): costs more than ``max_overrun`` of the stop. A tie
+    within float error passes, so a live spread read as ask - bid decides as the bar's spread does."""
+    return stop_overrun(stop_distance, spread, slippage) > max_overrun * (1 + 1e-9)
+
+
+def stops_valid(long_: bool, price: float, stop: float, target: Optional[float]) -> bool:
+    """Stop and target on the right sides of ``price`` (the limit, or the market fill), strictly, as MT5's
+    order_send requires: the check SimBroker and the MT5 adapter both make before sizing (INVALID_STOPS)."""
+    if long_:
+        return stop < price and (target is None or target > price)
+    return stop > price and (target is None or target < price)

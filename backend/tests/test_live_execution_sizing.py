@@ -138,3 +138,12 @@ class TestSimBrokerBackstop:
         b = _sim(max_stop_overrun=0.5)
         b.place_order({**_tight_long(), "stop_loss": 1.0990})   # 10 pips: 12%
         assert b.active_trade("EURUSD") is not None
+
+
+def test_a_tie_within_float_error_passes_the_backstop():
+    from agent.brokers.sizing import stop_too_tight
+
+    # Gold: 0.15 spread + 0.05 slippage on a 0.4 stop is exactly half; ask - bid reads the spread as 0.15000000000009.
+    assert not stop_too_tight(1785.525 - 1785.125, 0.15, 0.05, 0.5)
+    assert not stop_too_tight(1785.525 - 1785.125, (1800.015625 + 0.15) - 1800.015625, 0.05, 0.5)
+    assert stop_too_tight(0.4, 0.21, 0.0, 0.5)
