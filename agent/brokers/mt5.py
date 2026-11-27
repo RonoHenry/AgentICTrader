@@ -12,13 +12,24 @@ reachable on the same machine as this process — see agent/brokers/
 pepperstone.py's module docstring for the cloud-bridge alternative
 (MetaApi.cloud) when that constraint doesn't work.
 
-Validates: Requirements FR-6 (Agentic Execution Loop) — broker abstraction.
+A risk-sized order (one carrying ``risk_amount``, as execute_node sends) is
+sized by the backtest's rule, agent.brokers.sizing (live-execution
+Requirement 1): rounded down, capped, and refused rather than sent at a size
+nobody computed. The stop backstop (Requirement 2) refuses an order whose
+spread and stop slippage are more than ``max_stop_overrun`` of the stop.
+Refusals raise MT5BrokerError with a ``reason`` code, which execute_node turns
+into a SKIP.
+
+Validates: Requirements FR-6 (Agentic Execution Loop) — broker abstraction;
+live-execution Requirements 1, 2.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from agent.brokers.base import BrokerClient
+from agent.brokers.sizing import SizingError, lots_for_risk, stop_overrun
+from agent.instruments import InstrumentSpecs
 
 try:
     import MetaTrader5 as mt5
@@ -45,8 +56,23 @@ _MAX_COMMENT_LENGTH = 27
 _SUCCESS_RETCODES = frozenset({0, 10009})
 
 
+#: The stop backstop's default (live-execution LX-D1): spread plus slippage at
+#: most half the stop, so a stop-out costs at most ~1.5 budgets.
+DEFAULT_MAX_STOP_OVERRUN = 0.5
+
+
 class MT5BrokerError(Exception):
-    """Raised when the MT5 terminal connection or an order_send() call fails."""
+    """Raised when the MT5 terminal connection or an order_send() call fails,
+    or when an order is refused before it is sent. ``reason`` is the code the
+    journal records (MIN_VOLUME_OVER_RISK, STOP_TOO_TIGHT, ...)."""
+
+    def __init__(self, message: str, reason: str = "BROKER_ERROR") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def _refused(reason: str, detail: str) -> MT5BrokerError:
+    return MT5BrokerError(f"{reason}: {detail}", reason)
 
 
 def _order_send_failed(result: Any) -> bool:
@@ -81,6 +107,13 @@ class MT5BrokerAdapter(BrokerClient):
         symbol_suffix: Appended to every instrument before sending to MT5
                        (some brokers list symbols as ``"EURUSD.a"`` etc.).
         magic:         Magic number tagging orders placed by this adapter.
+        specs:         The broker profile's instrument specs: the stop
+                       backstop counts each instrument's stop slippage.
+                       Without them it counts the spread only.
+        max_stop_overrun: The stop backstop (live-execution Req 2); None
+                       switches it off.
+        min_volume_tolerance: How far over its budget the minimum volume
+                       may risk (the backtest's 10%).
     """
 
     def __init__(
@@ -91,6 +124,9 @@ class MT5BrokerAdapter(BrokerClient):
         path: str | None = None,
         symbol_suffix: str = "",
         magic: int = _DEFAULT_MAGIC,
+        specs: Optional[InstrumentSpecs] = None,
+        max_stop_overrun: Optional[float] = DEFAULT_MAX_STOP_OVERRUN,
+        min_volume_tolerance: float = 0.10,
     ) -> None:
         self._login = login
         self._password = password
@@ -98,6 +134,9 @@ class MT5BrokerAdapter(BrokerClient):
         self._path = path
         self._symbol_suffix = symbol_suffix
         self._magic = magic
+        self._specs = specs
+        self._max_stop_overrun = max_stop_overrun
+        self._tolerance = min_volume_tolerance
         self._connected = False
 
     def _ensure_connected(self) -> None:
@@ -158,40 +197,38 @@ class MT5BrokerAdapter(BrokerClient):
         decimals = len(str(step).split(".")[-1]) if "." in str(step) else 0
         return round(normalized, decimals)
 
-    def _compute_lots_from_risk(
-        self, symbol: str, entry: Any, stop_loss: Any, risk_amount: float
-    ) -> float | None:
-        """Convert a money risk amount into MT5 lot volume.
+    def _lots_for_risk(self, instrument: str, symbol: str, reference: float, stop_loss: Any, risk_amount: float,
+                       tick: Any) -> float:
+        """The lots a risk-sized order trades, by the backtest's rule (live-execution Requirement 1).
 
-        RiskEngine.compute_position_size() returns equity*RISK_PER_TRADE/
-        sl_pips, a figure that's only correct as a lot count for unit-based
-        brokers like OANDA — passing it straight through as MT5 volume is a
-        real unit mismatch (a normal account equity computes to several
-        standard lots, wildly over-risking the account). This uses the
-        symbol's own trade_tick_value/trade_tick_size instead — MT5 already
-        computes those per-symbol in account currency (contract size and any
-        cross-currency conversion included), so there's no need to hand-roll
-        pip-value math that would silently be wrong for JPY pairs, indices,
-        or an account currency that isn't the quote currency.
+        RiskEngine's position_size is OANDA units, so it is never the volume. The money a lot loses per price unit
+        is the symbol's own trade_tick_value / trade_tick_size: MT5 computes it in the account currency, contract
+        size and any cross conversion included, so JPY pairs, indices and crosses need no pip arithmetic here. The
+        reference is the limit price, or the market for a market order without an entry, as in SimBroker.
 
-        Returns None (caller falls back to the legacy order["size"]
-        passthrough) when entry/stop_loss/tick data isn't available to
-        compute a real number from.
+        Raises MT5BrokerError: INVALID_ORDER without a stop, NO_TICK_VALUE without the symbol's tick data,
+        STOP_TOO_TIGHT from the backstop, MIN_VOLUME_OVER_RISK from the sizing rule.
         """
-        if not entry or not stop_loss:
-            return None
+        if stop_loss is None:
+            raise _refused("INVALID_ORDER", f"{instrument}: a risk-sized order needs a stop_loss")
         info = mt5.symbol_info(symbol)
-        if info is None:
-            return None
-        tick_size = getattr(info, "trade_tick_size", None)
-        tick_value = getattr(info, "trade_tick_value", None)
-        if not tick_size or not tick_value:
-            return None
-        price_distance = abs(float(entry) - float(stop_loss))
-        loss_per_lot = (price_distance / tick_size) * tick_value
-        if loss_per_lot <= 0:
-            return None
-        return risk_amount / loss_per_lot
+        tick_size = getattr(info, "trade_tick_size", None) if info is not None else None
+        tick_value = getattr(info, "trade_tick_value", None) if info is not None else None
+        if not tick_size or not tick_value or not getattr(info, "volume_step", None):
+            raise _refused("NO_TICK_VALUE", f"{symbol}: no trade_tick_value/trade_tick_size/volume_step to size on")
+        distance = abs(float(reference) - float(stop_loss))
+        if self._max_stop_overrun is not None:
+            spread = max(0.0, float(tick.ask) - float(tick.bid))
+            slippage = (self._specs[instrument].stop_slippage
+                        if self._specs is not None and instrument in self._specs else 0.0)
+            if stop_overrun(distance, spread, slippage) > self._max_stop_overrun:
+                raise _refused("STOP_TOO_TIGHT", f"{instrument}: spread {spread:.6g} + slippage {slippage:.6g} over "
+                                                 f"{self._max_stop_overrun:.0%} of the {distance:.6g} stop")
+        try:
+            return lots_for_risk(risk_amount, distance / tick_size * tick_value, info.volume_min, info.volume_step,
+                                 info.volume_max, self._tolerance)
+        except SizingError as exc:
+            raise _refused(exc.reason, f"{instrument}: {str(exc).split(': ', 1)[-1]}") from None
 
     def _send_closing_deal(self, position: Any, volume: float) -> Any:
         symbol = position.symbol
@@ -279,26 +316,26 @@ class MT5BrokerAdapter(BrokerClient):
         """
         self._ensure_connected()
 
-        symbol = self._resolve_symbol(order["instrument"])
+        instrument = order["instrument"]
+        symbol = self._resolve_symbol(instrument)
         direction = order.get("direction", "LONG").upper()
         requested_entry = order.get("entry")
 
-        raw_size = float(order.get("size", 0.01))
-        risk_amount = order.get("risk_amount")
-        if risk_amount:
-            lots = self._compute_lots_from_risk(
-                symbol, requested_entry, order.get("stop_loss"), float(risk_amount)
-            )
-            if lots is not None:
-                raw_size = lots
-        size = self._normalize_volume(symbol, raw_size)
-
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
-            raise MT5BrokerError(f"No tick data for symbol {symbol}")
+            raise MT5BrokerError(f"No tick data for symbol {symbol}", "NO_PRICE")
 
         is_long = direction == "LONG"
         market_price = tick.ask if is_long else tick.bid
+
+        risk_amount = order.get("risk_amount")
+        if risk_amount:
+            reference = requested_entry if requested_entry is not None else market_price
+            size = self._lots_for_risk(instrument, symbol, reference, order.get("stop_loss"), float(risk_amount),
+                                       tick)
+        else:
+            # A manual order: its explicit size, on the symbol's step.
+            size = self._normalize_volume(symbol, float(order.get("size", 0.01)))
 
         is_pending = requested_entry is not None and (
             requested_entry < market_price if is_long else requested_entry > market_price

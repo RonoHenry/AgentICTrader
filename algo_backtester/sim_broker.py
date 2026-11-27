@@ -49,14 +49,13 @@ Validates: Requirements 4.12, 5.1, 5.3, 5.5, 6.1, 6.2, 28.3, 28.4 (.kiro/specs/a
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from decimal import Decimal
 from typing import Any, Callable, Optional
 
 from agent.brokers.base import BrokerClient
 from agent.brokers.fill_model import Bar, FillModel, SimOrder, pending_expiry, swap_nights
+from agent.brokers.sizing import SizingError, lots_for_risk, split_lots, stop_overrun
 from agent.clock import Clock
 from agent.instruments import (
     InstrumentSpec, InstrumentSpecs, commission_per_side, money_per_price_unit, swap_per_lot_per_night,
@@ -156,12 +155,15 @@ class SimBroker(BrokerClient):
         cost_flag_fraction: float = 0.25,
         partial_r: float = 0.0,
         partial_fraction: float = 0.0,
+        max_stop_overrun: Optional[float] = None,
     ) -> None:
         """``conversion`` gives a cross's quote -> account rate at a time (e.g.
         GBPUSD for EURGBP on a USD account); pairs quoted in or based on the
         account currency don't need it. ``partial_r`` > 0 closes
         ``partial_fraction`` of each trade at that many R and moves the rest
-        to break-even (Req 28)."""
+        to break-even (Req 28). ``max_stop_overrun`` is the live broker's
+        stop backstop (live-execution Req 2): None, the default, is off, so
+        recorded results don't change (LX-D1)."""
         self._specs = specs
         self._clock = clock
         self._expiry_rule = expiry_rule
@@ -170,6 +172,7 @@ class SimBroker(BrokerClient):
         self._tolerance = min_volume_tolerance
         self._cost_flag_fraction = cost_flag_fraction
         self._partial_r, self._partial_fraction = partial_r, partial_fraction
+        self._max_stop_overrun = max_stop_overrun
         self._models: dict[str, FillModel] = {}
         self._last_bar: dict[str, Bar] = {}
         self._active: dict[str, SimTrade] = {}   # by order id, in placement order
@@ -202,6 +205,10 @@ class SimBroker(BrokerClient):
 
         now = self._clock()
         spec = self._specs[instrument]
+        if (self._max_stop_overrun is not None
+                and stop_overrun(abs(reference - stop), last.spread, spec.stop_slippage) > self._max_stop_overrun):
+            raise SimBrokerError("STOP_TOO_TIGHT", f"spread {last.spread} + slippage {spec.stop_slippage} over "
+                                                   f"{self._max_stop_overrun:.0%} of the {abs(reference - stop):.6g} stop")
         conversion = self._conversion_rate(spec, now)
         per_price_unit = money_per_price_unit(spec, reference, conversion, self._specs.account_ccy)
         lots = self._lots(spec, risk_amount, abs(reference - stop) * per_price_unit)
@@ -303,24 +310,20 @@ class SimBroker(BrokerClient):
     # ── helpers ────────────────────────────────────────────────────────────
 
     def _lots(self, spec: InstrumentSpec, risk_amount: float, risk_per_lot: float) -> float:
-        lots = min(_round_down(risk_amount / risk_per_lot, spec.volume_step), spec.volume_max)
-        if lots >= spec.volume_min:
-            return lots
-        if spec.volume_min * risk_per_lot > risk_amount * (1 + self._tolerance):
-            raise SimBrokerError(
-                "MIN_VOLUME_OVER_RISK",
-                f"{spec.volume_min} lots risk {spec.volume_min * risk_per_lot:.2f}, "
-                f"over the {risk_amount:.2f} budget + {self._tolerance:.0%}",
-            )
-        return spec.volume_min
+        """The shared rule (agent.brokers.sizing), so live sizes as the backtest does (live-execution Req 1.3)."""
+        try:
+            return lots_for_risk(risk_amount, risk_per_lot, spec.volume_min, spec.volume_step, spec.volume_max,
+                                 self._tolerance)
+        except SizingError as exc:
+            raise SimBrokerError(exc.reason, str(exc).split(": ", 1)[-1]) from None
 
     def _partial(self, spec: InstrumentSpec, lots: float) -> tuple[Optional[float], float]:
         """The partial's setting and its actual share of ``lots``, rounded down to the volume step; none when the
         part or the rest would be under the minimum volume (D44)."""
         if not self._partial_r:
             return None, 0.0
-        part = _round_down(lots * self._partial_fraction, spec.volume_step)
-        if part < spec.volume_min or lots - part < spec.volume_min - 1e-9:
+        part = split_lots(lots, self._partial_fraction, spec.volume_min, spec.volume_step)
+        if not part:
             return None, 0.0
         return self._partial_r, part / lots
 
@@ -355,11 +358,6 @@ def _check_stops(long_: bool, price: float, stop: float, target: Optional[float]
              else stop > price and (target is None or target < price))
     if not valid:
         raise SimBrokerError("INVALID_STOPS", f"stop {stop} / target {target} against {price}")
-
-
-def _round_down(value: float, step: float) -> float:
-    steps = math.floor(value / step + 1e-9)   # 0.3 / 0.1 is 2.9999999999999996
-    return round(steps * step, max(0, -Decimal(repr(step)).normalize().as_tuple().exponent))
 
 
 def _closed_trade(trade: SimTrade, spec: InstrumentSpec, account_ccy: str, cost_flag_fraction: float) -> ClosedTrade:

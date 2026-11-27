@@ -17,10 +17,14 @@
   - The requirements, the design with decisions LX-D1 to D7, and this plan, after the 2026-11-25 recheck of the 2026-10-10 audit.
   - **Validates: the scope**
 
-- [ ] 454. Sizing as the backtest sizes, and the stop backstop (Requirements 1, 2)
+- [x] 454. Sizing as the backtest sizes, and the stop backstop (Requirements 1, 2)
   - `agent/brokers/sizing.py`: `round_down`, `lots_for_risk` (`MIN_VOLUME_OVER_RISK`), `split_lots` (D44), `stop_overrun`, `SizingError`.
   - SimBroker calls them, pinned by tests written before the change; `max_stop_overrun` is optional and off.
   - MT5 adapter: risk-sized orders round down, refuse min-over-risk, `STOP_TOO_TIGHT` (default 0.5), and refuse instead of falling back to `size` (`INVALID_ORDER`, `NO_TICK_VALUE`). Manual orders keep their size.
+  - **Done 2026-11-27.**
+    - Tests: `test_live_execution_sizing.py` (18, one Hypothesis) and `test_mt5_broker_adapter.py` (the two fallback-to-size tests replaced by 10 refusal tests).
+    - SimBroker's own tests, the golden journals and the run modes pass unchanged.
+    - `MT5BrokerError` carries a `reason`.
   - **Validates: Requirements 1.1-1.5, 2.1-2.3**
 
 - [ ] 455. The run's broker profile on MT5 (Requirement 6)

@@ -23,7 +23,7 @@ the source rather than worked around here:
   - RiskEngine.validate() now also returns risk_amount (equity *
     RISK_PER_TRADE, broker-agnostic money terms) alongside the OANDA-unit
     position_size. execute_node forwards it as order["risk_amount"], and
-    MT5BrokerAdapter._compute_lots_from_risk() converts that into real MT5
+    MT5BrokerAdapter._lots_for_risk() (agent.brokers.sizing) converts that into real MT5
     lots using the symbol's own trade_tick_value/trade_tick_size — no more
     treating an OANDA-unit figure as if it were already a lot count.
   - execute_node now calls RiskEngine.increment_open_trades() itself after
