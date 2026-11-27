@@ -12,20 +12,59 @@ reachable on the same machine as this process — see agent/brokers/
 pepperstone.py's module docstring for the cloud-bridge alternative
 (MetaApi.cloud) when that constraint doesn't work.
 
-Validates: Requirements FR-6 (Agentic Execution Loop) — broker abstraction.
+A risk-sized order (one carrying ``risk_amount``, as execute_node sends) is
+sized by the backtest's rule, agent.brokers.sizing (live-execution
+Requirement 1): rounded down, capped, and refused rather than sent at a size
+nobody computed. The stop backstop (Requirement 2) refuses an order whose
+spread and stop slippage are more than ``max_stop_overrun`` of the stop.
+Refusals raise MT5BrokerError with a ``reason`` code, which execute_node turns
+into a SKIP.
+
+With ``expiry_rule`` set (the live runner passes its StrategyConfig's), a
+pending order expires when the backtest's would (Requirement 3): the shared
+``pending_expiry``, sent as ORDER_TIME_SPECIFIED in server time when the
+symbol allows it and a ``server_clock`` is given, GTC otherwise. Either way
+``sync()``, which the runner calls every minute, cancels own pending orders
+past their expiry. The ledger (``MT5Ledger``, persisted to ``ledger_path``)
+records each trade placed: its tickets, setup, prices and expiry. The
+terminal stays the truth for each ticket's state; ``sync()`` reads it.
+
+With ``partial_r`` set (the run's ``[management]``), a risk-sized trade is two
+tickets (Requirement 7, LX-D2): the part, ``partial_fraction`` of the lots
+rounded down, targets the partial level; the rest targets the trade's target.
+SimBroker's split rule decides it (agent.brokers.sizing.split_lots, D44).
+``sync()`` moves the part's target to its actual fill's partial level, and once
+the part has closed with the rest in profit, the rest's stop to its fill.
+
+Validates: Requirements FR-6 (Agentic Execution Loop) — broker abstraction;
+live-execution Requirements 1, 2, 3, 4.1, 5, 6.1, 7.
 """
 from __future__ import annotations
 
-from typing import Any
+import json
+import os
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 from agent.brokers.base import BrokerClient
+from agent.brokers.fill_model import partial_level, pending_expiry
+from agent.brokers.sizing import SizingError, lots_for_risk, round_down, split_lots, stop_too_tight, stops_valid
+from agent.clock import Clock, wall_clock
+from agent.instruments import InstrumentSpecs
+from agent.strategy_config import PendingExpiry
+from services.market_data.mt5_clock import MT5ServerClock
 
 try:
     import MetaTrader5 as mt5
 except ImportError:  # pragma: no cover - exercised only when package is absent
     mt5 = None
 
-__all__ = ["MT5BrokerAdapter", "MT5BrokerError"]
+__all__ = ["MT5BrokerAdapter", "MT5BrokerError", "MT5Ledger"]
+
+ACTIVE = ("PENDING", "OPEN")
+#: SYMBOL_EXPIRATION_MODE's bit for an order with its own expiry time.
+_SYMBOL_EXPIRATION_SPECIFIED = 4
 
 _DEFAULT_MAGIC = 990001
 _DEVIATION_POINTS = 20
@@ -45,8 +84,62 @@ _MAX_COMMENT_LENGTH = 27
 _SUCCESS_RETCODES = frozenset({0, 10009})
 
 
+#: The stop backstop's default (live-execution LX-D1): spread plus slippage at
+#: most half the stop, so a stop-out costs at most ~1.5 budgets.
+DEFAULT_MAX_STOP_OVERRUN = 0.5
+
+
 class MT5BrokerError(Exception):
-    """Raised when the MT5 terminal connection or an order_send() call fails."""
+    """Raised when the MT5 terminal connection or an order_send() call fails,
+    or when an order is refused before it is sent. ``reason`` is the code the
+    journal records (MIN_VOLUME_OVER_RISK, STOP_TOO_TIGHT, ...)."""
+
+    def __init__(self, message: str, reason: str = "BROKER_ERROR") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def _refused(reason: str, detail: str) -> MT5BrokerError:
+    return MT5BrokerError(f"{reason}: {detail}", reason)
+
+
+class MT5Ledger:
+    """The trades this runner placed on MT5, persisted so a restart picks them up (live-execution Requirements 3, 5).
+
+    One entry per trade, in placement order: ``trade_id``, ``setup_id``, ``instrument``, ``symbol``,
+    ``direction``, ``kind`` (LIMIT / MARKET), ``entry``, ``stop_loss``, ``take_profit``, ``lots``, ``tickets``,
+    ``placed_at``, ``expires_at``, ``status`` (PENDING / OPEN / CLOSED), ``filled_at``, ``fill_price``,
+    ``closed_at`` and ``exit_reason``. Written with write-then-rename, as the paper broker's file is, so a crash
+    mid-write can't leave a truncated file. Without a path it lives in memory.
+    """
+
+    def __init__(self, path: Optional[str | Path] = None) -> None:
+        self._path = Path(path) if path else None
+        self._trades: dict[str, dict] = {}
+        if self._path and self._path.exists():
+            for trade in json.loads(self._path.read_text(encoding="utf-8")):
+                self._trades[trade["trade_id"]] = trade
+
+    def add(self, trade: dict) -> None:
+        self._trades[trade["trade_id"]] = trade
+        self.save()
+
+    def get(self, trade_id: str) -> Optional[dict]:
+        return self._trades.get(trade_id)
+
+    def trades(self) -> list[dict]:
+        return list(self._trades.values())
+
+    def active(self) -> list[dict]:
+        return [t for t in self._trades.values() if t["status"] in ACTIVE]
+
+    def save(self) -> None:
+        if self._path is None:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._path.with_name(self._path.name + ".tmp")
+        tmp.write_text(json.dumps(self.trades(), indent=2, default=str), encoding="utf-8")
+        os.replace(tmp, self._path)
 
 
 def _order_send_failed(result: Any) -> bool:
@@ -81,6 +174,24 @@ class MT5BrokerAdapter(BrokerClient):
         symbol_suffix: Appended to every instrument before sending to MT5
                        (some brokers list symbols as ``"EURUSD.a"`` etc.).
         magic:         Magic number tagging orders placed by this adapter.
+        specs:         The broker profile's instrument specs: the stop
+                       backstop counts each instrument's stop slippage.
+                       Without them it counts the spread only.
+        max_stop_overrun: The stop backstop (live-execution Req 2); None
+                       switches it off.
+        min_volume_tolerance: How far over its budget the minimum volume
+                       may risk (the backtest's 10%).
+        symbol_of:     The broker profile's symbol for an instrument
+                       (``BrokerProfile.symbol``); the suffix applies to
+                       instruments it doesn't name.
+        expiry_rule, fallback_ttl: When a pending order expires, as in the
+                       backtest (StrategyConfig.pending_expiry / fallback_ttl).
+                       None: GTC, never cancelled (manual use).
+        server_clock:  The broker's server clock, to send the expiry in
+                       server time. Without it orders go GTC and only
+                       ``sync()`` cancels them.
+        clock:         Now, in UTC (the wall clock by default).
+        ledger_path:   Where the ledger persists; None keeps it in memory.
     """
 
     def __init__(
@@ -91,13 +202,34 @@ class MT5BrokerAdapter(BrokerClient):
         path: str | None = None,
         symbol_suffix: str = "",
         magic: int = _DEFAULT_MAGIC,
+        specs: Optional[InstrumentSpecs] = None,
+        max_stop_overrun: Optional[float] = DEFAULT_MAX_STOP_OVERRUN,
+        min_volume_tolerance: float = 0.10,
+        symbol_of: Optional[Callable[[str], Optional[str]]] = None,
+        expiry_rule: Optional[PendingExpiry] = None,
+        fallback_ttl: timedelta = timedelta(hours=3),
+        server_clock: Optional[MT5ServerClock] = None,
+        clock: Optional[Clock] = None,
+        ledger_path: Optional[str | Path] = None,
+        partial_r: float = 0.0,
+        partial_fraction: float = 0.0,
     ) -> None:
         self._login = login
         self._password = password
         self._server = server
         self._path = path
         self._symbol_suffix = symbol_suffix
+        self._symbol_of = symbol_of
         self._magic = magic
+        self._specs = specs
+        self._max_stop_overrun = max_stop_overrun
+        self._tolerance = min_volume_tolerance
+        self._expiry_rule = expiry_rule
+        self._fallback_ttl = fallback_ttl
+        self._server_clock = server_clock
+        self._clock = clock or wall_clock
+        self._partial_r, self._partial_fraction = partial_r, partial_fraction
+        self.ledger = MT5Ledger(ledger_path)
         self._connected = False
 
     def _ensure_connected(self) -> None:
@@ -121,6 +253,12 @@ class MT5BrokerAdapter(BrokerClient):
         self._connected = True
 
     def _resolve_symbol(self, instrument: str) -> str:
+        """The broker's symbol: the profile's (``symbol_of``, live-execution Req 6.1), else the instrument plus the
+        suffix."""
+        if self._symbol_of is not None:
+            mapped = self._symbol_of(instrument)
+            if mapped:
+                return mapped
         return f"{instrument}{self._symbol_suffix}"
 
     def _resolve_filling_type(self, symbol: str) -> int:
@@ -158,40 +296,38 @@ class MT5BrokerAdapter(BrokerClient):
         decimals = len(str(step).split(".")[-1]) if "." in str(step) else 0
         return round(normalized, decimals)
 
-    def _compute_lots_from_risk(
-        self, symbol: str, entry: Any, stop_loss: Any, risk_amount: float
-    ) -> float | None:
-        """Convert a money risk amount into MT5 lot volume.
+    def _lots_for_risk(self, instrument: str, symbol: str, reference: float, stop_loss: Any, risk_amount: float,
+                       tick: Any) -> float:
+        """The lots a risk-sized order trades, by the backtest's rule (live-execution Requirement 1).
 
-        RiskEngine.compute_position_size() returns equity*RISK_PER_TRADE/
-        sl_pips, a figure that's only correct as a lot count for unit-based
-        brokers like OANDA — passing it straight through as MT5 volume is a
-        real unit mismatch (a normal account equity computes to several
-        standard lots, wildly over-risking the account). This uses the
-        symbol's own trade_tick_value/trade_tick_size instead — MT5 already
-        computes those per-symbol in account currency (contract size and any
-        cross-currency conversion included), so there's no need to hand-roll
-        pip-value math that would silently be wrong for JPY pairs, indices,
-        or an account currency that isn't the quote currency.
+        RiskEngine's position_size is OANDA units, so it is never the volume. The money a lot loses per price unit
+        is the symbol's own trade_tick_value / trade_tick_size: MT5 computes it in the account currency, contract
+        size and any cross conversion included, so JPY pairs, indices and crosses need no pip arithmetic here. The
+        reference is the limit price, or the market for a market order without an entry, as in SimBroker.
 
-        Returns None (caller falls back to the legacy order["size"]
-        passthrough) when entry/stop_loss/tick data isn't available to
-        compute a real number from.
+        Raises MT5BrokerError: INVALID_ORDER without a stop, NO_TICK_VALUE without the symbol's tick data,
+        STOP_TOO_TIGHT from the backstop, MIN_VOLUME_OVER_RISK from the sizing rule.
         """
-        if not entry or not stop_loss:
-            return None
+        if stop_loss is None:
+            raise _refused("INVALID_ORDER", f"{instrument}: a risk-sized order needs a stop_loss")
         info = mt5.symbol_info(symbol)
-        if info is None:
-            return None
-        tick_size = getattr(info, "trade_tick_size", None)
-        tick_value = getattr(info, "trade_tick_value", None)
-        if not tick_size or not tick_value:
-            return None
-        price_distance = abs(float(entry) - float(stop_loss))
-        loss_per_lot = (price_distance / tick_size) * tick_value
-        if loss_per_lot <= 0:
-            return None
-        return risk_amount / loss_per_lot
+        tick_size = getattr(info, "trade_tick_size", None) if info is not None else None
+        tick_value = getattr(info, "trade_tick_value", None) if info is not None else None
+        if not tick_size or not tick_value or not getattr(info, "volume_step", None):
+            raise _refused("NO_TICK_VALUE", f"{symbol}: no trade_tick_value/trade_tick_size/volume_step to size on")
+        distance = abs(float(reference) - float(stop_loss))
+        if self._max_stop_overrun is not None:
+            spread = max(0.0, float(tick.ask) - float(tick.bid))
+            slippage = (self._specs[instrument].stop_slippage
+                        if self._specs is not None and instrument in self._specs else 0.0)
+            if stop_too_tight(distance, spread, slippage, self._max_stop_overrun):
+                raise _refused("STOP_TOO_TIGHT", f"{instrument}: spread {spread:.6g} + slippage {slippage:.6g} over "
+                                                 f"{self._max_stop_overrun:.0%} of the {distance:.6g} stop")
+        try:
+            return lots_for_risk(risk_amount, distance / tick_size * tick_value, info.volume_min, info.volume_step,
+                                 info.volume_max, self._tolerance)
+        except SizingError as exc:
+            raise _refused(exc.reason, f"{instrument}: {str(exc).split(': ', 1)[-1]}") from None
 
     def _send_closing_deal(self, position: Any, volume: float) -> Any:
         symbol = position.symbol
@@ -235,7 +371,11 @@ class MT5BrokerAdapter(BrokerClient):
         misreport a live resting limit order as gone.
 
         Returns ("OPEN", position) | ("PENDING", order) | ("CLOSED", None).
+        An id that isn't a ticket (the ledger's ``unsent-...``, LX-D7) was
+        never at the terminal: CLOSED.
         """
+        if not str(trade_id).isdigit():
+            return "CLOSED", None
         ticket = int(trade_id)
         positions = mt5.positions_get(ticket=ticket)
         if positions:
@@ -279,23 +419,14 @@ class MT5BrokerAdapter(BrokerClient):
         """
         self._ensure_connected()
 
-        symbol = self._resolve_symbol(order["instrument"])
+        instrument = order["instrument"]
+        symbol = self._resolve_symbol(instrument)
         direction = order.get("direction", "LONG").upper()
         requested_entry = order.get("entry")
 
-        raw_size = float(order.get("size", 0.01))
-        risk_amount = order.get("risk_amount")
-        if risk_amount:
-            lots = self._compute_lots_from_risk(
-                symbol, requested_entry, order.get("stop_loss"), float(risk_amount)
-            )
-            if lots is not None:
-                raw_size = lots
-        size = self._normalize_volume(symbol, raw_size)
-
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
-            raise MT5BrokerError(f"No tick data for symbol {symbol}")
+            raise MT5BrokerError(f"No tick data for symbol {symbol}", "NO_PRICE")
 
         is_long = direction == "LONG"
         market_price = tick.ask if is_long else tick.bid
@@ -303,6 +434,40 @@ class MT5BrokerAdapter(BrokerClient):
         is_pending = requested_entry is not None and (
             requested_entry < market_price if is_long else requested_entry > market_price
         )
+        stop_loss = order.get("stop_loss")
+        if stop_loss is not None and not stops_valid(is_long, requested_entry if is_pending else market_price,
+                                                     float(stop_loss), order.get("take_profit")):
+            # MT5 refuses these itself; refused here, before sizing, with SimBroker's code (Requirement 8).
+            raise _refused("INVALID_STOPS", f"{instrument}: stop {stop_loss} / target {order.get('take_profit')} "
+                                            f"against {requested_entry if is_pending else market_price}")
+
+        risk_amount = order.get("risk_amount")
+        if risk_amount:
+            reference = requested_entry if requested_entry is not None else market_price
+            size = self._lots_for_risk(instrument, symbol, reference, stop_loss, float(risk_amount), tick)
+        else:
+            # A manual order: its explicit size, on the symbol's step.
+            size = self._normalize_volume(symbol, float(order.get("size", 0.01)))
+
+        now = self._clock()
+        expires_at = (pending_expiry(now, self._expiry_rule, self._fallback_ttl)
+                      if is_pending and self._expiry_rule is not None else None)
+        trade = {
+            "trade_id": None, "setup_id": order.get("setup_id"), "instrument": instrument, "symbol": symbol,
+            "direction": direction, "kind": "LIMIT" if is_pending else "MARKET",
+            "entry": requested_entry if requested_entry is not None else market_price,
+            "stop_loss": order.get("stop_loss"), "take_profit": order.get("take_profit"), "lots": size,
+            "tickets": [], "placed_at": now.isoformat(), "expires_at": expires_at.isoformat() if expires_at else None,
+            "status": "PENDING", "filled_at": None, "fill_price": None, "closed_at": None, "exit_reason": None,
+            "partial": self._plan_partial(symbol, direction, size, order) if risk_amount else None,
+        }
+        if expires_at is not None and expires_at <= now:
+            # Placed at the end of its killzone: the backtest places it and it expires unfilled. Nothing is sent;
+            # the ledger records it, so the setup counts as attempted (LX-D7).
+            trade.update(trade_id=f"unsent-{now:%Y%m%dT%H%M%S}-{instrument}", status="CLOSED",
+                         closed_at=now.isoformat(), exit_reason="EXPIRED")
+            self.ledger.add(trade)
+            return {"order_id": trade["trade_id"], "trade_id": trade["trade_id"], "pending": True}
 
         if is_pending:
             order_type = mt5.ORDER_TYPE_BUY_LIMIT if is_long else mt5.ORDER_TYPE_SELL_LIMIT
@@ -333,13 +498,156 @@ class MT5BrokerAdapter(BrokerClient):
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": type_filling,
         }
+        if expires_at is not None and self._server_clock is not None and self._allows_specified_expiry(symbol):
+            request["type_time"] = mt5.ORDER_TIME_SPECIFIED
+            request["expiration"] = int(self._server_clock.to_server(expires_at).timestamp())
 
+        partial = trade["partial"]
+        if partial is None:
+            tickets = [self._send(request)]
+        else:
+            # Two tickets (LX-D2): the part takes the partial at its level, the rest runs to the target.
+            first = self._send({**request, "volume": partial["lots"], "tp": partial["level"]})
+            try:
+                rest = self._send({**request, "volume": partial["rest_lots"]})
+            except MT5BrokerError:
+                self._undo(first)
+                raise
+            tickets = [first, rest]
+
+        ticket = str(tickets[0])
+        trade.update(trade_id=ticket, tickets=tickets)
+        self.ledger.add(trade)
+        return {"order_id": ticket, "trade_id": ticket, "pending": is_pending}
+
+    def _send(self, request: dict) -> int:
         result = mt5.order_send(request)
         if _order_send_failed(result):
             raise MT5BrokerError(f"MT5 order_send failed: {_describe_order_send_failure(result)}")
+        return int(result.order)
 
-        ticket = str(result.order)
-        return {"order_id": ticket, "trade_id": ticket, "pending": is_pending}
+    def _undo(self, ticket: int) -> None:
+        """Take back a ticket whose partner was refused: cancel it pending, close it filled. Best effort: a failure
+        is logged as the error the caller raises anyway."""
+        try:
+            state, obj = self._lookup_trade(str(ticket))
+            if state == "PENDING":
+                self._cancel_pending_order(ticket)
+            elif state == "OPEN":
+                self._send_closing_deal(obj, obj.volume)
+        except MT5BrokerError:
+            pass
+
+    def _plan_partial(self, symbol: str, direction: str, lots: float, order: dict) -> Optional[dict]:
+        """The partial's split (live-execution Requirement 7.1), by SimBroker's rule: the part is ``lots`` times
+        ``partial_fraction`` rounded down; None, unmanaged, when the part or the rest is under the minimum volume
+        (D44), or the partial level is at or beyond the target. The level is from the entry here; ``sync`` moves it
+        to the actual fill."""
+        stop = order.get("stop_loss")
+        if not self._partial_r or stop is None:
+            return None
+        entry = order.get("entry")
+        if entry is None:
+            tick = mt5.symbol_info_tick(symbol)
+            entry = tick.ask if direction == "LONG" else tick.bid
+        level = partial_level(direction, float(entry), float(stop), order.get("take_profit"), self._partial_r)
+        info = mt5.symbol_info(symbol)
+        part = split_lots(lots, self._partial_fraction, info.volume_min, info.volume_step) if level is not None else 0
+        if not part:
+            return None
+        return {"lots": part, "rest_lots": round_down(lots - part, info.volume_step), "level": level,
+                "partial_r": self._partial_r, "be_moved": False}
+
+    def _allows_specified_expiry(self, symbol: str) -> bool:
+        info = mt5.symbol_info(symbol)
+        mode = getattr(info, "expiration_mode", 0) if info is not None else 0
+        return isinstance(mode, int) and bool(mode & _SYMBOL_EXPIRATION_SPECIFIED)
+
+    # ── the ledger, against the terminal (live-execution Requirements 3, 5) ──
+
+    def sync(self) -> list[dict]:
+        """Bring each active trade up to date with the terminal, now. Returns the trades that changed, each with an
+        ``event``: FILLED (first seen as a position), EXPIRED (cancelled here past its expiry, or gone unfilled after
+        it) or CLOSED (gone from the terminal).
+
+        The runner calls it every minute (LX-D5). A pending order past its expiry is cancelled whether it was sent
+        with one or GTC (LX-D6)."""
+        self._ensure_connected()
+        now = self._clock()
+        events = []
+        for trade in self.ledger.active():
+            events.extend({**trade, "event": event} for event in self._sync_trade(trade, now))
+        if events:
+            self.ledger.save()
+        return events
+
+    def _sync_trade(self, trade: dict, now: datetime) -> list[str]:
+        states = {ticket: self._lookup_trade(str(ticket)) for ticket in trade["tickets"]}
+        expired = trade["expires_at"] is not None and now >= datetime.fromisoformat(trade["expires_at"])
+        pending = [ticket for ticket, (state, _) in states.items() if state == "PENDING"]
+        opened = {ticket: obj for ticket, (state, obj) in states.items() if state == "OPEN"}
+        if expired and pending:
+            for ticket in pending:
+                self._cancel_pending_order(ticket)
+            pending = []
+        events = []
+        if opened and trade["status"] == "PENDING":
+            first = next(iter(opened.values()))
+            trade.update(status="OPEN", filled_at=now.isoformat(), fill_price=float(first.price_open))
+            events.append("FILLED")
+        if trade.get("partial") is not None and opened:   # ledgers from before task 459 have no key
+            events.extend(self._manage_partial(trade, opened))
+        if opened or pending:
+            return events
+        # Nothing left at the terminal.
+        never_filled = trade["status"] == "PENDING"
+        reason = "EXPIRED" if never_filled and expired else "CLOSED"
+        trade.update(status="CLOSED", closed_at=now.isoformat(), exit_reason=reason)
+        return events + [reason]
+
+    def _manage_partial(self, trade: dict, opened: dict[int, Any]) -> list[str]:
+        """The split trade's management (live-execution Requirements 7.2, 7.3). The part's target follows its actual
+        fill, as the backtest's partial does. Once the part has closed at its target, the rest's stop moves to the
+        rest's fill: only with the rest in profit, so a part that was stopped out moves nothing."""
+        partial = trade["partial"]
+        part_ticket, rest_ticket = trade["tickets"]
+        part = opened.get(part_ticket)
+        if part is not None and not partial.get("from_fill"):
+            level = partial_level(trade["direction"], float(part.price_open), float(trade["stop_loss"]),
+                                  trade["take_profit"], partial["partial_r"])
+            target = level if level is not None else trade["take_profit"]
+            if target is not None and abs(target - float(part.tp)) > 1e-9:
+                self.set_sl_tp(str(part_ticket), float(trade["stop_loss"]), target)
+            partial.update(level=target, from_fill=True)
+        rest = opened.get(rest_ticket)
+        if part is None and rest is not None and not partial["be_moved"] and trade["status"] == "OPEN":
+            sign = 1 if trade["direction"] == "LONG" else -1
+            if sign * (float(rest.price_current) - float(rest.price_open)) > 0:
+                self.set_sl_tp(str(rest_ticket), float(rest.price_open), float(rest.tp))
+                partial["be_moved"] = True
+                return ["PARTIAL"]
+        return []
+
+    def active_trade(self, instrument: str) -> Optional[dict]:
+        """The instrument's own pending or open trade, if any (one per instrument, Requirement 5.1)."""
+        return next((t for t in self.ledger.active() if t["instrument"] == instrument), None)
+
+    def active_count(self) -> int:
+        """Own trades pending or open: a split trade counts once (Requirement 7.4)."""
+        return len(self.ledger.active())
+
+    def account_snapshot(self) -> tuple[float, float]:
+        """The account's (balance, equity) from the terminal, for the risk engine's exposure (Requirement 4.1)."""
+        self._ensure_connected()
+        info = mt5.account_info()
+        if info is None:
+            code, desc = mt5.last_error()
+            raise MT5BrokerError(f"MT5 account_info failed ({code}): {desc}", "NO_ACCOUNT")
+        return float(info.balance), float(info.equity)
+
+    def attempted_setups(self) -> set[str]:
+        """Every setup ordered from this ledger, whatever became of it (algo-backtester D6)."""
+        return {t["setup_id"] for t in self.ledger.trades() if t.get("setup_id")}
 
     def set_sl_tp(self, trade_id: str, sl_price: float, tp_price: float) -> bool:
         self._ensure_connected()

@@ -153,6 +153,9 @@ class StrategyConfig(BaseModel):
     raid_window: Optional[Timeframe] = None
     raid_window_candles: PositiveInt = 2
     require_htf_poi: bool = False        # the protected wick inside an unfilled H4/D1 PD array (LE-D14)
+    # Where the engine waits (context-engine Req 34): the raid in Q2-Q3 (00:00-12:00 New York) and the protected
+    # wick inside a level of its side (an H4/D1/W1 array in discount, or premium, of the D1 or W1 range). An order rule.
+    require_level: bool = False
     target_mode: TargetMode = TargetMode.SD
     min_stop_spreads: float = Field(default=0.0, ge=0)   # a stop of at least k typical spreads; 0 is off
     # The stop at the sweep's tip (liquidity-engine Req 27.5): at most k average true ranges of the last 14

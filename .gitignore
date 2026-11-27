@@ -82,6 +82,8 @@ data/backtests/
 # Paper-trader runtime state (docker/paper-trader writes these to data/)
 data/heartbeat
 data/*.err
+# The live runner's MT5 ledger and account state (live-execution): per machine and account
+data/live/
 
 # Test coverage
 .coverage
@@ -92,3 +94,6 @@ data/research/
 
 # The trader's journals and blind reads stay on this machine (market-narrative Requirement 10.8)
 data/journal/
+
+# Algo Mind's fitted versions, live bars and briefs (algo-mind AM-D6): reproducible from the code and snapshots
+data/algo_mind/

@@ -1,0 +1,40 @@
+;(async () => {
+  const ok = [], bad = [];
+  const check = (n, c, d) => (c ? ok : bad).push(n + (c || d === undefined ? "" : "  (" + d + ")"));
+  S.status = JSON.parse(JSON.stringify(global.__status)); S.digits = 3; S.t = 1741737600; S.layers.thesis = true;
+  const ctx = new Proxy({}, { get: (o, k) => (k in o ? o[k] : () => ({ width: 10 })), set: (o, k, v) => { o[k] = v; return true; } });
+  const pal = { ink: "#000000", muted: "#888888", accent: "#3366ff", up: "#00aa00", down: "#aa0000", bad: "#aa0000", warn: "#aaaa00", good: "#00aa00" };
+  const drawn = [];
+  const text = (s) => drawn.push(s), line = () => {};
+  let threw = null;
+  try { await loadThesis(); } catch (e) { threw = e.message; }
+  check("a server without the route doesn't throw (play goes on)", threw === null, threw);
+  check("the layer keeps the reason", /no such path/.test(S.thesis.error || ""), S.thesis.error);
+  check("the card says what to do", /Unavailable/.test(thesisCard()) && /restart/.test(thesisCard()));
+  try { paintThesis(ctx, { width: 900, height: 500 }, pal, text, line); } catch (e) { bad.push("painting the error threw: " + e.message); }
+  check("the chart says it is unavailable", drawn.some((s) => /unavailable/.test(s)));
+  global.__route();
+  S.t = 1741737600 + 600;                                   // a new five minutes: the layer asks again
+  threw = null;
+  try { await loadThesis(); } catch (e) { threw = e.message; }
+  check("once the route exists the layer loads", threw === null && !S.thesis.error && S.thesis.trades.length === 1, threw);
+  check("with no call of yours it shows the week's real side, and says so",
+        /no call of yours/.test(S.thesis.words) && S.thesis.hindsight === true, S.thesis.words);
+  check("it knows its next entry (Next TE trade)", S.thesis.next_trade === 1741800000, S.thesis.next_trade);
+  check("it asks for V4 unless told otherwise", global.__urls.length > 0 && global.__urls.every((u) => /version=v4/.test(u)),
+        global.__urls.join(" "));
+  check("the card names the version, the order's frame and counts the orders and setups", /Thesis Engine V4/.test(thesisCard())
+        && /1 setup\(s\)/.test(thesisCard())
+        && /M30 limit/.test(thesisCard()) && /1 pending/.test(thesisCard())
+        && /without displacement/.test(thesisCard()));
+  drawn.length = 0;
+  try { paintThesis(ctx, { width: 900, height: 500 }, pal, text, line); } catch (e) { bad.push("painting a trade threw: " + e.message); }
+  check("an open trade with no spread count paints", drawn.some((s) => /TE long @/.test(s)), drawn.join(" | "));
+  check("a pending limit paints with its frame", drawn.some((s) => /TE M30 limit buy @ .*pending/.test(s)), drawn.join(" | "));
+  check("a waiting setup paints its order block", drawn.some((s) => /TE M30 setup · order block · waiting/.test(s)), drawn.join(" | "));
+  check("the card shows the state", /IN_TRADE/.test(thesisCard()));
+  console.log(ok.map((s) => "  ok   " + s).join("\n"));
+  if (bad.length) console.log(bad.map((s) => "  FAIL " + s).join("\n"));
+  console.log("\n" + ok.length + " ok, " + bad.length + " failed");
+  process.exit(bad.length ? 1 : 0);
+})();

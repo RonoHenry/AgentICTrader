@@ -23,7 +23,7 @@ the source rather than worked around here:
   - RiskEngine.validate() now also returns risk_amount (equity *
     RISK_PER_TRADE, broker-agnostic money terms) alongside the OANDA-unit
     position_size. execute_node forwards it as order["risk_amount"], and
-    MT5BrokerAdapter._compute_lots_from_risk() converts that into real MT5
+    MT5BrokerAdapter._lots_for_risk() (agent.brokers.sizing) converts that into real MT5
     lots using the symbol's own trade_tick_value/trade_tick_size — no more
     treating an OANDA-unit figure as if it were already a lot count.
   - execute_node now calls RiskEngine.increment_open_trades() itself after
@@ -170,6 +170,8 @@ _DEMO_EQUITY = 200.0
 _USER_ID = "demo-runner"
 _ENTRY_TF_SECONDS = {Timeframe.M1: 60, Timeframe.M3: 180, Timeframe.M5: 300, Timeframe.M15: 900}
 _PAPER_STATE = REPO_ROOT / "data" / "paper_trades.json"
+_MT5_LEDGER = REPO_ROOT / "data" / "live" / "mt5_ledger.json"
+_MT5_ACCOUNT = REPO_ROOT / "data" / "live" / "mt5_account.json"
 
 # services/visual_model and services/algorag: docker-compose publishes both
 # to localhost for a host-run script; inside the compose network (the
@@ -330,6 +332,17 @@ def _parse_args() -> argparse.Namespace:
         help="With --loop: stop after this many minutes (default: run until Ctrl+C).",
     )
     parser.add_argument(
+        "--mt5-ledger",
+        default=str(_MT5_LEDGER),
+        help="JSON file the MT5 broker's own trades persist to, so expiry and the trade count survive restarts "
+        "(default: %(default)s).",
+    )
+    parser.add_argument(
+        "--mt5-account",
+        default=str(_MT5_ACCOUNT),
+        help="JSON file the MT5 account's first balance and drawdown anchors persist to (default: %(default)s).",
+    )
+    parser.add_argument(
         "--paper-state",
         default=str(_PAPER_STATE),
         help="JSON file paper trades persist to (default: %(default)s).",
@@ -447,6 +460,8 @@ def _process_instrument(
     verbose: bool = True,
     evaluated: Optional[dict[str, datetime]] = None,
     typical_spread: Optional[float] = None,
+    before_decision: Optional[Callable[[], None]] = None,
+    attempted: Optional[Callable[[], set[str]]] = None,
 ) -> dict:
     """Grade the window as of ``t`` and, if warranted, trade it. Returns a
     summary dict for the end-of-run table — never raises for a NO_TRADE
@@ -455,7 +470,10 @@ def _process_instrument(
     ``evaluated`` remembers the last t per instrument, so the same closed bar
     is evaluated once: over an FX weekend t stays at Friday's close, and every
     pass would otherwise re-send the same setup. ``typical_spread`` is the
-    instrument's spec spread, for cfg.min_stop_spreads.
+    instrument's spec spread, for cfg.min_stop_spreads. ``before_decision``
+    writes the account's exposure just before the graph runs, as the
+    backtest's simulate() does (live-execution Req 4.1). ``attempted`` gives
+    the setups ordered before: one of them isn't ordered again (D6, Req 5.2).
     """
     if evaluated is not None and evaluated.get(instrument) == t:
         return {"instrument": instrument, "grade": "-", "decision": "NO NEW BAR", "trade_id": None}
@@ -475,6 +493,10 @@ def _process_instrument(
         if verbose:
             print(f"[{instrument}] No valid setup right now — {intent.detail}")
         return {"instrument": instrument, "grade": "NO_TRADE", "decision": None, "trade_id": None}
+    if attempted is not None and intent.setup_id in attempted():
+        # One attempt per setup, whatever became of it (algo-backtester D6), as the backtest journals it.
+        return {"instrument": instrument, "grade": intent.grade.value, "decision": "SETUP_ALREADY_ATTEMPTED",
+                "trade_id": None}
 
     # Detected now, from data as of t (the last bar close): observe_node
     # rejects setups detected more than 60 s before it sees them. The candle
@@ -492,6 +514,8 @@ def _process_instrument(
     print(f"  time_window={intent.time_features.time_window} (killzone={intent.time_features.is_killzone})")
     print(f"[{instrument}] Handing off to AgentGraph (mode={mode})...\n")
 
+    if before_decision is not None:
+        before_decision()
     final_state = graph.run(message)
 
     print(f"[{instrument}] decision={final_state.decision}  reason={final_state.decision_reason}")
@@ -513,10 +537,13 @@ def _stop_on_sigterm(_signum, _frame) -> None:
 
 
 def main() -> None:
+    global _SERVER_CLOCK
     args = _parse_args()
     signal.signal(signal.SIGTERM, _stop_on_sigterm)
     cfg, symbol_of = _strategy(args)
     run_cfg = _run_config(args)
+    # The run's broker profile names the server clock for bars and order expiry (live-execution Req 6.2).
+    _SERVER_CLOCK = _server_clock(run_cfg)
     instruments = (
         [s.strip().upper() for s in args.instruments.split(",") if s.strip()]
         if args.instruments
@@ -548,8 +575,18 @@ def main() -> None:
 
     paper, specs = None, None
     fcm_sender, mode = None, "AUTONOMOUS"
+    mt5_broker = None
     if broker == "mt5":
-        broker_client = _mt5_broker_client()
+        # Pending orders expire as the backtest's do, and own trades persist to the ledger (live-execution Req 3).
+        # With the run's [management], the partial and break-even run as backtested (Req 7).
+        management = run_cfg.management if run_cfg is not None else None
+        broker_client = mt5_broker = _mt5_broker_client(
+            run_cfg, expiry_rule=cfg.pending_expiry, fallback_ttl=cfg.fallback_ttl, server_clock=_SERVER_CLOCK,
+            ledger_path=args.mt5_ledger, partial_r=management.partial_r if management else 0.0,
+            partial_fraction=management.partial_fraction if management else 0.0,
+        )
+        # The run's specs give min_stop_spreads its typical spreads, as on paper.
+        specs = _paper_specs(args.feed, run_cfg)
     elif broker == "paper":
         fee = args.paper_fee if args.paper_fee is not None else (0.001 if args.feed == "binance" else 0.0)
         # Free the risk engine's concurrent-trades slot whenever a paper
@@ -573,12 +610,30 @@ def main() -> None:
     # Each instrument's typical spread, for StrategyConfig.min_stop_spreads (off by default).
     spreads = {i: specs[i].default_spread for i in instruments if i in specs} if specs is not None else {}
 
-    # Paper trades still active from an earlier run count against the limit.
-    open_trades = sum(1 for t in paper.trades() if t["status"] in ("PENDING", "OPEN")) if paper else 0
-    redis_client.set(
-        f"risk:exposure:{_USER_ID}",
-        json.dumps({"daily_dd_pct": 0.0, "weekly_dd_pct": 0.0, "open_trades": open_trades, "equity": _DEMO_EQUITY}),
-    )
+    refresh_exposure: Optional[Callable[[], None]] = None
+    if mt5_broker is not None:
+        # The account from the terminal, with the backtest's anchors and budget rule (live-execution Req 4):
+        # written now and before every decision. _DEMO_EQUITY isn't used on MT5.
+        from algo_backtester.account import LiveAccount
+        from algo_backtester.config import AccountSection
+
+        account_cfg = run_cfg.account if run_cfg is not None else AccountSection()
+        live_account = LiveAccount(account_cfg.risk_per_trade, account_cfg.compounding, state_path=args.mt5_account)
+        refresh_exposure = _mt5_exposure(mt5_broker, live_account, redis_client)
+        refresh_exposure()
+    elif paper is not None:
+        # Paper trades still active from an earlier run count against the limit, now and before every decision.
+        refresh_exposure = _paper_exposure(paper, redis_client)
+        refresh_exposure()
+    else:
+        redis_client.set(
+            f"risk:exposure:{_USER_ID}",
+            json.dumps({"daily_dd_pct": 0.0, "weekly_dd_pct": 0.0, "open_trades": 0, "equity": _DEMO_EQUITY}),
+        )
+    # The broker whose own trades the runner tracks: one active trade per instrument and one attempt per setup,
+    # from its persisted trades (live-execution Req 5).
+    tracking = paper if paper is not None else mt5_broker
+    attempted = _attempted(paper=paper, mt5_broker=mt5_broker) if tracking is not None else None
 
     graph = AgentGraph(
         redis_client=redis_client,
@@ -632,11 +687,11 @@ def main() -> None:
                         _print_paper_event(event)
                     if m1:
                         paper_synced[instrument] = m1[-1].timestamp
-                    active = paper.active_trade(instrument)
-                    if active is not None:
-                        results.append({"instrument": instrument, "grade": "-",
-                                        "decision": f"IN TRADE ({active['status']})", "trade_id": active["trade_id"]})
-                        continue
+                # One active trade per instrument: a market in a trade isn't evaluated (live-execution Req 5.1).
+                in_trade = _skip_in_trade(instrument, tracking) if tracking is not None else None
+                if in_trade is not None:
+                    results.append(in_trade)
+                    continue
                 view, t = _as_of_window(
                     fetch,
                     lambda start, end, instrument=instrument: fetch_m1_range(instrument, start, end),
@@ -646,7 +701,8 @@ def main() -> None:
                 )
                 results.append(
                     _process_instrument(instrument, view, t, graph, cfg, mode, verbose=not args.loop, evaluated=evaluated,
-                                        typical_spread=spreads.get(instrument))
+                                        typical_spread=spreads.get(instrument), before_decision=refresh_exposure,
+                                        attempted=attempted)
                 )
             except _FEED_DOWN as exc:
                 logger.error("Feed unavailable (%s) — skipping the rest of this pass", exc)
@@ -668,19 +724,30 @@ def main() -> None:
 
     try:
         if not args.loop:
+            if mt5_broker is not None:
+                _manage(mt5_broker, refresh_exposure)
             _print_summary(run_pass())
         else:
             deadline = time.monotonic() + args.duration * 60 if args.duration else None
             period = _ENTRY_TF_SECONDS[cfg.entry_tf]
+            # On MT5 the trades are managed every minute (expiry, live-execution LX-D5); the markets are evaluated
+            # at each entry-timeframe close, as before.
+            tick = 60 if mt5_broker is not None else period
+            evaluated_bar = None
             while True:
-                results = run_pass()
-                print(
-                    f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S} UTC  "
-                    + "  ".join(f"{r['instrument']}={r['grade']}/{r['decision']}" for r in results),
-                    flush=True,
-                )
-                # Next pass just after the next entry-timeframe bar closes.
-                wait = period - time.time() % period + 5
+                if mt5_broker is not None:
+                    _manage(mt5_broker, refresh_exposure)
+                bar_index = int(time.time() // period)
+                if bar_index != evaluated_bar:
+                    evaluated_bar = bar_index
+                    results = run_pass()
+                    print(
+                        f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S} UTC  "
+                        + "  ".join(f"{r['instrument']}={r['grade']}/{r['decision']}" for r in results),
+                        flush=True,
+                    )
+                # Next wake just after the next tick (a minute on MT5, else the entry bar) closes.
+                wait = tick - time.time() % tick + 5
                 if deadline is not None and time.monotonic() + wait > deadline:
                     break
                 time.sleep(wait)
@@ -700,6 +767,62 @@ def _print_summary(results: list[dict]) -> None:
     print(f"{'instrument':<10} {'grade':<10} {'decision':<25} trade_id")
     for r in results:
         print(f"{r['instrument']:<10} {r['grade']:<10} {str(r['decision']):<25} {r['trade_id'] or ''}")
+
+
+def _skip_in_trade(instrument: str, broker) -> Optional[dict]:
+    """The summary row for a market with an own trade pending or open, which isn't evaluated (one active trade per
+    instrument, live-execution Req 5.1, as the backtest's IN_TRADE); None when it has none."""
+    active = broker.active_trade(instrument)
+    if active is None:
+        return None
+    return {"instrument": instrument, "grade": "-", "decision": f"IN TRADE ({active['status']})",
+            "trade_id": active["trade_id"]}
+
+
+def _attempted(paper=None, mt5_broker=None) -> Callable[[], set[str]]:
+    """The setups already ordered, from the broker's persisted state, so a restart keeps them (Req 5.2)."""
+    if mt5_broker is not None:
+        return mt5_broker.attempted_setups
+    return lambda: {t["setup_id"] for t in paper.trades() if t.get("setup_id")}
+
+
+def _paper_exposure(paper, redis_client) -> Callable[[], None]:
+    """Before each paper decision, the open trades from the paper broker's own trades (LX-D4). Paper has no money
+    account: drawdown stays 0 and the equity is the demo seed (design, Known divergences)."""
+    def refresh() -> None:
+        open_trades = sum(1 for t in paper.trades() if t["status"] in ("PENDING", "OPEN"))
+        redis_client.set(f"risk:exposure:{_USER_ID}", json.dumps(
+            {"daily_dd_pct": 0.0, "weekly_dd_pct": 0.0, "open_trades": open_trades, "equity": _DEMO_EQUITY}))
+    return refresh
+
+
+def _mt5_exposure(broker, account, redis_client, clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)):
+    """A callable writing the risk engine's exposure from the broker's truth (live-execution Req 4.1, LX-D4): the
+    terminal's balance and equity through ``account`` (a LiveAccount: SimAccount's anchors), and the ledger's own
+    trades pending or open."""
+    def refresh() -> None:
+        balance, equity = broker.account_snapshot()
+        account.sync(clock(), balance, equity, broker.active_count())
+        redis_client.set(f"risk:exposure:{_USER_ID}", json.dumps(account.exposure()))
+    return refresh
+
+
+def _manage(broker, refresh_exposure: Optional[Callable[[], None]] = None) -> list[dict]:
+    """One management step on MT5 (live-execution LX-D5): the broker syncs its ledger with the terminal, expiring
+    and closing out trades, then the account is marked (``refresh_exposure``); each change is printed. A terminal
+    error is logged, not raised: the next minute retries."""
+    try:
+        events = broker.sync()
+        if refresh_exposure is not None:
+            refresh_exposure()
+    except Exception as exc:
+        logger.error("MT5 sync failed: %s", exc)
+        return []
+    for event in events:
+        print(f"[{event['instrument']}] MT5 {event['event']}: {event['direction']} {event['kind']} entry "
+              f"{event['entry']} stop {event['stop_loss']} target {event['take_profit']} "
+              f"({event['lots']} lots, tickets {event['tickets']})", flush=True)
+    return events
 
 
 def _print_paper_event(event: dict) -> None:
@@ -727,12 +850,26 @@ def _mt5_credentials() -> dict:
     return credentials
 
 
-def _mt5_broker_client():
+def _mt5_broker_client(run_cfg=None, **execution):
+    """The MT5 adapter. With a run configuration it orders through the run's broker profile: its symbols, and its
+    specs for the stop backstop (live-execution Req 6.1), so it orders the symbols the runner reads."""
+    profile = broker_profiles.load_profile(run_cfg.run.profile) if run_cfg is not None else None
     return create_broker_client(
         "mt5",
         **{"path": None, **_mt5_credentials()},
         symbol_suffix=config("MT5_SYMBOL_SUFFIX", default=""),
+        symbol_of=profile.symbol if profile is not None else None,
+        specs=profile.specs() if profile is not None else None,
+        **execution,
     )
+
+
+def _server_clock(run_cfg=None) -> MT5ServerClock:
+    """The broker's server clock: the run's profile's with a configuration (live-execution Req 6.2), else
+    MT5_SERVER_TIMEZONE."""
+    if run_cfg is not None:
+        return broker_profiles.load_profile(run_cfg.run.profile).clock()
+    return MT5ServerClock(config("MT5_SERVER_TIMEZONE", default=NY_CLOSE))
 
 
 def _strategy(args) -> tuple[StrategyConfig, Optional[Callable[[str], str]]]:

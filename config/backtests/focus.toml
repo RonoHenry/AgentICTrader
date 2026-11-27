@@ -139,3 +139,44 @@ strategy.target_mode = "NEAREST"
 strategy.fvg_zone = "gap"
 strategy.bias_mode = "THESIS"
 strategy.thesis_file = "data/research/theses/engine_theses.json"
+
+# The trader's weekly context (context-engine Requirement 32.5): the partial strategy trading only the side of the
+# trader's call for the week (Noculus /context), until its draw trades or a D1 candle closes beyond its protected
+# swing, with stops of at least ten typical spreads. The calls write the thesis file.
+[variants.fresh_near_gap_context]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.bias_mode = "THESIS"
+strategy.thesis_file = "data/research/theses/context_theses.json"
+strategy.min_stop_spreads = 10.0
+management.partial_r = 3.0
+management.partial_fraction = 0.3333333333333333
+
+# Where the engine waits (context-engine Requirement 34): the partial strategy, its setups kept only when the raid
+# was in Q2-Q3 (00:00-12:00 New York) and the protected wick sits inside a level of its side (an H4, D1 or W1 array in
+# discount, or premium, of the D1 or W1 range). The trader's blueprint of 2026-10-31: the level first, then the trigger.
+[variants.fresh_near_gap_levels]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.require_level = true
+management.partial_r = 3.0
+management.partial_fraction = 0.3333333333333333
+
+# Algo Mind's hands: the context variant trading AlgoMindDIS's side (context-engine Requirement 35, task 397: it
+# replaces the brain's and the agreement's variants, 2026-11-03). Its thesis file comes from the week's read
+# (python -m algo_mind shadow): the side held at the week's open, until its draw's CE trades or a D1 candle closes
+# beyond its protected swing.
+[variants.fresh_near_gap_dis]
+strategy.raid_window = "H4"
+strategy.max_stop_atr = 1.0
+strategy.target_mode = "NEAREST"
+strategy.fvg_zone = "gap"
+strategy.bias_mode = "THESIS"
+strategy.thesis_file = "data/research/theses/dis_theses.json"
+strategy.min_stop_spreads = 10.0
+management.partial_r = 3.0
+management.partial_fraction = 0.3333333333333333

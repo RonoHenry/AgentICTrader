@@ -444,6 +444,181 @@ The trader's order: 277 → 278 → 365 → 366 (the pass rule confirmed before 
   - **Tests:** the session test checks the tags and the keep rule; `test_research_search_crt_context.py` (3).
   - **Validates: Requirement 31.4**
 
+- [x] 378. The weekly context book and the end of a context (Requirement 32.1-32.3)
+  - **378a. RED** — on hand-made calls and candles:
+    - a call's week opens on the Sunday 17:00 New York before its trading dates;
+    - a weekend time belongs to the next week;
+    - a bullish call needs its protected swing below its draw, a bearish one above;
+    - a call after its week's open is marked late, and its `since` is its own time;
+    - the thesis file holds one entry per trading date of every called week, with NONE left out;
+    - under `THESIS`, an entry with a draw refuses `THESIS_DELIVERED` once an H1 or entry candle since `since` reached the draw, and `THESIS_INVALIDATED` once a D1 candle closed beyond the protected swing;
+    - a wick beyond the protected swing doesn't end it;
+    - a plain side entry behaves as before.
+  - **378b. GREEN** — `agent/context_calls.py` (`week_monday`, `week_open`, `Call`, `ContextBook`, `thesis_table`); `order_intent` reads either kind of entry.
+  - Editing `agent/order_intent.py` changes `ENGINE_SOURCES`, so Phase A recomputes on the next backtest.
+  - **Done 2026-10-29.**
+    - Tests: `test_context_calls.py` (4) and, in `test_backtest_order_intent.py`, `test_a_weekly_context_trades_its_side_until_its_draw_trades` and `test_a_weekly_context_ends_at_a_d1_close_beyond_its_protected_swing_not_a_wick`.
+    - Delivery reads the closed H1 and entry candles opened since `since`. The H1 candle holding `since` is left out, so a touch earlier in that hour doesn't count.
+  - **Validates: Requirement 32.1-32.3**
+
+- [x] 379. The context page on Noculus (Requirement 32.4)
+  - `/context`: the week, the nine markets, their last prices from the terminal when connected, and each call's form. `GET /api/context`, `POST /api/context/call`. Saving rewrites the thesis file.
+  - **Done 2026-10-29.**
+    - `algo_research/replay/context.py` (`ContextApp`, `default_week`, `MARKETS`), with `static/context.html` and `context.js`; the shell links to the page.
+    - The form checks the levels against each other (an error blocks the save) and against the last price (a warning). It also shows a random walk's chance of reaching the draw first from there.
+    - Test: `test_the_context_page_keeps_a_call_per_market_and_week_and_writes_the_thesis_file`.
+  - **Validates: Requirement 32.4**
+
+- [x] 380. The context variant and its paper agent (Requirement 32.5)
+  - `[variants.fresh_near_gap_context]`: `fresh_near_gap_partial` with `bias_mode = "THESIS"`, `thesis_file = "data/research/theses/context_theses.json"` and `min_stop_spreads = 10`.
+  - A paper agent on the control agents' eight markets: `data/paper_trades_fresh_near_gap_context.json`.
+  - **Done 2026-10-29.**
+    - Test: `test_the_context_variant_trades_only_inside_the_calls`. It differs from the partial strategy only in the three settings.
+    - The thesis file starts empty (`{}`), so the agent orders nothing until the first calls.
+    - Its agent started 2026-10-29 beside the two controls; DXY is called and scored but not traded, as in the controls.
+  - **Validates: Requirement 32.5**
+
+- [x] 381. The weekly scorecard (Requirement 32.6)
+  - `GET /api/context/scorecard` and the page's table: each called week and market, scored on the terminal's bars and the paper agents' records.
+  - **Done 2026-10-29.**
+    - `agent.context_calls.score_call` scores a call on its week's M15 bars from the terminal: its open and close, whether it closed on the call's side, the context's first end and a random walk's odds from `since`.
+    - `paper_r` gives each paper agent's R in that market and week. `ContextApp.scorecard` totals the finished calls' hit rate against `BREAK_EVEN` (57-60%).
+    - Tests: `test_a_call_is_scored_on_its_weeks_close_and_its_contexts_first_end` and `test_the_scorecard_sets_the_context_agent_against_the_controls`.
+    - The order-intent context tests write a thesis file per entry. The reader caches by modification time and size, which two quick same-size writes can share.
+  - **Validates: Requirement 32.6**
+
+
+- [x] 390. The sequence reader, v0 (Requirement 33.1-33.7)
+  - `algo_research/sequence.py` (`read_day`, `narrative`, `soups`, `cisd`, `key_zones`, `opening_gaps`) reads one market-day: the narrative at the eve's 17:00, the D1 soup before it, then C3's Q1 range, Q2 Judas swing, M5 CISD, order, path and deviations. A sell is the buy read of the negated prices. `python -m algo_research.sequence --symbol GBPUSDm --day 2026-10-29` reads from the MT5 terminal: H1 for 420 days and M1 around the day.
+  - **Done 2026-10-31.**
+    - The trader's day is found from the bars alone:
+      - narrative BULLISH from Fri 16 Oct 17:00, the 2026 Q2 low 1.31395 taken at 1.31364;
+      - draw: the W1 gap 1.33998-1.34803;
+      - soup: Tue 27 / Wed 28 (low 1.32720 at 03:17), in the D1 +IFVG 22-24 Sep and the 16 Oct NDOG;
+      - CISD runs: H4 from Tue 21:00, H1 from Tue 23:00, both confirmed Wed 13:00;
+      - C3: Q1 low taken 05:20, Judas 1.33172 (04:55) to 1.32956 (05:27), M5 run 05:05, confirmed by the 06:00 candle;
+      - order: buy limit 1.33030, filled 09:18;
+      - targets: −1 at the PDH, −4 at the W1 gap's edge (reached 21:10).
+    - Over GBPUSD 20-30 Oct it orders once, on 29 Oct. Fri 23's soup is refused for its Thursday C2.
+    - Defaults the trader hasn't set (module docstring): the doji tenth, Model A's W1 and D1 C2 windows, external lows from 4 quarters and 3 months, delivery at the draw's CE, and opening gaps from 10 days.
+    - Tests: `test_research_sequence.py` (5), on Exness GBPUSD fixtures (`fixtures/research/sequence/`): the trader's day, the week's single order, the mirror, the soup, the CISD run.
+    - Frozen before the trader's UK100 sample of 30 Oct 2026 is read (33.7).
+  - **Validates: Requirement 33.1-33.7**
+
+- [ ] 391. The sequence on the chart (Requirement 33)
+  - A Noculus layer: the narrative's turn, draw and protected swing; the D1 soup and its key levels; the child CISD runs; C3's Q1 range, Judas swing, M5 CISD, order block and deviations. The trader judges the reader's reads visually, day by day.
+  - **Validates: Requirement 33.1-33.5**
+
+- [x] 392. Where the engine waits: the levels, the gate and the layer (Requirement 34)
+  - What was built:
+    - `liquidity_engine/context/levels.py` (`levels`, `Level`, `in_window`);
+    - `StrategyConfig.require_level` and `order_intent._level_rule` (`NOT_AT_LEVEL`);
+    - `[variants.fresh_near_gap_levels]`;
+    - the watch state's `levels` and engine.js's Levels layer.
+  - Editing `agent/order_intent.py` changes `ENGINE_SOURCES`, so Phase A recomputes on the next backtest.
+  - **Done 2026-10-31.**
+    - **Last week on the terminal's bars** (26-30 Oct, 8 markets, the engine read once per M15 close for both): the control placed 9 orders (4 long, 5 short), 5 filled, −5.2R. Behind the gate, 5 orders (1 long, 4 short), 3 filled, −3.1R.
+      - Refused: the XAUUSD long, the EURUSD short, and both UK100 longs (one raided at 12:15).
+      - Kept: GBPUSD's PDH short of Thu 29 (a D1 order block in D1 premium, on the trader's bullish day), GER40's two shorts, and UK100's Fri 30 short.
+      - One week: no evidence.
+    - **The engine holds dozens of unfilled H4/D1 arrays per side** (about 30 sell levels above GBPUSD on Thu 29). Location alone, on both sides, is weak: the side decides which levels count.
+    - **The first version merged overlapping arrays,** which chained into a 300-pip level. Each array is its own level now.
+    - **Tests:**
+      - `test_context_levels.py`;
+      - `test_backtest_order_intent.py`: the gate's four parts and the variant;
+      - `test_backtest_watch.py`: the state's levels;
+      - `test_backtest_strategy_config.py`: the field in the fingerprint.
+  - **Validates: Requirement 34.1-34.5**
+
+- [x] 393. H-AE registered: the trader's narrative held as the side (Requirement 35.5)
+  - The hypothesis, its window, its control, its two cells and its pass rule appended to `docs/research/SEARCH_2018_2024.md` and committed before any outcome is computed.
+  - **Done 2026-11-02**, in the commit that adds Requirement 35. Only call counts were looked at before it (none yet).
+  - **Validates: Requirement 35.5**
+
+- [x] 394. The directional state over history, and H-AE's run (Requirement 35.1, 35.2, 35.5)
+  - **394a. RED**:
+    - on the Exness GBPUSD fixture's bars rebuilt as daily candles, the reader's state on Mon 26 Oct 2026 is BULLISH, set by the W1 soup that took the 2026 Q2 low, with the September W1 gap as its draw;
+    - on hand-made turns, a same-side turn replaces the live one, an opposite one is ignored while the side lives, and after a delivery or an invalidation the state is UNDETERMINED until the next turn;
+    - a state at t is unchanged when the bars after t are cut;
+    - the race counts a day that both delivers and invalidates as failed, and the control's distances scale with the 20-day average range.
+  - **394b. GREEN**: `algo_mind/dis.py` (`DirectionalState`, `daily_market`, `states`, `state_at`) and `algo_research/search_narrative.py` (H-AE).
+  - **394c.** The development run, logged in the search log with the tries count.
+  - **Done 2026-11-02.**
+    - `algo_mind/dis.py`: `DirectionalState` (with `to_json`), `Span`, `daily_market`, `reader_turns`, `states`, `state_at`. Reader v0's `_turns`, `_signed` and `_end` run unchanged on the daily frames.
+    - `algo_research/search_narrative.py`: `race`, `control_share`, `market_tables`, `judge`. The companions change one of reader v0's defaults by patching the module during the call; `sequence.py` is not edited.
+    - **H-AE fails:** cell 1 −2.6 [−10.9, +5.3] on 196 calls, cell 2 +0.4 [−3.0, +3.7] on 1,368 weeks (hit 51.5%). A side is live in 12.5% of market-weeks. Neither open-question variant changes it.
+    - Tests: `test_algo_mind_dis.py` (6).
+  - **Validates: Requirement 35.1, 35.2, 35.5**
+
+- [x] 395. The directional state in shadow on /context (Requirement 35.3, 35.4)
+  - Each week, each market's records from the reader, the trader's call and the brain, side by side, scored by the existing scorecard.
+  - The trader asked (2026-11-02) to see how the choice is made before a trade. So the page also shows, per market:
+    - the reader's record and its evidence;
+    - why each of the last four W1 candles did or didn't turn the narrative;
+    - each day's read up to its verdict.
+  - **Done 2026-11-02.**
+    - **What was built:**
+      - `algo_mind/dis.py`: `terminal_market` (reader v0's D1 and W1 from the terminal's H1, New York days, a forming day or week left out) and `week_checks` (the turn's four tests, up to the first each W1 candle fails, both sides).
+      - `algo_mind/shadow.py` (`read_market`, `write_shadow`; `python -m algo_mind shadow --week`), writing `data/algo_mind/dis/<week>.json`: the record at the week's open and at the last D1 close since, the last sides, the weeks checked, and `sequence.read_day` for every trading date opened. H1 for 1,100 days.
+      - `ContextApp.shadow`/`run_reader`, `POST /api/context/reader`. The scorecard scores the side each week opened with, as it scores the brain.
+      - The page: a Reader column, Run the reader, and "How the reader chose", one card per market (the side, the weeks checked, each day).
+    - Nothing in the engine reads the file (35.4). The trader's call and the brain sit beside it as before; they aren't converted into the record's form.
+    - **Weeks of 26 Oct and 2 Nov 2026 on the terminal's bars:**
+      - GBPUSD is BULLISH since Fri 16 Oct. It ordered once, Thu 29 Oct (buy 1.33030, filled 09:18), the trader's trade.
+      - The other eight markets have no side:
+        - XAUUSD's of 9 Oct was invalidated on 22 Oct;
+        - UK100's last was invalidated on 27 Jul;
+        - the rest were delivered between Jun 2024 and Sep 2026.
+      - The last four weeks give no new turn: weeks 3 and 4 of October fall outside the C2 window, and most other candles weren't soups.
+      - The next possible turn is a C2 in the week of 2 or 9 Nov.
+    - **Tests:**
+      - `test_algo_mind_shadow.py` (5): the cut frames; the week checks against `_turns` over the whole fixture; the week of 26 Oct; the day not yet opened; a market the broker doesn't carry.
+      - `test_algo_mind_context.py` (2 more): the record beside the call and the button; the scorecard's reader.
+      - The context tests now give the shadow folder too, so a real file can't leak in.
+  - **Validates: Requirement 35.3, 35.4**
+
+
+- [x] 396. Blind weekly calls (Requirement 36)
+  - **396a. RED** — on hand-made daily bars:
+    - the charts fall in the window, in a fixed order, and none is shown twice;
+    - a chart's bars end at its Friday's close, its dates are 56 years later on the same weekdays, its last close is 1000, and the market isn't named;
+    - a call's levels are checked against the last close, and the real prices are kept;
+    - the score: the next week's close on the side, the race (a day both delivering and invalidating fails), drift and the control;
+    - the reveal is refused before the call is saved;
+    - recognised charts and NONE calls stay out of the hit totals.
+  - **396b. GREEN** — `algo_research/replay/weekly.py` (`WeeklyApp`), `/weekly` with `static/weekly.html` and `weekly.js`, and the routes in `charts.py`.
+  - **Done 2026-11-02.**
+    - 8,617 charts across the nine markets. The page knows a chart only by its number: the first test caught the market and date in the id, and it was made opaque. MN1 is capped at 180 months so the history's depth is the same for every market where it can be. A market whose history starts later (gold from 2010, FX from 2003) still shows a shorter history on its early charts.
+    - Calls go to `data/journal/weekly_blind/calls.jsonl`. Reader v0's timelines are built in the background when the order is first read (about 6 s a market), so the reveal doesn't wait.
+    - Keys: B / S / N side, M / W / D frame, L line, Enter save, → next. After a side, the next two chart clicks set the draw, then the protected swing.
+    - Checked in headless Edge (puppeteer-core): the blind chart, two clicks setting the levels, the save, the reveal at the top of the panel with the next eight weeks greyed on D1, the totals and the next chart, with no page errors.
+    - Tests: `test_research_replay_weekly.py` (4).
+  - **Validates: Requirement 36.1-36.6**
+
+
+- [x] 397. AlgoMindDIS is Algo Mind: its thesis file, its paper agent, the brain retired (Requirement 37)
+  - **397a. RED:**
+    - the thesis file holds only sides live at the week's open (the draw's CE, the protected swing, `since` the open), and the GBPUSD fixture's week of 26 Oct gives its BULLISH entry for each trading date;
+    - a read with no market raises and leaves the week's file;
+    - the loop wakes five minutes after each D1 close in New York time, across the clocks' change;
+    - the dis variant differs from the context variant only in its thesis file, and the brain's variants are gone;
+    - /context has no brain, a saved call writes no agreement file, and the scorecard gives AlgoMindDIS's totals with the agents' R on its markets.
+  - **397b. GREEN:**
+    - `algo_mind/shadow.py`: `thesis_table`, `DIS_THESES`, and `write_shadow(..., theses=)`.
+    - `algo_mind/__main__.py`: `shadow --loop` and `next_read`.
+    - `[variants.fresh_near_gap_dis]` in `focus.toml` replaces `fresh_near_gap_brain` and `fresh_near_gap_agree`, and `PAPER_FILES` follows.
+    - `ContextApp` loses the brief, `run_brain` and the agreement; `/api/context/brief` is gone; the page loses the Brain column, its button and its totals.
+  - **Done 2026-11-03.**
+    - **The processes (paper only):**
+      - The brain and agree paper agents were stopped. Neither had an open order: the brain's last, an XAUUSD buy on 2 Nov, expired unfilled.
+      - The `fresh_near_gap_dis` agent started on the controls' eight markets, and the read loop beside it.
+    - **The first read (Tue 3 Nov 07:13 UTC):**
+      - GBPUSD opened the week BULLISH (draw: the W1 gap of 07-21 Sep, CE 1.34401; protected 1.31364). It was delivered at Monday's close, so the engine sees the draw already traded and orders nothing.
+      - The other eight markets have no side.
+      - So the dis agent trades nothing until a new turn, at the earliest a C2 closing on Fri 6 or Fri 13 Nov.
+    - **Tests:** `test_algo_mind_shadow.py` (2 new, 1 extended); `test_algo_mind_context.py` rewritten (4); `test_context_calls.py` and `test_replay_charts.py` lose the brain's arguments.
+  - **Validates: Requirement 37.1-37.5**
+
 ---
 
 ## Task Dependency Graph

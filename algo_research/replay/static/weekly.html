@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Noculus · Weekly blind</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  main.wk { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 12px; padding: 10px 14px 30px; }
+  .chartbox { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; min-width: 0; align-self: start; }
+  .chartbar button.on, .conf button.on, .lv button.on { background: var(--ink); color: var(--panel); }
+  .chartbar { display: flex; gap: 4px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  #chart { position: relative; height: 600px; min-width: 0; overflow: hidden; }
+  aside.panel { max-height: none; overflow: visible; height: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+  aside.panel h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 12px 0 6px; }
+  aside.panel h3:first-child { margin-top: 0; }
+  .sides { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  .sides button { border: 1px solid var(--line); padding: 6px 0; font-weight: 650; }
+  .sides button.on.BULLISH { background: var(--good); color: #fff; } .sides button.on.BEARISH { background: var(--bad); color: #fff; }
+  .lv { display: grid; grid-template-columns: 92px 1fr 54px; gap: 4px; align-items: center; margin: 4px 0; }
+  .lv input { width: 100%; font-variant-numeric: tabular-nums; }
+  .lv button.on { outline: 2px solid var(--accent); }
+  .conf button { border: 1px solid var(--line); min-width: 34px; }
+  .ev label { display: block; font-size: 12px; margin: 2px 0; }
+  textarea { width: 100%; min-height: 44px; font: inherit; }
+  .msg { font-size: 12px; min-height: 16px; } .msg.err { color: var(--bad); } .msg.info { color: var(--muted); }
+  .rev { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 10px; padding: 8px; background: var(--bg); }
+  .rev dl { display: grid; grid-template-columns: 96px 1fr; gap: 2px 8px; margin: 0; font-size: 12px; }
+  .rev dt { color: var(--muted); } .rev dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .good { color: var(--good); font-weight: 650; } .bad { color: var(--bad); font-weight: 650; }
+  section.totals { grid-column: 1 / -1; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+  section.totals table { border-collapse: collapse; } section.totals td, section.totals th { padding: 3px 10px 3px 0; text-align: left; font-variant-numeric: tabular-nums; }
+  section.totals th { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .keys { color: var(--muted); font-size: 11px; margin-top: 8px; }
+  @media (max-width: 900px) { main.wk { grid-template-columns: minmax(0, 1fr); } #chart { height: 440px; } }
+</style>
+</head>
+<body>
+<div id="shell"><span class="modes" title="Who is reading the chart"><a href="/">You</a><a href="/engine">Engine</a><a href="/context">Context</a><a href="/weekly" class="on">Weekly</a></span></div>
+<header>
+  <h1>Noculus · Weekly blind</h1>
+  <span class="muted">A random market and week from 1996-2017, the market hidden, the dates 56 years later, the last close at 1000. Call the next week and the draw; the reveal comes after the save.</span>
+  <span class="spacer"></span>
+  <span class="pill" id="progress">—</span>
+</header>
+<main class="wk">
+  <div class="chartbox">
+    <div class="chartbar">
+      <button class="boxed" data-tf="MN1">MN1</button><button class="boxed" data-tf="W1">W1</button><button class="boxed" data-tf="D1">D1</button>
+      <span class="spacer"></span>
+      <button class="boxed" id="lineTool" title="Each click on the chart marks a level (L)">Line</button>
+      <button class="boxed" id="clearLines" title="Remove your marked levels">Clear lines</button>
+      <span class="muted" id="cursor"></span>
+    </div>
+    <div id="chart"></div>
+  </div>
+  <aside class="panel">
+    <h3>Chart <span id="chartNo"></span></h3>
+    <div class="rev" id="reveal" hidden></div>
+    <div class="sides">
+      <button class="BULLISH" data-side="BULLISH" title="B">Bullish</button>
+      <button class="BEARISH" data-side="BEARISH" title="S">Bearish</button>
+      <button class="NONE" data-side="NONE" title="N">No side</button>
+    </div>
+    <div id="levels">
+      <div class="lv"><span>Draw</span><input id="draw" type="number" step="any"><button class="boxed" id="pickDraw" title="Then click the chart">Pick</button></div>
+      <div class="lv"><span>Protected swing</span><input id="prot" type="number" step="any"><button class="boxed" id="pickProt" title="Then click the chart">Pick</button></div>
+      <div class="msg info" id="odds"></div>
+      <h3>Confidence</h3>
+      <div class="conf"><button data-c="1">1</button><button data-c="2">2</button><button data-c="3">3</button></div>
+      <h3>Evidence</h3>
+      <div class="ev" id="evidence"></div>
+    </div>
+    <h3>Note</h3>
+    <textarea id="note" placeholder="Optional"></textarea>
+    <label style="display:block;margin:6px 0;font-size:12px"><input type="checkbox" id="recognised"> I recognise this chart</label>
+    <button class="primary" id="save" style="width:100%">Save the call (Enter)</button>
+    <div class="msg" id="msg"></div>
+    <div class="keys">Keys: B / S / N side · M / W / D frame · L line · Enter save · → next chart. After choosing a side, the next two clicks on the chart set the draw, then the protected swing.</div>
+  </aside>
+  <section class="totals" id="totals">—</section>
+</main>
+<script src="/static/weekly.js"></script>
+</body>
+</html>

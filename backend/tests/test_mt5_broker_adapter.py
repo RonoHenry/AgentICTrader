@@ -321,37 +321,125 @@ class TestMT5BrokerAdapterRiskBasedSizing:
         sent_request = mock_mt5.order_send.call_args[0][0]
         assert sent_request["volume"] == 0.05
 
-    def test_falls_back_to_size_when_stop_loss_missing(self, adapter, mock_mt5):
-        mock_mt5.symbol_info_tick.return_value = MagicMock(ask=1.1000, bid=1.0998)
+
+class TestMT5BrokerAdapterSizesAsTheBacktest:
+    """live-execution Requirements 1 and 2 (task 454): a risk-sized order is
+    sized by the backtest's rule (agent.brokers.sizing), and refused rather
+    than sent at a size nobody computed. ``order["size"]`` is OANDA units: it
+    is never used for a risk-sized order."""
+
+    @pytest.fixture(autouse=True)
+    def _eurusd(self, mock_mt5):
+        mock_mt5.symbol_info.return_value = MagicMock(
+            filling_mode=2, volume_step=0.01, volume_min=0.01, volume_max=100.0,
+            trade_tick_size=0.0001, trade_tick_value=10.0,
+        )
+        mock_mt5.symbol_info_tick.return_value = MagicMock(ask=1.1001, bid=1.1000)
         mock_mt5.order_send.return_value = MagicMock(retcode=mock_mt5.TRADE_RETCODE_DONE, order=555)
 
-        adapter.place_order({
-            "instrument": "EURUSD", "direction": "LONG",
-            "entry": 1.1000,
-            "size": 0.05,
-            "risk_amount": 100.0,
-        })
+    @staticmethod
+    def _order(**overrides):
+        return {"instrument": "EURUSD", "direction": "LONG", "entry": 1.0990, "stop_loss": 1.0970,
+                "take_profit": 1.1100, "size": 5.0, "risk_amount": 100.0, "setup_id": "s1", **overrides}
 
-        sent_request = mock_mt5.order_send.call_args[0][0]
-        assert sent_request["volume"] == 0.05
+    def test_rounds_down_never_to_nearest(self, adapter, mock_mt5):
+        # $101.9 over a 20-pip stop at $10/pip/lot: 0.5095 lots -> 0.50, not 0.51.
+        adapter.place_order(self._order(risk_amount=101.9))
+        assert mock_mt5.order_send.call_args[0][0]["volume"] == 0.5
 
-    def test_falls_back_to_size_when_symbol_missing_tick_value(self, adapter, mock_mt5):
+    def test_min_volume_over_risk_is_refused(self, adapter, mock_mt5):
+        from agent.brokers.mt5 import MT5BrokerError
+
+        # 0.01 lots over 20 pips risk $2: double a $1 budget.
+        with pytest.raises(MT5BrokerError) as raised:
+            adapter.place_order(self._order(risk_amount=1.0))
+        assert raised.value.reason == "MIN_VOLUME_OVER_RISK"
+        mock_mt5.order_send.assert_not_called()
+
+    def test_volume_min_within_the_tolerance_is_sent(self, adapter, mock_mt5):
+        adapter.place_order(self._order(risk_amount=1.85))   # $2 against $1.85: within 10%
+        assert mock_mt5.order_send.call_args[0][0]["volume"] == 0.01
+
+    def test_market_order_without_entry_is_sized_on_the_market(self, adapter, mock_mt5):
+        # No entry: 1R is the ask (1.1001) to the stop (1.0981), 20 pips.
+        adapter.place_order(self._order(entry=None, stop_loss=1.0981))
+        assert mock_mt5.order_send.call_args[0][0]["volume"] == 0.5
+
+    def test_stop_missing_is_refused_not_sized_from_size(self, adapter, mock_mt5):
+        from agent.brokers.mt5 import MT5BrokerError
+
+        with pytest.raises(MT5BrokerError) as raised:
+            adapter.place_order(self._order(stop_loss=None))
+        assert raised.value.reason == "INVALID_ORDER"
+        mock_mt5.order_send.assert_not_called()
+
+    def test_no_tick_value_is_refused_not_sized_from_size(self, adapter, mock_mt5):
+        from agent.brokers.mt5 import MT5BrokerError
+
         mock_mt5.symbol_info.return_value = MagicMock(
             filling_mode=2, volume_step=0.01, volume_min=0.01, volume_max=100.0,
             trade_tick_size=0.0, trade_tick_value=0.0,
         )
-        mock_mt5.symbol_info_tick.return_value = MagicMock(ask=1.1000, bid=1.0998)
-        mock_mt5.order_send.return_value = MagicMock(retcode=mock_mt5.TRADE_RETCODE_DONE, order=555)
+        with pytest.raises(MT5BrokerError) as raised:
+            adapter.place_order(self._order())
+        assert raised.value.reason == "NO_TICK_VALUE"
+        mock_mt5.order_send.assert_not_called()
 
-        adapter.place_order({
-            "instrument": "EURUSD", "direction": "LONG",
-            "entry": 1.1000, "stop_loss": 1.0980,
-            "size": 0.05,
-            "risk_amount": 100.0,
-        })
+    def test_a_hair_stop_is_refused_by_the_backstop(self, adapter, mock_mt5):
+        from agent.brokers.mt5 import MT5BrokerError
 
-        sent_request = mock_mt5.order_send.call_args[0][0]
-        assert sent_request["volume"] == 0.05
+        # A 1.5-pip stop with a 1-pip spread: the spread alone is 67% of it.
+        with pytest.raises(MT5BrokerError) as raised:
+            adapter.place_order(self._order(stop_loss=1.09885))
+        assert raised.value.reason == "STOP_TOO_TIGHT"
+        mock_mt5.order_send.assert_not_called()
+
+    def test_the_backstop_counts_the_instruments_slippage(self, mock_mt5):
+        from agent.brokers.mt5 import MT5BrokerAdapter, MT5BrokerError
+        from agent.instruments import CommissionSpec, InstrumentSpec, InstrumentSpecs
+
+        specs = InstrumentSpecs("mt5", "USD", {"EURUSD": InstrumentSpec(
+            symbol="EURUSD", venue="mt5", point=1e-5, tick_size=1e-5, contract_size=100_000.0, volume_min=0.01,
+            volume_step=0.01, volume_max=100.0, base_ccy="EUR", quote_ccy="USD", default_spread=0.0001,
+            stop_slippage=0.0001, commission=CommissionSpec("PER_LOT_PER_SIDE", 3.5))})
+        # A 3-pip stop: 1 pip of spread is 33% (passes), plus 1 pip of slippage 67% (refused).
+        plain = MT5BrokerAdapter(login=FAKE_LOGIN, password=FAKE_PASSWORD, server=FAKE_SERVER)
+        plain.place_order(self._order(stop_loss=1.0987))
+        with_specs = MT5BrokerAdapter(login=FAKE_LOGIN, password=FAKE_PASSWORD, server=FAKE_SERVER, specs=specs)
+        with pytest.raises(MT5BrokerError) as raised:
+            with_specs.place_order(self._order(stop_loss=1.0987))
+        assert raised.value.reason == "STOP_TOO_TIGHT"
+
+    def test_the_backstop_can_be_switched_off(self, mock_mt5):
+        from agent.brokers.mt5 import MT5BrokerAdapter
+
+        adapter = MT5BrokerAdapter(login=FAKE_LOGIN, password=FAKE_PASSWORD, server=FAKE_SERVER,
+                                   max_stop_overrun=None)
+        adapter.place_order(self._order(stop_loss=1.09885))
+        mock_mt5.order_send.assert_called_once()
+
+    def test_a_refusal_reaches_execute_node_as_a_skip_with_the_code(self, adapter, mock_mt5):
+        import json
+        from datetime import datetime, timezone
+
+        import fakeredis
+
+        from agent.nodes.execute_node import execute_node
+        from agent.state import AgentMode, AgentState, DecisionAction, Direction, TradePlan
+        from services.risk_engine.main import RiskEngine
+
+        redis = fakeredis.FakeRedis(decode_responses=True)
+        redis.set("risk:exposure:default", json.dumps({"daily_dd_pct": 0.0, "weekly_dd_pct": 0.0,
+                                                       "open_trades": 0, "equity": 100.0}))   # risk: $1
+        state = AgentState(setup_id="s1", instrument="EURUSD", timeframe="M15", direction=Direction.LONG,
+                           detected_at=datetime.now(timezone.utc), raw_confidence=0.8, final_confidence=0.8,
+                           mode=AgentMode.AUTONOMOUS,
+                           trade_plan=TradePlan(entry=1.0990, stop_loss=1.0970, take_profit_1=1.1100, r_ratio=5.5,
+                                                recommended_size=0.01))
+        result = execute_node(state, risk_engine=RiskEngine(redis), broker_client=adapter)
+        assert result.decision == DecisionAction.SKIP
+        assert "MIN_VOLUME_OVER_RISK" in result.decision_reason
+        mock_mt5.order_send.assert_not_called()
 
 
 class TestMT5BrokerAdapterSetSlTp:
