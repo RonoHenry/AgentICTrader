@@ -82,6 +82,8 @@ data/backtests/
 # Paper-trader runtime state (docker/paper-trader writes these to data/)
 data/heartbeat
 data/*.err
+# The live runner's MT5 ledger and account state (live-execution): per machine and account
+data/live/
 
 # Test coverage
 .coverage
