@@ -25,7 +25,7 @@ live-execution Requirements 1, 2.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from agent.brokers.base import BrokerClient
 from agent.brokers.sizing import SizingError, lots_for_risk, stop_overrun
@@ -114,6 +114,9 @@ class MT5BrokerAdapter(BrokerClient):
                        switches it off.
         min_volume_tolerance: How far over its budget the minimum volume
                        may risk (the backtest's 10%).
+        symbol_of:     The broker profile's symbol for an instrument
+                       (``BrokerProfile.symbol``); the suffix applies to
+                       instruments it doesn't name.
     """
 
     def __init__(
@@ -127,12 +130,14 @@ class MT5BrokerAdapter(BrokerClient):
         specs: Optional[InstrumentSpecs] = None,
         max_stop_overrun: Optional[float] = DEFAULT_MAX_STOP_OVERRUN,
         min_volume_tolerance: float = 0.10,
+        symbol_of: Optional[Callable[[str], Optional[str]]] = None,
     ) -> None:
         self._login = login
         self._password = password
         self._server = server
         self._path = path
         self._symbol_suffix = symbol_suffix
+        self._symbol_of = symbol_of
         self._magic = magic
         self._specs = specs
         self._max_stop_overrun = max_stop_overrun
@@ -160,6 +165,12 @@ class MT5BrokerAdapter(BrokerClient):
         self._connected = True
 
     def _resolve_symbol(self, instrument: str) -> str:
+        """The broker's symbol: the profile's (``symbol_of``, live-execution Req 6.1), else the instrument plus the
+        suffix."""
+        if self._symbol_of is not None:
+            mapped = self._symbol_of(instrument)
+            if mapped:
+                return mapped
         return f"{instrument}{self._symbol_suffix}"
 
     def _resolve_filling_type(self, symbol: str) -> int:

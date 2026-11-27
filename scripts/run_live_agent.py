@@ -513,10 +513,13 @@ def _stop_on_sigterm(_signum, _frame) -> None:
 
 
 def main() -> None:
+    global _SERVER_CLOCK
     args = _parse_args()
     signal.signal(signal.SIGTERM, _stop_on_sigterm)
     cfg, symbol_of = _strategy(args)
     run_cfg = _run_config(args)
+    # The run's broker profile names the server clock for bars and order expiry (live-execution Req 6.2).
+    _SERVER_CLOCK = _server_clock(run_cfg)
     instruments = (
         [s.strip().upper() for s in args.instruments.split(",") if s.strip()]
         if args.instruments
@@ -549,7 +552,7 @@ def main() -> None:
     paper, specs = None, None
     fcm_sender, mode = None, "AUTONOMOUS"
     if broker == "mt5":
-        broker_client = _mt5_broker_client()
+        broker_client = _mt5_broker_client(run_cfg)
     elif broker == "paper":
         fee = args.paper_fee if args.paper_fee is not None else (0.001 if args.feed == "binance" else 0.0)
         # Free the risk engine's concurrent-trades slot whenever a paper
@@ -727,12 +730,26 @@ def _mt5_credentials() -> dict:
     return credentials
 
 
-def _mt5_broker_client():
+def _mt5_broker_client(run_cfg=None, **execution):
+    """The MT5 adapter. With a run configuration it orders through the run's broker profile: its symbols, and its
+    specs for the stop backstop (live-execution Req 6.1), so it orders the symbols the runner reads."""
+    profile = broker_profiles.load_profile(run_cfg.run.profile) if run_cfg is not None else None
     return create_broker_client(
         "mt5",
         **{"path": None, **_mt5_credentials()},
         symbol_suffix=config("MT5_SYMBOL_SUFFIX", default=""),
+        symbol_of=profile.symbol if profile is not None else None,
+        specs=profile.specs() if profile is not None else None,
+        **execution,
     )
+
+
+def _server_clock(run_cfg=None) -> MT5ServerClock:
+    """The broker's server clock: the run's profile's with a configuration (live-execution Req 6.2), else
+    MT5_SERVER_TIMEZONE."""
+    if run_cfg is not None:
+        return broker_profiles.load_profile(run_cfg.run.profile).clock()
+    return MT5ServerClock(config("MT5_SERVER_TIMEZONE", default=NY_CLOSE))
 
 
 def _strategy(args) -> tuple[StrategyConfig, Optional[Callable[[str], str]]]:
