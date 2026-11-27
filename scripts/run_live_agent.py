@@ -170,6 +170,7 @@ _DEMO_EQUITY = 200.0
 _USER_ID = "demo-runner"
 _ENTRY_TF_SECONDS = {Timeframe.M1: 60, Timeframe.M3: 180, Timeframe.M5: 300, Timeframe.M15: 900}
 _PAPER_STATE = REPO_ROOT / "data" / "paper_trades.json"
+_MT5_LEDGER = REPO_ROOT / "data" / "live" / "mt5_ledger.json"
 
 # services/visual_model and services/algorag: docker-compose publishes both
 # to localhost for a host-run script; inside the compose network (the
@@ -328,6 +329,12 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=None,
         help="With --loop: stop after this many minutes (default: run until Ctrl+C).",
+    )
+    parser.add_argument(
+        "--mt5-ledger",
+        default=str(_MT5_LEDGER),
+        help="JSON file the MT5 broker's own trades persist to, so expiry and the trade count survive restarts "
+        "(default: %(default)s).",
     )
     parser.add_argument(
         "--paper-state",
@@ -551,8 +558,13 @@ def main() -> None:
 
     paper, specs = None, None
     fcm_sender, mode = None, "AUTONOMOUS"
+    mt5_broker = None
     if broker == "mt5":
-        broker_client = _mt5_broker_client(run_cfg)
+        # Pending orders expire as the backtest's do, and own trades persist to the ledger (live-execution Req 3).
+        broker_client = mt5_broker = _mt5_broker_client(
+            run_cfg, expiry_rule=cfg.pending_expiry, fallback_ttl=cfg.fallback_ttl, server_clock=_SERVER_CLOCK,
+            ledger_path=args.mt5_ledger,
+        )
     elif broker == "paper":
         fee = args.paper_fee if args.paper_fee is not None else (0.001 if args.feed == "binance" else 0.0)
         # Free the risk engine's concurrent-trades slot whenever a paper
@@ -671,19 +683,30 @@ def main() -> None:
 
     try:
         if not args.loop:
+            if mt5_broker is not None:
+                _manage(mt5_broker)
             _print_summary(run_pass())
         else:
             deadline = time.monotonic() + args.duration * 60 if args.duration else None
             period = _ENTRY_TF_SECONDS[cfg.entry_tf]
+            # On MT5 the trades are managed every minute (expiry, live-execution LX-D5); the markets are evaluated
+            # at each entry-timeframe close, as before.
+            tick = 60 if mt5_broker is not None else period
+            evaluated_bar = None
             while True:
-                results = run_pass()
-                print(
-                    f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S} UTC  "
-                    + "  ".join(f"{r['instrument']}={r['grade']}/{r['decision']}" for r in results),
-                    flush=True,
-                )
-                # Next pass just after the next entry-timeframe bar closes.
-                wait = period - time.time() % period + 5
+                if mt5_broker is not None:
+                    _manage(mt5_broker)
+                bar_index = int(time.time() // period)
+                if bar_index != evaluated_bar:
+                    evaluated_bar = bar_index
+                    results = run_pass()
+                    print(
+                        f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S} UTC  "
+                        + "  ".join(f"{r['instrument']}={r['grade']}/{r['decision']}" for r in results),
+                        flush=True,
+                    )
+                # Next wake just after the next tick (a minute on MT5, else the entry bar) closes.
+                wait = tick - time.time() % tick + 5
                 if deadline is not None and time.monotonic() + wait > deadline:
                     break
                 time.sleep(wait)
@@ -703,6 +726,22 @@ def _print_summary(results: list[dict]) -> None:
     print(f"{'instrument':<10} {'grade':<10} {'decision':<25} trade_id")
     for r in results:
         print(f"{r['instrument']:<10} {r['grade']:<10} {str(r['decision']):<25} {r['trade_id'] or ''}")
+
+
+def _manage(broker) -> list[dict]:
+    """One management step on MT5 (live-execution LX-D5): the broker syncs its ledger with the terminal, expiring
+    and closing out trades; each change is printed. A terminal error is logged, not raised: the next minute
+    retries."""
+    try:
+        events = broker.sync()
+    except Exception as exc:
+        logger.error("MT5 sync failed: %s", exc)
+        return []
+    for event in events:
+        print(f"[{event['instrument']}] MT5 {event['event']}: {event['direction']} {event['kind']} entry "
+              f"{event['entry']} stop {event['stop_loss']} target {event['take_profit']} "
+              f"({event['lots']} lots, tickets {event['tickets']})", flush=True)
+    return events
 
 
 def _print_paper_event(event: dict) -> None:

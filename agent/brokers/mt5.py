@@ -20,23 +20,44 @@ spread and stop slippage are more than ``max_stop_overrun`` of the stop.
 Refusals raise MT5BrokerError with a ``reason`` code, which execute_node turns
 into a SKIP.
 
+With ``expiry_rule`` set (the live runner passes its StrategyConfig's), a
+pending order expires when the backtest's would (Requirement 3): the shared
+``pending_expiry``, sent as ORDER_TIME_SPECIFIED in server time when the
+symbol allows it and a ``server_clock`` is given, GTC otherwise. Either way
+``sync()``, which the runner calls every minute, cancels own pending orders
+past their expiry. The ledger (``MT5Ledger``, persisted to ``ledger_path``)
+records each trade placed: its tickets, setup, prices and expiry. The
+terminal stays the truth for each ticket's state; ``sync()`` reads it.
+
 Validates: Requirements FR-6 (Agentic Execution Loop) — broker abstraction;
-live-execution Requirements 1, 2.
+live-execution Requirements 1, 2, 3, 5.
 """
 from __future__ import annotations
 
+import json
+import os
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from agent.brokers.base import BrokerClient
+from agent.brokers.fill_model import pending_expiry
 from agent.brokers.sizing import SizingError, lots_for_risk, stop_overrun
+from agent.clock import Clock, wall_clock
 from agent.instruments import InstrumentSpecs
+from agent.strategy_config import PendingExpiry
+from services.market_data.mt5_clock import MT5ServerClock
 
 try:
     import MetaTrader5 as mt5
 except ImportError:  # pragma: no cover - exercised only when package is absent
     mt5 = None
 
-__all__ = ["MT5BrokerAdapter", "MT5BrokerError"]
+__all__ = ["MT5BrokerAdapter", "MT5BrokerError", "MT5Ledger"]
+
+ACTIVE = ("PENDING", "OPEN")
+#: SYMBOL_EXPIRATION_MODE's bit for an order with its own expiry time.
+_SYMBOL_EXPIRATION_SPECIFIED = 4
 
 _DEFAULT_MAGIC = 990001
 _DEVIATION_POINTS = 20
@@ -73,6 +94,45 @@ class MT5BrokerError(Exception):
 
 def _refused(reason: str, detail: str) -> MT5BrokerError:
     return MT5BrokerError(f"{reason}: {detail}", reason)
+
+
+class MT5Ledger:
+    """The trades this runner placed on MT5, persisted so a restart picks them up (live-execution Requirements 3, 5).
+
+    One entry per trade, in placement order: ``trade_id``, ``setup_id``, ``instrument``, ``symbol``,
+    ``direction``, ``kind`` (LIMIT / MARKET), ``entry``, ``stop_loss``, ``take_profit``, ``lots``, ``tickets``,
+    ``placed_at``, ``expires_at``, ``status`` (PENDING / OPEN / CLOSED), ``filled_at``, ``fill_price``,
+    ``closed_at`` and ``exit_reason``. Written with write-then-rename, as the paper broker's file is, so a crash
+    mid-write can't leave a truncated file. Without a path it lives in memory.
+    """
+
+    def __init__(self, path: Optional[str | Path] = None) -> None:
+        self._path = Path(path) if path else None
+        self._trades: dict[str, dict] = {}
+        if self._path and self._path.exists():
+            for trade in json.loads(self._path.read_text(encoding="utf-8")):
+                self._trades[trade["trade_id"]] = trade
+
+    def add(self, trade: dict) -> None:
+        self._trades[trade["trade_id"]] = trade
+        self.save()
+
+    def get(self, trade_id: str) -> Optional[dict]:
+        return self._trades.get(trade_id)
+
+    def trades(self) -> list[dict]:
+        return list(self._trades.values())
+
+    def active(self) -> list[dict]:
+        return [t for t in self._trades.values() if t["status"] in ACTIVE]
+
+    def save(self) -> None:
+        if self._path is None:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._path.with_name(self._path.name + ".tmp")
+        tmp.write_text(json.dumps(self.trades(), indent=2, default=str), encoding="utf-8")
+        os.replace(tmp, self._path)
 
 
 def _order_send_failed(result: Any) -> bool:
@@ -117,6 +177,14 @@ class MT5BrokerAdapter(BrokerClient):
         symbol_of:     The broker profile's symbol for an instrument
                        (``BrokerProfile.symbol``); the suffix applies to
                        instruments it doesn't name.
+        expiry_rule, fallback_ttl: When a pending order expires, as in the
+                       backtest (StrategyConfig.pending_expiry / fallback_ttl).
+                       None: GTC, never cancelled (manual use).
+        server_clock:  The broker's server clock, to send the expiry in
+                       server time. Without it orders go GTC and only
+                       ``sync()`` cancels them.
+        clock:         Now, in UTC (the wall clock by default).
+        ledger_path:   Where the ledger persists; None keeps it in memory.
     """
 
     def __init__(
@@ -131,6 +199,11 @@ class MT5BrokerAdapter(BrokerClient):
         max_stop_overrun: Optional[float] = DEFAULT_MAX_STOP_OVERRUN,
         min_volume_tolerance: float = 0.10,
         symbol_of: Optional[Callable[[str], Optional[str]]] = None,
+        expiry_rule: Optional[PendingExpiry] = None,
+        fallback_ttl: timedelta = timedelta(hours=3),
+        server_clock: Optional[MT5ServerClock] = None,
+        clock: Optional[Clock] = None,
+        ledger_path: Optional[str | Path] = None,
     ) -> None:
         self._login = login
         self._password = password
@@ -142,6 +215,11 @@ class MT5BrokerAdapter(BrokerClient):
         self._specs = specs
         self._max_stop_overrun = max_stop_overrun
         self._tolerance = min_volume_tolerance
+        self._expiry_rule = expiry_rule
+        self._fallback_ttl = fallback_ttl
+        self._server_clock = server_clock
+        self._clock = clock or wall_clock
+        self.ledger = MT5Ledger(ledger_path)
         self._connected = False
 
     def _ensure_connected(self) -> None:
@@ -283,7 +361,11 @@ class MT5BrokerAdapter(BrokerClient):
         misreport a live resting limit order as gone.
 
         Returns ("OPEN", position) | ("PENDING", order) | ("CLOSED", None).
+        An id that isn't a ticket (the ledger's ``unsent-...``, LX-D7) was
+        never at the terminal: CLOSED.
         """
+        if not str(trade_id).isdigit():
+            return "CLOSED", None
         ticket = int(trade_id)
         positions = mt5.positions_get(ticket=ticket)
         if positions:
@@ -352,6 +434,25 @@ class MT5BrokerAdapter(BrokerClient):
             requested_entry < market_price if is_long else requested_entry > market_price
         )
 
+        now = self._clock()
+        expires_at = (pending_expiry(now, self._expiry_rule, self._fallback_ttl)
+                      if is_pending and self._expiry_rule is not None else None)
+        trade = {
+            "trade_id": None, "setup_id": order.get("setup_id"), "instrument": instrument, "symbol": symbol,
+            "direction": direction, "kind": "LIMIT" if is_pending else "MARKET",
+            "entry": requested_entry if requested_entry is not None else market_price,
+            "stop_loss": order.get("stop_loss"), "take_profit": order.get("take_profit"), "lots": size,
+            "tickets": [], "placed_at": now.isoformat(), "expires_at": expires_at.isoformat() if expires_at else None,
+            "status": "PENDING", "filled_at": None, "fill_price": None, "closed_at": None, "exit_reason": None,
+        }
+        if expires_at is not None and expires_at <= now:
+            # Placed at the end of its killzone: the backtest places it and it expires unfilled. Nothing is sent;
+            # the ledger records it, so the setup counts as attempted (LX-D7).
+            trade.update(trade_id=f"unsent-{now:%Y%m%dT%H%M%S}-{instrument}", status="CLOSED",
+                         closed_at=now.isoformat(), exit_reason="EXPIRED")
+            self.ledger.add(trade)
+            return {"order_id": trade["trade_id"], "trade_id": trade["trade_id"], "pending": True}
+
         if is_pending:
             order_type = mt5.ORDER_TYPE_BUY_LIMIT if is_long else mt5.ORDER_TYPE_SELL_LIMIT
             price = requested_entry
@@ -381,13 +482,77 @@ class MT5BrokerAdapter(BrokerClient):
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": type_filling,
         }
+        if expires_at is not None and self._server_clock is not None and self._allows_specified_expiry(symbol):
+            request["type_time"] = mt5.ORDER_TIME_SPECIFIED
+            request["expiration"] = int(self._server_clock.to_server(expires_at).timestamp())
 
         result = mt5.order_send(request)
         if _order_send_failed(result):
             raise MT5BrokerError(f"MT5 order_send failed: {_describe_order_send_failure(result)}")
 
         ticket = str(result.order)
+        trade.update(trade_id=ticket, tickets=[int(result.order)])
+        self.ledger.add(trade)
         return {"order_id": ticket, "trade_id": ticket, "pending": is_pending}
+
+    def _allows_specified_expiry(self, symbol: str) -> bool:
+        info = mt5.symbol_info(symbol)
+        mode = getattr(info, "expiration_mode", 0) if info is not None else 0
+        return isinstance(mode, int) and bool(mode & _SYMBOL_EXPIRATION_SPECIFIED)
+
+    # ── the ledger, against the terminal (live-execution Requirements 3, 5) ──
+
+    def sync(self) -> list[dict]:
+        """Bring each active trade up to date with the terminal, now. Returns the trades that changed, each with an
+        ``event``: FILLED (first seen as a position), EXPIRED (cancelled here past its expiry, or gone unfilled after
+        it) or CLOSED (gone from the terminal).
+
+        The runner calls it every minute (LX-D5). A pending order past its expiry is cancelled whether it was sent
+        with one or GTC (LX-D6)."""
+        self._ensure_connected()
+        now = self._clock()
+        events = []
+        for trade in self.ledger.active():
+            event = self._sync_trade(trade, now)
+            if event:
+                events.append({**trade, "event": event})
+        if events:
+            self.ledger.save()
+        return events
+
+    def _sync_trade(self, trade: dict, now: datetime) -> Optional[str]:
+        states = {ticket: self._lookup_trade(str(ticket)) for ticket in trade["tickets"]}
+        expired = trade["expires_at"] is not None and now >= datetime.fromisoformat(trade["expires_at"])
+        pending = [ticket for ticket, (state, _) in states.items() if state == "PENDING"]
+        opened = [obj for state, obj in states.values() if state == "OPEN"]
+        if expired and pending:
+            for ticket in pending:
+                self._cancel_pending_order(ticket)
+            pending = []
+        if opened:
+            if trade["status"] == "PENDING":
+                trade.update(status="OPEN", filled_at=now.isoformat(), fill_price=float(opened[0].price_open))
+                return "FILLED"
+            return None
+        if pending:
+            return None
+        # Nothing left at the terminal.
+        never_filled = trade["status"] == "PENDING"
+        reason = "EXPIRED" if never_filled and expired else "CLOSED"
+        trade.update(status="CLOSED", closed_at=now.isoformat(), exit_reason=reason)
+        return reason
+
+    def active_trade(self, instrument: str) -> Optional[dict]:
+        """The instrument's own pending or open trade, if any (one per instrument, Requirement 5.1)."""
+        return next((t for t in self.ledger.active() if t["instrument"] == instrument), None)
+
+    def active_count(self) -> int:
+        """Own trades pending or open: a split trade counts once (Requirement 7.4)."""
+        return len(self.ledger.active())
+
+    def attempted_setups(self) -> set[str]:
+        """Every setup ordered from this ledger, whatever became of it (algo-backtester D6)."""
+        return {t["setup_id"] for t in self.ledger.trades() if t.get("setup_id")}
 
     def set_sl_tp(self, trade_id: str, sl_price: float, tp_price: float) -> bool:
         self._ensure_connected()

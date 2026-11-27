@@ -10,7 +10,7 @@ Validates: Requirements 6.1, 6.2 (.kiro/specs/live-execution/requirements.md)
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -54,3 +54,29 @@ class TestTheRunsBrokerProfile:
         with patch.object(runner, "config", side_effect=lambda name, default=None, **_: {
                 "MT5_SERVER_TIMEZONE": "+2"}.get(name, default)):
             assert runner._server_clock(None).spec == "+2"
+
+
+class TestExpiryInTheRunner:
+    """Requirement 3 (task 456): the runner hands the adapter the run's expiry and a ledger, and syncs it."""
+
+    def test_the_adapter_gets_the_runs_expiry_and_ledger(self, run_cfg, tmp_path):
+        cfg = run_cfg.strategy
+        with patch.object(runner, "_mt5_credentials", return_value=FAKE_CREDENTIALS):
+            broker = runner._mt5_broker_client(run_cfg, expiry_rule=cfg.pending_expiry, fallback_ttl=cfg.fallback_ttl,
+                                               server_clock=runner._server_clock(run_cfg),
+                                               ledger_path=tmp_path / "ledger.json")
+        assert broker._expiry_rule == cfg.pending_expiry and broker._fallback_ttl == cfg.fallback_ttl
+        assert broker._server_clock.spec == "+0"
+
+    def test_manage_syncs_and_prints_each_change(self, capsys):
+        broker = MagicMock()
+        broker.sync.return_value = [{"instrument": "EURUSD", "event": "EXPIRED", "direction": "LONG",
+                                     "kind": "LIMIT", "entry": 1.099, "stop_loss": 1.097, "take_profit": 1.11,
+                                     "lots": 0.5, "tickets": [555]}]
+        assert [e["event"] for e in runner._manage(broker)] == ["EXPIRED"]
+        assert "[EURUSD] MT5 EXPIRED" in capsys.readouterr().out
+
+    def test_manage_logs_a_terminal_error_and_carries_on(self):
+        broker = MagicMock()
+        broker.sync.side_effect = RuntimeError("terminal gone")
+        assert runner._manage(broker) == []

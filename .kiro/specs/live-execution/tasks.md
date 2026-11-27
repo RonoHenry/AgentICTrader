@@ -36,10 +36,15 @@
     - Tests: `test_live_execution_runner.py` (5), `test_live_execution_mt5.py` (1).
   - **Validates: Requirements 6.1, 6.2**
 
-- [ ] 456. Expiry, and the ledger (Requirement 3)
+- [x] 456. Expiry, and the ledger (Requirement 3)
   - `MT5Ledger`: own trades persisted, write-then-rename.
   - The order is sent `ORDER_TIME_SPECIFIED` with server-time expiration when the symbol allows it, otherwise GTC. One expiring at placement isn't sent (LX-D7).
   - `sync(now)` cancels own pending orders past their expiry and closes out finished trades.
+  - **Done 2026-11-27.**
+    - `MT5BrokerAdapter(expiry_rule, fallback_ttl, server_clock, clock, ledger_path)`.
+    - `sync()` returns FILLED / EXPIRED / CLOSED events. `active_trade`, `active_count` and `attempted_setups` read the ledger.
+    - The runner passes the run's expiry and `--mt5-ledger` (default `data/live/mt5_ledger.json`). On MT5 it wakes every minute to `_manage` (sync) and evaluates the markets at each entry close.
+    - Tests: `test_live_execution_mt5.py` (12 more), `test_live_execution_runner.py` (3 more).
   - **Validates: Requirements 3.1-3.4**
 
 - [ ] 457. The account from the terminal (Requirement 4)
