@@ -70,8 +70,15 @@
     - Tests: `test_live_execution_runner.py` (7 more).
   - **Validates: Requirements 5.1, 5.2**
 
-- [ ] 459. The partial and break-even on MT5 (Requirement 7)
+- [x] 459. The partial and break-even on MT5 (Requirement 7)
   - Placement splits with `split_lots` and `partial_level`. `sync` recomputes the part's target from its fill and moves the rest to break-even once the part has closed.
+  - **Done 2026-11-27.**
+    - `MT5BrokerAdapter(partial_r, partial_fraction)` sends the part and the rest.
+    - A refused rest takes the part back: cancelled if pending, closed if filled.
+    - `sync` emits PARTIAL when the rest moves to break-even. It moves only with the rest in profit, so a part that was stopped out moves nothing.
+    - The runner passes the run's `[management]`.
+    - A ledger from before this task still syncs.
+    - Tests: `test_live_execution_mt5.py` (9 more), `test_live_execution_runner.py` (1 more).
   - **Validates: Requirements 7.1-7.4**
 
 - [ ] 460. The parity test (Requirement 8)

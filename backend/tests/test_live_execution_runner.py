@@ -164,3 +164,11 @@ class TestPaperExposure:
         runner._paper_exposure(paper, redis)()
         exposure = json.loads(redis.get(f"risk:exposure:{runner._USER_ID}"))
         assert exposure["open_trades"] == 2 and exposure["daily_dd_pct"] == 0.0
+
+
+class TestTheRunsManagement:
+    def test_the_adapter_gets_the_runs_partial(self, run_cfg):
+        with patch.object(runner, "_mt5_credentials", return_value=FAKE_CREDENTIALS):
+            broker = runner._mt5_broker_client(run_cfg, partial_r=run_cfg.management.partial_r,
+                                               partial_fraction=run_cfg.management.partial_fraction)
+        assert broker._partial_r == 3.0 and broker._partial_fraction == pytest.approx(1 / 3)

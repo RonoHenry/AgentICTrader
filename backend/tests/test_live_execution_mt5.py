@@ -195,3 +195,127 @@ class TestTheLedger:
         assert adapter.active_trade("GBPUSD") is None
         assert adapter.active_trade("EURUSD")["setup_id"] == "setup-1"
         assert adapter.active_count() == 1
+
+
+# ── the partial and break-even (task 459, LX-D2) ───────────────────────────
+
+def _send_tickets(mock_mt5, *tickets):
+    mock_mt5.order_send.side_effect = [MagicMock(retcode=10009, order=t) for t in tickets]
+
+
+def _managed(clock=None, **kwargs) -> MT5BrokerAdapter:
+    return _adapter(clock or Clock(), partial_r=3.0, partial_fraction=1 / 3, **kwargs)
+
+
+def _positions(**by_ticket):
+    """positions_get answering by ticket: ticket -> (price_open, price_current, sl, tp)."""
+    def positions_get(ticket=None, **_):
+        found = by_ticket.get(f"t{ticket}")
+        if found is None:
+            return ()
+        price_open, price_current, sl, tp = found
+        return (MagicMock(ticket=ticket, type=0, symbol="EURUSD", price_open=price_open, price_current=price_current,
+                          sl=sl, tp=tp, volume=0.16, profit=0.0),)
+    return positions_get
+
+
+class TestTheSplit:
+    def test_a_third_at_the_partial_level_the_rest_at_the_target(self, mock_mt5):
+        _send_tickets(mock_mt5, 555, 556)
+        adapter = _managed()
+        result = adapter.place_order(_limit())   # 0.5 lots: 0.16 + 0.34; partial at 1.0990 + 3 x 20 pips
+        part, rest = (c[0][0] for c in mock_mt5.order_send.call_args_list)
+        assert (part["volume"], part["tp"]) == (0.16, pytest.approx(1.1050))
+        assert (rest["volume"], rest["tp"]) == (0.34, 1.1100)
+        assert part["sl"] == rest["sl"] == 1.0970 and part["price"] == rest["price"] == 1.0990
+        trade = adapter.active_trade("EURUSD")
+        assert trade["tickets"] == [555, 556] and trade["lots"] == 0.5 and result["trade_id"] == "555"
+        assert adapter.active_count() == 1
+
+    def test_too_small_to_split_runs_unmanaged(self, mock_mt5):
+        adapter = _managed()
+        adapter.place_order(_limit(risk_amount=2.0))   # 0.01 lots (D44)
+        mock_mt5.order_send.assert_called_once()
+        assert adapter.active_trade("EURUSD")["partial"] is None
+
+    def test_a_partial_at_or_beyond_the_target_runs_unmanaged(self, mock_mt5):
+        adapter = _managed()
+        adapter.place_order(_limit(take_profit=1.1040))   # the partial (1.1050) is past it
+        mock_mt5.order_send.assert_called_once()
+
+    def test_without_the_partial_one_ticket(self, mock_mt5):
+        adapter = _adapter(Clock())
+        adapter.place_order(_limit())
+        mock_mt5.order_send.assert_called_once()
+
+    def test_the_rest_refused_cancels_the_part(self, mock_mt5):
+        mock_mt5.order_send.side_effect = [MagicMock(retcode=10009, order=555), MagicMock(retcode=10013, order=0,
+                                                                                         comment="Invalid request"),
+                                           MagicMock(retcode=10009, order=555)]
+        mock_mt5.orders_get.side_effect = lambda ticket=None, **_: (MagicMock(ticket=555),) if ticket == 555 else ()
+        adapter = _managed()
+        with pytest.raises(MT5BrokerError):
+            adapter.place_order(_limit())
+        assert mock_mt5.order_send.call_args[0][0] == {"action": mock_mt5.TRADE_ACTION_REMOVE, "order": 555}
+        assert adapter.active_trade("EURUSD") is None and adapter.attempted_setups() == set()
+
+
+class TestBreakEven:
+    def _placed(self, mock_mt5, clock):
+        _send_tickets(mock_mt5, 555, 556)
+        adapter = _managed(clock)
+        adapter.place_order(_limit())
+        mock_mt5.order_send.reset_mock()
+        mock_mt5.order_send.side_effect = None
+        mock_mt5.order_send.return_value = MagicMock(retcode=10009, order=0)
+        return adapter
+
+    def test_the_part_closed_moves_the_rest_to_its_fill(self, mock_mt5):
+        clock = Clock()
+        adapter = self._placed(mock_mt5, clock)
+        mock_mt5.positions_get.side_effect = _positions(t555=(1.0990, 1.1000, 1.0970, 1.1050),
+                                                        t556=(1.0990, 1.1000, 1.0970, 1.1100))
+        adapter.sync()                                         # both filled at the limit
+        mock_mt5.order_send.reset_mock()
+        mock_mt5.positions_get.side_effect = _positions(t556=(1.0990, 1.1052, 1.0970, 1.1100))   # the part took 3R
+        events = adapter.sync()
+        assert [e["event"] for e in events] == ["PARTIAL"]
+        assert mock_mt5.order_send.call_args[0][0] == {"action": mock_mt5.TRADE_ACTION_SLTP, "symbol": "EURUSD",
+                                                       "position": 556, "sl": 1.0990, "tp": 1.1100}
+        assert adapter.active_trade("EURUSD")["partial"]["be_moved"] is True
+        mock_mt5.order_send.reset_mock()
+        assert adapter.sync() == [] and not mock_mt5.order_send.called   # moved once
+
+    def test_the_part_stopped_out_moves_nothing(self, mock_mt5):
+        clock = Clock()
+        adapter = self._placed(mock_mt5, clock)
+        mock_mt5.positions_get.side_effect = _positions(t555=(1.0990, 1.0980, 1.0970, 1.1050),
+                                                        t556=(1.0990, 1.0980, 1.0970, 1.1100))
+        adapter.sync()
+        mock_mt5.order_send.reset_mock()
+        mock_mt5.positions_get.side_effect = _positions(t556=(1.0990, 1.0969, 1.0970, 1.1100))   # at the stop
+        assert adapter.sync() == []
+        mock_mt5.order_send.assert_not_called()
+
+    def test_a_fill_away_from_the_entry_resets_the_parts_target(self, mock_mt5):
+        clock = Clock()
+        adapter = self._placed(mock_mt5, clock)
+        # Filled 1 pip better than the limit: the partial follows the fill, as the backtest's does.
+        mock_mt5.positions_get.side_effect = _positions(t555=(1.0989, 1.0995, 1.0970, 1.1050),
+                                                        t556=(1.0989, 1.0995, 1.0970, 1.1100))
+        adapter.sync()
+        request = mock_mt5.order_send.call_args[0][0]
+        assert request["action"] == mock_mt5.TRADE_ACTION_SLTP and request["position"] == 555
+        assert request["tp"] == pytest.approx(1.0989 + 3 * (1.0989 - 1.0970)) and request["sl"] == 1.0970
+
+
+def test_a_ledger_from_before_the_partial_still_syncs(mock_mt5, tmp_path):
+    import json
+
+    (tmp_path / "ledger.json").write_text(json.dumps([{
+        "trade_id": "555", "setup_id": "s0", "instrument": "EURUSD", "symbol": "EURUSD", "direction": "LONG",
+        "kind": "LIMIT", "entry": 1.099, "stop_loss": 1.097, "take_profit": 1.11, "lots": 0.5, "tickets": [555],
+        "placed_at": T0.isoformat(), "expires_at": None, "status": "OPEN", "filled_at": T0.isoformat(),
+        "fill_price": 1.099, "closed_at": None, "exit_reason": None}]), encoding="utf-8")
+    mock_mt5.positions_get.side_effect = _positions(t555=(1.099, 1.100, 1.097, 1.11))
+    assert _adapter(Clock(), tmp_path).sync() == []

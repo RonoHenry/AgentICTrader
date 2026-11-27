@@ -578,9 +578,12 @@ def main() -> None:
     mt5_broker = None
     if broker == "mt5":
         # Pending orders expire as the backtest's do, and own trades persist to the ledger (live-execution Req 3).
+        # With the run's [management], the partial and break-even run as backtested (Req 7).
+        management = run_cfg.management if run_cfg is not None else None
         broker_client = mt5_broker = _mt5_broker_client(
             run_cfg, expiry_rule=cfg.pending_expiry, fallback_ttl=cfg.fallback_ttl, server_clock=_SERVER_CLOCK,
-            ledger_path=args.mt5_ledger,
+            ledger_path=args.mt5_ledger, partial_r=management.partial_r if management else 0.0,
+            partial_fraction=management.partial_fraction if management else 0.0,
         )
         # The run's specs give min_stop_spreads its typical spreads, as on paper.
         specs = _paper_specs(args.feed, run_cfg)

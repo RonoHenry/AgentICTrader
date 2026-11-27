@@ -29,8 +29,15 @@ past their expiry. The ledger (``MT5Ledger``, persisted to ``ledger_path``)
 records each trade placed: its tickets, setup, prices and expiry. The
 terminal stays the truth for each ticket's state; ``sync()`` reads it.
 
+With ``partial_r`` set (the run's ``[management]``), a risk-sized trade is two
+tickets (Requirement 7, LX-D2): the part, ``partial_fraction`` of the lots
+rounded down, targets the partial level; the rest targets the trade's target.
+SimBroker's split rule decides it (agent.brokers.sizing.split_lots, D44).
+``sync()`` moves the part's target to its actual fill's partial level, and once
+the part has closed with the rest in profit, the rest's stop to its fill.
+
 Validates: Requirements FR-6 (Agentic Execution Loop) — broker abstraction;
-live-execution Requirements 1, 2, 3, 5.
+live-execution Requirements 1, 2, 3, 4.1, 5, 6.1, 7.
 """
 from __future__ import annotations
 
@@ -41,8 +48,8 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from agent.brokers.base import BrokerClient
-from agent.brokers.fill_model import pending_expiry
-from agent.brokers.sizing import SizingError, lots_for_risk, stop_overrun
+from agent.brokers.fill_model import partial_level, pending_expiry
+from agent.brokers.sizing import SizingError, lots_for_risk, round_down, split_lots, stop_overrun
 from agent.clock import Clock, wall_clock
 from agent.instruments import InstrumentSpecs
 from agent.strategy_config import PendingExpiry
@@ -204,6 +211,8 @@ class MT5BrokerAdapter(BrokerClient):
         server_clock: Optional[MT5ServerClock] = None,
         clock: Optional[Clock] = None,
         ledger_path: Optional[str | Path] = None,
+        partial_r: float = 0.0,
+        partial_fraction: float = 0.0,
     ) -> None:
         self._login = login
         self._password = password
@@ -219,6 +228,7 @@ class MT5BrokerAdapter(BrokerClient):
         self._fallback_ttl = fallback_ttl
         self._server_clock = server_clock
         self._clock = clock or wall_clock
+        self._partial_r, self._partial_fraction = partial_r, partial_fraction
         self.ledger = MT5Ledger(ledger_path)
         self._connected = False
 
@@ -444,6 +454,7 @@ class MT5BrokerAdapter(BrokerClient):
             "stop_loss": order.get("stop_loss"), "take_profit": order.get("take_profit"), "lots": size,
             "tickets": [], "placed_at": now.isoformat(), "expires_at": expires_at.isoformat() if expires_at else None,
             "status": "PENDING", "filled_at": None, "fill_price": None, "closed_at": None, "exit_reason": None,
+            "partial": self._plan_partial(symbol, direction, size, order) if risk_amount else None,
         }
         if expires_at is not None and expires_at <= now:
             # Placed at the end of its killzone: the backtest places it and it expires unfilled. Nothing is sent;
@@ -486,14 +497,61 @@ class MT5BrokerAdapter(BrokerClient):
             request["type_time"] = mt5.ORDER_TIME_SPECIFIED
             request["expiration"] = int(self._server_clock.to_server(expires_at).timestamp())
 
+        partial = trade["partial"]
+        if partial is None:
+            tickets = [self._send(request)]
+        else:
+            # Two tickets (LX-D2): the part takes the partial at its level, the rest runs to the target.
+            first = self._send({**request, "volume": partial["lots"], "tp": partial["level"]})
+            try:
+                rest = self._send({**request, "volume": partial["rest_lots"]})
+            except MT5BrokerError:
+                self._undo(first)
+                raise
+            tickets = [first, rest]
+
+        ticket = str(tickets[0])
+        trade.update(trade_id=ticket, tickets=tickets)
+        self.ledger.add(trade)
+        return {"order_id": ticket, "trade_id": ticket, "pending": is_pending}
+
+    def _send(self, request: dict) -> int:
         result = mt5.order_send(request)
         if _order_send_failed(result):
             raise MT5BrokerError(f"MT5 order_send failed: {_describe_order_send_failure(result)}")
+        return int(result.order)
 
-        ticket = str(result.order)
-        trade.update(trade_id=ticket, tickets=[int(result.order)])
-        self.ledger.add(trade)
-        return {"order_id": ticket, "trade_id": ticket, "pending": is_pending}
+    def _undo(self, ticket: int) -> None:
+        """Take back a ticket whose partner was refused: cancel it pending, close it filled. Best effort: a failure
+        is logged as the error the caller raises anyway."""
+        try:
+            state, obj = self._lookup_trade(str(ticket))
+            if state == "PENDING":
+                self._cancel_pending_order(ticket)
+            elif state == "OPEN":
+                self._send_closing_deal(obj, obj.volume)
+        except MT5BrokerError:
+            pass
+
+    def _plan_partial(self, symbol: str, direction: str, lots: float, order: dict) -> Optional[dict]:
+        """The partial's split (live-execution Requirement 7.1), by SimBroker's rule: the part is ``lots`` times
+        ``partial_fraction`` rounded down; None, unmanaged, when the part or the rest is under the minimum volume
+        (D44), or the partial level is at or beyond the target. The level is from the entry here; ``sync`` moves it
+        to the actual fill."""
+        stop = order.get("stop_loss")
+        if not self._partial_r or stop is None:
+            return None
+        entry = order.get("entry")
+        if entry is None:
+            tick = mt5.symbol_info_tick(symbol)
+            entry = tick.ask if direction == "LONG" else tick.bid
+        level = partial_level(direction, float(entry), float(stop), order.get("take_profit"), self._partial_r)
+        info = mt5.symbol_info(symbol)
+        part = split_lots(lots, self._partial_fraction, info.volume_min, info.volume_step) if level is not None else 0
+        if not part:
+            return None
+        return {"lots": part, "rest_lots": round_down(lots - part, info.volume_step), "level": level,
+                "partial_r": self._partial_r, "be_moved": False}
 
     def _allows_specified_expiry(self, symbol: str) -> bool:
         info = mt5.symbol_info(symbol)
@@ -513,34 +571,57 @@ class MT5BrokerAdapter(BrokerClient):
         now = self._clock()
         events = []
         for trade in self.ledger.active():
-            event = self._sync_trade(trade, now)
-            if event:
-                events.append({**trade, "event": event})
+            events.extend({**trade, "event": event} for event in self._sync_trade(trade, now))
         if events:
             self.ledger.save()
         return events
 
-    def _sync_trade(self, trade: dict, now: datetime) -> Optional[str]:
+    def _sync_trade(self, trade: dict, now: datetime) -> list[str]:
         states = {ticket: self._lookup_trade(str(ticket)) for ticket in trade["tickets"]}
         expired = trade["expires_at"] is not None and now >= datetime.fromisoformat(trade["expires_at"])
         pending = [ticket for ticket, (state, _) in states.items() if state == "PENDING"]
-        opened = [obj for state, obj in states.values() if state == "OPEN"]
+        opened = {ticket: obj for ticket, (state, obj) in states.items() if state == "OPEN"}
         if expired and pending:
             for ticket in pending:
                 self._cancel_pending_order(ticket)
             pending = []
-        if opened:
-            if trade["status"] == "PENDING":
-                trade.update(status="OPEN", filled_at=now.isoformat(), fill_price=float(opened[0].price_open))
-                return "FILLED"
-            return None
-        if pending:
-            return None
+        events = []
+        if opened and trade["status"] == "PENDING":
+            first = next(iter(opened.values()))
+            trade.update(status="OPEN", filled_at=now.isoformat(), fill_price=float(first.price_open))
+            events.append("FILLED")
+        if trade.get("partial") is not None and opened:   # ledgers from before task 459 have no key
+            events.extend(self._manage_partial(trade, opened))
+        if opened or pending:
+            return events
         # Nothing left at the terminal.
         never_filled = trade["status"] == "PENDING"
         reason = "EXPIRED" if never_filled and expired else "CLOSED"
         trade.update(status="CLOSED", closed_at=now.isoformat(), exit_reason=reason)
-        return reason
+        return events + [reason]
+
+    def _manage_partial(self, trade: dict, opened: dict[int, Any]) -> list[str]:
+        """The split trade's management (live-execution Requirements 7.2, 7.3). The part's target follows its actual
+        fill, as the backtest's partial does. Once the part has closed at its target, the rest's stop moves to the
+        rest's fill: only with the rest in profit, so a part that was stopped out moves nothing."""
+        partial = trade["partial"]
+        part_ticket, rest_ticket = trade["tickets"]
+        part = opened.get(part_ticket)
+        if part is not None and not partial.get("from_fill"):
+            level = partial_level(trade["direction"], float(part.price_open), float(trade["stop_loss"]),
+                                  trade["take_profit"], partial["partial_r"])
+            target = level if level is not None else trade["take_profit"]
+            if target is not None and abs(target - float(part.tp)) > 1e-9:
+                self.set_sl_tp(str(part_ticket), float(trade["stop_loss"]), target)
+            partial.update(level=target, from_fill=True)
+        rest = opened.get(rest_ticket)
+        if part is None and rest is not None and not partial["be_moved"] and trade["status"] == "OPEN":
+            sign = 1 if trade["direction"] == "LONG" else -1
+            if sign * (float(rest.price_current) - float(rest.price_open)) > 0:
+                self.set_sl_tp(str(rest_ticket), float(rest.price_open), float(rest.tp))
+                partial["be_moved"] = True
+                return ["PARTIAL"]
+        return []
 
     def active_trade(self, instrument: str) -> Optional[dict]:
         """The instrument's own pending or open trade, if any (one per instrument, Requirement 5.1)."""
