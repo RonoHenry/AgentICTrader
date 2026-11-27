@@ -27,8 +27,13 @@
     - `MT5BrokerError` carries a `reason`.
   - **Validates: Requirements 1.1-1.5, 2.1-2.3**
 
-- [ ] 455. The run's broker profile on MT5 (Requirement 6)
+- [x] 455. The run's broker profile on MT5 (Requirement 6)
   - The adapter takes a symbol map; the runner passes the profile's, and uses the profile's server clock with `--config`.
+  - **Done 2026-11-27.**
+    - `MT5BrokerAdapter(symbol_of=...)`.
+    - `run_live_agent._mt5_broker_client(run_cfg)` passes the profile's symbols and specs.
+    - `_server_clock(run_cfg)` replaces the environment's clock with the profile's.
+    - Tests: `test_live_execution_runner.py` (5), `test_live_execution_mt5.py` (1).
   - **Validates: Requirements 6.1, 6.2**
 
 - [ ] 456. Expiry, and the ledger (Requirement 3)
