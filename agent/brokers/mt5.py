@@ -550,6 +550,15 @@ class MT5BrokerAdapter(BrokerClient):
         """Own trades pending or open: a split trade counts once (Requirement 7.4)."""
         return len(self.ledger.active())
 
+    def account_snapshot(self) -> tuple[float, float]:
+        """The account's (balance, equity) from the terminal, for the risk engine's exposure (Requirement 4.1)."""
+        self._ensure_connected()
+        info = mt5.account_info()
+        if info is None:
+            code, desc = mt5.last_error()
+            raise MT5BrokerError(f"MT5 account_info failed ({code}): {desc}", "NO_ACCOUNT")
+        return float(info.balance), float(info.equity)
+
     def attempted_setups(self) -> set[str]:
         """Every setup ordered from this ledger, whatever became of it (algo-backtester D6)."""
         return {t["setup_id"] for t in self.ledger.trades() if t.get("setup_id")}

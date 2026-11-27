@@ -171,6 +171,7 @@ _USER_ID = "demo-runner"
 _ENTRY_TF_SECONDS = {Timeframe.M1: 60, Timeframe.M3: 180, Timeframe.M5: 300, Timeframe.M15: 900}
 _PAPER_STATE = REPO_ROOT / "data" / "paper_trades.json"
 _MT5_LEDGER = REPO_ROOT / "data" / "live" / "mt5_ledger.json"
+_MT5_ACCOUNT = REPO_ROOT / "data" / "live" / "mt5_account.json"
 
 # services/visual_model and services/algorag: docker-compose publishes both
 # to localhost for a host-run script; inside the compose network (the
@@ -337,6 +338,11 @@ def _parse_args() -> argparse.Namespace:
         "(default: %(default)s).",
     )
     parser.add_argument(
+        "--mt5-account",
+        default=str(_MT5_ACCOUNT),
+        help="JSON file the MT5 account's first balance and drawdown anchors persist to (default: %(default)s).",
+    )
+    parser.add_argument(
         "--paper-state",
         default=str(_PAPER_STATE),
         help="JSON file paper trades persist to (default: %(default)s).",
@@ -454,6 +460,7 @@ def _process_instrument(
     verbose: bool = True,
     evaluated: Optional[dict[str, datetime]] = None,
     typical_spread: Optional[float] = None,
+    before_decision: Optional[Callable[[], None]] = None,
 ) -> dict:
     """Grade the window as of ``t`` and, if warranted, trade it. Returns a
     summary dict for the end-of-run table — never raises for a NO_TRADE
@@ -462,7 +469,9 @@ def _process_instrument(
     ``evaluated`` remembers the last t per instrument, so the same closed bar
     is evaluated once: over an FX weekend t stays at Friday's close, and every
     pass would otherwise re-send the same setup. ``typical_spread`` is the
-    instrument's spec spread, for cfg.min_stop_spreads.
+    instrument's spec spread, for cfg.min_stop_spreads. ``before_decision``
+    writes the account's exposure just before the graph runs, as the
+    backtest's simulate() does (live-execution Req 4.1).
     """
     if evaluated is not None and evaluated.get(instrument) == t:
         return {"instrument": instrument, "grade": "-", "decision": "NO NEW BAR", "trade_id": None}
@@ -499,6 +508,8 @@ def _process_instrument(
     print(f"  time_window={intent.time_features.time_window} (killzone={intent.time_features.is_killzone})")
     print(f"[{instrument}] Handing off to AgentGraph (mode={mode})...\n")
 
+    if before_decision is not None:
+        before_decision()
     final_state = graph.run(message)
 
     print(f"[{instrument}] decision={final_state.decision}  reason={final_state.decision_reason}")
@@ -565,6 +576,8 @@ def main() -> None:
             run_cfg, expiry_rule=cfg.pending_expiry, fallback_ttl=cfg.fallback_ttl, server_clock=_SERVER_CLOCK,
             ledger_path=args.mt5_ledger,
         )
+        # The run's specs give min_stop_spreads its typical spreads, as on paper.
+        specs = _paper_specs(args.feed, run_cfg)
     elif broker == "paper":
         fee = args.paper_fee if args.paper_fee is not None else (0.001 if args.feed == "binance" else 0.0)
         # Free the risk engine's concurrent-trades slot whenever a paper
@@ -588,12 +601,25 @@ def main() -> None:
     # Each instrument's typical spread, for StrategyConfig.min_stop_spreads (off by default).
     spreads = {i: specs[i].default_spread for i in instruments if i in specs} if specs is not None else {}
 
-    # Paper trades still active from an earlier run count against the limit.
-    open_trades = sum(1 for t in paper.trades() if t["status"] in ("PENDING", "OPEN")) if paper else 0
-    redis_client.set(
-        f"risk:exposure:{_USER_ID}",
-        json.dumps({"daily_dd_pct": 0.0, "weekly_dd_pct": 0.0, "open_trades": open_trades, "equity": _DEMO_EQUITY}),
-    )
+    refresh_exposure: Optional[Callable[[], None]] = None
+    if mt5_broker is not None:
+        # The account from the terminal, with the backtest's anchors and budget rule (live-execution Req 4):
+        # written now and before every decision. _DEMO_EQUITY isn't used on MT5.
+        from algo_backtester.account import LiveAccount
+        from algo_backtester.config import AccountSection
+
+        account_cfg = run_cfg.account if run_cfg is not None else AccountSection()
+        live_account = LiveAccount(account_cfg.risk_per_trade, account_cfg.compounding, state_path=args.mt5_account)
+        refresh_exposure = _mt5_exposure(mt5_broker, live_account, redis_client)
+        refresh_exposure()
+    else:
+        # Paper trades still active from an earlier run count against the limit.
+        open_trades = sum(1 for t in paper.trades() if t["status"] in ("PENDING", "OPEN")) if paper else 0
+        redis_client.set(
+            f"risk:exposure:{_USER_ID}",
+            json.dumps({"daily_dd_pct": 0.0, "weekly_dd_pct": 0.0, "open_trades": open_trades,
+                        "equity": _DEMO_EQUITY}),
+        )
 
     graph = AgentGraph(
         redis_client=redis_client,
@@ -661,7 +687,7 @@ def main() -> None:
                 )
                 results.append(
                     _process_instrument(instrument, view, t, graph, cfg, mode, verbose=not args.loop, evaluated=evaluated,
-                                        typical_spread=spreads.get(instrument))
+                                        typical_spread=spreads.get(instrument), before_decision=refresh_exposure)
                 )
             except _FEED_DOWN as exc:
                 logger.error("Feed unavailable (%s) — skipping the rest of this pass", exc)
@@ -684,7 +710,7 @@ def main() -> None:
     try:
         if not args.loop:
             if mt5_broker is not None:
-                _manage(mt5_broker)
+                _manage(mt5_broker, refresh_exposure)
             _print_summary(run_pass())
         else:
             deadline = time.monotonic() + args.duration * 60 if args.duration else None
@@ -695,7 +721,7 @@ def main() -> None:
             evaluated_bar = None
             while True:
                 if mt5_broker is not None:
-                    _manage(mt5_broker)
+                    _manage(mt5_broker, refresh_exposure)
                 bar_index = int(time.time() // period)
                 if bar_index != evaluated_bar:
                     evaluated_bar = bar_index
@@ -728,12 +754,25 @@ def _print_summary(results: list[dict]) -> None:
         print(f"{r['instrument']:<10} {r['grade']:<10} {str(r['decision']):<25} {r['trade_id'] or ''}")
 
 
-def _manage(broker) -> list[dict]:
+def _mt5_exposure(broker, account, redis_client, clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)):
+    """A callable writing the risk engine's exposure from the broker's truth (live-execution Req 4.1, LX-D4): the
+    terminal's balance and equity through ``account`` (a LiveAccount: SimAccount's anchors), and the ledger's own
+    trades pending or open."""
+    def refresh() -> None:
+        balance, equity = broker.account_snapshot()
+        account.sync(clock(), balance, equity, broker.active_count())
+        redis_client.set(f"risk:exposure:{_USER_ID}", json.dumps(account.exposure()))
+    return refresh
+
+
+def _manage(broker, refresh_exposure: Optional[Callable[[], None]] = None) -> list[dict]:
     """One management step on MT5 (live-execution LX-D5): the broker syncs its ledger with the terminal, expiring
-    and closing out trades; each change is printed. A terminal error is logged, not raised: the next minute
-    retries."""
+    and closing out trades, then the account is marked (``refresh_exposure``); each change is printed. A terminal
+    error is logged, not raised: the next minute retries."""
     try:
         events = broker.sync()
+        if refresh_exposure is not None:
+            refresh_exposure()
     except Exception as exc:
         logger.error("MT5 sync failed: %s", exc)
         return []

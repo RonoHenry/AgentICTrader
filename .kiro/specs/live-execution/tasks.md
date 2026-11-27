@@ -47,9 +47,16 @@
     - Tests: `test_live_execution_mt5.py` (12 more), `test_live_execution_runner.py` (3 more).
   - **Validates: Requirements 3.1-3.4**
 
-- [ ] 457. The account from the terminal (Requirement 4)
+- [x] 457. The account from the terminal (Requirement 4)
   - `LiveAccount(SimAccount)`: `sync(t, balance, equity, open_trades)`, with the initial balance and anchors persisted.
   - The runner on MT5: the per-minute sync, and the exposure written before every decision. `_DEMO_EQUITY` is gone from MT5.
+  - **Done 2026-11-27.**
+    - `algo_backtester/account.py::LiveAccount` persists to `--mt5-account` (default `data/live/mt5_account.json`). Its anchors match SimAccount's mark for mark.
+    - The first sync anchors at the larger of the balance and the equity, so a loss already open counts.
+    - `MT5BrokerAdapter.account_snapshot()`.
+    - `run_live_agent._mt5_exposure` writes the exposure at start, after each minute's sync, and before every decision (`_process_instrument(before_decision=...)`).
+    - **Found and fixed:** on MT5 the runner had no specs, so a variant with `min_stop_spreads` (e.g. `fresh_near_gap_dis`) raised on every intent. The MT5 branch now loads the run's specs.
+    - Tests: `test_live_execution_account.py` (11).
   - **Validates: Requirements 4.1-4.4**
 
 - [ ] 458. One trade per market, one attempt per setup (Requirement 5)
